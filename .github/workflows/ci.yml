@@ -84,7 +84,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # === Cross-compile (Linux only from ubuntu, Darwin from macos runner) ===
+  # === Cross-compile (Linux only — Windows ARM64 needs Windows runner) ===
   build-targets:
     name: Build (cross-compile)
     runs-on: ubuntu-latest
@@ -94,6 +94,26 @@ jobs:
         target:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
+          - x86_64-pc-windows-msvc
+          # aarch64-pc-windows-msvc requires Windows runner (ring crate needs MSVC headers)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.86
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build for ${{ matrix.target }}
+        run: cargo build -p rook --release --target ${{ matrix.target }}
+
+  # === Windows native build (handles Windows ARM64) ===
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
           - x86_64-pc-windows-msvc
           - aarch64-pc-windows-msvc
     steps:
