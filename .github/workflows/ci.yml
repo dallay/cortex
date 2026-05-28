@@ -79,10 +79,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88
+      - name: Install cargo-audit
+        run: cargo install cargo-audit@0.21.2
       - name: Run cargo audit
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo audit
 
   # === Cross-compile (Linux only — Windows targets built natively in build-windows job) ===
   build-targets:
@@ -101,9 +101,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.86
         with:
           targets: ${{ matrix.target }}
-      - name: Install ARM64 cross-compile toolchain
+      - name: Install ARM64 cross-compile toolchain and dependencies
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Build for ${{ matrix.target }}
