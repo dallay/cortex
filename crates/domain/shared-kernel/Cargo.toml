@@ -1,0 +1,23 @@
+[package]
+name = "shared-kernel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Error handling — kept minimal, extend per-crate
+thiserror = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["serde"] }
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+smol_str = { version = "0.2", features = ["serde"] }
+
+# Async
+tokio = { version = "1", features = ["rt", "sync"] }
+futures = "0.3"

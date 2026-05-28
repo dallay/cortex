@@ -1,0 +1,40 @@
+# =============================================================================
+# Nuxa/Rook — lefthook configuration
+# =============================================================================
+# Universal install (any OS):
+#   npx lefthook@latest install
+#
+# Or via npm (if Node.js available):
+#   npm install -g lefthook && npx lefthook install
+#
+# Or via curl (standalone):
+#   curl -fsSL https://raw.githubusercontent.com/evilmartians/lefthook/master/bin/lefthook_darwin_amd64 -o /usr/local/bin/lefthook && chmod +x /usr/local/bin/lefthook
+# =============================================================================
+
+max-parallel: 4
+
+# =============================================================================
+# Hooks
+# =============================================================================
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      run: cargo fmt --all
+      stage_prepended: true
+
+    check:
+      run: cargo check --workspace
+      fail-fast: true
+
+pre-push:
+  parallel: true
+  commands:
+    clippy:
+      run: cargo clippy --workspace --all-targets -- -D warnings
+      fail-fast: true
+
+    test:
+      run: cargo test --workspace
+      fail-fast: true

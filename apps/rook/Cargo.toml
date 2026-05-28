@@ -1,0 +1,43 @@
+[package]
+name = "rook"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rook"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace deps
+shared-kernel = { path = "../../crates/domain/shared-kernel" }
+rook-core = { path = "../../crates/domain/rook-core" }
+rook-usecases = { path = "../../crates/application/rook-usecases" }
+transport-axum = { path = "../../crates/infrastructure/transport-axum" }
+cache-memory = { path = "../../crates/infrastructure/cache-memory" }
+audit-sqlite = { path = "../../crates/infrastructure/audit-sqlite" }
+observability = { path = "../../crates/infrastructure/observability" }
+providers-openai = { path = "../../crates/infrastructure/providers-openai" }
+providers-anthropic = { path = "../../crates/infrastructure/providers-anthropic" }
+providers-ollama = { path = "../../crates/infrastructure/providers-ollama" }
+providers-gemini = { path = "../../crates/infrastructure/providers-gemini" }
+providers-groq = { path = "../../crates/infrastructure/providers-groq" }
+
+# Runtime
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+
+# Web
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+
+# Config
+toml = "0.8"
+figment = { version = "0.10", features = ["toml", "env"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async
+async-trait = "0.1"
+futures = "0.3"

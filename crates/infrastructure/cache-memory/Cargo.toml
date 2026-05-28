@@ -1,0 +1,25 @@
+[package]
+name = "cache-memory"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared-kernel = { path = "../../domain/shared-kernel" }
+rook-core = { path = "../../domain/rook-core" }
+
+# Async
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "sync"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# Caching
+dashmap = "5"
+ttl_cache = "0.5"
+
+# Logging
+tracing = "0.1"
+
+# Errors
+thiserror = "1"

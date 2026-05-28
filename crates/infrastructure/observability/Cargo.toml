@@ -1,0 +1,22 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared-kernel = { path = "../../domain/shared-kernel" }
+rook-core = { path = "../../domain/rook-core" }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.21"
+metrics-exporter-prometheus = "0.13"
+opentelemetry = "0.22"
+opentelemetry-otlp = "0.15"
+
+# Async
+tokio = { version = "1", features = ["rt"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
