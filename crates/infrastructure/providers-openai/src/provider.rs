@@ -156,7 +156,7 @@ impl ProviderPort for OpenAIProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(NuxaError::provider(format!("{}: {}", status, body)));
+            return Err(NuxaError::provider(format!("{status}: {body}")));
         }
 
         let openai_resp: OpenAIResponse = resp
