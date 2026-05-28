@@ -1,4 +1,4 @@
-// shared-kernel — common types shared across all nuxa crates
+// shared-kernel — common types shared across all cortex crates
 //
 // Design principles:
 // - No external service dependencies (no DB, no HTTP, no async runtime)

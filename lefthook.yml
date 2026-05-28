@@ -21,7 +21,7 @@ pre-commit:
   parallel: true
   commands:
     fmt:
-      run: cargo fmt --all
+      run: rustup run stable cargo fmt --all
       stage_prepended: true
 
     check:

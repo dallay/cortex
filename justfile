@@ -146,7 +146,7 @@ ci-local:
 # === Help ===
 
 help:
-    @echo "nuxa/rook - available commands:"
+    @echo "cortex/rook - available commands:"
     @echo ""
     @echo "Quality:"
     @echo "  just fmt          - Format code"

@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| {
             dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join("nuxa")
+                .join("cortex")
                 .join("rook.toml")
         });
 

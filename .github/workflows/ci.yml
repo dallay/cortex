@@ -21,7 +21,9 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          rustup run stable rustfmt --version
+          rustup run stable cargo fmt --all -- --check
 
   clippy:
     name: Clippy
@@ -52,8 +54,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.86
-        with:
-          components: llvm-tools-preview
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Run tests
@@ -84,17 +84,36 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # === Cross-compile verification ===
+  # === Cross-compile (Linux only from ubuntu, Darwin from macos runner) ===
   build-targets:
     name: Build (cross-compile)
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         target:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
           - x86_64-pc-windows-msvc
           - aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.86
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build for ${{ matrix.target }}
+        run: cargo build -p rook --release --target ${{ matrix.target }}
+
+  # === macOS native build ===
+  build-darwin:
+    name: Build (Darwin)
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
@@ -107,7 +126,7 @@ jobs:
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
-  # === Multi-platform test (macOS + Windows) ===
+  # === Test on macOS and Windows ===
   test-multi:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

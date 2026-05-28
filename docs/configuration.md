@@ -4,8 +4,8 @@
 
 Rook looks for config in this order:
 1. `ROOK_CONFIG` environment variable (path to TOML file)
-2. `$XDG_CONFIG_HOME/nuxa/rook.toml`
-3. `~/.config/nuxa/rook.toml`
+2. `$XDG_CONFIG_HOME/cortex/rook.toml`
+3. `~/.config/cortex/rook.toml`
 
 ## Full Schema
 
@@ -22,7 +22,7 @@ enabled = true
 ttl_secs = 300         # 5 minutes
 
 [audit]
-db_path = "~/.local/share/nuxa/rook/audit.db"
+db_path = "~/.local/share/cortex/rook/audit.db"
 
 # At least one provider is required
 [[providers]]
@@ -143,7 +143,7 @@ enabled = true
 ttl_secs = 600
 
 [audit]
-db_path = "~/.local/share/nuxa/rook/audit.db"
+db_path = "~/.local/share/cortex/rook/audit.db"
 
 [[providers]]
 id = "openai-primary"

@@ -19,7 +19,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["nuxa team"]
+authors = ["cortex team"]
 rust-version = "1.81"
 
 [workspace.lints.rust]

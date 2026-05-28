@@ -155,10 +155,7 @@ impl RouterPort for FallbackRouter {
     }
 
     async fn on_failure(&self, provider: &ProviderId, _error: &NuxaError) {
-        let mut state = self
-            .circuits
-            .entry(provider.clone())
-            .or_default();
+        let mut state = self.circuits.entry(provider.clone()).or_default();
         state.record_failure();
         tracing::warn!(
             provider = %provider,
