@@ -349,7 +349,8 @@ pub async fn middleware(
     remove_trusted_headers(request.headers_mut());
     let outcome = evaluate_policy(route_class, request.headers(), &config);
     if !outcome.allow {
-        let mut resp = rejection_response(request.uri().path(), route_class, outcome).into_response();
+        let mut resp =
+            rejection_response(request.uri().path(), route_class, outcome).into_response();
         apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
         return resp;
     }
