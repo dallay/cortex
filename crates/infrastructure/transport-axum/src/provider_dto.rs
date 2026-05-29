@@ -37,24 +37,26 @@ pub struct UpdateProviderRequest {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CredentialsInput {
-    ApiKey {
-        #[serde(rename = "apiKey")]
-        api_key: String,
-    },
-    OAuth {
-        email: String,
-        #[serde(rename = "accessToken")]
-        access_token: String,
-        #[serde(rename = "refreshToken")]
-        refresh_token: String,
-        #[serde(rename = "expiresAt")]
-        expires_at: i64,
-        scope: String,
-        #[serde(rename = "idToken")]
-        id_token: String,
-        #[serde(rename = "projectId")]
-        project_id: String,
-    },
+    ApiKey(ApiKeyCredentialsInput),
+    OAuth(OAuthCredentialsInput),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApiKeyCredentialsInput {
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OAuthCredentialsInput {
+    pub email: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
+    pub scope: String,
+    pub id_token: String,
+    pub project_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,29 +269,20 @@ impl From<&TestConnectionResult> for TestConnectionResponse {
 
 fn credentials_to_usecase(credentials: &CredentialsInput) -> UsecaseCredentialsInput {
     match credentials {
-        CredentialsInput::ApiKey { api_key } => UsecaseCredentialsInput::ApiKey {
-            api_key: api_key.clone(),
+        CredentialsInput::ApiKey(credentials) => UsecaseCredentialsInput::ApiKey {
+            api_key: credentials.api_key.clone(),
         },
-        CredentialsInput::OAuth {
-            email,
-            access_token,
-            refresh_token,
-            expires_at,
-            scope,
-            id_token,
-            project_id,
-        } => UsecaseCredentialsInput::OAuth {
-            email: email.clone(),
-            access_token: access_token.clone(),
-            refresh_token: refresh_token.clone(),
-            expires_at: *expires_at,
-            scope: scope.clone(),
-            id_token: id_token.clone(),
-            project_id: project_id.clone(),
+        CredentialsInput::OAuth(credentials) => UsecaseCredentialsInput::OAuth {
+            email: credentials.email.clone(),
+            access_token: credentials.access_token.clone(),
+            refresh_token: credentials.refresh_token.clone(),
+            expires_at: credentials.expires_at,
+            scope: credentials.scope.clone(),
+            id_token: credentials.id_token.clone(),
+            project_id: credentials.project_id.clone(),
         },
     }
 }
-
 fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
     ConnectionConfig {
         max_concurrent: config.max_concurrent,
@@ -314,5 +307,26 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
     match auth_type {
         AuthType::ApiKey => "apiKey",
         AuthType::OAuth => "oauth",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CredentialsInput;
+
+    #[test]
+    fn credentials_reject_mixed_api_key_and_oauth_fields() {
+        let mixed = serde_json::json!({
+            "apiKey": "sk-test",
+            "email": "ops@example.com",
+            "accessToken": "access",
+            "refreshToken": "refresh",
+            "expiresAt": 1772150400,
+            "scope": "cloud-platform",
+            "idToken": "id",
+            "projectId": "project"
+        });
+
+        assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
     }
 }

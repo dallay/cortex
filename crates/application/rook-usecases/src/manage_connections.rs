@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rook_core::{
-    AuthType, ConnectionConfig, Credentials, EncryptedBlob, HealthStatus, KeyManager,
-    ProviderConnection, ProviderKind, ProviderRegistryPort, ProviderRepositoryPort,
-    QuotaWindowThresholds, RepositoryError, TestStatus, ValidationError,
+    AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, EncryptedBlob,
+    HealthStatus, KeyManager, ProviderConnection, ProviderKind, ProviderRegistryPort,
+    ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError, TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
 
@@ -14,8 +14,8 @@ pub enum ManageConnectionsError {
     Validation(#[from] ValidationError),
     #[error("repository error: {0}")]
     Repository(#[from] RepositoryError),
-    #[error("encryption error")]
-    Encryption,
+    #[error("encryption error: {0}")]
+    Encryption(#[from] CredentialEncryptionError),
     #[error("provider runtime not found: {0}")]
     ProviderRuntimeNotFound(ProviderId),
 }
@@ -236,11 +236,7 @@ impl ManageConnections {
     }
 
     fn encrypt_blob(&self, plaintext: &str) -> ManageConnectionsResult<EncryptedBlob> {
-        Ok(EncryptedBlob(
-            self.key_manager
-                .encrypt(plaintext.trim())
-                .map_err(|_| ManageConnectionsError::Encryption)?,
-        ))
+        Ok(EncryptedBlob(self.key_manager.encrypt(plaintext.trim())?))
     }
 }
 

@@ -104,7 +104,6 @@ impl FallbackRouter {
     }
 }
 
-#[async_trait]
 impl ProviderRegistryPort for FallbackRouter {
     fn providers(&self) -> Vec<ProviderId> {
         self.providers.iter().map(|p| p.id().clone()).collect()

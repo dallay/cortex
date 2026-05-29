@@ -105,7 +105,6 @@ pub trait HealthPort: Send + Sync {
 // ProviderRegistryPort — lookup for runtime providers
 // ---------------------------------------------------------------------------
 
-#[async_trait]
 pub trait ProviderRegistryPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;

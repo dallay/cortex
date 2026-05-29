@@ -136,7 +136,7 @@ fn map_error(error: ManageConnectionsError) -> HttpError {
             code: "CONFLICT",
             message: "connection conflict".to_string(),
         },
-        ManageConnectionsError::Repository(_) | ManageConnectionsError::Encryption => {
+        ManageConnectionsError::Repository(_) | ManageConnectionsError::Encryption(_) => {
             internal_error()
         }
     }

@@ -31,6 +31,12 @@ packages:
   - path: crates/infrastructure/audit-sqlite
     type: lib
     purpose: SQLite-backed audit log (implements AuditPort)
+  - path: crates/infrastructure/encryption-inmemory
+    type: lib
+    purpose: AES-256-GCM credential encryption and Argon2id key derivation (implements KeyManager)
+  - path: crates/infrastructure/provider-sqlite
+    type: lib
+    purpose: SQLite-backed provider connection repository (implements ProviderRepositoryPort)
   - path: crates/infrastructure/observability
     type: lib
     purpose: Tracing, metrics, OpenTelemetry integration
@@ -65,7 +71,7 @@ quality:
   clippy_check: "cargo clippy --workspace --all-targets -- -D warnings"
   test_check: "cargo test --workspace --all-features"
   doc_check: "cargo doc --workspace --no-deps --document-private-items"
-  audit_check: "cargo audit --locked"
+  audit_check: "cargo audit"
 
 # Architecture pattern: Clean Architecture / Hexagonal
 # Layer order (outermost → innermost):

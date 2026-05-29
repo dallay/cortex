@@ -261,7 +261,6 @@ This explicitly defines optimistic locking. Implementations MUST NOT rely on SQL
 `ManageConnections::test` needs to probe the runtime provider referenced by `provider_runtime_id`. The current `RouterPort` does not support lookup by id, so add a focused registry port:
 
 ```rust
-#[async_trait]
 pub trait ProviderRegistryPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;

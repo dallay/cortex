@@ -176,7 +176,6 @@ pub enum HealthStatus {
     },
 }
 
-#[async_trait]
 pub trait ProviderRegistryPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;
