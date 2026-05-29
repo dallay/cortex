@@ -12,7 +12,25 @@ pub struct RookConfig {
     pub routing: RoutingConfig,
     pub cache: CacheConfig,
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub provider_crud: ProviderCrudConfig,
     pub providers: Vec<ProviderConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderCrudConfig {
+    pub enabled: bool,
+    #[serde(rename = "db_path")]
+    pub db_path: String,
+}
+
+impl Default for ProviderCrudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            db_path: "~/.local/share/cortex/rook/providers.db".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +104,14 @@ impl RookConfig {
             let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
             config.audit.db_path = config
                 .audit
+                .db_path
+                .replace('~', home.to_str().unwrap_or(""));
+        }
+
+        if config.provider_crud.db_path.starts_with('~') {
+            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
+            config.provider_crud.db_path = config
+                .provider_crud
                 .db_path
                 .replace('~', home.to_str().unwrap_or(""));
         }

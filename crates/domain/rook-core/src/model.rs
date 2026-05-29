@@ -104,12 +104,51 @@ pub struct TokenUsage {
 /// Health
 /// ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
-pub struct HealthStatus {
-    pub provider: ProviderId,
-    pub is_healthy: bool,
-    pub latency_ms: Option<u64>,
-    pub last_error: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthStatus {
+    Healthy {
+        provider: ProviderId,
+        latency_ms: u64,
+    },
+    Unhealthy {
+        provider: ProviderId,
+        latency_ms: Option<u64>,
+        error: String,
+    },
+    Unknown {
+        provider: ProviderId,
+        reason: String,
+    },
+}
+
+impl HealthStatus {
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy { .. })
+    }
+
+    pub fn provider_id(&self) -> &ProviderId {
+        match self {
+            Self::Healthy { provider, .. }
+            | Self::Unhealthy { provider, .. }
+            | Self::Unknown { provider, .. } => provider,
+        }
+    }
+
+    pub fn latency_ms(&self) -> Option<u64> {
+        match self {
+            Self::Healthy { latency_ms, .. } => Some(*latency_ms),
+            Self::Unhealthy { latency_ms, .. } => *latency_ms,
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    pub fn last_error(&self) -> Option<&str> {
+        match self {
+            Self::Unhealthy { error, .. } => Some(error),
+            Self::Unknown { reason, .. } => Some(reason),
+            Self::Healthy { .. } => None,
+        }
+    }
 }
 
 /// ---------------------------------------------------------------------------

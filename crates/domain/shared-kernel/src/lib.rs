@@ -10,7 +10,7 @@ pub mod id;
 pub mod time_;
 
 pub use error::{NuxaError, NuxaResult};
-pub use id::{ModelId, ProviderId, RequestId};
+pub use id::{ConnectionId, ModelId, ProviderId, RequestId};
 pub use time_::Instant;
 
 // Re-export chrono for convenience in downstream crates

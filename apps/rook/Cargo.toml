@@ -21,6 +21,8 @@ providers-anthropic = { path = "../../crates/infrastructure/providers-anthropic"
 providers-ollama = { path = "../../crates/infrastructure/providers-ollama" }
 providers-gemini = { path = "../../crates/infrastructure/providers-gemini" }
 providers-groq = { path = "../../crates/infrastructure/providers-groq" }
+encryption-inmemory = { path = "../../crates/infrastructure/encryption-inmemory" }
+provider-sqlite = { path = "../../crates/infrastructure/provider-sqlite" }
 
 # Runtime
 tokio = { version = "1", features = ["full"] }

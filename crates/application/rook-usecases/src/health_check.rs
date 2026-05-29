@@ -3,37 +3,37 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rook_core::{HealthPort, HealthStatus, RouterPort};
+use rook_core::{HealthPort, HealthStatus, ProviderRegistryPort};
 use tokio::sync::RwLock;
 
 /// Periodically checks all providers and caches their health status.
 pub struct HealthCheck {
-    router: Arc<dyn RouterPort>,
+    registry: Arc<dyn ProviderRegistryPort>,
     statuses: Arc<RwLock<Vec<HealthStatus>>>,
 }
 
 impl HealthCheck {
-    pub fn new(router: Arc<dyn RouterPort>) -> Self {
+    pub fn new(registry: Arc<dyn ProviderRegistryPort>) -> Self {
         Self {
-            router,
+            registry,
             statuses: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
     /// Refresh health status from all providers.
     pub async fn refresh(&self) {
-        let provider_ids = self.router.providers();
+        let provider_ids = self.registry.providers();
         let mut new_statuses = Vec::with_capacity(provider_ids.len());
 
         for id in provider_ids {
-            // Router only gives us IDs — we'd need to store provider refs separately
-            // to call health_check() on them. For now, return a placeholder.
-            new_statuses.push(HealthStatus {
-                provider: id,
-                is_healthy: true,
-                latency_ms: None,
-                last_error: None,
-            });
+            if let Some(provider) = self.registry.get(&id) {
+                new_statuses.push(provider.health_check().await);
+            } else {
+                new_statuses.push(HealthStatus::Unknown {
+                    provider: id,
+                    reason: "provider_not_registered".to_string(),
+                });
+            }
         }
 
         *self.statuses.write().await = new_statuses;

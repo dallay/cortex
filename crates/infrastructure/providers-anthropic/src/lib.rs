@@ -43,12 +43,9 @@ impl ProviderPort for AnthropicProvider {
     }
 
     async fn health_check(&self) -> HealthStatus {
-        let start = std::time::Instant::now();
-        HealthStatus {
+        HealthStatus::Unknown {
             provider: self.config.id.clone(),
-            is_healthy: true, // TODO: real health check
-            latency_ms: Some(start.elapsed().as_millis() as u64),
-            last_error: None,
+            reason: "health_check_not_supported".to_string(),
         }
     }
 

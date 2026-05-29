@@ -24,6 +24,10 @@ ttl_secs = 300         # 5 minutes
 [audit]
 db_path = "~/.local/share/cortex/rook/audit.db"
 
+[provider_crud]
+enabled = false
+db_path = "~/.local/share/cortex/rook/providers.db"
+
 # At least one provider is required
 [[providers]]
 id = "openai-primary"
@@ -116,6 +120,30 @@ api_key = "${ANTHROPIC_KEY}"    # reads from ANTHROPIC_KEY env var
 ```
 
 The `${}` wrapper is required. Bare `${VAR}` without closing brace is not expanded.
+
+## Provider CRUD API
+
+Provider connection CRUD is disabled by default. When enabled, Rook mounts `/api/providers` endpoints for storing provider connection metadata and encrypted credentials.
+
+```toml
+[provider_crud]
+enabled = true
+db_path = "~/.local/share/cortex/rook/providers.db"
+```
+
+| Field     | Type   | Default                                      | Description                       |
+|-----------|--------|----------------------------------------------|-----------------------------------|
+| `enabled` | bool   | `false`                                      | Enable provider connection routes |
+| `db_path` | string | `~/.local/share/cortex/rook/providers.db`    | SQLite DB path; `~` expands       |
+
+When `enabled = true`, both environment variables are required and must be non-empty:
+
+| Variable                | Description                                      |
+|-------------------------|--------------------------------------------------|
+| `ENCRYPTION_PASSPHRASE` | Passphrase used to derive the credential key     |
+| `ENCRYPTION_SALT`       | Base64url-no-pad encoded 16-byte derivation salt |
+
+Rollback: setting `enabled = false` unmounts the provider CRUD routes. It does not delete the SQLite database or stored connection rows.
 
 ## Routing Strategies
 

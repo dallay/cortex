@@ -9,9 +9,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use shared_kernel::{CacheKey, ModelId, NuxaResult, ProviderId};
+use chrono::{DateTime, Utc};
+use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
 
 use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
+use super::{ProviderConnection, RepositoryError};
 
 /// ---------------------------------------------------------------------------
 /// ProviderPort — the primary port for LLM providers
@@ -97,6 +99,59 @@ pub trait AuditPort: Send + Sync {
 #[async_trait]
 pub trait HealthPort: Send + Sync {
     async fn health(&self) -> Vec<HealthStatus>;
+}
+
+// ---------------------------------------------------------------------------
+// ProviderRegistryPort — lookup for runtime providers
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait ProviderRegistryPort: Send + Sync {
+    fn providers(&self) -> Vec<ProviderId>;
+    fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;
+}
+
+// ---------------------------------------------------------------------------
+// ProviderRepositoryPort — persistence for provider connections
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait ProviderRepositoryPort: Send + Sync {
+    async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError>;
+    async fn find(&self, id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError>;
+    async fn create(&self, conn: &ProviderConnection) -> Result<(), RepositoryError>;
+    async fn update(
+        &self,
+        conn: &ProviderConnection,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError>;
+    async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// KeyManager — encryption boundary for provider credentials
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredentialEncryptionError {
+    Encrypt(String),
+    Decrypt(String),
+}
+
+impl std::fmt::Display for CredentialEncryptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Encrypt(message) => write!(f, "credential encryption failed: {message}"),
+            Self::Decrypt(message) => write!(f, "credential decryption failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for CredentialEncryptionError {}
+
+pub trait KeyManager: Send + Sync {
+    fn encrypt(&self, plaintext: &str) -> Result<String, CredentialEncryptionError>;
+    fn decrypt(&self, ciphertext: &str) -> Result<String, CredentialEncryptionError>;
 }
 
 // ---------------------------------------------------------------------------

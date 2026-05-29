@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use rook_core::{CompletionRequest, ModelId, ProviderId, ProviderPort, RouterPort};
+use rook_core::{
+    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
+};
 use shared_kernel::{NuxaError, NuxaResult, Utc};
 use tokio::sync::RwLock;
 
@@ -99,6 +101,20 @@ impl FallbackRouter {
                 !circuit.is_open() && p.supports_model(model)
             })
             .collect()
+    }
+}
+
+#[async_trait]
+impl ProviderRegistryPort for FallbackRouter {
+    fn providers(&self) -> Vec<ProviderId> {
+        self.providers.iter().map(|p| p.id().clone()).collect()
+    }
+
+    fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+        self.providers
+            .iter()
+            .find(|provider| provider.id() == id)
+            .cloned()
     }
 }
 

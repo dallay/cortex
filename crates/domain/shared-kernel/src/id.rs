@@ -86,3 +86,53 @@ impl std::fmt::Display for RequestId {
         write!(f, "{}", self.0)
     }
 }
+
+/// Connection identifier for stored provider connections (UUID v4).
+/// Distinct from ProviderId, which identifies runtime providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ConnectionId(pub uuid::Uuid);
+
+impl ConnectionId {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+
+    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
+        uuid::Uuid::parse_str(s).map(Self)
+    }
+}
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_id_new_is_unique() {
+        assert_ne!(ConnectionId::new(), ConnectionId::new());
+    }
+
+    #[test]
+    fn connection_id_default_generates_uuid_v4() {
+        let id = ConnectionId::default();
+        assert_eq!(id.0.get_version_num(), 4);
+    }
+
+    #[test]
+    fn connection_id_display_is_uuid_string() {
+        let rendered = ConnectionId::new().to_string();
+        assert_eq!(rendered.len(), 36);
+        assert!(rendered.contains('-'));
+    }
+}
