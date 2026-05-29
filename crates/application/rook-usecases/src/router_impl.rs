@@ -360,8 +360,7 @@ mod tests {
     fn provider_registry_get_returns_provider_by_id() {
         let p1 = StubProvider::new("a", &["model-a"]);
         let p2 = StubProvider::new("b", &["model-b"]);
-        let router =
-            FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
 
         let found = router.get(&ProviderId::new("a"));
         assert!(found.is_some());
@@ -443,7 +442,10 @@ mod tests {
                 let p1 = CountingProviderWrapper::new("a", &["model-x"]);
                 let p2 = CountingProviderWrapper::new("b", &["model-x"]);
                 let router = FallbackRouter::new(
-                    vec![p1.clone() as Arc<dyn ProviderPort>, p2.clone() as Arc<dyn ProviderPort>],
+                    vec![
+                        p1.clone() as Arc<dyn ProviderPort>,
+                        p2.clone() as Arc<dyn ProviderPort>,
+                    ],
                     RoutingStrategy::RoundRobin,
                 );
 
@@ -477,15 +479,21 @@ mod tests {
 
         // Record 2 failures — circuit should NOT open yet
         rt.block_on(async {
-            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err1")).await;
+            router
+                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err1"))
+                .await;
         });
         rt.block_on(async {
-            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err2")).await;
+            router
+                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err2"))
+                .await;
         });
 
         // 3rd failure — circuit opens
         rt.block_on(async {
-            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err3")).await;
+            router
+                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err3"))
+                .await;
         });
 
         // Now provider should be unavailable (circuit open)
@@ -510,7 +518,12 @@ mod tests {
         // Open the circuit with 3 failures
         rt.block_on(async {
             for _ in 0..3 {
-                let _ = router.on_failure(&ProviderId::new("recoverable"), &NuxaError::provider("boom")).await;
+                let _ = router
+                    .on_failure(
+                        &ProviderId::new("recoverable"),
+                        &NuxaError::provider("boom"),
+                    )
+                    .await;
             }
         });
 
@@ -532,10 +545,8 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("anthropic", &["claude-3"]);
                 let p2 = StubProvider::new("openai", &["gpt-4"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::ModelBased,
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::ModelBased);
 
                 // ModelBased currently falls back to first — verify it selects without error
                 let selected = router

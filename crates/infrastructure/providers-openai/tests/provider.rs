@@ -7,7 +7,10 @@ async fn health_check_returns_healthy_on_200() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/models"))
-        .and(wiremock::matchers::header("Authorization", "Bearer sk-test"))
+        .and(wiremock::matchers::header(
+            "Authorization",
+            "Bearer sk-test",
+        ))
         .respond_with(wiremock::ResponseTemplate::new(200))
         .mount(&server)
         .await;
@@ -52,8 +55,8 @@ async fn complete_returns_response_on_success() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
-        .respond_with(wiremock::ResponseTemplate::new(200)
-            .set_body_json(serde_json::json!({
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": "chatcmpl-123",
                 "model": "gpt-4",
                 "choices": [{
@@ -61,7 +64,8 @@ async fn complete_returns_response_on_success() {
                     "finish_reason": "stop"
                 }],
                 "usage": { "prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13 }
-            })))
+            })),
+        )
         .mount(&server)
         .await;
 

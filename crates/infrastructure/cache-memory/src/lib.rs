@@ -103,7 +103,10 @@ mod tests {
         let key = make_key();
         let resp = make_response("hello world");
 
-        cache.set(&key, &resp, Duration::from_secs(60)).await.unwrap();
+        cache
+            .set(&key, &resp, Duration::from_secs(60))
+            .await
+            .unwrap();
         let result = cache.get(&key).await.unwrap();
 
         assert!(result.is_some());
@@ -127,7 +130,10 @@ mod tests {
         let key = make_key();
         let resp = make_response("to be deleted");
 
-        cache.set(&key, &resp, Duration::from_secs(60)).await.unwrap();
+        cache
+            .set(&key, &resp, Duration::from_secs(60))
+            .await
+            .unwrap();
         cache.delete(&key).await.unwrap();
 
         let result = cache.get(&key).await.unwrap();
@@ -140,10 +146,12 @@ mod tests {
         let key1 = make_key();
         let key2 = make_key();
 
-        cache.set(&key1, &make_response("value1"), Duration::from_secs(60))
+        cache
+            .set(&key1, &make_response("value1"), Duration::from_secs(60))
             .await
             .unwrap();
-        cache.set(&key2, &make_response("value2"), Duration::from_secs(60))
+        cache
+            .set(&key2, &make_response("value2"), Duration::from_secs(60))
             .await
             .unwrap();
 
@@ -159,7 +167,10 @@ mod tests {
         let key = make_key();
         let resp = make_response("expired content");
 
-        cache.set(&key, &resp, Duration::from_secs(0)).await.unwrap();
+        cache
+            .set(&key, &resp, Duration::from_secs(0))
+            .await
+            .unwrap();
         // Give the expiry check a chance to trigger
         tokio::time::sleep(Duration::from_millis(1)).await;
 
@@ -172,10 +183,12 @@ mod tests {
         let cache = InMemoryCache::new(Duration::from_secs(60));
         let key = make_key();
 
-        cache.set(&key, &make_response("first"), Duration::from_secs(60))
+        cache
+            .set(&key, &make_response("first"), Duration::from_secs(60))
             .await
             .unwrap();
-        cache.set(&key, &make_response("second"), Duration::from_secs(60))
+        cache
+            .set(&key, &make_response("second"), Duration::from_secs(60))
             .await
             .unwrap();
 
@@ -189,10 +202,12 @@ mod tests {
         let key_a = CacheKey::from(&RequestId::new());
         let key_b = CacheKey::from(&RequestId::new());
 
-        cache.set(&key_a, &make_response("content A"), Duration::from_secs(60))
+        cache
+            .set(&key_a, &make_response("content A"), Duration::from_secs(60))
             .await
             .unwrap();
-        cache.set(&key_b, &make_response("content B"), Duration::from_secs(60))
+        cache
+            .set(&key_b, &make_response("content B"), Duration::from_secs(60))
             .await
             .unwrap();
 

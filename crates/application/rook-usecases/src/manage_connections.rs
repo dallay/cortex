@@ -563,7 +563,11 @@ mod tests {
             &self,
             id: &ConnectionId,
         ) -> Result<Option<ProviderConnection>, RepositoryError> {
-            Ok(if id == &self.conn.id { Some(self.conn.clone()) } else { None })
+            Ok(if id == &self.conn.id {
+                Some(self.conn.clone())
+            } else {
+                None
+            })
         }
 
         async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
@@ -613,8 +617,11 @@ mod tests {
                     updated_at: Utc::now(),
                 };
                 let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
-                let mc =
-                    ManageConnections::new(repo, Arc::new(EmptyRegistry), Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                );
                 let result = mc.list().await;
                 assert!(result.is_ok());
                 let list = result.unwrap();
@@ -669,8 +676,11 @@ mod tests {
                     updated_at: Utc::now(),
                 };
                 let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
-                let mc =
-                    ManageConnections::new(repo, Arc::new(EmptyRegistry), Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                );
                 let result = mc.get(&conn.id).await;
                 assert!(result.is_ok());
                 let found = result.unwrap();
@@ -736,7 +746,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::EmptyName))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::EmptyName
+                    ))
                 ));
             });
     }
@@ -764,7 +776,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::EmptyName))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::EmptyName
+                    ))
                 ));
             });
     }
@@ -792,7 +806,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::NameTooLong))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::NameTooLong
+                    ))
                 ));
             });
     }
@@ -820,7 +836,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::PriorityOutOfRange))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::PriorityOutOfRange
+                    ))
                 ));
             });
     }
@@ -884,7 +902,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::MaxConcurrentTooLow))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::MaxConcurrentTooLow
+                    ))
                 ));
             });
     }
@@ -920,7 +940,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::QuotaThresholdOrder))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::QuotaThresholdOrder
+                    ))
                 ));
             });
     }
@@ -948,7 +970,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Validation(ValidationError::EmptyCredential))
+                    Err(ManageConnectionsError::Validation(
+                        ValidationError::EmptyCredential
+                    ))
                 ));
             });
     }
@@ -987,8 +1011,11 @@ mod tests {
                     updated_at: Utc::now(),
                 };
                 let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
-                let mc =
-                    ManageConnections::new(repo, Arc::new(EmptyRegistry), Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                );
 
                 let expected_updated_at = conn.updated_at;
                 let result = mc
@@ -1032,7 +1059,10 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn find(&self, _id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError> {
+        async fn find(
+            &self,
+            _id: &ConnectionId,
+        ) -> Result<Option<ProviderConnection>, RepositoryError> {
             Ok(None)
         }
 
@@ -1077,7 +1107,9 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Repository(RepositoryError::NotFound(_)))
+                    Err(ManageConnectionsError::Repository(
+                        RepositoryError::NotFound(_)
+                    ))
                 ));
             });
     }
@@ -1100,7 +1132,11 @@ mod tests {
             &self,
             id: &ConnectionId,
         ) -> Result<Option<ProviderConnection>, RepositoryError> {
-            Ok(if id == &self.conn.id { Some(self.conn.clone()) } else { None })
+            Ok(if id == &self.conn.id {
+                Some(self.conn.clone())
+            } else {
+                None
+            })
         }
 
         async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
@@ -1154,8 +1190,11 @@ mod tests {
                     updated_at: Utc::now(),
                 };
                 let repo = Arc::new(DeletableRepo { conn: conn.clone() });
-                let mc =
-                    ManageConnections::new(repo, Arc::new(EmptyRegistry), Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                );
 
                 let result = mc.delete(&conn.id).await;
                 assert!(result.is_ok());
@@ -1176,7 +1215,9 @@ mod tests {
                 let result = mc.delete(&ConnectionId::new()).await;
                 assert!(matches!(
                     result,
-                    Err(ManageConnectionsError::Repository(RepositoryError::NotFound(_)))
+                    Err(ManageConnectionsError::Repository(
+                        RepositoryError::NotFound(_)
+                    ))
                 ));
             });
     }
@@ -1208,10 +1249,7 @@ mod tests {
             self.health_status.clone()
         }
 
-        async fn complete(
-            &self,
-            _req: &CompletionRequest,
-        ) -> NuxaResult<CompletionResponse> {
+        async fn complete(&self, _req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
             unreachable!("not used in tests")
         }
 
@@ -1276,7 +1314,11 @@ mod tests {
                 // Replace NotFoundRepo with one that returns our connection
                 let repo = Arc::new(PopulatedRepo { conn });
                 // EmptyRegistry returns None for get(), so test() should fail with ProviderRuntimeNotFound
-                let mc = ManageConnections::new(repo, Arc::new(EmptyRegistry), Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                );
                 let result = mc.test(&conn_id).await;
                 assert!(matches!(
                     result,
@@ -1383,6 +1425,9 @@ mod tests {
             id_token: EncryptedBlob("enc:v1:i".to_string()),
             project_id: EncryptedBlob("enc:v1:p".to_string()),
         };
-        assert!(!credentials_matches_auth_type(AuthType::ApiKey, &creds_oauth));
+        assert!(!credentials_matches_auth_type(
+            AuthType::ApiKey,
+            &creds_oauth
+        ));
     }
 }

@@ -53,12 +53,13 @@ async fn complete_returns_error_when_not_implemented() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/api/chat"))
-        .respond_with(wiremock::ResponseTemplate::new(200)
-            .set_body_json(serde_json::json!({
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "model": "llama3",
                 "message": { "role": "assistant", "content": "Hello, world!" },
                 "done": true
-            })))
+            })),
+        )
         .mount(&server)
         .await;
 
