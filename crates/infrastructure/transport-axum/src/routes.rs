@@ -38,11 +38,11 @@ pub fn router(usecases: Usecases) -> Router {
     }
 
     router
+        .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
         .layer(middleware::from_fn_with_state(
             authz_config,
             authz::middleware,
         ))
-        .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible

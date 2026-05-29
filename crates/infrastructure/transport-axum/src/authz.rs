@@ -328,9 +328,12 @@ pub async fn middleware(
 ) -> Response {
     let request_id = Uuid::new_v4().to_string();
     let route_class = classify_route(request.method(), request.uri().path());
+    let origin = request.headers().get(ORIGIN).cloned();
 
     if let Some(response) = preflight_response(request.method(), request.headers(), &config.cors) {
-        return response.into_response();
+        let mut resp = response.into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     if let Some(rejection) = body_size_rejection(
@@ -338,13 +341,17 @@ pub async fn middleware(
         request.headers(),
         config.max_body_size_bytes,
     ) {
-        return rejection.into_response();
+        let mut resp = rejection.into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     remove_trusted_headers(request.headers_mut());
     let outcome = evaluate_policy(route_class, request.headers(), &config);
     if !outcome.allow {
-        return rejection_response(request.uri().path(), route_class, outcome).into_response();
+        let mut resp = rejection_response(request.uri().path(), route_class, outcome).into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     let rate_limit = outcome.rate_limit;
@@ -352,7 +359,6 @@ pub async fn middleware(
         stamp_trusted_headers(request.headers_mut(), &request_id, route_class, &subject);
     }
 
-    let origin = request.headers().get(ORIGIN).cloned();
     let mut response = next.run(request).await;
     apply_cors_headers(response.headers_mut(), origin.as_ref(), &config.cors);
     if route_class == RouteClass::ClientApi {
@@ -650,7 +656,25 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: Option<&HeaderValue>, cor
             "access-control-allow-credentials",
             HeaderValue::from_static("true"),
         );
-        headers.insert(VARY, HeaderValue::from_static("Origin"));
+        let vary_value = match headers.get_mut(VARY) {
+            Some(vary) => {
+                if let Ok(vary_str) = vary.to_str() {
+                    if vary_str.contains("Origin") {
+                        None
+                    } else {
+                        Some(format!("{}, Origin", vary_str))
+                    }
+                } else {
+                    None
+                }
+            }
+            None => Some("Origin".to_string()),
+        };
+        if let Some(value) = vary_value {
+            if let Ok(hv) = HeaderValue::from_str(&value) {
+                headers.insert(VARY, hv);
+            }
+        }
     }
     headers.insert(
         "access-control-allow-methods",
