@@ -1,4 +1,4 @@
-# Cortex — AI Tools Monorepo
+# Cortex — AI Tools
 
 **Cortex** is a monorepo for AI tools. Currently includes:
 
@@ -19,7 +19,7 @@ ROOK_CONFIG=./rook.toml cargo run --release -p rook
 
 ## Project Structure
 
-```
+```text
 cortex/
 ├── apps/
 │   └── rook/              ← AI proxy/gateway binary
@@ -33,8 +33,8 @@ cortex/
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
+| Tool               | Description                                                           |
+|--------------------|-----------------------------------------------------------------------|
 | [Rook](apps/rook/) | AI proxy with OpenAI-compatible API, fallback routing, caching, audit |
 
 ## Documentation
@@ -57,6 +57,7 @@ just dev          # Watch mode with check+test+clippy
 ## Build Targets
 
 Cross-compiles for:
+
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
 - `x86_64-pc-windows-msvc`
