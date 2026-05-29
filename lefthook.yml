@@ -28,6 +28,11 @@ pre-commit:
       run: cargo check --workspace
       fail-fast: true
 
+    markdown:
+      run: npx markdownlint-cli2 "*.md" "docs/**/*.md"
+      glob: "*.md"
+      stage_prepended: true
+
 pre-push:
   parallel: true
   commands:

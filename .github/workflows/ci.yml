@@ -25,6 +25,20 @@ jobs:
           rustup run stable rustfmt --version
           rustup run stable cargo fmt --all -- --check
 
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint markdown
+        run: npx markdownlint-cli2 "*.md" "docs/**/*.md"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

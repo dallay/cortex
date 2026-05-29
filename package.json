@@ -5,6 +5,7 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "lefthook": "^1.11.0"
+    "lefthook": "^1.11.0",
+    "markdownlint-cli2": "^0.15.0"
   }
 }
