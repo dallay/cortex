@@ -82,7 +82,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit
-        run: cargo audit
+        run: cargo audit --locked
 
   # === Cross-compile (Linux only — Windows targets built natively in build-windows job) ===
   build-targets:
