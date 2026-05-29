@@ -81,7 +81,7 @@ metrics = "0.22"
 opentelemetry = "0.22"
 
 # Caching
-dashmap = "5"
+dashmap = "6"
 ttl_cache = "0.5"
 
 # Database

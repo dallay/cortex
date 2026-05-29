@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 serde = { version = "1", features = ["derive"] }
 
 # Caching
-dashmap = "5"
+dashmap = "6"
 ttl_cache = "0.5"
 
 # Logging

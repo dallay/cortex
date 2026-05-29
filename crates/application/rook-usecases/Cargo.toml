@@ -23,7 +23,7 @@ thiserror = "1"
 anyhow = "1"
 
 # DashMap for circuit breaker
-dashmap = "5"
+dashmap = "6"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
