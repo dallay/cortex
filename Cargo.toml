@@ -56,7 +56,7 @@ futures = "0.3"
 # Web
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
