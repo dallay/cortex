@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
       - uses: actions/setup-node@v6.4.0
       - name: Install dependencies
         run: pnpm install
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Check workspace
         run: cargo check --workspace
 
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run tests
         run: cargo test --workspace --all-features
 
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: dtolnay/rust-toolchain@193d6aa1dbbc28bd2c0a6b0e327cfdce68baaf6e
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit
@@ -114,7 +114,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -134,7 +134,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -154,7 +154,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run tests
         run: cargo test --workspace --all-features
       - name: Run clippy
