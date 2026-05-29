@@ -1,25 +1,28 @@
-version: 2
-updates:
-  # GitHub Actions updates
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    groups:
-      github-actions:
-        patterns:
-          - "*"
-    labels:
-      - "dependencies"
-      - "github-actions"
-    commit-message:
-      prefix: "chore(deps-actions)"
+# Dependabot configuration for dallay/cortex
+# 
+# This configuration combines our best-practice settings with the existing
+# configuration from main branch. Key improvements:
+# - Cooldown periods to avoid updating very recent releases (min 2-3 days)
+# - Smart grouping to reduce noise and batch related updates
+# - Different schedules per ecosystem based on importance
+# 
+# Note: Auto-merge must be enabled via repo settings:
+# Settings → General → Pull Requests → Allow auto-merge
+# Then configure branch protection rules to auto-merge when checks pass
 
-  # Rust dependencies
+version: 2
+
+updates:
+  # Cargo/Rust dependencies with best-practice settings
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "06:00"
+    # Wait 3 days before updating to allow for stability in new releases
+    cooldown:
+      default-days: 3
+    # Group all cargo updates into a single PR to reduce noise
     groups:
       rust-dependencies:
         applies-to: version-updates
@@ -31,15 +34,46 @@ updates:
     labels:
       - "dependencies"
       - "rust"
+    # Limit number of open PRs to prevent spam
     open-pull-requests-limit: 10
+    # Use commit message prefix for easy filtering
     commit-message:
       prefix: "chore(deps-rust)"
+      include: "scope"
 
-  # Node.js dependencies
+  # GitHub Actions with best-practice settings
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "06:00"
+    # Wait 2 days for GitHub Actions releases to stabilize
+    cooldown:
+      default-days: 2
+    # Batch all GitHub Actions updates together
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # Limit number of open PRs
+    open-pull-requests-limit: 5
+    # Use commit message prefix for easy filtering
+    commit-message:
+      prefix: "chore(deps-actions)"
+      include: "scope"
+
+  # Node.js dependencies from main branch (preserved)
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "06:00"
+    # Wait 2 days for npm releases to stabilize
+    cooldown:
+      default-days: 2
     groups:
       node-dependencies:
         applies-to: version-updates
@@ -54,3 +88,4 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps-js)"
+      include: "scope"
