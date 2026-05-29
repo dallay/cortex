@@ -1,0 +1,15 @@
+[package]
+name = "provider-sqlite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared-kernel = { path = "../../domain/shared-kernel" }
+rook-core = { path = "../../domain/rook-core" }
+
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

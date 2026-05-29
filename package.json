@@ -1,6 +1,7 @@
 {
   "name": "cortex",
   "private": true,
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "prepare": "lefthook install"
   },

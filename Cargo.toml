@@ -13,6 +13,8 @@ members = [
     "crates/infrastructure/providers-ollama",
     "crates/infrastructure/providers-gemini",
     "crates/infrastructure/providers-groq",
+    "crates/infrastructure/encryption-inmemory",
+    "crates/infrastructure/provider-sqlite",
     "apps/rook",
 ]
 
@@ -97,6 +99,11 @@ once_cell = "1"
 parking_lot = "0.12"
 dirs = "5"
 rand = "0.8"
+
+# Encryption
+aes-gcm = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
 
 # Dev tools (installed via cargo install or as dependencies)
 # cargo install cargo-hack cargo-udeps cargo-audit cargo-outdated cargo-llvm-cov cargo-spellcheck

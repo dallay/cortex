@@ -1,0 +1,30 @@
+change: provider-connections
+current_phase: ready-for-apply
+completed:
+  - init
+  - explore
+  - propose
+  - proposal-review
+  - spec
+  - spec-gap-fixes
+  - design
+  - design-review
+  - tasks
+next: apply
+updated: "2026-05-29T00:00:00Z"
+notes: |
+  Specs/design/tasks reconciled to remove implementation ambiguity:
+  - ConnectionId(uuid::Uuid v4) is the stored connection id; ProviderId remains runtime provider id
+  - ProviderConnection stores providerKind and providerRuntimeId separately
+  - AuthType is only a discriminator; Credentials stores encrypted credential blobs
+  - OAuth expiresAt is rejected when expired on create/update; later expiry is surfaced by test status "expired"
+  - OAuth scope is encrypted in v1
+  - EncryptedBlob format fixed as enc:v1:{base64url_nonce}:{base64url_ciphertext_and_tag}
+  - ENCRYPTION_PASSPHRASE and ENCRYPTION_SALT required only when provider_crud.enabled=true
+  - HealthStatus is an enum with Healthy, Unhealthy, Unknown; /health remains backwards-compatible
+  - ProviderRegistryPort added for runtime provider lookup by providerRuntimeId
+  - PUT requires expectedUpdatedAt and repository update performs explicit optimistic locking
+  - provider_crud.enabled gates route mounting; default false
+  - SQLite provider connections are not hot-registered into routing in v1
+  - Unknown provider kinds and UUID v7 are out of scope for v1
+  - Tasks split into 3 chained PRs due health migration + CRUD blast radius

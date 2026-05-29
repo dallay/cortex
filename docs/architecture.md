@@ -15,7 +15,7 @@
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │                  rook-usecases (application)                │  ← RouteRequest, FallbackRouter
-│                ManageProviders, HealthCheck                 │    ManageProviders, HealthCheck
+│       ManageProviders, HealthCheck, ManageConnections       │
 └────────────────────────┬────────────────────────────────────┘
                          │
          ┌───────────────┼───────────────┬───────────────┐
@@ -48,11 +48,14 @@ Common types with zero external dependencies.
 ### `rook-core`
 Domain model and port traits. Completely provider-agnostic.
 - **Model** — `CompletionRequest`, `CompletionResponse`, `Message`, `Role`, `TokenUsage`, `StreamChunk`, `HealthStatus`, `AuditEntry`
-- **Ports** — four capability traits the domain requires but cannot implement:
+- **Ports** — capability traits the domain requires but cannot implement:
   - `ProviderPort` — LLM provider capability (complete, stream, health_check)
   - `RouterPort` — provider selection with failure notification
   - `CachePort` — get/set/delete/clear with TTL
   - `AuditPort` — record audit entries
+  - `ProviderRepositoryPort` — persisted provider connection storage
+  - `ProviderRegistryPort` — runtime provider lookup for health probes
+  - `KeyManager` — credential encryption boundary
 
 ### `rook-usecases`
 Application orchestration.
@@ -60,12 +63,15 @@ Application orchestration.
 - **`FallbackRouter`** — implements RouterPort with three strategies: Priority, RoundRobin, ModelBased. Includes circuit breaker (3 failures → 30s cooldown).
 - **`ManageProviders`** — enable/disable providers (interface only for now)
 - **`HealthCheck`** — aggregated health status across all providers
+- **`ManageConnections`** — runtime-managed provider connection CRUD/test workflow
 
 ### `transport-axum`
 HTTP transport layer. All wire-format logic lives here.
 - **`routes.rs`** — axum router with four endpoints
 - **`openai_adapter.rs`** — OpenAI wire format ↔ domain model translation
 - **`anthropic_adapter.rs`** — Anthropic `/v1/messages` wire format ↔ domain model
+- **`provider_routes.rs`** — `/api/providers` CRUD endpoints, mounted only when enabled
+- **`provider_dto.rs`** — provider connection JSON DTOs; responses always include `credentials: {}`
 
 ### Provider crates (`providers-openai`, `providers-anthropic`, `providers-ollama`, `providers-gemini`, `providers-groq`)
 Each implements `ProviderPort` for a specific API. All share the same structure:
@@ -81,6 +87,12 @@ Each implements `ProviderPort` for a specific API. All share the same structure:
 
 ### `audit-sqlite`
 SQLite-backed audit log. Implements `AuditPort`. Auto-creates schema on init with indexes on `request_id`, `provider`, `timestamp`.
+
+### `encryption-inmemory`
+AES-256-GCM credential encryption with Argon2id key derivation. Implements `KeyManager`.
+
+### `provider-sqlite`
+SQLite-backed provider connection repository. Implements `ProviderRepositoryPort`.
 
 ### `apps/rook`
 Binary crate. Assembles all infrastructure.
@@ -175,7 +187,7 @@ rook.toml file
     ▼
 config::RookConfig::load()         ← toml::from_str + path expansion
     │
-    ├─ Expands ~ in audit.db_path to $HOME
+    ├─ Expands ~ in audit.db_path and provider_crud.db_path to $HOME
     ├─ Expands ${ENV_VAR} in provider.api_key
     │
     ▼
@@ -185,13 +197,21 @@ di::RookContainer::build(&config) ← assembles all infrastructure
     ├─ InMemoryCache or NoOpCache
     ├─ SqliteAudit::new(db_path)
     ├─ FallbackRouter::new(providers, strategy)
+    ├─ If provider_crud.enabled:
+    │   ├─ require ENCRYPTION_PASSPHRASE and ENCRYPTION_SALT
+    │   ├─ AesGcmKeyManager
+    │   └─ SqliteProviderRepository
     │
     ▼
-RookUsecases { route_request, manage_providers, health_check }
+RookUsecases { route_request, manage_providers, health_check, manage_connections }
     │
     ▼
 transport_axum::router(usecases)  ← axum Router with routes + state
 ```
+
+## Provider CRUD Limitation
+
+Provider CRUD is an administrative storage and health-test surface in v1. SQLite provider connections are not hot-registered into the request router; TOML providers continue to serve completion traffic.
 
 ## Observability
 

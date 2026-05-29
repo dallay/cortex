@@ -100,23 +100,19 @@ impl ProviderPort for OpenAIProvider {
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => HealthStatus {
+            Ok(resp) if resp.status().is_success() => HealthStatus::Healthy {
                 provider: self.config.id.clone(),
-                is_healthy: true,
-                latency_ms: Some(start.elapsed().as_millis() as u64),
-                last_error: None,
+                latency_ms: start.elapsed().as_millis() as u64,
             },
-            Ok(resp) => HealthStatus {
+            Ok(resp) => HealthStatus::Unhealthy {
                 provider: self.config.id.clone(),
-                is_healthy: false,
                 latency_ms: Some(start.elapsed().as_millis() as u64),
-                last_error: Some(format!("HTTP {}", resp.status())),
+                error: format!("HTTP {}", resp.status()),
             },
-            Err(e) => HealthStatus {
+            Err(e) => HealthStatus::Unhealthy {
                 provider: self.config.id.clone(),
-                is_healthy: false,
                 latency_ms: None,
-                last_error: Some(e.to_string()),
+                error: e.to_string(),
             },
         }
     }

@@ -187,6 +187,26 @@ All providers share the same circuit breaker behavior in `FallbackRouter`:
 
 When a provider fails, call `RouterPort::on_failure(provider_id, error)` to record the failure in the circuit breaker.
 
+## HealthStatus Contract
+
+Providers now return an enum instead of a bool-shaped status:
+
+```rust
+pub enum HealthStatus {
+    Healthy { provider: ProviderId, latency_ms: u64 },
+    Unhealthy { provider: ProviderId, latency_ms: Option<u64>, error: String },
+    Unknown { provider: ProviderId, reason: String },
+}
+```
+
+OpenAI performs a real `/models` probe. Provider adapters without a real probe (Anthropic, Ollama, Gemini, Groq) return `Unknown { reason: "health_check_not_supported" }`. For these providers, `HealthStatus::is_healthy()` returns `false`, and the public `/health` endpoint renders `healthy: false`, `latency_ms: null`, and `last_error` containing the reason string.
+
+## Runtime-Managed Provider Connections
+
+When `[provider_crud].enabled = true`, Rook exposes `/api/providers` CRUD endpoints backed by SQLite. Credentials are encrypted at rest using `enc:v1:{nonce}:{ciphertext_and_tag}` and API responses always return `credentials: {}`.
+
+These stored provider connections are not automatically added to request routing in v1. Existing TOML-configured providers remain the routing source; runtime-managed connections support metadata management and health probes only.
+
 ## Adding a New Provider
 
 1. Create `crates/infrastructure/providers-{name}/src/lib.rs`

@@ -7,14 +7,20 @@ use std::time::Duration;
 
 use audit_sqlite::SqliteAudit;
 use cache_memory::InMemoryCache;
+use encryption_inmemory::AesGcmKeyManager;
+use provider_sqlite::SqliteProviderRepository;
 use providers_anthropic::AnthropicProvider;
 use providers_gemini::GeminiProvider;
 use providers_groq::GroqProvider;
 use providers_ollama::OllamaProvider;
 use providers_openai::OpenAIProvider;
-use rook_core::{AuditPort, CachePort, ProviderId, ProviderPort, RouterPort};
+use rook_core::{
+    AuditPort, CachePort, ProviderId, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
+    RouterPort,
+};
 use rook_usecases::{
-    FallbackRouter, HealthCheck, ManageProviders, RookUsecases, RouteRequest, RoutingStrategy,
+    FallbackRouter, HealthCheck, ManageConnections, ManageProviders, RookUsecases, RouteRequest,
+    RoutingStrategy,
 };
 
 use crate::config::{ProviderConfig, RookConfig};
@@ -48,19 +54,47 @@ impl RookContainer {
         // 3. Audit
         let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.audit.db_path)?);
 
-        // 4. Router
+        // 4. Router and provider registry
         let strategy: RoutingStrategy = config.routing.strategy.into();
-        let router: Arc<dyn RouterPort> = Arc::new(FallbackRouter::new(providers, strategy));
+        let fallback_router: Arc<FallbackRouter> =
+            Arc::new(FallbackRouter::new(providers, strategy));
+        let router: Arc<dyn RouterPort> = fallback_router.clone();
+        let registry: Arc<dyn ProviderRegistryPort> = fallback_router;
+
+        let manage_connections = if config.provider_crud.enabled {
+            let passphrase = required_env("ENCRYPTION_PASSPHRASE")?;
+            let salt = required_env("ENCRYPTION_SALT")?;
+            let key_manager = Arc::new(
+                AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
+                    .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
+            );
+            let repo: Arc<dyn ProviderRepositoryPort> = Arc::new(SqliteProviderRepository::new(
+                &config.provider_crud.db_path,
+            )?);
+            Some(ManageConnections::new(repo, registry.clone(), key_manager))
+        } else {
+            None
+        };
 
         // 5. Use cases
         let usecases = Arc::new(RookUsecases {
             route_request: RouteRequest::new(router.clone(), cache.clone(), audit.clone()),
             manage_providers: ManageProviders::new(router.clone()),
-            health_check: HealthCheck::new(router.clone()),
+            health_check: HealthCheck::new(registry),
+            manage_connections,
         });
 
         Ok(Self { usecases })
     }
+}
+
+fn required_env(name: &str) -> anyhow::Result<String> {
+    let value = std::env::var(name)
+        .map_err(|_| anyhow::anyhow!("{name} is required when provider_crud.enabled=true"))?;
+    if value.trim().is_empty() {
+        anyhow::bail!("{name} must not be empty when provider_crud.enabled=true");
+    }
+    Ok(value)
 }
 
 // ---------------------------------------------------------------------------

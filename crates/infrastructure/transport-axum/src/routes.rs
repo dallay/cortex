@@ -9,11 +9,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rook_core::{CompletionRequest, HealthPort};
+use rook_core::{CompletionRequest, HealthPort, HealthStatus};
 use tower_http::cors::CorsLayer;
 use tracing::error;
 
-use super::{anthropic_adapter::*, openai_adapter::*, HttpError};
+use super::{anthropic_adapter::*, openai_adapter::*, provider_routes, HttpError};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
@@ -21,7 +21,7 @@ type Usecases = Arc<rook_usecases::RookUsecases>;
 pub fn router(usecases: Usecases) -> Router {
     let cors = CorsLayer::permissive();
 
-    Router::new()
+    let mut router = Router::new()
         // OpenAI-compatible endpoints
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
@@ -29,8 +29,13 @@ pub fn router(usecases: Usecases) -> Router {
         .route("/v1/messages", post(anthropic_messages))
         // Health
         .route("/health", get(health_check))
-        .with_state(usecases)
-        .layer(cors)
+        .with_state(usecases.clone());
+
+    if usecases.manage_connections.is_some() {
+        router = router.merge(provider_routes::router(usecases));
+    }
+
+    router.layer(cors)
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible
@@ -140,7 +145,7 @@ async fn anthropic_messages(
 /// GET /health
 async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
     let statuses = usecases.health_check.health().await;
-    let all_healthy = statuses.iter().all(|s| s.is_healthy);
+    let all_healthy = statuses.iter().all(HealthStatus::is_healthy);
 
     let status = if statuses.is_empty() {
         "no_providers_configured"
@@ -154,10 +159,10 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
         "status": status,
         "providers": statuses.iter().map(|s| {
             serde_json::json!({
-                "id": s.provider.to_string(),
-                "healthy": s.is_healthy,
-                "latency_ms": s.latency_ms,
-                "last_error": s.last_error,
+                "id": s.provider_id().to_string(),
+                "healthy": s.is_healthy(),
+                "latency_ms": s.latency_ms(),
+                "last_error": s.last_error(),
             })
         }).collect::<Vec<_>>()
     }))

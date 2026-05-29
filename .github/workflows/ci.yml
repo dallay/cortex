@@ -16,8 +16,8 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: rustfmt
       - name: Check formatting
@@ -29,22 +29,20 @@ jobs:
     name: Markdown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
+      - uses: actions/checkout@v6.0.2
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9
+      - uses: actions/setup-node@v6.4.0
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install
       - name: Lint markdown
-        run: npx markdownlint-cli2 "*.md" "docs/**/*.md"
+        run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: clippy
       - name: Run Clippy
@@ -54,10 +52,10 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Check workspace
         run: cargo check --workspace
 
@@ -66,10 +64,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Run tests
         run: cargo test --workspace --all-features
 
@@ -77,8 +75,8 @@ jobs:
     name: Doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: rustfmt, clippy
       - name: Build docs
@@ -91,12 +89,12 @@ jobs:
     name: Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@193d6aa1dbbc28bd2c0a6b0e327cfdce68baaf6e
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit
-        run: cargo audit --locked
+        run: cargo audit
 
   # === Cross-compile (Linux only — Windows targets built natively in build-windows job) ===
   build-targets:
@@ -111,12 +109,12 @@ jobs:
           # requires target-specific headers which is complex. Windows ARM64 is covered
           # natively in build-windows job.
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -131,12 +129,12 @@ jobs:
           - x86_64-pc-windows-msvc
           - aarch64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -151,12 +149,12 @@ jobs:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           targets: ${{ matrix.target }}
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Build for ${{ matrix.target }}
         run: cargo build -p rook --release --target ${{ matrix.target }}
 
@@ -169,10 +167,10 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
       - name: Run tests
         run: cargo test --workspace --all-features
       - name: Run clippy
