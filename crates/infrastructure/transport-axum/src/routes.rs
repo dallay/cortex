@@ -11,6 +11,7 @@ use axum::{
     Router,
 };
 use rook_core::{CompletionRequest, HealthPort, HealthStatus};
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
 use super::{anthropic_adapter::*, authz, openai_adapter::*, provider_routes, HttpError};
@@ -20,6 +21,7 @@ type Usecases = Arc<rook_usecases::RookUsecases>;
 /// Build the axum router with all routes
 pub fn router(usecases: Usecases) -> Router {
     let authz_config = authz::AuthzConfig::from_env();
+    let max_body_size_bytes = authz_config.max_body_size_bytes();
 
     let mut router = Router::new()
         // OpenAI-compatible endpoints
@@ -35,10 +37,12 @@ pub fn router(usecases: Usecases) -> Router {
         router = router.merge(provider_routes::router(usecases));
     }
 
-    router.layer(middleware::from_fn_with_state(
-        authz_config,
-        authz::middleware,
-    ))
+    router
+        .layer(middleware::from_fn_with_state(
+            authz_config,
+            authz::middleware,
+        ))
+        .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible
