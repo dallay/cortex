@@ -34,7 +34,7 @@ axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
 
 # Config
-toml = "0.8"
+toml = "1.1"
 figment = { version = "0.10", features = ["toml", "env"] }
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
