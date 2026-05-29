@@ -72,7 +72,7 @@ time = { version = "0.3", features = ["serde"] }
 
 # IDs
 uuid = { version = "1", features = ["v4", "serde"] }
-smol_str = { version = "0.2", features = ["serde"] }
+smol_str = { version = "0.3", features = ["serde"] }
 
 # Observability
 tracing = "0.1"
