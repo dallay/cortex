@@ -239,7 +239,7 @@ CREATE TABLE provider_connections (
     provider_kind       TEXT NOT NULL,
     provider_runtime_id TEXT NOT NULL,
     name                TEXT NOT NULL,
-    auth_type           TEXT NOT NULL CHECK (auth_type IN ('ApiKey', 'OAuth')),
+    auth_type           TEXT NOT NULL CHECK (auth_type IN ('apiKey', 'oauth')),
     priority            INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 255),
     is_active           INTEGER NOT NULL CHECK (is_active IN (0, 1)),
 

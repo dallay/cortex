@@ -48,7 +48,7 @@ A stored provider connection has the following attributes:
 | `name` | String | Non-empty Unicode string, max 256 scalar values. Unique per `provider_kind`. |
 | `priority` | Integer (1–255) | Lower number = higher priority. Used for ordering, not enforcement. |
 | `is_active` | Boolean | If `false`, the connection exists but is not used for probing. |
-| `auth_type` | Enum: `ApiKey` \| `OAuth` | Determines which credential fields are present. |
+| `auth_type` | Enum: `apiKey` \| `oauth` | Determines which credential fields are present. |
 | `credentials` | Credential value | Encrypted at rest; never stored or returned in plaintext. |
 | `config` | ConnectionConfig | Contains concurrency limit and quota thresholds. |
 | `test_status` | TestStatus | Result of last health probe or `neverTested`. |

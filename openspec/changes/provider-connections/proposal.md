@@ -62,7 +62,7 @@ The source-side reference is a SQLite schema (`rook-backup-2026-05-28`) that cap
 `ProviderConnection` is an aggregate root. Its identity is `ConnectionId` (UUID v4). It encapsulates:
 
 - **Identity fields**: `id`, `providerKind`, `providerRuntimeId`, `name`, `priority`, `isActive`
-- **Auth type discriminator**: `authType` ∈ {`ApiKey`, `OAuth`}
+- **Auth type discriminator**: `authType` ∈ {`apiKey`, `oauth`}
 - **Credentials** (opaque to domain, handled by encryption adapter):
     - `ApiKey`: `apiKey` (encrypted `EncryptedBlob`)
     - `OAuth`: `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, `projectId` encrypted; `expiresAt` plain UTC Unix timestamp
@@ -109,7 +109,7 @@ SQLite adapter stores all fields; credentials ciphertext is stored as `TEXT` in 
   "id": "uuid",
   "providerKind": "openai",
   "providerRuntimeId": "openai-primary",
-  "authType": "apikey",
+  "authType": "apiKey",
   "name": "Production Key",
   "priority": 1,
   "isActive": true,

@@ -40,8 +40,10 @@ impl AesGcmKeyManager {
             .map_err(|_| EncryptionError::KeyDerivation)?;
         let hash_output = hash.hash.ok_or(EncryptionError::KeyDerivation)?;
 
-        let mut key = [0_u8; 32];
-        key.copy_from_slice(hash_output.as_bytes());
+        let key: [u8; 32] = hash_output
+            .as_bytes()
+            .try_into()
+            .map_err(|_| EncryptionError::KeyDerivation)?;
         Ok(Self { key })
     }
 
