@@ -23,6 +23,7 @@ providers-gemini = { path = "../../crates/infrastructure/providers-gemini" }
 providers-groq = { path = "../../crates/infrastructure/providers-groq" }
 encryption-inmemory = { path = "../../crates/infrastructure/encryption-inmemory" }
 provider-sqlite = { path = "../../crates/infrastructure/provider-sqlite" }
+auth-sqlite = { path = "../../crates/infrastructure/auth-sqlite" }
 
 # Runtime
 tokio = { version = "1", features = ["full"] }

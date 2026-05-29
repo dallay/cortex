@@ -187,7 +187,7 @@ rook.toml file
     ▼
 config::RookConfig::load()         ← toml::from_str + path expansion
     │
-    ├─ Expands ~ in audit.db_path and provider_crud.db_path to $HOME
+    ├─ Expands ~ in database.db_path to $HOME
     ├─ Expands ${ENV_VAR} in provider.api_key
     │
     ▼
@@ -195,18 +195,22 @@ di::RookContainer::build(&config) ← assembles all infrastructure
     │
     ├─ build_provider(pc) per provider  ← maps config.kind → provider impl
     ├─ InMemoryCache or NoOpCache
-    ├─ SqliteAudit::new(db_path)
+    ├─ SqliteAudit::new(database.db_path)
     ├─ FallbackRouter::new(providers, strategy)
+    ├─ If auth.api_keys.enabled:
+    │   ├─ require API_KEY_HASH_SECRET
+    │   ├─ SqliteApiKeyRepository(database.db_path)
+    │   └─ AuthenticateClientApi
     ├─ If provider_crud.enabled:
     │   ├─ require ENCRYPTION_PASSPHRASE and ENCRYPTION_SALT
     │   ├─ AesGcmKeyManager
-    │   └─ SqliteProviderRepository
+    │   └─ SqliteProviderRepository(database.db_path)
     │
     ▼
-RookUsecases { route_request, manage_providers, health_check, manage_connections }
+RookUsecases { route_request, manage_providers, health_check, authenticate_client_api, manage_connections }
     │
     ▼
-transport_axum::router(usecases)  ← axum Router with routes + state
+transport_axum::router(usecases, authz_config)  ← axum Router with routes + state
 ```
 
 ## Provider CRUD Limitation

@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
 
+use super::{ApiKeyId, ApiKeyRepositoryError, ApiKeySubject, ProviderConnection, RepositoryError};
 use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
-use super::{ProviderConnection, RepositoryError};
 
 /// ---------------------------------------------------------------------------
 /// ProviderPort — the primary port for LLM providers
@@ -125,6 +125,24 @@ pub trait ProviderRepositoryPort: Send + Sync {
         expected_updated_at: DateTime<Utc>,
     ) -> Result<(), RepositoryError>;
     async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// ApiKeyRepositoryPort — persistence for client API key subjects
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait ApiKeyRepositoryPort: Send + Sync {
+    async fn find_active_by_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError>;
+
+    async fn record_last_used(
+        &self,
+        id: &ApiKeyId,
+        used_at: DateTime<Utc>,
+    ) -> Result<(), ApiKeyRepositoryError>;
 }
 
 // ---------------------------------------------------------------------------

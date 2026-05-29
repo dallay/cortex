@@ -3,6 +3,9 @@ name = "providers-gemini"
 version = "0.1.0"
 edition = "2021"
 
+[dev-dependencies]
+wiremock = "0.6"
+
 [dependencies]
 shared-kernel = { path = "../../domain/shared-kernel" }
 rook-core = { path = "../../domain/rook-core" }

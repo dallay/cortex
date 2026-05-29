@@ -15,7 +15,8 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         .parse()
         .context("invalid address")?;
 
-    let router: Router = transport_axum::router(container.usecases.clone());
+    let router: Router =
+        transport_axum::router(container.usecases.clone(), container.authz_config.clone());
 
     info!(addr = %addr, "starting rook server");
 

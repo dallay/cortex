@@ -28,3 +28,6 @@ anyhow = "1"
 
 # Logging
 tracing = "0.1"
+
+[dev-dependencies]
+wiremock = "0.6"

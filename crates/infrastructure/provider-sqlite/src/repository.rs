@@ -625,4 +625,47 @@ mod tests {
             ));
         });
     }
+
+    #[test]
+    fn delete_returns_not_found_for_nonexistent_id() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.delete(&ConnectionId::new()).await;
+            assert!(matches!(result, Err(RepositoryError::NotFound(_))));
+        });
+    }
+
+    #[test]
+    fn create_duplicate_name_reports_duplicate_connection() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let first = connection("shared-name", 1, timestamp("2026-01-01T00:00:00Z"));
+            repo.create(&first).await.expect("first");
+
+            let second = connection("shared-name", 2, timestamp("2026-01-02T00:00:00Z"));
+            let result = repo.create(&second).await;
+            assert!(matches!(
+                result,
+                Err(RepositoryError::DuplicateConnection(_))
+            ));
+        });
+    }
+
+    #[test]
+    fn list_returns_empty_when_no_connections() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.list().await.expect("list");
+            assert!(result.is_empty());
+        });
+    }
+
+    #[test]
+    fn find_returns_none_for_nonexistent_id() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.find(&ConnectionId::new()).await.expect("find");
+            assert!(result.is_none());
+        });
+    }
 }

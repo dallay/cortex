@@ -184,3 +184,399 @@ impl RouterPort for FallbackRouter {
         self.providers.iter().map(|p| p.id().clone()).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::stream::BoxStream;
+    use rook_core::{
+        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId, ProviderId,
+        ProviderPort, Role, StreamChunk, TokenUsage,
+    };
+
+    struct StubProvider {
+        id: ProviderId,
+        models: Vec<ModelId>,
+    }
+
+    impl StubProvider {
+        fn new(id: &str, models: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                id: ProviderId::new(id),
+                models: models.iter().map(|model| ModelId::new(*model)).collect(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPort for StubProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn supported_models(&self) -> &[ModelId] {
+            &self.models
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+
+        async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.id.clone(),
+                model: req.model.clone(),
+                content: "ok".to_string(),
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>> {
+            Err(NuxaError::provider("streaming not supported"))
+        }
+    }
+
+    fn request(model: &str) -> CompletionRequest {
+        CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: ModelId::new(model),
+            messages: vec![Message {
+                role: Role::User,
+                content: "hello".to_string(),
+            }],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".to_string(),
+                cacheable: true,
+                priority: 1,
+            },
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // New tests below
+    // -------------------------------------------------------------------------
+
+    /// Provider that records how many times it was selected.
+    struct CountingProvider {
+        id: ProviderId,
+        models: Vec<ModelId>,
+        select_count: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl CountingProvider {
+        fn new(id: &str, models: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                id: ProviderId::new(id),
+                models: models.iter().map(|m| ModelId::new(*m)).collect(),
+                select_count: Arc::new(std::sync::Mutex::new(0)),
+            })
+        }
+    }
+
+    struct CountingProviderWrapper {
+        inner: Arc<CountingProvider>,
+    }
+
+    impl CountingProviderWrapper {
+        fn new(id: &str, models: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                inner: CountingProvider::new(id, models),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPort for CountingProviderWrapper {
+        fn id(&self) -> &ProviderId {
+            &self.inner.id
+        }
+        fn supported_models(&self) -> &[ModelId] {
+            &self.inner.models
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.inner.id.clone(),
+                latency_ms: 1,
+            }
+        }
+        async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+            *self.inner.select_count.lock().unwrap() += 1;
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.inner.id.clone(),
+                model: req.model.clone(),
+                content: format!("provider-{}", self.inner.id.as_str()),
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+            })
+        }
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>> {
+            Err(NuxaError::provider("not supported"))
+        }
+    }
+
+    #[test]
+    fn fallback_router_new_stores_providers_and_strategy() {
+        let p1 = StubProvider::new("a", &["model-a"]);
+        let router = FallbackRouter::new(vec![p1.clone()], RoutingStrategy::Priority);
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            vec![ProviderId::new("a")]
+        );
+    }
+
+    #[test]
+    fn provider_registry_get_returns_provider_by_id() {
+        let p1 = StubProvider::new("a", &["model-a"]);
+        let p2 = StubProvider::new("b", &["model-b"]);
+        let router =
+            FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
+
+        let found = router.get(&ProviderId::new("a"));
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id(), &ProviderId::new("a"));
+
+        let not_found = router.get(&ProviderId::new("nonexistent"));
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn provider_registry_providers_lists_all_registered_ids() {
+        let p1 = StubProvider::new("a", &["model-a"]);
+        let p2 = StubProvider::new("b", &["model-b"]);
+        let router = FallbackRouter::new(vec![p1, p2], RoutingStrategy::Priority);
+        let ids = <FallbackRouter as ProviderRegistryPort>::providers(&router);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&ProviderId::new("a")));
+        assert!(ids.contains(&ProviderId::new("b")));
+    }
+
+    #[test]
+    fn select_with_priority_strategy_returns_first_available() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("first", &["model-x"]);
+                let p2 = StubProvider::new("second", &["model-x"]);
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
+
+                let selected = router
+                    .select(&request("model-x"))
+                    .await
+                    .expect("should select");
+                assert_eq!(selected.id(), &ProviderId::new("first"));
+            });
+    }
+
+    #[test]
+    fn select_returns_error_when_no_providers_available() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let router = FallbackRouter::new(vec![], RoutingStrategy::Priority);
+                let result = router.select(&request("any-model")).await;
+                assert!(result.is_err());
+                match result {
+                    Ok(_) => panic!("expected error"),
+                    Err(e) => assert!(e.is_all_providers_exhausted()),
+                }
+            });
+    }
+
+    #[test]
+    fn select_returns_error_when_no_provider_supports_model() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p = StubProvider::new("a", &["only-this-model"]);
+                let router = FallbackRouter::new(vec![p], RoutingStrategy::Priority);
+                let result = router.select(&request("different-model")).await;
+                assert!(result.is_err());
+                match result {
+                    Ok(_) => panic!("expected error"),
+                    Err(e) => assert!(e.is_all_providers_exhausted()),
+                }
+            });
+    }
+
+    #[test]
+    fn select_round_robin_rotates_across_providers() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = CountingProviderWrapper::new("a", &["model-x"]);
+                let p2 = CountingProviderWrapper::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone() as Arc<dyn ProviderPort>, p2.clone() as Arc<dyn ProviderPort>],
+                    RoutingStrategy::RoundRobin,
+                );
+
+                // Round-robin: a, b, a, b
+                let ids: Vec<_> = futures::future::join_all([
+                    router.select(&request("model-x")),
+                    router.select(&request("model-x")),
+                    router.select(&request("model-x")),
+                    router.select(&request("model-x")),
+                ])
+                .await
+                .into_iter()
+                .map(|r| r.expect("select ok").id().clone())
+                .collect();
+
+                assert_eq!(ids[0], ProviderId::new("a"));
+                assert_eq!(ids[1], ProviderId::new("b"));
+                assert_eq!(ids[2], ProviderId::new("a"));
+                assert_eq!(ids[3], ProviderId::new("b"));
+            });
+    }
+
+    #[test]
+    fn on_failure_records_failure_count() {
+        let p = StubProvider::new("failing", &["model-x"]);
+        let router = FallbackRouter::new(vec![p], RoutingStrategy::Priority);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+
+        // Record 2 failures — circuit should NOT open yet
+        rt.block_on(async {
+            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err1")).await;
+        });
+        rt.block_on(async {
+            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err2")).await;
+        });
+
+        // 3rd failure — circuit opens
+        rt.block_on(async {
+            router.on_failure(&ProviderId::new("failing"), &NuxaError::provider("err3")).await;
+        });
+
+        // Now provider should be unavailable (circuit open)
+        let result = rt.block_on(async { router.select(&request("model-x")).await });
+
+        assert!(result.is_err());
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(e) => assert!(e.is_all_providers_exhausted()),
+        }
+    }
+
+    #[test]
+    fn circuit_breaker_opens_after_threshold_and_blocks_provider() {
+        let p = StubProvider::new("recoverable", &["model-x"]);
+        let router = FallbackRouter::new(vec![p.clone()], RoutingStrategy::Priority);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+
+        // Open the circuit with 3 failures
+        rt.block_on(async {
+            for _ in 0..3 {
+                let _ = router.on_failure(&ProviderId::new("recoverable"), &NuxaError::provider("boom")).await;
+            }
+        });
+
+        // Verify circuit is open
+        let result = rt.block_on(async { router.select(&request("model-x")).await });
+
+        assert!(result.is_err());
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(e) => assert!(e.is_all_providers_exhausted()),
+        }
+    }
+
+    #[test]
+    fn model_based_strategy_falls_back_to_first_candidate() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("anthropic", &["claude-3"]);
+                let p2 = StubProvider::new("openai", &["gpt-4"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::ModelBased,
+                );
+
+                // ModelBased currently falls back to first — verify it selects without error
+                let selected = router
+                    .select(&request("claude-3"))
+                    .await
+                    .expect("should select");
+                assert_eq!(selected.id(), &ProviderId::new("anthropic"));
+            });
+    }
+
+    #[test]
+    fn weighted_random_strategy_falls_back_to_first_when_weights_mismatch() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    // 3 weights but only 2 providers — should fall back to first
+                    RoutingStrategy::WeightedRandom(vec![0.5, 0.3, 0.2]),
+                );
+
+                let selected = router
+                    .select(&request("model-x"))
+                    .await
+                    .expect("should select");
+                assert_eq!(selected.id(), &ProviderId::new("a"));
+            });
+    }
+
+    #[test]
+    fn routing_strategy_clone_works() {
+        // Verify RoutingStrategy derives Clone
+        let s1 = RoutingStrategy::Priority;
+        let s2 = s1.clone();
+        assert!(matches!(s2, RoutingStrategy::Priority));
+
+        let s3 = RoutingStrategy::WeightedRandom(vec![0.5, 0.5]);
+        let s4 = s3.clone();
+        assert!(matches!(s4, RoutingStrategy::WeightedRandom(_)));
+    }
+}

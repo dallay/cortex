@@ -17,6 +17,8 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ring::hmac;
+use rook_core::ApiKeyTier;
+use rook_usecases::{AuthenticateClientApi, AuthenticateClientApiError};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -35,6 +37,8 @@ const TRUSTED_HEADERS: &[&str] = &[
 #[derive(Clone)]
 pub struct AuthzConfig {
     api_keys: Vec<ApiKeyCredential>,
+    client_api_auth: Option<AuthenticateClientApi>,
+    allow_env_api_key_fallback: bool,
     jwt_secret: Option<String>,
     max_body_size_bytes: u64,
     cors: CorsConfig,
@@ -43,6 +47,13 @@ pub struct AuthzConfig {
 
 impl AuthzConfig {
     pub fn from_env() -> Self {
+        Self::from_env_with_client_auth(None, true)
+    }
+
+    pub fn from_env_with_client_auth(
+        client_api_auth: Option<AuthenticateClientApi>,
+        allow_env_api_key_fallback: bool,
+    ) -> Self {
         let api_keys = std::env::var("CLIENT_API_KEYS")
             .unwrap_or_default()
             .split(',')
@@ -68,6 +79,8 @@ impl AuthzConfig {
 
         Self {
             api_keys,
+            client_api_auth,
+            allow_env_api_key_fallback,
             jwt_secret,
             max_body_size_bytes,
             cors: CorsConfig::from_env(),
@@ -83,6 +96,25 @@ impl AuthzConfig {
     fn new(api_keys: Vec<ApiKeyCredential>, jwt_secret: &str) -> Self {
         Self {
             api_keys,
+            client_api_auth: None,
+            allow_env_api_key_fallback: true,
+            jwt_secret: Some(jwt_secret.to_string()),
+            max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
+            cors: CorsConfig::default(),
+            rate_limiter: RateLimiter::default(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_client_auth(
+        client_api_auth: AuthenticateClientApi,
+        allow_env_api_key_fallback: bool,
+        jwt_secret: &str,
+    ) -> Self {
+        Self {
+            api_keys: Vec::new(),
+            client_api_auth: Some(client_api_auth),
+            allow_env_api_key_fallback,
             jwt_secret: Some(jwt_secret.to_string()),
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
@@ -321,6 +353,16 @@ impl RateLimitTier {
     }
 }
 
+impl From<ApiKeyTier> for RateLimitTier {
+    fn from(value: ApiKeyTier) -> Self {
+        match value {
+            ApiKeyTier::Free => Self::Free,
+            ApiKeyTier::Pro => Self::Pro,
+            ApiKeyTier::Enterprise => Self::Enterprise,
+        }
+    }
+}
+
 pub async fn middleware(
     State(config): State<AuthzConfig>,
     mut request: Request,
@@ -347,7 +389,7 @@ pub async fn middleware(
     }
 
     remove_trusted_headers(request.headers_mut());
-    let outcome = evaluate_policy(route_class, request.headers(), &config);
+    let outcome = evaluate_policy(route_class, request.headers(), &config).await;
     if !outcome.allow {
         let mut resp =
             rejection_response(request.uri().path(), route_class, outcome).into_response();
@@ -387,14 +429,14 @@ pub fn classify_route(method: &Method, path: &str) -> RouteClass {
     }
 }
 
-pub fn evaluate_policy(
+pub async fn evaluate_policy(
     route_class: RouteClass,
     headers: &HeaderMap,
     config: &AuthzConfig,
 ) -> AuthOutcome {
     match route_class {
         RouteClass::Public => AuthOutcome::allow(Subject::anonymous()),
-        RouteClass::ClientApi => client_api_policy(headers, config),
+        RouteClass::ClientApi => client_api_policy(headers, config).await,
         RouteClass::Management => management_policy(headers, config),
     }
 }
@@ -479,10 +521,52 @@ pub fn body_size_rejection(
     })
 }
 
-fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
+async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
     let Some(api_key) = extract_api_key(headers) else {
         return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "MISSING_API_KEY");
     };
+
+    if let Some(authenticate) = &config.client_api_auth {
+        match authenticate.execute(&api_key).await {
+            Ok(api_key_subject) => {
+                let subject = Subject {
+                    kind: AuthKind::ApiKey,
+                    id: api_key_subject.id.to_string(),
+                    label: api_key_subject.label,
+                    scopes: api_key_subject
+                        .scopes
+                        .iter()
+                        .map(|scope| scope.as_str().to_string())
+                        .collect(),
+                };
+                return match config
+                    .rate_limiter
+                    .check(&subject.id, RateLimitTier::from(api_key_subject.tier))
+                {
+                    Ok(snapshot) => AuthOutcome::allow(subject).with_rate_limit(snapshot),
+                    Err(snapshot) => {
+                        AuthOutcome::reject(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
+                            .with_rate_limit(snapshot)
+                    }
+                };
+            }
+            Err(AuthenticateClientApiError::InvalidKey) if config.allow_env_api_key_fallback => {}
+            Err(AuthenticateClientApiError::InvalidKey) => {
+                return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "INVALID_API_KEY");
+            }
+            Err(AuthenticateClientApiError::Repository(_)) => {
+                return AuthOutcome::reject(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "AUTH_BACKEND_ERROR",
+                );
+            }
+        }
+    }
+
+    if !config.allow_env_api_key_fallback && config.client_api_auth.is_some() {
+        return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "INVALID_API_KEY");
+    }
+
     let Some(credential) = config
         .api_keys
         .iter()
@@ -632,6 +716,7 @@ fn rejection_message(code: &str) -> &'static str {
         "MISSING_AUTH_TOKEN" => "Missing auth token",
         "TOKEN_EXPIRED" => "Auth token expired",
         "AUTH_MISCONFIGURED" => "Authentication is not configured",
+        "AUTH_BACKEND_ERROR" => "Authentication backend error",
         "RATE_LIMIT_EXCEEDED" => "Rate limit exceeded",
         _ => "Unauthorized",
     }
@@ -727,9 +812,50 @@ fn apply_rate_limit_headers(headers: &mut HeaderMap, snapshot: RateLimitSnapshot
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
     use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+    use chrono::{DateTime, Utc};
+    use rook_core::{
+        ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
+        ApiKeyTier,
+    };
 
     use super::*;
+
+    #[derive(Default)]
+    struct FakeApiKeyRepository {
+        subject: Mutex<Option<ApiKeySubject>>,
+    }
+
+    #[async_trait]
+    impl ApiKeyRepositoryPort for FakeApiKeyRepository {
+        async fn find_active_by_hash(
+            &self,
+            _hash: &str,
+        ) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError> {
+            Ok(self.subject.lock().expect("subject").clone())
+        }
+
+        async fn record_last_used(
+            &self,
+            _id: &ApiKeyId,
+            _used_at: DateTime<Utc>,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+    }
+
+    fn evaluate(route_class: RouteClass, headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
+        runtime().block_on(evaluate_policy(route_class, headers, config))
+    }
 
     #[test]
     fn classifies_public_client_api_and_management_routes() {
@@ -762,7 +888,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
-        let outcome = evaluate_policy(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
 
         assert!(outcome.allow);
         let subject = outcome.subject.expect("subject");
@@ -774,7 +900,7 @@ mod tests {
     #[test]
     fn client_api_rejects_missing_api_key() {
         let config = AuthzConfig::new(Vec::new(), "test-secret");
-        let outcome = evaluate_policy(RouteClass::ClientApi, &HeaderMap::new(), &config);
+        let outcome = evaluate(RouteClass::ClientApi, &HeaderMap::new(), &config);
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
@@ -902,7 +1028,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
-        let outcome = evaluate_policy(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
 
         let snapshot = outcome.rate_limit.expect("rate limit snapshot");
         assert_eq!(snapshot.limit, 100);
@@ -924,14 +1050,52 @@ mod tests {
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
         for _ in 0..100 {
-            let outcome = evaluate_policy(RouteClass::ClientApi, &headers, &config);
+            let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
             assert!(outcome.allow);
         }
-        let outcome = evaluate_policy(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::TOO_MANY_REQUESTS));
         assert_eq!(outcome.code, Some("RATE_LIMIT_EXCEEDED"));
         assert!(outcome.rate_limit.expect("rate limit").retry_after_secs > 0);
+    }
+
+    #[test]
+    fn client_api_uses_persistent_authentication_subject() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        *repo.subject.lock().expect("subject") = Some(ApiKeySubject {
+            id: ApiKeyId::new("persisted-key"),
+            label: "Persisted Key".to_string(),
+            scopes: vec![ApiKeyScope::parse("read").expect("scope")],
+            tier: ApiKeyTier::Enterprise,
+        });
+        let auth = AuthenticateClientApi::new(repo, "hash-secret");
+        let config = AuthzConfig::with_client_auth(auth, false, "test-secret");
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
+
+        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+
+        assert!(outcome.allow);
+        let subject = outcome.subject.expect("subject");
+        assert_eq!(subject.id, "persisted-key");
+        assert_eq!(subject.label, "Persisted Key");
+        assert_eq!(subject.scopes, vec!["read"]);
+        assert_eq!(outcome.rate_limit.expect("rate limit").limit, 10_000);
+    }
+
+    #[test]
+    fn persistent_auth_rejects_invalid_key_when_env_fallback_disabled() {
+        let auth = AuthenticateClientApi::new(Arc::new(FakeApiKeyRepository::default()), "secret");
+        let config = AuthzConfig::with_client_auth(auth, false, "test-secret");
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-invalid"));
+
+        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+
+        assert!(!outcome.allow);
+        assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
+        assert_eq!(outcome.code, Some("INVALID_API_KEY"));
     }
 }

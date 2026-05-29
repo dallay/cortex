@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use audit_sqlite::SqliteAudit;
+use auth_sqlite::SqliteApiKeyRepository;
 use cache_memory::InMemoryCache;
 use encryption_inmemory::AesGcmKeyManager;
 use provider_sqlite::SqliteProviderRepository;
@@ -15,18 +16,19 @@ use providers_groq::GroqProvider;
 use providers_ollama::OllamaProvider;
 use providers_openai::OpenAIProvider;
 use rook_core::{
-    AuditPort, CachePort, ProviderId, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
-    RouterPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, ProviderId, ProviderPort, ProviderRegistryPort,
+    ProviderRepositoryPort, RouterPort,
 };
 use rook_usecases::{
-    FallbackRouter, HealthCheck, ManageConnections, ManageProviders, RookUsecases, RouteRequest,
-    RoutingStrategy,
+    AuthenticateClientApi, FallbackRouter, HealthCheck, ManageConnections, ManageProviders,
+    RookUsecases, RouteRequest, RoutingStrategy,
 };
 
 use crate::config::{ProviderConfig, RookConfig};
 
 pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
+    pub authz_config: transport_axum::authz::AuthzConfig,
 }
 
 impl RookContainer {
@@ -52,7 +54,7 @@ impl RookContainer {
         };
 
         // 3. Audit
-        let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.audit.db_path)?);
+        let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.database.db_path)?);
 
         // 4. Router and provider registry
         let strategy: RoutingStrategy = config.routing.strategy.into();
@@ -68,10 +70,18 @@ impl RookContainer {
                 AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
                     .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
             );
-            let repo: Arc<dyn ProviderRepositoryPort> = Arc::new(SqliteProviderRepository::new(
-                &config.provider_crud.db_path,
-            )?);
+            let repo: Arc<dyn ProviderRepositoryPort> =
+                Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
             Some(ManageConnections::new(repo, registry.clone(), key_manager))
+        } else {
+            None
+        };
+
+        let authenticate_client_api = if config.auth.api_keys.enabled {
+            let hash_secret = required_env("API_KEY_HASH_SECRET")?;
+            let repo: Arc<dyn ApiKeyRepositoryPort> =
+                Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
+            Some(AuthenticateClientApi::new(repo, hash_secret))
         } else {
             None
         };
@@ -81,10 +91,19 @@ impl RookContainer {
             route_request: RouteRequest::new(router.clone(), cache.clone(), audit.clone()),
             manage_providers: ManageProviders::new(router.clone()),
             health_check: HealthCheck::new(registry),
+            authenticate_client_api: authenticate_client_api.clone(),
             manage_connections,
         });
 
-        Ok(Self { usecases })
+        let authz_config = transport_axum::authz::AuthzConfig::from_env_with_client_auth(
+            authenticate_client_api,
+            config.auth.api_keys.allow_env_fallback,
+        );
+
+        Ok(Self {
+            usecases,
+            authz_config,
+        })
     }
 }
 

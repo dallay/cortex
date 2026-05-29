@@ -166,4 +166,27 @@ mod tests {
     fn empty_plaintext_is_rejected() {
         assert!(manager().encrypt("").is_err());
     }
+
+    #[test]
+    fn decrypt_rejects_wrong_nonce_length() {
+        let mgr = manager();
+        // Nonce must be exactly 12 bytes; use 8 bytes instead
+        let bad_nonce = URL_SAFE_NO_PAD.encode([0_u8; 8]);
+        let data = URL_SAFE_NO_PAD.encode([0_u8; 32]);
+        let malformed = format!("enc:v1:{}:{}", bad_nonce, data);
+        assert!(mgr.decrypt(&malformed).is_err());
+    }
+
+    #[test]
+    fn decrypt_rejects_short_ciphertext() {
+        let mgr = manager();
+        // Get a valid nonce from a real encryption, then replace data with <16 bytes
+        let valid = mgr.encrypt("secret").expect("encrypt");
+        let parts: Vec<&str> = valid.split(':').collect();
+        assert_eq!(parts.len(), 4);
+        // 16 bytes is the minimum for AES-GCM auth tag; use 8 bytes instead
+        let short_data = URL_SAFE_NO_PAD.encode([0_u8; 8]);
+        let malformed = format!("{}:{}:{}:{}", parts[0], parts[1], parts[2], short_data);
+        assert!(mgr.decrypt(&malformed).is_err());
+    }
 }

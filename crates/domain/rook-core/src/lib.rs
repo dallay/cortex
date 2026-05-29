@@ -2,10 +2,12 @@
 //
 // Ports (traits) live here. Implementations live in `infrastructure/` and `application/`.
 
+pub mod api_key;
 pub mod model;
 pub mod ports;
 pub mod provider_connection;
 
+pub use api_key::*;
 pub use model::*;
 pub use ports::*;
 pub use provider_connection::*;
@@ -14,3 +16,31 @@ pub use provider_connection::*;
 pub use shared_kernel::{
     CacheKey, ConnectionId, Instant, ModelId, NuxaError, NuxaResult, ProviderId, RequestId,
 };
+
+#[cfg(test)]
+mod api_key_tests {
+    use std::str::FromStr;
+
+    use super::{ApiKeyScope, ApiKeyTier};
+
+    #[test]
+    fn api_key_tier_parses_supported_values() {
+        assert_eq!(
+            ApiKeyTier::from_str("free").expect("free"),
+            ApiKeyTier::Free
+        );
+        assert_eq!(ApiKeyTier::from_str("pro").expect("pro"), ApiKeyTier::Pro);
+        assert_eq!(
+            ApiKeyTier::from_str("enterprise").expect("enterprise"),
+            ApiKeyTier::Enterprise
+        );
+        assert!(ApiKeyTier::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn api_key_scope_trims_and_rejects_empty_values() {
+        let scope = ApiKeyScope::parse(" read ").expect("scope");
+        assert_eq!(scope.as_str(), "read");
+        assert!(ApiKeyScope::parse(" ").is_err());
+    }
+}

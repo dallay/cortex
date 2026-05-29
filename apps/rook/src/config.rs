@@ -11,26 +11,58 @@ pub struct RookConfig {
     pub server: ServerConfig,
     pub routing: RoutingConfig,
     pub cache: CacheConfig,
-    pub audit: AuditConfig,
+    #[serde(default)]
+    pub database: DatabaseConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
     #[serde(default)]
     pub provider_crud: ProviderCrudConfig,
     pub providers: Vec<ProviderConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProviderCrudConfig {
-    pub enabled: bool,
+pub struct DatabaseConfig {
     #[serde(rename = "db_path")]
     pub db_path: String,
 }
 
-impl Default for ProviderCrudConfig {
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            db_path: "~/.local/share/cortex/rook/rook.db".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub api_keys: ApiKeysAuthConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeysAuthConfig {
+    pub enabled: bool,
+    #[serde(default = "default_allow_env_fallback")]
+    pub allow_env_fallback: bool,
+}
+
+impl Default for ApiKeysAuthConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            db_path: "~/.local/share/cortex/rook/providers.db".to_string(),
+            allow_env_fallback: true,
         }
     }
+}
+
+fn default_allow_env_fallback() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderCrudConfig {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -76,12 +108,6 @@ impl CacheConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct AuditConfig {
-    #[serde(rename = "db_path")]
-    pub db_path: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     pub id: String,
     pub kind: String,
@@ -99,19 +125,10 @@ impl RookConfig {
         let content = std::fs::read_to_string(path)?;
         let mut config: RookConfig = toml::from_str(&content)?;
 
-        // Expand ~ in audit db path
-        if config.audit.db_path.starts_with('~') {
+        if config.database.db_path.starts_with('~') {
             let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
-            config.audit.db_path = config
-                .audit
-                .db_path
-                .replace('~', home.to_str().unwrap_or(""));
-        }
-
-        if config.provider_crud.db_path.starts_with('~') {
-            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
-            config.provider_crud.db_path = config
-                .provider_crud
+            config.database.db_path = config
+                .database
                 .db_path
                 .replace('~', home.to_str().unwrap_or(""));
         }

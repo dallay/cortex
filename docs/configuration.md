@@ -21,12 +21,17 @@ strategy = "priority"  # "priority" | "round-robin" | "model-based"
 enabled = true
 ttl_secs = 300         # 5 minutes
 
+[database]
+db_path = "~/.local/share/cortex/rook/rook.db"
+
 [audit]
-db_path = "~/.local/share/cortex/rook/audit.db"
+
+[auth.api_keys]
+enabled = false
+allow_env_fallback = true
 
 [provider_crud]
 enabled = false
-db_path = "~/.local/share/cortex/rook/providers.db"
 
 # At least one provider is required
 [[providers]]
@@ -77,11 +82,34 @@ Supported values for `strategy`: `priority`, `round-robin`, `model-based`
 | `enabled`   | bool   | `true`  | Enable/disable response caching   |
 | `ttl_secs`  | u64    | `300`   | Cache TTL in seconds             |
 
+### `[database]`
+
+| Field     | Type   | Default                                  | Description                                      |
+|-----------|--------|------------------------------------------|--------------------------------------------------|
+| `db_path` | string | `~/.local/share/cortex/rook/rook.db`     | Single SQLite database path. `~` expands to `$HOME` |
+
+Rook currently stores local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a TOML-backed adapter later should require a new adapter rather than changes to use cases or domain types.
+
 ### `[audit]`
 
-| Field     | Type   | Description                        |
-|-----------|--------|------------------------------------|
-| `db_path` | string | SQLite DB path. `~` expands to `$HOME` |
+Audit logging uses the shared `[database].db_path` SQLite database.
+
+### `[auth.api_keys]`
+
+Persistent client API key auth is disabled by default. When enabled, `/v1/*` requests authenticate against SQLite rows whose API key material is stored only as an HMAC-SHA256 hash.
+
+```toml
+[auth.api_keys]
+enabled = true
+allow_env_fallback = true
+```
+
+| Field                | Type   | Default | Description                              |
+|----------------------|--------|---------|------------------------------------------|
+| `enabled`            | bool   | `false` | Use SQLite-backed client API key auth    |
+| `allow_env_fallback` | bool   | `true`  | Permit legacy `CLIENT_API_KEYS` fallback |
+
+When `enabled = true`, `API_KEY_HASH_SECRET` is required and must be non-empty. Legacy `CLIENT_API_KEYS` may still be used for local compatibility only when `allow_env_fallback = true`.
 
 ### `[[providers]]`
 
@@ -128,13 +156,11 @@ Provider connection CRUD is disabled by default. When enabled, Rook mounts `/api
 ```toml
 [provider_crud]
 enabled = true
-db_path = "~/.local/share/cortex/rook/providers.db"
 ```
 
-| Field     | Type   | Default                                      | Description                       |
-|-----------|--------|----------------------------------------------|-----------------------------------|
-| `enabled` | bool   | `false`                                      | Enable provider connection routes |
-| `db_path` | string | `~/.local/share/cortex/rook/providers.db`    | SQLite DB path; `~` expands       |
+| Field     | Type   | Default | Description                       |
+|-----------|--------|---------|-----------------------------------|
+| `enabled` | bool   | `false` | Enable provider connection routes |
 
 When `enabled = true`, both environment variables are required and must be non-empty:
 
@@ -171,7 +197,9 @@ enabled = true
 ttl_secs = 600
 
 [audit]
-db_path = "~/.local/share/cortex/rook/audit.db"
+
+[database]
+db_path = "~/.local/share/cortex/rook/rook.db"
 
 [[providers]]
 id = "openai-primary"
