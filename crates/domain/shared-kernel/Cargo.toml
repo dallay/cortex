@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Error handling — kept minimal, extend per-crate
-thiserror = "1"
+thiserror = "2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
