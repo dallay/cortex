@@ -354,6 +354,11 @@ Runs a health probe. OAuth expiry is checked BEFORE the runtime provider is call
 - **When** a client sends `POST /api/providers/:id/test`
 - **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
 
+### S-TEST-04: Test — connection not found
+- **Given** provider CRUD is enabled and no connection with `ConnectionId = id` exists
+- **When** a client sends `POST /api/providers/:id/test` with a valid UUID not in the database
+- **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
+
 ---
 
 ## 6. Credentials Omission

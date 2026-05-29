@@ -168,7 +168,7 @@ The following fields MUST be encrypted before SQLite persistence:
 | `idToken`      | OAuth     | `id_token_ct`      |
 | `projectId`    | OAuth     | `project_id_ct`    |
 
-`expiresAt` is stored as plain `INTEGER` because expiry time is operational metadata. All other credential values, including `scope`, are treated as sensitive in v1 to avoid per-provider privacy debates during implementation.
+`expiresAt` is stored as plain `INTEGER` because expiry time is operational metadata. All other credential values, including `scope`, are treated as sensitive in v1 to avoid per-provider privacy debates during implementation. The expiry timestamp is intentionally included in operational error messages emitted by the test endpoint.
 
 ### 4.2 EncryptedBlob Format
 
@@ -293,7 +293,7 @@ Returns `200 OK` and all provider connections ordered by priority.
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "providerKind": "openai",
     "providerRuntimeId": "openai-primary",
-    "authType": "apikey",
+    "authType": "apiKey",
     "name": "Production Key",
     "priority": 1,
     "isActive": true,
@@ -323,7 +323,7 @@ Creates a connection. The server generates `id`, `createdAt`, `updatedAt`, and `
 {
   "providerKind": "openai",
   "providerRuntimeId": "openai-primary",
-  "authType": "apikey",
+  "authType": "apiKey",
   "name": "Production Key",
   "priority": 1,
   "isActive": true,
@@ -436,6 +436,8 @@ Response variants:
 }
 ```
 
+> **Note**: `lastTestAt` and `expiresAt` are stored in the domain model (`TestStatus::Expired { last_test_at, expires_at }`) but are NOT returned as structured JSON fields in the API response. Instead, the expiry timestamp is embedded in the `error` string for operational clarity. The API response shape intentionally differs from the domain model to keep the transport contract simple; implementers should not expect `expiresAt` as a top-level or nested JSON field in the expired response.
+
 Rules:
 
 - `400 VALIDATION_ERROR` if `:id` is not a UUID.
@@ -454,7 +456,7 @@ CREATE TABLE provider_connections
     provider_kind       TEXT    NOT NULL,
     provider_runtime_id TEXT    NOT NULL,
     name                TEXT    NOT NULL,
-    auth_type           TEXT    NOT NULL CHECK (auth_type IN ('apikey', 'oauth')),
+    auth_type           TEXT    NOT NULL CHECK (auth_type IN ('ApiKey', 'OAuth')),
     priority            INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 255),
     is_active           INTEGER NOT NULL CHECK (is_active IN (0, 1)),
 
