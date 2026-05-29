@@ -162,7 +162,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
- "tower 0.5.3",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -1967,7 +1967,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tower 0.5.3",
+ "tower",
  "tower-http",
  "tower-service",
  "url",
@@ -1999,7 +1999,7 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper",
  "tokio",
- "tower 0.5.3",
+ "tower",
  "tower-http",
  "tower-service",
  "url",
@@ -2049,7 +2049,7 @@ dependencies = [
  "shared-kernel",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
- "tower 0.4.13",
+ "tower",
  "tracing",
  "transport-axum",
 ]
@@ -2674,17 +2674,6 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "tower"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
-dependencies = [
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
@@ -2712,7 +2701,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "pin-project-lite",
- "tower 0.5.3",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -2824,7 +2813,7 @@ dependencies = [
  "shared-kernel",
  "thiserror 2.0.18",
  "tokio",
- "tower 0.4.13",
+ "tower",
  "tower-http",
  "tracing",
  "uuid",
