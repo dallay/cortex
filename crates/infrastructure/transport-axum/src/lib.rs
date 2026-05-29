@@ -4,6 +4,7 @@
 // internal domain model. All format-specific logic lives here.
 
 pub mod anthropic_adapter;
+pub mod authz;
 pub mod openai_adapter;
 pub mod provider_dto;
 pub mod provider_routes;

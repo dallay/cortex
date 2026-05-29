@@ -8,7 +8,7 @@ use axum::{
     body::Body,
     extract::{Request, State},
     http::{
-        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, LOCATION, ORIGIN},
+        header::{AUTHORIZATION, CONTENT_LENGTH, COOKIE, LOCATION, ORIGIN, VARY},
         HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
     },
     middleware::Next,
@@ -75,10 +75,15 @@ impl AuthzConfig {
         }
     }
 
-    pub fn new(api_keys: Vec<ApiKeyCredential>) -> Self {
+    pub fn max_body_size_bytes(&self) -> usize {
+        self.max_body_size_bytes as usize
+    }
+
+    #[cfg(test)]
+    fn new(api_keys: Vec<ApiKeyCredential>, jwt_secret: &str) -> Self {
         Self {
             api_keys,
-            jwt_secret: Some("test-secret".to_string()),
+            jwt_secret: Some(jwt_secret.to_string()),
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
             rate_limiter: RateLimiter::default(),
@@ -135,19 +140,17 @@ impl CorsConfig {
         Self { allowed_origins }
     }
 
-    fn allow_origin(&self, origin: Option<&HeaderValue>) -> HeaderValue {
-        let Some(origin) = origin.and_then(|value| value.to_str().ok()) else {
-            return HeaderValue::from_static("*");
-        };
+    fn allow_origin(&self, origin: Option<&HeaderValue>) -> Option<HeaderValue> {
+        let origin = origin.and_then(|value| value.to_str().ok())?;
         if self.allowed_origins.iter().any(|allowed| allowed == "*")
             || self.allowed_origins.iter().any(|allowed| allowed == origin)
             || (cfg!(debug_assertions)
                 && (origin.starts_with("http://localhost:")
                     || origin.starts_with("http://127.0.0.1:")))
         {
-            HeaderValue::from_str(origin).unwrap_or_else(|_| HeaderValue::from_static("*"))
+            HeaderValue::from_str(origin).ok()
         } else {
-            HeaderValue::from_static("null")
+            None
         }
     }
 }
@@ -325,9 +328,12 @@ pub async fn middleware(
 ) -> Response {
     let request_id = Uuid::new_v4().to_string();
     let route_class = classify_route(request.method(), request.uri().path());
+    let origin = request.headers().get(ORIGIN).cloned();
 
     if let Some(response) = preflight_response(request.method(), request.headers(), &config.cors) {
-        return response.into_response();
+        let mut resp = response.into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     if let Some(rejection) = body_size_rejection(
@@ -335,13 +341,18 @@ pub async fn middleware(
         request.headers(),
         config.max_body_size_bytes,
     ) {
-        return rejection.into_response();
+        let mut resp = rejection.into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     remove_trusted_headers(request.headers_mut());
     let outcome = evaluate_policy(route_class, request.headers(), &config);
     if !outcome.allow {
-        return rejection_response(request.uri().path(), route_class, outcome).into_response();
+        let mut resp =
+            rejection_response(request.uri().path(), route_class, outcome).into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
     }
 
     let rate_limit = outcome.rate_limit;
@@ -350,7 +361,7 @@ pub async fn middleware(
     }
 
     let mut response = next.run(request).await;
-    apply_cors_headers(response.headers_mut(), None, &config.cors);
+    apply_cors_headers(response.headers_mut(), origin.as_ref(), &config.cors);
     if route_class == RouteClass::ClientApi {
         if let Some(snapshot) = rate_limit {
             apply_rate_limit_headers(response.headers_mut(), snapshot);
@@ -518,24 +529,20 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
     }
 
     let signing_input = format!("{header}.{payload}");
-    let expected = hmac::sign(
-        &hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes()),
-        signing_input.as_bytes(),
-    );
-    let expected = URL_SAFE_NO_PAD.encode(expected.as_ref());
-    if expected != signature {
-        return Err("INVALID_TOKEN");
-    }
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature)
+        .map_err(|_| "INVALID_TOKEN")?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    hmac::verify(&key, signing_input.as_bytes(), &signature).map_err(|_| "INVALID_TOKEN")?;
 
     let payload = URL_SAFE_NO_PAD
         .decode(payload)
         .map_err(|_| "INVALID_TOKEN")?;
     let payload: Value = serde_json::from_slice(&payload).map_err(|_| "INVALID_TOKEN")?;
-    if payload
+    if !payload
         .get("authenticated")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        != true
     {
         return Err("INVALID_TOKEN");
     }
@@ -644,7 +651,32 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) {
 }
 
 fn apply_cors_headers(headers: &mut HeaderMap, origin: Option<&HeaderValue>, cors: &CorsConfig) {
-    headers.insert("access-control-allow-origin", cors.allow_origin(origin));
+    if let Some(origin) = cors.allow_origin(origin) {
+        headers.insert("access-control-allow-origin", origin);
+        headers.insert(
+            "access-control-allow-credentials",
+            HeaderValue::from_static("true"),
+        );
+        let vary_value = match headers.get_mut(VARY) {
+            Some(vary) => {
+                if let Ok(vary_str) = vary.to_str() {
+                    if vary_str.contains("Origin") {
+                        None
+                    } else {
+                        Some(format!("{}, Origin", vary_str))
+                    }
+                } else {
+                    None
+                }
+            }
+            None => Some("Origin".to_string()),
+        };
+        if let Some(value) = vary_value {
+            if let Ok(hv) = HeaderValue::from_str(&value) {
+                headers.insert(VARY, hv);
+            }
+        }
+    }
     headers.insert(
         "access-control-allow-methods",
         HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
@@ -654,11 +686,6 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: Option<&HeaderValue>, cor
         HeaderValue::from_static("Content-Type, Authorization, X-API-Key"),
     );
     headers.insert("access-control-max-age", HeaderValue::from_static("86400"));
-    headers.insert(
-        "access-control-allow-credentials",
-        HeaderValue::from_static("true"),
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 }
 
 fn refill(bucket: &mut TokenBucket, tier: RateLimitTier) {
@@ -723,12 +750,15 @@ mod tests {
 
     #[test]
     fn client_api_requires_configured_api_key() {
-        let config = AuthzConfig::new(vec![ApiKeyCredential::new(
-            "key_1",
-            "Production Key",
-            "sk-live",
-            ["read", "write"],
-        )]);
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_1",
+                "Production Key",
+                "sk-live",
+                ["read", "write"],
+            )],
+            "test-secret",
+        );
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
@@ -743,7 +773,7 @@ mod tests {
 
     #[test]
     fn client_api_rejects_missing_api_key() {
-        let config = AuthzConfig::new(Vec::new());
+        let config = AuthzConfig::new(Vec::new(), "test-secret");
         let outcome = evaluate_policy(RouteClass::ClientApi, &HeaderMap::new(), &config);
 
         assert!(!outcome.allow);
@@ -796,6 +826,26 @@ mod tests {
             response.headers.get("access-control-allow-origin"),
             Some(&HeaderValue::from_static("http://localhost:3000"))
         );
+        assert_eq!(
+            response.headers.get("vary"),
+            Some(&HeaderValue::from_static("Origin"))
+        );
+        assert!(response.headers.get("content-type").is_none());
+    }
+
+    #[test]
+    fn cors_headers_omit_credentials_when_origin_is_not_allowed() {
+        let cors = CorsConfig {
+            allowed_origins: vec!["https://dashboard.example.com".to_string()],
+        };
+        let origin = HeaderValue::from_static("https://evil.example.com");
+        let mut headers = HeaderMap::new();
+
+        apply_cors_headers(&mut headers, Some(&origin), &cors);
+
+        assert!(headers.get("access-control-allow-origin").is_none());
+        assert!(headers.get("access-control-allow-credentials").is_none());
+        assert!(headers.get("content-type").is_none());
     }
 
     #[test]
@@ -840,12 +890,15 @@ mod tests {
 
     #[test]
     fn client_api_policy_consumes_rate_limit_token_and_returns_snapshot() {
-        let config = AuthzConfig::new(vec![ApiKeyCredential::new(
-            "key_1",
-            "Production Key",
-            "sk-live",
-            ["read"],
-        )]);
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_1",
+                "Production Key",
+                "sk-live",
+                ["read"],
+            )],
+            "test-secret",
+        );
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
@@ -858,12 +911,15 @@ mod tests {
 
     #[test]
     fn client_api_policy_rejects_when_bucket_is_empty() {
-        let config = AuthzConfig::new(vec![ApiKeyCredential::new(
-            "key_1",
-            "Production Key",
-            "sk-live",
-            ["read"],
-        )]);
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_1",
+                "Production Key",
+                "sk-live",
+                ["read"],
+            )],
+            "test-secret",
+        );
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
