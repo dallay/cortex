@@ -1,21 +1,76 @@
+# Dependabot configuration for dallay/cortex
+#
+# This configuration follows best practices:
+# - Cooldown periods to avoid updating very recent releases (min 2-3 days)
+# - Smart grouping to reduce noise and batch related updates
+# - Automerge for safe, non-breaking updates (minor and patch versions)
+# - Different schedules per ecosystem based on importance
+
 version: 2
+
 updates:
-  # Cargo dependencies
+  # Cargo/Rust dependencies
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+    # Wait 3 days before updating to allow for stability in new releases
+    cooldown:
+      default-days: 3
+    # Group all updates into a single PR to reduce noise
+    groups:
+      all-cargo:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "rust"
+    # Limit number of open PRs to prevent spam
     open-pull-requests-limit: 10
+    # Use commit message prefix for easy filtering
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Automerge non-breaking updates automatically
+    automerge:
+      enabled: true
+      # Automerge security updates immediately
+      patterns:
+        - "update-types:security"
+        - "version-update:semver-patch"
+        - "version-update:semver-minor"
+    # Ignore major version updates unless explicitly wanted
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    # Wait 2 days for GitHub Actions releases to stabilize
+    cooldown:
+      default-days: 2
+    # Batch all GitHub Actions updates together
+    groups:
+      all-actions:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "github-actions"
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+    # GitHub Actions updates are generally safe to automerge
+    automerge:
+      enabled: true
+      patterns:
+        - "update-types:security"
+        - "version-update:semver-patch"
+        - "version-update:semver-minor"
