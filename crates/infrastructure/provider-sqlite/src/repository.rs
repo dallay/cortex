@@ -393,7 +393,11 @@ fn parse_test_status(
             Some(dt.with_timezone(&Utc))
         }
         None if status == "neverTested" => None,
-        None => return Err(invalid_data("missing last_test_at for non-NeverTested status")),
+        None => {
+            return Err(invalid_data(
+                "missing last_test_at for non-NeverTested status",
+            ))
+        }
     };
 
     match status {
