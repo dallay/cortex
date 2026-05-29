@@ -5,21 +5,23 @@ use std::sync::Arc;
 use axum::{
     extract::{Json, State},
     http::StatusCode,
+    middleware,
     response::{AppendHeaders, IntoResponse, Response},
     routing::{get, post},
     Router,
 };
 use rook_core::{CompletionRequest, HealthPort, HealthStatus};
-use tower_http::cors::CorsLayer;
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
-use super::{anthropic_adapter::*, openai_adapter::*, provider_routes, HttpError};
+use super::{anthropic_adapter::*, authz, openai_adapter::*, provider_routes, HttpError};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
 /// Build the axum router with all routes
 pub fn router(usecases: Usecases) -> Router {
-    let cors = CorsLayer::permissive();
+    let authz_config = authz::AuthzConfig::from_env();
+    let max_body_size_bytes = authz_config.max_body_size_bytes();
 
     let mut router = Router::new()
         // OpenAI-compatible endpoints
@@ -35,7 +37,12 @@ pub fn router(usecases: Usecases) -> Router {
         router = router.merge(provider_routes::router(usecases));
     }
 
-    router.layer(cors)
+    router
+        .layer(middleware::from_fn_with_state(
+            authz_config,
+            authz::middleware,
+        ))
+        .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible
