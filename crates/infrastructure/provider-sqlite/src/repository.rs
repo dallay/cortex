@@ -335,7 +335,7 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             .map_err(|_| invalid_data("invalid provider kind"))?,
         provider_runtime_id: ProviderId::new(row.get::<_, String>("provider_runtime_id")?),
         name: row.get("name")?,
-        priority: row.get::<_, i64>("priority")? as u32,
+        priority: row.get::<_, i64>("priority")? as u8,
         is_active: row.get("is_active")?,
         auth_type,
         credentials,
@@ -356,7 +356,7 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             row.get("test_error")?,
             row.get("test_expires_at")?,
             row.get::<_, Option<String>>("last_test_at")?.as_deref(),
-        ),
+        )?,
         created_at: parse_datetime(&created_at)?,
         updated_at: parse_datetime(&updated_at)?,
     })
@@ -384,30 +384,40 @@ fn parse_test_status(
     error: Option<String>,
     expires_at: Option<i64>,
     last_test_at: Option<&str>,
-) -> TestStatus {
-    let parsed_last_test_at = last_test_at
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+) -> rusqlite::Result<TestStatus> {
+    // For non-NeverTested states, last_test_at is required and must parse correctly
+    let parsed_last_test_at: Option<DateTime<Utc>> = match last_test_at {
+        Some(value) => {
+            let dt = DateTime::parse_from_rfc3339(value)
+                .map_err(|_| invalid_data("invalid last_test_at timestamp"))?;
+            Some(dt.with_timezone(&Utc))
+        }
+        None if status == "neverTested" => None,
+        None => return Err(invalid_data("missing last_test_at for non-NeverTested status")),
+    };
 
     match status {
-        "active" => TestStatus::Active {
-            last_test_at: parsed_last_test_at,
+        "active" => Ok(TestStatus::Active {
+            last_test_at: parsed_last_test_at
+                .ok_or_else(|| invalid_data("last_test_at required for active status"))?,
             latency_ms: latency_ms.unwrap_or_default(),
-        },
-        "unhealthy" => TestStatus::Unhealthy {
-            last_test_at: parsed_last_test_at,
+        }),
+        "unhealthy" => Ok(TestStatus::Unhealthy {
+            last_test_at: parsed_last_test_at
+                .ok_or_else(|| invalid_data("last_test_at required for unhealthy status"))?,
             error: error.unwrap_or_default(),
-        },
-        "expired" => TestStatus::Expired {
-            last_test_at: parsed_last_test_at,
+        }),
+        "expired" => Ok(TestStatus::Expired {
+            last_test_at: parsed_last_test_at
+                .ok_or_else(|| invalid_data("last_test_at required for expired status"))?,
             expires_at: expires_at.unwrap_or_default(),
-        },
-        "unknown" => TestStatus::Unknown {
-            last_test_at: parsed_last_test_at,
+        }),
+        "unknown" => Ok(TestStatus::Unknown {
+            last_test_at: parsed_last_test_at
+                .ok_or_else(|| invalid_data("last_test_at required for unknown status"))?,
             reason: error.unwrap_or_else(|| "health_check_not_supported".to_string()),
-        },
-        _ => TestStatus::NeverTested,
+        }),
+        _ => Ok(TestStatus::NeverTested),
     }
 }
 
@@ -531,7 +541,7 @@ mod tests {
             .with_timezone(&Utc)
     }
 
-    fn connection(name: &str, priority: u32, created_at: DateTime<Utc>) -> ProviderConnection {
+    fn connection(name: &str, priority: u8, created_at: DateTime<Utc>) -> ProviderConnection {
         ProviderConnection {
             id: ConnectionId::new(),
             provider_kind: ProviderKind::OpenAI,

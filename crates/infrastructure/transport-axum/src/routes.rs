@@ -29,14 +29,13 @@ pub fn router(usecases: Usecases) -> Router {
         .route("/v1/messages", post(anthropic_messages))
         // Health
         .route("/health", get(health_check))
-        .with_state(usecases.clone())
-        .layer(cors);
+        .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
         router = router.merge(provider_routes::router(usecases));
     }
 
-    router
+    router.layer(cors)
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible

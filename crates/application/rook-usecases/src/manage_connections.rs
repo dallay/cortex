@@ -66,7 +66,7 @@ impl ManageConnections {
         let credentials = self.encrypt_credentials(&request.credentials)?;
         validate_credentials_not_expired(&credentials)?;
         if !credentials_matches_auth_type(request.auth_type, &credentials) {
-            return Err(ValidationError::EmptyCredential.into());
+            return Err(ValidationError::AuthTypeCredentialMismatch.into());
         }
 
         let now = Utc::now();
@@ -102,12 +102,15 @@ impl ManageConnections {
 
         let auth_type = request.auth_type.unwrap_or(existing.auth_type);
         let credentials = match request.credentials {
-            Some(credentials) => self.encrypt_credentials(&credentials)?,
+            Some(credentials) => {
+                let encrypted = self.encrypt_credentials(&credentials)?;
+                validate_credentials_not_expired(&encrypted)?;
+                encrypted
+            }
             None => existing.credentials.clone(),
         };
-        validate_credentials_not_expired(&credentials)?;
         if !credentials_matches_auth_type(auth_type, &credentials) {
-            return Err(ValidationError::EmptyCredential.into());
+            return Err(ValidationError::AuthTypeCredentialMismatch.into());
         }
 
         let provider_runtime_id = request
@@ -247,7 +250,7 @@ pub struct CreateConnectionRequest {
     pub provider_runtime_id: ProviderId,
     pub auth_type: AuthType,
     pub name: String,
-    pub priority: u32,
+    pub priority: u8,
     pub is_active: bool,
     pub credentials: CredentialsInput,
     pub config: ConnectionConfig,
@@ -260,7 +263,7 @@ pub struct UpdateConnectionRequest {
     pub provider_runtime_id: Option<ProviderId>,
     pub auth_type: Option<AuthType>,
     pub name: Option<String>,
-    pub priority: Option<u32>,
+    pub priority: Option<u8>,
     pub is_active: Option<bool>,
     pub credentials: Option<CredentialsInput>,
     pub config: Option<ConnectionConfig>,
@@ -338,7 +341,7 @@ fn test_status_from_health(health: HealthStatus) -> TestStatus {
 fn validate_base_fields(
     provider_runtime_id: &ProviderId,
     name: &str,
-    priority: u32,
+    priority: u8,
     config: &ConnectionConfig,
 ) -> Result<(), ValidationError> {
     if provider_runtime_id.as_str().trim().is_empty() {
@@ -384,11 +387,18 @@ fn validate_non_empty(value: &str, error: ValidationError) -> Result<(), Validat
 
 fn validate_email(email: &str) -> Result<(), ValidationError> {
     validate_non_empty(email, ValidationError::OAuthFieldMissing("email"))?;
+    let email = email.trim();
     let mut parts = email.split('@');
     let local = parts.next().unwrap_or_default();
     let domain = parts.next().unwrap_or_default();
     if parts.next().is_some() || local.is_empty() || domain.is_empty() || !domain.contains('.') {
         return Err(ValidationError::OAuthEmailInvalid);
+    }
+    // Reject empty domain labels (e.g., "a@.com", "a@domain.", "a@b..c")
+    for label in domain.split('.') {
+        if label.is_empty() {
+            return Err(ValidationError::OAuthEmailInvalid);
+        }
     }
     Ok(())
 }
@@ -518,7 +528,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ManageConnectionsError::Validation(
-                        ValidationError::EmptyCredential
+                        ValidationError::AuthTypeCredentialMismatch
                     ))
                 ));
             });

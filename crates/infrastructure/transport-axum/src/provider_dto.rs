@@ -14,7 +14,7 @@ pub struct CreateProviderRequest {
     pub provider_runtime_id: ProviderId,
     pub auth_type: String,
     pub name: String,
-    pub priority: u32,
+    pub priority: u8,
     pub is_active: bool,
     pub credentials: CredentialsInput,
     pub config: ConnectionConfigDto,
@@ -28,7 +28,7 @@ pub struct UpdateProviderRequest {
     pub provider_runtime_id: Option<ProviderId>,
     pub auth_type: Option<String>,
     pub name: Option<String>,
-    pub priority: Option<u32>,
+    pub priority: Option<u8>,
     pub is_active: Option<bool>,
     pub credentials: Option<CredentialsInput>,
     pub config: Option<ConnectionConfigDto>,
@@ -81,7 +81,7 @@ pub struct ProviderConnectionResponse {
     pub provider_runtime_id: ProviderId,
     pub auth_type: String,
     pub name: String,
-    pub priority: u32,
+    pub priority: u8,
     pub is_active: bool,
     pub credentials: EmptyCredentials,
     pub config: ConnectionConfigResponse,
@@ -302,8 +302,9 @@ fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
 }
 
 fn parse_auth_type(value: &str) -> Result<AuthType, String> {
-    match value {
-        "apiKey" | "apikey" | "api_key" => Ok(AuthType::ApiKey),
+    let lower = value.to_lowercase();
+    match lower.as_str() {
+        "apikey" | "api_key" | "api-key" => Ok(AuthType::ApiKey),
         "oauth" => Ok(AuthType::OAuth),
         _ => Err(format!("invalid authType: {value}")),
     }

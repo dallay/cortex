@@ -113,7 +113,7 @@ pub struct ProviderConnection {
     pub provider_kind: ProviderKind,
     pub provider_runtime_id: ProviderId,
     pub name: String,
-    pub priority: u32,
+    pub priority: u8,
     pub is_active: bool,
     pub auth_type: AuthType,
     pub credentials: Credentials,
@@ -134,6 +134,7 @@ pub enum ValidationError {
     QuotaThresholdOutOfRange,
     QuotaThresholdOrder,
     EmptyCredential,
+    AuthTypeCredentialMismatch,
     OAuthFieldMissing(&'static str),
     OAuthEmailInvalid,
     OAuthExpiresAtPast,
@@ -153,6 +154,9 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "quota threshold error must be greater than warning")
             }
             Self::EmptyCredential => write!(f, "credential value must not be empty"),
+            Self::AuthTypeCredentialMismatch => {
+                write!(f, "credentials do not match auth type")
+            }
             Self::OAuthFieldMissing(field) => write!(f, "OAuth {field} must not be empty"),
             Self::OAuthEmailInvalid => write!(f, "OAuth email format is invalid"),
             Self::OAuthExpiresAtPast => write!(f, "OAuth expires_at must be in the future"),

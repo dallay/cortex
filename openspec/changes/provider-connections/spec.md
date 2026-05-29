@@ -149,7 +149,7 @@ For v1 the API MUST reject unknown provider kinds with `400 VALIDATION_ERROR`. E
 8. `AuthType::ApiKey` requires `credentials.apiKey` to be non-empty before encryption.
 9. `AuthType::OAuth` requires non-empty `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, and `projectId` before encryption.
 10. OAuth `email` MUST pass a basic format check: exactly one `@`, non-empty local part, non-empty domain part, and at least one `.` in the domain.
-11. OAuth `expiresAt` MUST be a future Unix timestamp UTC at create or credential replacement time. Expired OAuth credentials are rejected on create/update with `400 VALIDATION_ERROR`.
+11. OAuth `expiresAt` MUST be a future Unix timestamp UTC at create or credential replacement time. When an UPDATE request omits the credentials field (credentials preserved), the stored expiresAt is NOT re-validated—even if it is now expired, the update proceeds and expiration is surfaced via `POST /api/providers/:id/test` as defined in rule 12. When credentials are present (replaced), rule 11 is enforced and invalid/expired values return `400 VALIDATION_ERROR`.
 12. OAuth tokens that expire after persistence are NOT rejected during read/list. They are surfaced by `POST /api/providers/:id/test` as `status: "expired"`.
 
 ## 4. Encryption Specification

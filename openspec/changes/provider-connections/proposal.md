@@ -130,6 +130,12 @@ SQLite adapter stores all fields; credentials ciphertext is stored as `TEXT` in 
 
 **Test endpoint**: returns `{ "ok": true|false|null, "status": "active|unhealthy|unknown|expired", "error": "optional message", "latencyMs": 123|null }`.
 
+**HealthStatus to test-status mapping**:
+- `HealthStatus::Healthy` → `"active"` (is_healthy() = true)
+- `HealthStatus::Unhealthy` → `"unhealthy"` (is_healthy() = false)
+- `HealthStatus::Unknown` → `"unknown"` (is_healthy() = false)
+- `"expired"` is a pre-probe OAuth expiry condition surfaced by POST /api/providers/:id/test when tokens have passed their expiresAt; it has no direct HealthStatus enum counterpart and is handled as a special transport-level condition (surface as `"status": "expired"` with ok: false).
+
 ### CRUD Behavior
 
 - **Create**: Validate known provider kind, encrypt credentials, persist, return connection with `credentials: {}`.

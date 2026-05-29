@@ -199,7 +199,7 @@ pub enum HealthStatus {
 }
 ```
 
-OpenAI performs a real `/models` probe. Provider adapters without a real probe return `Unknown { reason: "health_check_not_supported" }`. The public `/health` endpoint still renders the legacy JSON fields `healthy`, `latency_ms`, and `last_error`.
+OpenAI performs a real `/models` probe. Provider adapters without a real probe (Anthropic, Ollama, Gemini, Groq) return `Unknown { reason: "health_check_not_supported" }`. For these providers, `HealthStatus::is_healthy()` returns `false`, and the public `/health` endpoint renders `healthy: false`, `latency_ms: null`, and `last_error` containing the reason string.
 
 ## Runtime-Managed Provider Connections
 

@@ -47,7 +47,7 @@ A stored provider connection has the following attributes:
 | `provider_runtime_id` | `ProviderId` | Reference to an existing registered runtime provider. |
 | `name` | String | Non-empty Unicode string, max 256 scalar values. Unique per `provider_kind`. |
 | `priority` | Integer (1–255) | Lower number = higher priority. Used for ordering, not enforcement. |
-| `is_active` | Boolean | If `false`, the connection exists but is not used for probing. |
+| `is_active` | Boolean | If `false`, the connection exists but is not used for probing. Inactive connections remain stored and returned by repository list/get operations (unless explicitly filtered); they are excluded from v1 routing probe/selection decisions. Metrics, health checks, and UI visibility may treat inactive connections differently. |
 | `auth_type` | Enum: `apiKey` \| `oauth` | Determines which credential fields are present. |
 | `credentials` | Credential value | Encrypted at rest; never stored or returned in plaintext. |
 | `config` | ConnectionConfig | Contains concurrency limit and quota thresholds. |
@@ -63,6 +63,8 @@ A stored provider connection has the following attributes:
 | `quota_window_thresholds.warning` | Float [0.0, 1.0] | Warning threshold for quota window. |
 | `quota_window_thresholds.error` | Float [0.0, 1.0] | Error threshold; MUST be > `warning`. |
 | `default_model` | String (optional) | Model id to use as default for this connection. |
+
+**`default_model` semantics**: `defaultModel: null` (or omitted) explicitly means "no default model configured" and will not be used for routing. Connections may be created without a default model. When routing a request that does not specify a model and the connection has no default, the caller must supply a model or the request returns an error (error code: `MODEL_REQUIRED` or similar). There is no global fallback to a system-wide default for connection-scoped routing.
 
 ### 2.3 Credential Variants
 
@@ -110,7 +112,7 @@ The following rules MUST be enforced on every create and update operation:
 | V7 | `quota_window_thresholds.error` MUST be strictly greater than `warning`. | `400 VALIDATION_ERROR` |
 | V8 | For `ApiKey`: `credentials.apiKey` MUST be non-empty before encryption. | `400 VALIDATION_ERROR` |
 | V9 | For `OAuth`: `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, and `projectId` MUST all be non-empty before encryption. | `400 VALIDATION_ERROR` |
-| V10 | OAuth `email` MUST contain exactly one `@`, non-empty local part, non-empty domain part, and at least one `.` in the domain. | `400 VALIDATION_ERROR` |
+| V10 | OAuth `email` MUST contain exactly one `@`, a non-empty local part, and a domain composed of dot-separated labels where: no label is empty, no label starts or ends with `-`, the TLD label is at least 2 characters, and the domain contains at least one `.`. Rejects addresses like `test@domain.`, `user@localhost.localdomain.`, and single-char TLDs. | `400 VALIDATION_ERROR` |
 | V11 | OAuth `expiresAt` MUST be a future Unix timestamp UTC at create or credential replacement time. | `400 VALIDATION_ERROR` |
 
 ---
@@ -272,6 +274,35 @@ Returns all stored connections ordered by `priority ASC`, then `createdAt DESC`.
 ```
 
 Empty list returns `200 OK` with `[]`.
+
+### 7.4 `testStatus` Field Examples
+
+Each `testStatus` variant includes the `status` string plus appropriate fields:
+
+**neverTested:**
+```json
+{ "testStatus": { "status": "neverTested" } }
+```
+
+**active:**
+```json
+{ "testStatus": { "status": "active", "lastTestAt": "2026-05-29T12:00:00Z", "latencyMs": 42 } }
+```
+
+**unhealthy:**
+```json
+{ "testStatus": { "status": "unhealthy", "lastTestAt": "2026-05-29T12:00:00Z", "latencyMs": 1023, "error": "connection refused" } }
+```
+
+**expired:**
+```json
+{ "testStatus": { "status": "expired", "lastTestAt": "2026-05-29T12:00:00Z" } }
+```
+
+**unknown:**
+```json
+{ "testStatus": { "status": "unknown", "lastTestAt": "2026-05-29T12:00:00Z", "error": "health_check_not_supported" } }
+```
 
 ---
 
