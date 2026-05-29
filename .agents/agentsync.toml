@@ -1,0 +1,191 @@
+# AgentSync Configuration
+# This file defines how AI agent configurations are synchronized via symbolic links.
+#
+# Source directory (relative to this config file)
+source_dir = "."
+
+# Optional: compress AGENTS.md and point symlinks to the compressed file
+# compress_agents_md = false
+
+# Gitignore management
+[gitignore]
+enabled = true
+marker = "AI Agent Symlinks"
+# Additional entries can be added here:
+# entries = ["custom-file.md"]
+
+# =============================================================================
+# MCP (Model Context Protocol) Configuration
+# =============================================================================
+# Define MCP servers once here, and AgentSync will generate the appropriate
+# config files for each AI agent (Claude, Copilot, Codex, Cursor, Gemini, VS Code, OpenCode).
+#
+# [mcp]
+# enabled = true
+# merge_strategy = "merge"  # "merge" (default) or "overwrite"
+#
+# [mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+#
+# [mcp_servers.git]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+
+# =============================================================================
+# Agent Configurations
+# =============================================================================
+# Each agent has:
+#   - enabled: Whether to sync this agent (default: true)
+#   - description: Human-readable description
+#   - targets: Map of target configurations
+#
+# Each target has:
+#   - source: Path relative to source_dir
+#   - destination: Path relative to project root
+#   - type: "symlink" or "symlink-contents"
+#   - pattern: (optional) Glob pattern for symlink-contents
+
+# -----------------------------------------------------------------------------
+# Claude Code
+# -----------------------------------------------------------------------------
+[agents.claude]
+enabled = true
+description = "Claude Code - Anthropic's AI coding assistant"
+
+[agents.claude.targets.instructions]
+source = "AGENTS.md"
+destination = "CLAUDE.md"
+type = "symlink"
+
+[agents.claude.targets.skills]
+source = "skills"
+destination = ".claude/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.claude.targets.commands]
+source = "command"
+destination = ".claude/commands"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# GitHub Copilot
+# -----------------------------------------------------------------------------
+[agents.copilot]
+enabled = true
+description = "GitHub Copilot - VS Code and GitHub integrated AI"
+
+[agents.copilot.targets.instructions]
+source = "AGENTS.md"
+destination = ".github/copilot-instructions.md"
+type = "symlink"
+
+[agents.copilot.targets.agents]
+source = "command"
+destination = ".github/agents"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# OpenAI Codex CLI
+# -----------------------------------------------------------------------------
+[agents.codex]
+enabled = true
+description = "OpenAI Codex CLI - OpenAI's AI coding agent"
+
+[agents.codex.targets.instructions]
+source = "AGENTS.md"
+destination = ".codex/AGENTS.md"
+type = "symlink"
+
+[agents.codex.targets.skills]
+source = "skills"
+destination = ".codex/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.codex.targets.commands]
+source = "command"
+destination = ".codex/commands"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# Google Gemini
+# -----------------------------------------------------------------------------
+[agents.gemini]
+enabled = true
+description = "Google Gemini - AI coding assistant"
+
+[agents.gemini.targets.instructions]
+source = "AGENTS.md"
+destination = "GEMINI.md"
+type = "symlink"
+
+[agents.gemini.targets.skills]
+source = "skills"
+destination = ".gemini/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.gemini.targets.commands]
+source = "command"
+destination = ".gemini/commands"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# OpenCode AI - Terminal-based AI coding assistant
+# -----------------------------------------------------------------------------
+[agents.opencode]
+enabled = true
+description = "OpenCode - Open source AI coding agent"
+
+[agents.opencode.targets.skills]
+source = "skills"
+destination = ".opencode/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.opencode.targets.commands]
+source = "command"
+destination = ".opencode/command"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# Antigravity - High-performance AI coding CLI
+# -----------------------------------------------------------------------------
+# NOTE: Antigravity does not use a project-level AGENTS.md like Codex or Claude.
+# It works primarily with skills (SKILL.md playbooks) in .agent/skills/.
+# No instructions target is configured for Antigravity.
+# -----------------------------------------------------------------------------
+[agents.antigravity]
+enabled = true
+description = "Antigravity - High-performance AI coding CLI"
+
+[agents.antigravity.targets.skills]
+source = "skills"
+destination = ".agent/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.antigravity.targets.commands]
+source = "command"
+destination = ".agent/commands"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
+# Root AGENTS.md
+# -----------------------------------------------------------------------------
+[agents.root]
+enabled = true
+description = "Root AGENTS.md for tools that look for it in repo root (e.g., Jules)"
+
+[agents.root.targets.agents]
+source = "AGENTS.md"
+destination = "AGENTS.md"
+type = "symlink"
