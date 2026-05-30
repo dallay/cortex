@@ -6,6 +6,121 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{CacheKey, ModelId, ProviderId, RequestId};
+use uuid::Uuid;
+
+// ============================================================================
+// User — admin user for MANAGEMENT routes
+// ============================================================================
+
+/// User identifier (UUID v4)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UserId(pub Uuid);
+
+impl UserId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(s).map(Self)
+    }
+}
+
+impl Default for UserId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for UserId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A user record — currently only admin exists
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub id: UserId,
+    pub username: String,
+    /// Argon2id hash, or None if password not set yet
+    pub password_hash: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Input for creating a new user
+#[derive(Debug, Clone)]
+pub struct NewUser {
+    pub username: String,
+    pub password_hash: Option<String>,
+}
+
+/// Password hash wrapped as an opaque string (Argon2id format)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordHash(pub String);
+
+impl PasswordHash {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for PasswordHash {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+// ============================================================================
+// Session — session token for MANAGEMENT route auth
+// ============================================================================
+
+/// Session identifier (UUID v4)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionId(pub Uuid);
+
+impl SessionId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(s).map(Self)
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A session record — ties a user to a token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub id: SessionId,
+    /// SHA-256 hash of the raw token bytes
+    pub token_hash: String,
+    pub user_id: UserId,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub revoked: bool,
+}
+
+/// Input for creating a new session
+#[derive(Debug, Clone)]
+pub struct NewSession {
+    pub user_id: UserId,
+    /// 32 raw random bytes (not hashed)
+    pub token: Vec<u8>,
+}
 
 /// ---------------------------------------------------------------------------
 /// Request / Response

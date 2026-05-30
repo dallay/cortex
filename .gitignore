@@ -1,6 +1,7 @@
 # === Rust ===
 /target/
 /tmp/
+/.playwright-mcp/
 
 # Cargo.lock is committed (pins deps)
 /Cargo.toml.local
@@ -19,6 +20,7 @@ pnpm-lock.yaml
 
 # Build outputs
 *.tsbuildinfo
+apps/rook/dashboard/dist/
 
 # === Environment ===
 .env

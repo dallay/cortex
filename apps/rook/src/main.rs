@@ -3,6 +3,7 @@
 // Boots the dependency injection container and starts the HTTP server.
 
 mod config;
+mod dashboard;
 mod di;
 mod server;
 

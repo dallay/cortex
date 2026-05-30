@@ -1,0 +1,24 @@
+change: security-authz-architecture-notes
+current_phase: archive
+completed:
+  - init
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply_phase1
+  - apply_phase2
+  - apply_phase3
+  - apply_phase4
+  - apply_phase5
+  - apply_phase6
+  - apply_phase6_partial
+  - apply_phase7
+  - apply_phase8
+  - verify
+  - archive
+next: none
+archived: true
+archived_at: "2025-05-31T00:02:00Z"
+updated: "2025-05-31T00:02:00Z"
