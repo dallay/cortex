@@ -98,7 +98,7 @@ figment = { version = "0.10", features = ["toml"] }
 once_cell = "1"
 parking_lot = "0.12"
 dirs = "6"
-rand = "0.8"
+rand = "0.9"
 
 # Encryption
 aes-gcm = "0.10"
