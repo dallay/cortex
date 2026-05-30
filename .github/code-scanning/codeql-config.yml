@@ -1,0 +1,10 @@
+name: CodeQL Config
+
+# Disable default queries and use security-and-quality
+disable-default-queries: false
+queries:
+  - uses: security-and-quality
+
+# Explicitly analyze Rust only — override GitHub's auto-detection
+languages:
+  - rust
