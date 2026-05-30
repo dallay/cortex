@@ -30,7 +30,7 @@ anyhow = "1"
 tracing = "0.1"
 
 # Web
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 
 # Config
