@@ -1,5 +1,6 @@
 # =============================================================================
 # Runtime image - expects pre-built rook binary in the same directory
+# Uses TARGETARCH to select the correct binary (amd64 or arm64)
 # =============================================================================
 FROM debian:bookworm-slim
 
@@ -20,8 +21,11 @@ RUN useradd -m -u 1000 rook
 
 WORKDIR /app
 
-# Copy pre-built binary (passed via docker-context)
-COPY rook /usr/local/bin/rook
+# Copy pre-built binary based on target architecture
+# docker-context/amd64/rook-amd64 or docker-context/arm64/rook-arm64
+ARG TARGETARCH
+RUN echo "Target architecture: ${TARGETARCH}"
+COPY rook-${TARGETARCH} /usr/local/bin/rook
 
 # Create config directory with proper permissions
 RUN mkdir -p /app/config \

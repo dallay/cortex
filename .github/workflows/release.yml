@@ -505,24 +505,21 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
-      - name: Extract Linux amd64 binary
+      - name: Extract Linux binaries to docker-context
         run: |
-          mkdir -p docker-context/amd64
+          mkdir -p docker-context/amd64 docker-context/arm64
+
           tar -xzvf artifacts/rook-*-x86_64-unknown-linux-gnu.tar.gz -C docker-context/amd64 --strip-components=1
-          mv docker-context/amd64/rook docker-context/amd64/rook-bin
-          chmod +x docker-context/amd64/rook-bin
-
-      - name: Extract Linux arm64 binary
-        run: |
-          mkdir -p docker-context/arm64
           tar -xzvf artifacts/rook-*-aarch64-unknown-linux-gnu.tar.gz -C docker-context/arm64 --strip-components=1
-          mv docker-context/arm64/rook docker-context/arm64/rook-bin
-          chmod +x docker-context/arm64/rook-bin
 
-      - name: Copy Dockerfile to both contexts
-        run: |
-          cp Dockerfile docker-context/amd64/
-          cp Dockerfile docker-context/arm64/
+          mv docker-context/amd64/rook docker-context/amd64/rook-amd64
+          chmod +x docker-context/amd64/rook-amd64
+
+          mv docker-context/arm64/rook docker-context/arm64/rook-arm64
+          chmod +x docker-context/arm64/rook-arm64
+
+      - name: Copy Dockerfile to docker-context
+        run: cp apps/rook/Dockerfile docker-context/
 
       - name: Extract metadata for Docker
         id: meta
