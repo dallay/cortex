@@ -20,8 +20,9 @@ use rook_core::{
     ProviderRepositoryPort, RouterPort,
 };
 use rook_usecases::{
-    AuthenticateClientApi, FallbackRouter, HealthCheck, ManageConnections, ManageProviders,
-    RookUsecases, RouteRequest, RoutingStrategy,
+    AuthenticateClientApi, FallbackRouter, HealthCheck, ManageConnections, ManageConnectionsError,
+    ManageProviders, ProviderBuildInput, ProviderBuilderPort, RookUsecases, RouteRequest,
+    RoutingStrategy,
 };
 
 use crate::config::{ProviderConfig, RookConfig};
@@ -72,7 +73,13 @@ impl RookContainer {
             );
             let repo: Arc<dyn ProviderRepositoryPort> =
                 Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
-            Some(ManageConnections::new(repo, registry.clone(), key_manager))
+            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
+            Some(ManageConnections::new(
+                repo,
+                registry.clone(),
+                key_manager,
+                builder,
+            ))
         } else {
             None
         };
@@ -185,7 +192,7 @@ fn build_provider(config: &ProviderConfig) -> Option<Arc<dyn ProviderPort>> {
 // ---------------------------------------------------------------------------
 
 use async_trait::async_trait;
-use rook_core::CacheKey;
+use rook_core::{CacheKey, DecryptedCredentials};
 use shared_kernel::NuxaResult;
 
 #[derive(Clone, Default)]
@@ -209,5 +216,113 @@ impl CachePort for NoOpCache {
     }
     async fn clear(&self) -> NuxaResult<()> {
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic provider builder (for provider CRUD)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct DynamicProviderBuilder;
+
+#[async_trait]
+impl ProviderBuilderPort for DynamicProviderBuilder {
+    async fn build(
+        &self,
+        input: ProviderBuildInput,
+    ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
+        let api_key = match &input.decrypted_credentials {
+            DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
+            DecryptedCredentials::OAuth { .. } => {
+                return Err(ManageConnectionsError::RegistryUpdateFailed(
+                    "OAuth provider build not yet implemented".to_string(),
+                ));
+            }
+        };
+
+        // Build the appropriate provider based on kind
+        let provider = match input.provider_kind.as_str() {
+            "openai" => {
+                let config = providers_openai::OpenAIProviderConfig {
+                    id: ProviderId::new(input.connection_id.to_string()),
+                    api_key,
+                    base_url: input
+                        .base_url
+                        .unwrap_or_else(|| "https://api.openai.com".to_string()),
+                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
+                    timeout_secs: 60,
+                };
+                Arc::new(providers_openai::OpenAIProvider::new(config).map_err(|e| {
+                    ManageConnectionsError::RegistryUpdateFailed(format!(
+                        "OpenAI provider build failed: {e}"
+                    ))
+                })?) as Arc<dyn ProviderPort>
+            }
+            "anthropic" => {
+                let config = providers_anthropic::AnthropicProviderConfig {
+                    id: ProviderId::new(input.connection_id.to_string()),
+                    api_key,
+                    base_url: input
+                        .base_url
+                        .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
+                    timeout_secs: 60,
+                };
+                providers_anthropic::AnthropicProvider::new(config).map_err(|e| {
+                    ManageConnectionsError::RegistryUpdateFailed(format!(
+                        "Anthropic provider build failed: {e}"
+                    ))
+                })?
+            }
+            "ollama" => {
+                let config = providers_ollama::OllamaProviderConfig {
+                    id: ProviderId::new(input.connection_id.to_string()),
+                    base_url: input
+                        .base_url
+                        .unwrap_or_else(|| "http://localhost:11434".to_string()),
+                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
+                    timeout_secs: 300,
+                };
+                providers_ollama::OllamaProvider::new(config).map_err(|e| {
+                    ManageConnectionsError::RegistryUpdateFailed(format!(
+                        "Ollama provider build failed: {e}"
+                    ))
+                })?
+            }
+            "gemini" => {
+                let config = providers_gemini::GeminiProviderConfig {
+                    id: ProviderId::new(input.connection_id.to_string()),
+                    api_key,
+                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
+                    timeout_secs: 60,
+                };
+                providers_gemini::GeminiProvider::new(config).map_err(|e| {
+                    ManageConnectionsError::RegistryUpdateFailed(format!(
+                        "Gemini provider build failed: {e}"
+                    ))
+                })?
+            }
+            "groq" => {
+                let config = providers_groq::GroqProviderConfig {
+                    id: ProviderId::new(input.connection_id.to_string()),
+                    api_key,
+                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
+                    timeout_secs: 60,
+                };
+                providers_groq::GroqProvider::new(config).map_err(|e| {
+                    ManageConnectionsError::RegistryUpdateFailed(format!(
+                        "Groq provider build failed: {e}"
+                    ))
+                })?
+            }
+            unknown => {
+                return Err(ManageConnectionsError::RegistryUpdateFailed(format!(
+                    "unknown provider kind: {unknown}"
+                )));
+            }
+        };
+
+        Ok(provider)
     }
 }

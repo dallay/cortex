@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
     AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, DecryptedCredentials,
-    EncryptedBlob, HealthStatus, KeyManager, ProviderConnection, ProviderKind,
-    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError,
-    TestStatus, ValidationError,
+    EncryptedBlob, HealthStatus, KeyManager, ModelId, ProviderConnection, ProviderKind,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds,
+    RepositoryError, TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
 
@@ -29,6 +30,7 @@ pub struct ManageConnections {
     repo: Arc<dyn ProviderRepositoryPort>,
     registry: Arc<dyn ProviderRegistryPort>,
     key_manager: Arc<dyn KeyManager>,
+    builder: Arc<dyn ProviderBuilderPort>,
 }
 
 impl ManageConnections {
@@ -36,11 +38,13 @@ impl ManageConnections {
         repo: Arc<dyn ProviderRepositoryPort>,
         registry: Arc<dyn ProviderRegistryPort>,
         key_manager: Arc<dyn KeyManager>,
+        builder: Arc<dyn ProviderBuilderPort>,
     ) -> Self {
         Self {
             repo,
             registry,
             key_manager,
+            builder,
         }
     }
 
@@ -288,23 +292,59 @@ impl ManageConnections {
             ManageConnectionsError::RegistryUpdateFailed(format!("list failed: {e}"))
         })?;
 
-        // Filter active connections and build a provider list.
-        // Note: build_provider_from_connection is implemented in PR 2.
-        // For PR 1, we simply clear the registry since no provider builder exists yet.
-        let providers = Vec::new();
+        let mut providers = Vec::new();
+        let mut errors = Vec::new();
 
         for conn in connections.iter().filter(|c| c.is_active) {
-            // In PR 2, this will decrypt and build actual providers.
-            // For now, we skip since build_provider_from_connection doesn't exist.
-            tracing::debug!(
-                connection_id = %conn.id,
-                provider_kind = ?conn.provider_kind,
-                "connection marked active but provider build not yet implemented"
+            let decrypted = match self.decrypt_credentials(&conn.credentials) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(
+                        connection_id = %conn.id,
+                        error = %e,
+                        "failed to decrypt credentials, skipping provider"
+                    );
+                    errors.push(format!("{}: decrypt failed - {}", conn.id, e));
+                    continue;
+                }
+            };
+
+            let input = ProviderBuildInput {
+                provider_kind: conn.provider_kind,
+                connection_id: conn.id,
+                decrypted_credentials: decrypted,
+                base_url: conn.config.base_url.clone(),
+                default_model: conn.config.default_model.clone(),
+            };
+
+            match self.builder.build(input).await {
+                Ok(provider) => {
+                    tracing::debug!(
+                        connection_id = %conn.id,
+                        provider_id = %provider.id(),
+                        "provider built successfully"
+                    );
+                    providers.push(provider);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        connection_id = %conn.id,
+                        error = %e,
+                        "failed to build provider"
+                    );
+                    errors.push(format!("{}: build failed - {}", conn.id, e));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            tracing::warn!(
+                count = errors.len(),
+                errors = ?errors,
+                "some providers failed during registry refresh"
             );
         }
 
-        // Replace all providers in the registry.
-        // The registry will be empty until build_provider_from_connection is added in PR 2.
         self.registry.replace_all(providers).map_err(|e| {
             tracing::error!(error = %e, "failed to replace provider registry");
             ManageConnectionsError::RegistryUpdateFailed(format!("replace_all failed: {e}"))
@@ -312,6 +352,26 @@ impl ManageConnections {
 
         Ok(())
     }
+}
+
+/// Information needed to construct a provider from a connection.
+#[derive(Debug, Clone)]
+pub struct ProviderBuildInput {
+    pub provider_kind: ProviderKind,
+    pub connection_id: ConnectionId,
+    pub decrypted_credentials: DecryptedCredentials,
+    pub base_url: Option<String>,
+    pub default_model: Option<ModelId>,
+}
+
+/// Port for building providers from connection data.
+/// Implementations live in apps/rook where all provider crates are available.
+#[async_trait]
+pub trait ProviderBuilderPort: Send + Sync {
+    async fn build(
+        &self,
+        input: ProviderBuildInput,
+    ) -> ManageConnectionsResult<Arc<dyn ProviderPort>>;
 }
 
 #[derive(Debug, Clone)]
@@ -570,11 +630,26 @@ mod tests {
         }
     }
 
+    struct NoopProviderBuilder;
+
+    #[async_trait]
+    impl ProviderBuilderPort for NoopProviderBuilder {
+        async fn build(
+            &self,
+            _input: ProviderBuildInput,
+        ) -> ManageConnectionsResult<Arc<dyn ProviderPort>> {
+            Err(ManageConnectionsError::RegistryUpdateFailed(
+                "NoopProviderBuilder cannot build providers".to_string(),
+            ))
+        }
+    }
+
     fn usecase() -> ManageConnections {
         ManageConnections::new(
             Arc::new(NoopRepository),
             Arc::new(EmptyRegistry),
             Arc::new(PlainKeyManager),
+            Arc::new(NoopProviderBuilder),
         )
     }
 
@@ -709,6 +784,7 @@ mod tests {
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc.list().await;
                 assert!(result.is_ok());
@@ -769,6 +845,7 @@ mod tests {
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc.get(&conn.id).await;
                 assert!(result.is_ok());
@@ -1107,6 +1184,7 @@ mod tests {
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
 
                 let expected_updated_at = conn.updated_at;
@@ -1185,6 +1263,7 @@ mod tests {
                     Arc::new(NotFoundRepo),
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc
                     .update(
@@ -1288,6 +1367,7 @@ mod tests {
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc.delete(&conn.id).await;
                 assert!(result.is_ok());
@@ -1304,6 +1384,7 @@ mod tests {
                     Arc::new(NotFoundRepo),
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc.delete(&ConnectionId::new()).await;
                 assert!(matches!(
@@ -1424,6 +1505,7 @@ mod tests {
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
                 );
                 let result = mc.test(&conn_id).await;
                 assert!(matches!(
@@ -1476,7 +1558,12 @@ mod tests {
                     provider_id: ProviderId::new("openai-primary"),
                     provider: mock_provider,
                 });
-                let mc = ManageConnections::new(repo, registry, Arc::new(PlainKeyManager));
+                let mc = ManageConnections::new(
+                    repo,
+                    registry,
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
 
                 let result = mc.test(&conn_id).await;
                 assert!(result.is_ok());

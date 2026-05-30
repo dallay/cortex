@@ -10,7 +10,9 @@ pub mod router_impl;
 
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use health_check::HealthCheck;
-pub use manage_connections::ManageConnections;
+pub use manage_connections::{
+    ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
+};
 pub use manage_providers::ManageProviders;
 pub use rook_core::RegistryError;
 pub use route_request::RouteRequest;
