@@ -1,4 +1,5 @@
-allowBuilds:
-  lefthook: set this to true or false
+packages:
+  - 'apps/*/npm/*'
+
 onlyBuiltDependencies:
-  - lefthook@2.1.9
+  - lefthook
