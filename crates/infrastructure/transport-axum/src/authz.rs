@@ -563,7 +563,7 @@ async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
         }
     }
 
-    if !config.allow_env_api_key_fallback && config.client_api_auth.is_some() {
+    if !config.allow_env_api_key_fallback && config.client_api_auth.is_none() {
         return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "INVALID_API_KEY");
     }
 

@@ -26,7 +26,9 @@ impl AuthenticateClientApi {
         let Some(subject) = self.repo.find_active_by_hash(&key_hash).await? else {
             return Err(AuthenticateClientApiError::InvalidKey);
         };
-        self.repo.record_last_used(&subject.id, Utc::now()).await?;
+        if let Err(e) = self.repo.record_last_used(&subject.id, Utc::now()).await {
+            tracing::warn!(api_key_id = %subject.id, error = %e, "failed to record last_used (best-effort)");
+        }
         Ok(subject)
     }
 }

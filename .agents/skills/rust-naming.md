@@ -108,7 +108,7 @@ Las convenciones de Rust son enforced por el compilador en algunos casos.
  let bytes: Vec<u8> = string.into_bytes();
  ```
 
-## Para Nuevos Créditos
+## Para Nuevos Crates
 
 Cuando crees un nuevo crate público:
 
