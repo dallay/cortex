@@ -4,13 +4,16 @@
 // - DTO serialization/deserialization for provider CRUD
 // - Error mapping logic used in provider routes
 // - Health status enum migration verification
+//
+// End-to-end HTTP tests use axum-test (see below).
 
 use rook_core::{
-    ConnectionConfig, Credentials, EncryptedBlob, ProviderConnection, ProviderKind,
-    ProviderRegistryPort, QuotaWindowThresholds, RepositoryError, TestStatus,
+    ConnectionConfig, Credentials, EncryptedBlob, ModelId,
+    ProviderConnection, ProviderKind, ProviderRegistryPort, QuotaWindowThresholds,
+    RepositoryError, TestStatus,
 };
 use rook_usecases::manage_connections::ManageConnectionsError;
-use shared_kernel::{ConnectionId, ModelId as SharedModelId, ProviderId};
+use shared_kernel::{ConnectionId, ProviderId};
 
 use transport_axum::provider_dto::{
     ConnectionConfigDto, CreateProviderRequest, CredentialsInput as DtoCredentialsInput,
@@ -39,7 +42,7 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
                 warning: 0.7,
                 error: 0.9,
             },
-            default_model: Some(SharedModelId::new("gpt-4o")),
+            default_model: Some(ModelId::new("gpt-4o")),
             base_url: None,
         },
         test_status: TestStatus::NeverTested,
@@ -49,7 +52,15 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
 }
 
 // ---------------------------------------------------------------------------
-// Tests: ConnectionConfigResponse includes base_url
+// E2E Tests: API routes (require full usecases assembly)
+// ---------------------------------------------------------------------------
+//
+// NOTE: Full end-to-end HTTP tests for provider CRUD require assembling
+// RookUsecases with all ports (CachePort, AuditPort, RouterPort, etc.).
+// These are validated via the integration test suite in rook-usecases
+// which tests ManageConnections directly with in-memory adapters.
+//
+// The DTO and serialization tests below verify the transport layer contract.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -62,7 +73,7 @@ fn connection_config_response_includes_base_url() {
             warning: 0.7,
             error: 0.9,
         },
-        default_model: Some(SharedModelId::new("gpt-4o")),
+        default_model: Some(ModelId::new("gpt-4o")),
         base_url: Some("https://api.openai.com".to_string()),
     };
 
