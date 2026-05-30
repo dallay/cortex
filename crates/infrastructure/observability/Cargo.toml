@@ -10,8 +10,8 @@ rook-core = { path = "../../domain/rook-core" }
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.22"
-metrics-exporter-prometheus = "0.13"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 opentelemetry = "0.32"
 opentelemetry-otlp = "0.32"
 
