@@ -39,6 +39,7 @@
     "edit": "Editar",
     "create": "Crear",
     "search": "Buscar",
-    "noResults": "No se encontraron resultados"
+    "noResults": "No se encontraron resultados",
+    "logout": "Cerrar sesión"
   }
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { LucideIcon } from "@lucide/vue"
-import { ChevronRight } from "@lucide/vue"
+import { useI18n } from 'vue-i18n'
+import type { LucideIcon } from '@lucide/vue'
+import { ChevronRight } from '@lucide/vue'
 import {
   Collapsible,
   CollapsibleContent,
@@ -18,6 +19,8 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar'
 
+const { t } = useI18n()
+
 defineProps<{
   items: {
     title: string
@@ -34,7 +37,7 @@ defineProps<{
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>Platform</SidebarGroupLabel>
+    <SidebarGroupLabel>{{ t('sidebar.platform') }}</SidebarGroupLabel>
     <SidebarMenu>
       <Collapsible v-for="item in items" :key="item.title" as-child :default-open="item.isActive">
         <SidebarMenuItem>

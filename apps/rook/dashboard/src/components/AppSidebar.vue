@@ -1,188 +1,104 @@
 <script setup lang="ts">
-import type { SidebarProps } from '@/components/ui/sidebar'
-
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
-  BookOpen,
-  Bot,
-  Command,
-  Frame,
+  CircleDot,
+  Globe,
+  Home,
+  Key,
   LifeBuoy,
-  Map,
-  PieChart,
+  ListOrdered,
+  Settings,
+  SlidersHorizontal,
   Send,
-  Settings2,
-  SquareTerminal,
-} from "@lucide/vue"
+} from '@lucide/vue'
 
 import NavMain from '@/components/NavMain.vue'
-import NavProjects from '@/components/NavProjects.vue'
 import NavSecondary from '@/components/NavSecondary.vue'
 import NavUser from '@/components/NavUser.vue'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { LocaleSwitcher } from '@/components/ui/locale-switcher'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
 } from '@/components/ui/sidebar'
 
-const props = withDefaults(defineProps<SidebarProps>(), {
-  variant: "inset",
-})
+const { t } = useI18n()
 
-const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
+const data = computed(() => ({
   navMain: [
     {
-      title: "Playground",
-      url: "#",
-      icon: SquareTerminal,
+      title: t('nav.home'),
+      url: '/',
+      icon: Home,
       isActive: true,
+    },
+    {
+      title: t('nav.apiKeys'),
+      url: '/api-keys',
+      icon: Key,
       items: [
-        {
-          title: "History",
-          url: "#",
-        },
-        {
-          title: "Starred",
-          url: "#",
-        },
-        {
-          title: "Settings",
-          url: "#",
-        },
+        { title: t('nav.apiKeysList'), url: '/api-keys' },
+        { title: t('nav.apiKeysCreate'), url: '/api-keys/new' },
       ],
     },
     {
-      title: "Models",
-      url: "#",
-      icon: Bot,
+      title: t('nav.endpoints'),
+      url: '/endpoints',
+      icon: ListOrdered,
+    },
+    {
+      title: t('nav.providers'),
+      url: '/providers',
+      icon: Globe,
       items: [
-        {
-          title: "Genesis",
-          url: "#",
-        },
-        {
-          title: "Explorer",
-          url: "#",
-        },
-        {
-          title: "Quantum",
-          url: "#",
-        },
+        { title: t('nav.providersList'), url: '/providers' },
+        { title: t('nav.providersQuotes'), url: '/providers/quotes' },
       ],
     },
     {
-      title: "Documentation",
-      url: "#",
-      icon: BookOpen,
-      items: [
-        {
-          title: "Introduction",
-          url: "#",
-        },
-        {
-          title: "Get Started",
-          url: "#",
-        },
-        {
-          title: "Tutorials",
-          url: "#",
-        },
-        {
-          title: "Changelog",
-          url: "#",
-        },
-      ],
+      title: t('nav.combos'),
+      url: '/combos',
+      icon: CircleDot,
     },
     {
-      title: "Settings",
-      url: "#",
-      icon: Settings2,
-      items: [
-        {
-          title: "General",
-          url: "#",
-        },
-        {
-          title: "Team",
-          url: "#",
-        },
-        {
-          title: "Billing",
-          url: "#",
-        },
-        {
-          title: "Limits",
-          url: "#",
-        },
-      ],
+      title: t('nav.settings'),
+      url: '/settings',
+      icon: Settings,
     },
   ],
   navSecondary: [
-    {
-      title: "Support",
-      url: "#",
-      icon: LifeBuoy,
-    },
-    {
-      title: "Feedback",
-      url: "#",
-      icon: Send,
-    },
+    { title: 'Support', url: '#', icon: LifeBuoy },
+    { title: 'Feedback', url: '#', icon: Send },
   ],
-  projects: [
-    {
-      name: "Design Engineering",
-      url: "#",
-      icon: Frame,
-    },
-    {
-      name: "Sales & Marketing",
-      url: "#",
-      icon: PieChart,
-    },
-    {
-      name: "Travel",
-      url: "#",
-      icon: Map,
-    },
-  ],
-}
+}))
 </script>
 
 <template>
-  <Sidebar v-bind="props">
+  <Sidebar>
     <SidebarHeader>
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton size="lg" as-child>
-            <a href="#">
-              <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <Command class="size-4" />
-              </div>
-              <div class="grid flex-1 text-left text-sm leading-tight">
-                <span class="truncate font-medium">Acme Inc</span>
-                <span class="truncate text-xs">Enterprise</span>
-              </div>
-            </a>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
+      <div class="flex items-center gap-2 px-2 py-1">
+        <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+          <SlidersHorizontal class="size-4" />
+        </div>
+        <div class="grid flex-1 text-left text-sm leading-tight">
+          <span class="truncate font-medium">Rook</span>
+          <span class="truncate text-xs text-muted-foreground">API Gateway</span>
+        </div>
+      </div>
     </SidebarHeader>
     <SidebarContent>
       <NavMain :items="data.navMain" />
-      <NavProjects :projects="data.projects" />
-      <NavSecondary :items="data.navSecondary" class="mt-auto" />
+      <NavSecondary :items="data.navSecondary" />
     </SidebarContent>
     <SidebarFooter>
-      <NavUser :user="data.user" />
+      <div class="flex items-center justify-between gap-2 px-2 py-1">
+        <LocaleSwitcher />
+        <ThemeToggle />
+      </div>
+      <NavUser />
     </SidebarFooter>
   </Sidebar>
 </template>
