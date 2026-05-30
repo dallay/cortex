@@ -9,7 +9,7 @@ rook-core = { path = "../../domain/rook-core" }
 rook-usecases = { path = "../../application/rook-usecases" }
 
 # Web
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 ring = "0.17"
 tower = "0.5"
