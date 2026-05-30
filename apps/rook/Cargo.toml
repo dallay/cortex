@@ -31,7 +31,7 @@ tracing = "0.1"
 
 # Web
 axum = { version = "0.7", features = ["macros"] }
-tower = "0.4"
+tower = "0.5"
 
 # Config
 toml = "1.1"
