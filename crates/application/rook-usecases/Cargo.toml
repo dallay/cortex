@@ -35,3 +35,9 @@ time = "0.3"
 
 # Random (for WeightedRandom routing)
 rand = "0.8"
+
+# SHA-256 for session token hashing
+sha2 = "0.10"
+
+# Base64 for token encoding
+base64 = "0.22"

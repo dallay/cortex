@@ -33,6 +33,12 @@ tracing = "0.1"
 # Web
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
+bytes = "1"
+
+# Dashboard embedding
+rust-embed = "8"
+mime = "0.3"
+mime_guess = "2"
 
 # Config
 toml = "1.1"

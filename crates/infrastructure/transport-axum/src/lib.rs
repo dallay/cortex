@@ -5,12 +5,15 @@
 
 pub mod anthropic_adapter;
 pub mod authz;
+pub mod handlers;
+pub mod middleware;
 pub mod openai_adapter;
 pub mod provider_dto;
 pub mod provider_routes;
 pub mod routes;
 
 pub use routes::router;
+pub use middleware::{ApiKeyRateLimiter, ApiKeyRateLimitExceeded, CsrfGuard, LoginRateLimiter, RateLimitSnapshot};
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
 

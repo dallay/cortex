@@ -14,12 +14,20 @@ use rook_core::{CompletionRequest, HealthPort, HealthStatus};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
-use super::{anthropic_adapter::*, authz, openai_adapter::*, provider_routes, HttpError};
+use super::{anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*, provider_routes, HttpError};
+use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
 /// Build the axum router with all routes
-pub fn router(usecases: Usecases, authz_config: authz::AuthzConfig) -> Router {
+#[allow(clippy::too_many_arguments)]
+pub fn router(
+    usecases: Usecases,
+    authz_config: authz::AuthzConfig,
+    login_rate_limiter: Arc<LoginRateLimiter>,
+    _api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
+    csrf_guard: Arc<CsrfGuard>,
+) -> Router {
     let max_body_size_bytes = authz_config.max_body_size_bytes();
 
     let mut router = Router::new()
@@ -30,6 +38,10 @@ pub fn router(usecases: Usecases, authz_config: authz::AuthzConfig) -> Router {
         .route("/v1/messages", post(anthropic_messages))
         // Health
         .route("/health", get(health_check))
+        // Auth endpoints
+        .route("/login", post(handlers::auth::login_handler))
+        .route("/login", get(handlers::auth::get_login_handler))
+        .route("/logout", post(handlers::auth::logout_handler))
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
@@ -38,10 +50,69 @@ pub fn router(usecases: Usecases, authz_config: authz::AuthzConfig) -> Router {
 
     router
         .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
+        // Login rate limiter — applied only to POST /login before auth middleware
+        // Extracts client IP from ConnectInfo extension set by axum
+        .layer(middleware::from_fn_with_state(
+            login_rate_limiter.clone(),
+            login_rate_limiter_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             authz_config,
             authz::middleware,
         ))
+        // CSRF guard for state-changing requests on MANAGEMENT routes
+        // Note: This is applied globally but only checks for CSRF on POST/PUT/DELETE
+        // The CSRF middleware skips non-state-changing methods and PUBLIC routes
+        .layer(middleware::from_fn_with_state(
+            csrf_guard,
+            csrf_guard::csrf_guard_middleware,
+        ))
+}
+
+/// Login rate limiter middleware — applies to POST /login only
+pub async fn login_rate_limiter_middleware(
+    State(limiter): State<Arc<LoginRateLimiter>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    // Only apply to POST /login
+    if request.method() != axum::http::Method::POST
+        || request.uri().path() != "/login"
+    {
+        return next.run(request).await;
+    }
+
+    // Extract client IP from extensions (set by tower::ServiceBuilder::layer(axum::middleware::from_fn))
+    let client_ip = extract_client_ip(&request);
+
+    match limiter.check(client_ip).await {
+        Ok(()) => next.run(request).await,
+        Err(rate_limit) => {
+            let body = serde_json::json!({
+                "error": "rate_limit_exceeded",
+                "message": "Too many login attempts. Please try again later.",
+                "code": "RATE_LIMITED",
+                "retry_after": rate_limit.retry_after_secs,
+            });
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(rate_limit.retry_after_secs),
+            );
+            response
+        }
+    }
+}
+
+/// Extract client IP from request extensions or connection info
+fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
+    // Try to get from axum's ConnectInfo extension
+    // Falls back to 127.0.0.1 if not available
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip())
+        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible

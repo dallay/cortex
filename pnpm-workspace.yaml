@@ -1,4 +1,11 @@
 allowBuilds:
+  esbuild: true
   lefthook: true
+  vue-demi: false
+
 onlyBuiltDependencies:
   - lefthook@2.1.9
+  - esbuild@*
+
+packages:
+  - 'apps/rook/dashboard'

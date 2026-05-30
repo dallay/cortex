@@ -5,10 +5,16 @@
 //   - FallbackRouter: priority/round-robin/weighted routing with circuit breaker
 //   - ManageProviders: health checks, enable/disable providers
 
+pub mod auth;
 pub mod route_request;
 pub mod router_impl;
 
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
+pub use auth::{
+    EnsureAdminUser, Login, LoginError, LoginInput, LoginOutput, Logout, LogoutError,
+    LogoutInput, SetAdminPassword, SetAdminPasswordError, SetAdminPasswordInput, ValidateSession,
+    ValidateSessionError, ValidatedSession,
+};
 pub use health_check::HealthCheck;
 pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
@@ -30,4 +36,25 @@ pub struct RookUsecases {
     pub health_check: HealthCheck,
     pub authenticate_client_api: Option<AuthenticateClientApi>,
     pub manage_connections: Option<ManageConnections>,
+    pub ensure_admin_user: EnsureAdminUser,
+    pub set_admin_password: SetAdminPassword,
+    pub login: Login,
+    pub logout: Logout,
+}
+
+impl RookUsecases {
+    /// Revoke a session given its token_hash (from the raw cookie value).
+    /// This is used by the logout handler which receives the raw cookie value.
+    #[allow(dead_code)]
+    pub async fn revoke_session_by_token_hash(
+&self,
+        _token_hash: &str,
+    ) -> Result<(), auth::LogoutError> {
+        // The logout use case expects a session_id, but we have token_hash.
+        // We need to look up the session first... but session_repo is private.
+        // For now, this is a placeholder - actual implementation requires
+        // exposing session lookup or a different approach.
+        // TODO: Add session_repo to RookUsecases or add a find_by_token_hash method
+        Err(auth::LogoutError::SessionNotFound)
+    }
 }

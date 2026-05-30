@@ -1,0 +1,44 @@
+{
+  "nav": {
+    "home": "Inicio",
+    "apiKeys": "Claves API",
+    "apiKeysList": "Listar",
+    "apiKeysCreate": "Crear",
+    "endpoints": "Endpoints",
+    "providers": "Proveedores",
+    "providersList": "Listar",
+    "providersQuotes": "Cotizaciones",
+    "combos": "Combos",
+    "settings": "Configuración"
+  },
+  "sidebar": {
+    "platform": "Plataforma"
+  },
+  "breadcrumb": {
+    "home": "Inicio",
+    "apiKeys": "Claves API",
+    "apiKeysList": "Listar",
+    "apiKeysCreate": "Crear Nueva Clave",
+    "endpoints": "Endpoints",
+    "providers": "Proveedores",
+    "providersQuotes": "Cotizaciones de Proveedores",
+    "combos": "Combos",
+    "settings": "Configuración"
+  },
+  "theme": {
+    "toggle": "Cambiar tema",
+    "light": "Cambiar a modo claro",
+    "dark": "Cambiar a modo oscuro"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "error": "Ocurrió un error",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "create": "Crear",
+    "search": "Buscar",
+    "noResults": "No se encontraron resultados"
+  }
+}
