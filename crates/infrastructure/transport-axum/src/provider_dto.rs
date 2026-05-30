@@ -103,6 +103,7 @@ pub struct ConnectionConfigResponse {
     #[serde(rename = "quotaWindowThresholds")]
     pub quota_window_thresholds: QuotaWindowThresholdsResponse,
     pub default_model: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +205,7 @@ impl From<&ConnectionConfig> for ConnectionConfigResponse {
                 error: config.quota_window_thresholds.error,
             },
             default_model: config.default_model.as_ref().map(ToString::to_string),
+            base_url: config.base_url.clone(),
         }
     }
 }

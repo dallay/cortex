@@ -57,10 +57,10 @@ Cada item público debe tener documentación que explique:
  //! ## Usage
  //!
  //! ```rust,ignore
- //! let provider = OpenAiProvider::new(config);
- //! ```
+//! let provider = OpenAiProvider::new(config);
+  //! ```
 
- ### 3. doc-examples-section
+### 3. doc-examples-section
  > Incluye `# Examples` con código ejecutable.
 
  ```rust
@@ -69,9 +69,11 @@ Cada item público debe tener documentación que explique:
  /// # Examples
  ///
  /// ```
- /// use rook_core::CompletionRequest;
- /// let request = CompletionRequest::new("gpt-4", "Hello").unwrap();
- /// ```
+/// use rook_core::CompletionRequest;
+  /// fn parse_request(model: &str, prompt: &str) -> Result<CompletionRequest, ParseError> {
+  ///     Ok(CompletionRequest::new(model, prompt)?)
+  /// }
+  /// ```
  pub fn new(model: &str, prompt: &str) -> Result<Self, ParseError> { ... }
  ```
 

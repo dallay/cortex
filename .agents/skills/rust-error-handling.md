@@ -7,27 +7,27 @@ Patrones de error handling para Rust, adaptados para el monorepo Cortex.
 ## Propósito
 
 Estandarizar el manejo de errores en todo el codebase, respetando el patrón
-de domain-driven errors establecido con CtxError.
+de domain-driven errors establecido con NuxaError.
 
 ## Arquitectura de Errores en Cortex
 
- ```
- shared-kernel (sin deps)
-   └── CtxError (error wrapper con Box<dyn Error>)
-       ├── ProviderError
-       ├── NotFoundError
-       ├── RateLimitedError
-       └── AllProvidersExhaustedError
+  ```
+  shared-kernel (sin deps)
+    └── NuxaError (error wrapper con Box<dyn Error>)
+        ├── ProviderError
+        ├── NotFoundError
+        ├── RateLimitedError
+        └── AllProvidersExhaustedError
 
- rook-core (domain)
-   └── Define ports con CtxResult<T>
+  rook-core (domain)
+    └── Define ports con NuxaResult<T>
 
- transport-axum (infrastructure)
-   └── Adapta errores de providers a CtxError
+  transport-axum (infrastructure)
+    └── Adapta errores de providers a NuxaError
 
- apps/rook (application)
-   └── Maneja errores, logging, respuesta HTTP
- ```
+  apps/rook (application)
+    └── Maneja errores, logging, respuesta HTTP
+  ```
 
 Este patrón es MEJOR que anyhow para código de biblioteca/domain porque:
 
@@ -44,13 +44,13 @@ Este patrón es MEJOR que anyhow para código de biblioteca/domain porque:
 Ya lo usamos bien en shared-kernel. Mantener este padrão.
 
  ```rust
- #[derive(Debug, thiserror::Error)]
- #[error(transparent)]
- pub struct CtxError {
-     #[from]
-     source: Box<dyn std::error::Error + Send + Sync + 'static>,
- }
- ```
+#[derive(Debug, thiserror::Error)]
+  #[error(transparent)]
+  pub struct NuxaError {
+      #[from]
+      source: Box<dyn std::error::Error + Send + Sync + 'static>,
+  }
+  ```
 
 **NO usar anyhow en crates de dominio.** Anyhow es para aplicación/binaries.
 
@@ -58,13 +58,13 @@ Ya lo usamos bien en shared-kernel. Mantener este padrão.
 
 > Implementa From<E> para conversiones automáticas.
 
- ```rust
- impl From<std::io::Error> for CtxError {
-     fn from(err: std::io::Error) -> Self {
-         Self::provider(err.to_string())
-     }
- }
- ```
+  ```rust
+  impl From<std::io::Error> for NuxaError {
+      fn from(err: std::io::Error) -> Self {
+          Self::provider(err.to_string())
+      }
+  }
+  ```
 
 Esto permite `?` operator automáticamente.
 
@@ -74,19 +74,19 @@ Esto permite `?` operator automáticamente.
 
 Encontrado en provider implementations y adapters.
 
- ```rust
- // BAD
- fn complete(&self, req: &CompletionRequest) -> CtxResult<CompletionResponse> {
-     Ok(self.client.post(&url).unwrap()) // Panic on error!
- }
+  ```rust
+  // BAD
+  fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+      Ok(self.client.post(&url).unwrap()) // Panic on error!
+  }
 
- // GOOD
- fn complete(&self, req: &CompletionRequest) -> CtxResult<CompletionResponse> {
-     self.client.post(&url)
-         .await
-         .map_err(|e| CtxError::provider(e.to_string()))
- }
- ```
+  // GOOD
+  fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+      self.client.post(&url)
+          .await
+          .map_err(|e| NuxaError::provider(e.to_string()))
+  }
+  ```
 
 Excepciones válidas:
 
@@ -138,7 +138,7 @@ Decision guide:
 | Situación                          | Use                                |
  |------------------------------------|------------------------------------|
 | Provider no disponible             | `Result`                           |
-| Rate limited                       | `Result` (CtxError::rate_limited) |
+| Rate limited                       | `Result` (NuxaError::rate_limited) |
 | Index out of bounds (user data)    | `Result`                           |
 | Index out of bounds (internal bug) | `panic!` con expect                |
 | Invariant violated (program bug)   | `panic!`                           |
@@ -185,8 +185,8 @@ Decision guide:
      // Caller no puede matchear específicamente
  }
 
- // ✅ USAR CtxError con tipos domain-specific
- fn good() -> CtxResult<Response> {
+// ✅ USAR NuxaError con tipos domain-specific
+  fn good() -> NuxaResult<Response> {
      // Callers pueden hacer:
      // match err {
      //     e if e.is_rate_limited() => handle_rate_limit(e),
@@ -197,8 +197,8 @@ Decision guide:
 
 ## Archivos Relacionados
 
-- `crates/domain/shared-kernel/src/error.rs` — CtxError y variants
-- `crates/domain/rook-core/src/` — Ports con CtxResult
+- `crates/domain/shared-kernel/src/error.rs` — NuxaError y variants
+- `crates/domain/rook-core/src/` — Ports con NuxaResult
 - `crates/infrastructure/providers-*/src/` — Provider implementations
 
 ## See Also

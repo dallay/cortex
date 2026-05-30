@@ -309,9 +309,13 @@ mod tests {
                 .await
                 .expect("record last used");
 
-            assert_eq!(
-                repo.last_used_at_for_test(&id).expect("last used"),
-                Some(used_at)
+            let stored = repo.last_used_at_for_test(&id).expect("last used");
+            assert!(stored.is_some(), "last_used should be recorded");
+            // Fuzzy comparison: SQLite datetime storage may truncate microseconds
+            let diff = (stored.unwrap() - used_at).num_milliseconds().abs();
+            assert!(
+                diff < 1000,
+                "last_used should be within 1 second of used_at"
             );
         });
     }

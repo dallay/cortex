@@ -82,8 +82,8 @@ Especialmente crítico en providers y use cases. El código de transporte
  let response = provider.complete(req).unwrap();
 
  // GOOD
- let response = provider.complete(req)
-     .map_err(|e| CtxError::provider(e.to_string()))?;
+let response = provider.complete(req)
+      .map_err(|e| NuxaError::provider(e.to_string()))?;
  ```
 
 Excepciones válidas:

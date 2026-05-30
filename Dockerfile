@@ -8,11 +8,10 @@ LABEL org.opencontainers.image.source="https://github.com/dallay/cortex"
 LABEL org.opencontainers.image.description="AI proxy/router for LLM requests with fallback, caching, and audit logging"
 
 # Install runtime dependencies only
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN useradd -m -u 1000 rook

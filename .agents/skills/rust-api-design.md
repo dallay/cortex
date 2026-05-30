@@ -22,9 +22,9 @@ En Cortex ya lo hacemos con ProviderPort. Es la forma correcta.
      pub trait Sealed {}
  }
 
- pub trait ProviderPort: private::Sealed {
-     async fn complete(&self, req: &CompletionRequest) -> CtxResult<CompletionResponse>;
- }
+pub trait ProviderPort: private::Sealed {
+      async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse>;
+  }
 
  // Solo providers internos pueden implementar
  impl private::Sealed for OpenAiProvider {}

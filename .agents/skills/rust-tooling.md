@@ -11,7 +11,7 @@ El tooling correcto hace todo el equipo más productivo.
 
 ## Herramientas Principales
 
-### 1. cargo-make
+### 1. just
 
 Task runner para automatizar workflows.
 

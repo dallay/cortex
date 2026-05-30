@@ -65,8 +65,8 @@ impl RookContainer {
         let registry: Arc<dyn ProviderRegistryPort> = fallback_router;
 
         let manage_connections = if config.provider_crud.enabled {
-            let passphrase = required_env("ENCRYPTION_PASSPHRASE")?;
-            let salt = required_env("ENCRYPTION_SALT")?;
+            let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
+            let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
             let key_manager = Arc::new(
                 AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
                     .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
@@ -85,7 +85,7 @@ impl RookContainer {
         };
 
         let authenticate_client_api = if config.auth.api_keys.enabled {
-            let hash_secret = required_env("API_KEY_HASH_SECRET")?;
+            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
             let repo: Arc<dyn ApiKeyRepositoryPort> =
                 Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
             Some(AuthenticateClientApi::new(repo, hash_secret))
@@ -114,11 +114,11 @@ impl RookContainer {
     }
 }
 
-fn required_env(name: &str) -> anyhow::Result<String> {
-    let value = std::env::var(name)
-        .map_err(|_| anyhow::anyhow!("{name} is required when provider_crud.enabled=true"))?;
+fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
+    let value =
+        std::env::var(name).map_err(|_| anyhow::anyhow!("{name} is required when {context}"))?;
     if value.trim().is_empty() {
-        anyhow::bail!("{name} must not be empty when provider_crud.enabled=true");
+        anyhow::bail!("{name} must not be empty when {context}");
     }
     Ok(value)
 }
