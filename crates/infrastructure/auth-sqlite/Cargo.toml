@@ -1,0 +1,17 @@
+[package]
+name = "auth-sqlite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rook-core = { path = "../../domain/rook-core" }
+shared-kernel = { path = "../../domain/shared-kernel" }
+
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

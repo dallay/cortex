@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
 
+use super::{ApiKeyId, ApiKeyRepositoryError, ApiKeySubject, ProviderConnection, RepositoryError};
 use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
-use super::{ProviderConnection, RepositoryError};
 
 /// ---------------------------------------------------------------------------
 /// ProviderPort — the primary port for LLM providers
@@ -105,9 +105,23 @@ pub trait HealthPort: Send + Sync {
 // ProviderRegistryPort — lookup for runtime providers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum RegistryError {
+    #[error("provider build failed for '{provider_id}': {reason}")]
+    ProviderBuildFailed {
+        provider_id: ProviderId,
+        reason: String,
+    },
+    #[error("registry locked")]
+    RegistryLocked,
+}
+
 pub trait ProviderRegistryPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;
+    fn replace_all(&self, providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError>;
+    fn upsert(&self, provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError>;
+    fn remove(&self, id: &ProviderId) -> Result<(), RegistryError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +139,24 @@ pub trait ProviderRepositoryPort: Send + Sync {
         expected_updated_at: DateTime<Utc>,
     ) -> Result<(), RepositoryError>;
     async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// ApiKeyRepositoryPort — persistence for client API key subjects
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait ApiKeyRepositoryPort: Send + Sync {
+    async fn find_active_by_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError>;
+
+    async fn record_last_used(
+        &self,
+        id: &ApiKeyId,
+        used_at: DateTime<Utc>,
+    ) -> Result<(), ApiKeyRepositoryError>;
 }
 
 // ---------------------------------------------------------------------------

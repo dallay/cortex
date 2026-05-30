@@ -39,13 +39,15 @@ timeout_secs = 60
 
 **Health check behavior:**
 - Makes a `GET /models` request to `base_url`
-- Returns `is_healthy: true` if response is 2xx
-- Returns `is_healthy: false` with HTTP status as `last_error` on non-2xx
-- Returns `is_healthy: false` with connection error as `last_error` on failure
+- Returns `HealthStatus::Healthy` if response is 2xx
+- Returns `HealthStatus::Unhealthy` with error message on non-2xx or connection failure
+
+**Health status enum:**
+Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provider, latency_ms, error }`, or `Unknown { provider, reason }`. The `/health` endpoint renders backwards-compatible JSON with `healthy` (bool), `latency_ms`, and `last_error` derived from the enum.
 
 **Implementation status:**
 - `complete()` — ✅ Implemented
-- `stream()` — ❌ Not yet implemented (returns `Err(NuxaError::provider("streaming not yet implemented"))`)
+- `stream()` — ❌ Not yet implemented
 
 ---
 
@@ -71,7 +73,7 @@ timeout_secs = 60
 ```
 
 **Health check behavior:**
-- Placeholder: always returns `is_healthy: true` with `latency_ms` (no actual network check)
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
 - TODO: real health check against Anthropic API
 
 **Implementation status:**
@@ -101,7 +103,8 @@ timeout_secs = 300
 ```
 
 **Health check behavior:**
-- Always returns `is_healthy: true` (no health check implementation)
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check (e.g., `GET /api/tags`)
 
 **Implementation status:**
@@ -131,7 +134,8 @@ timeout_secs = 60
 ```
 
 **Health check behavior:**
-- Placeholder: always returns `is_healthy: true`
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**
@@ -159,7 +163,8 @@ timeout_secs = 60
 ```
 
 **Health check behavior:**
-- Placeholder: always returns `is_healthy: true`
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**

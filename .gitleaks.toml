@@ -1,0 +1,35 @@
+[[rules]]
+id = "generic_api_key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey|api[_-]?token|apitoken)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
+
+[[rules]]
+id = "aws_access_key"
+description = "AWS Access Key"
+regex = '''AKIA[0-9A-Z]{16}'''
+
+[[rules]]
+id = "aws_secret_key"
+description = "AWS Secret Key"
+regex = '''(?i)aws[_-]?secret[_-]?access[_-]?key\s*[=:]\s*['"]?[a-zA-Z0-9/+=]{40}'''
+
+[[rules]]
+id = "generic_secret"
+description = "Generic Secret"
+regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
+
+[[rules]]
+id = "openai_gcp_hf_api_key"
+description = "OpenAI/GCP/Hugging Face API Key pattern"
+regex = '''sk-[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35}|hf_[a-zA-Z0-9]{34,}'''
+
+[allowlist]
+paths = [
+  '''node_modules/.*''',
+  '''target/.*''',
+  '''\.git/.*''',
+  '''\.github/workflows/.*''',
+  '''reports/.*''',
+  '''.*\.lock''',
+  '''.*\.md''',
+]

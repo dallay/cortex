@@ -45,6 +45,7 @@ pub struct ConnectionConfig {
     pub max_concurrent: u32,
     pub quota_window_thresholds: QuotaWindowThresholds,
     pub default_model: Option<ModelId>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

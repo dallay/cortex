@@ -19,8 +19,7 @@ use super::{anthropic_adapter::*, authz, openai_adapter::*, provider_routes, Htt
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
 /// Build the axum router with all routes
-pub fn router(usecases: Usecases) -> Router {
-    let authz_config = authz::AuthzConfig::from_env();
+pub fn router(usecases: Usecases, authz_config: authz::AuthzConfig) -> Router {
     let max_body_size_bytes = authz_config.max_body_size_bytes();
 
     let mut router = Router::new()
@@ -34,7 +33,7 @@ pub fn router(usecases: Usecases) -> Router {
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
-        router = router.merge(provider_routes::router(usecases));
+        router = router.merge(provider_routes::router(usecases.clone()));
     }
 
     router

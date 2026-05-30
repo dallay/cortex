@@ -159,7 +159,7 @@ const SELECT_PROVIDER_CONNECTIONS: &str = "
     SELECT id, provider_kind, provider_runtime_id, name, auth_type,
            priority, is_active, api_key_ct, oauth_email_ct, access_token_ct,
            refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
-           max_concurrent, quota_warning, quota_error, default_model,
+           max_concurrent, quota_warning, quota_error, default_model, base_url,
            test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
            created_at, updated_at
     FROM provider_connections";
@@ -172,12 +172,12 @@ const INSERT_PROVIDER_CONNECTION: &str = "
         priority, is_active,
         api_key_ct, oauth_email_ct, access_token_ct,
         refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
-        max_concurrent, quota_warning, quota_error, default_model,
+        max_concurrent, quota_warning, quota_error, default_model, base_url,
         test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
         created_at, updated_at
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
     )";
 
 const UPDATE_PROVIDER_CONNECTION: &str = "
@@ -200,13 +200,14 @@ const UPDATE_PROVIDER_CONNECTION: &str = "
         quota_warning = ?17,
         quota_error = ?18,
         default_model = ?19,
-        test_status = ?20,
-        test_latency_ms = ?21,
-        test_error = ?22,
-        test_expires_at = ?23,
-        last_test_at = ?24,
-        updated_at = ?26
-    WHERE id = ?1 AND updated_at = ?27";
+        base_url = ?20,
+        test_status = ?21,
+        test_latency_ms = ?22,
+        test_error = ?23,
+        test_expires_at = ?24,
+        last_test_at = ?25,
+        updated_at = ?27
+    WHERE id = ?1 AND updated_at = ?28";
 
 fn provider_params(
     conn: &ProviderConnection,
@@ -250,6 +251,7 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
         f64::from(conn.config.quota_window_thresholds.warning).into(),
         f64::from(conn.config.quota_window_thresholds.error).into(),
         optional_string(conn.config.default_model.as_ref().map(ToString::to_string)),
+        optional_string(conn.config.base_url.as_ref().map(ToString::to_string)),
         serialize_test_status(&conn.test_status).to_string().into(),
         conn.test_status
             .latency_ms()
@@ -348,6 +350,7 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             default_model: row
                 .get::<_, Option<String>>("default_model")?
                 .map(ModelId::new),
+            base_url: row.get("base_url")?,
         },
         test_status: parse_test_status(
             test_status.as_str(),
@@ -564,6 +567,7 @@ mod tests {
                     error: 0.9,
                 },
                 default_model: None,
+                base_url: None,
             },
             test_status: TestStatus::NeverTested,
             created_at,
@@ -623,6 +627,49 @@ mod tests {
                 repo.update(&duplicate, expected).await,
                 Err(RepositoryError::DuplicateConnection(_))
             ));
+        });
+    }
+
+    #[test]
+    fn delete_returns_not_found_for_nonexistent_id() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.delete(&ConnectionId::new()).await;
+            assert!(matches!(result, Err(RepositoryError::NotFound(_))));
+        });
+    }
+
+    #[test]
+    fn create_duplicate_name_reports_duplicate_connection() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let first = connection("shared-name", 1, timestamp("2026-01-01T00:00:00Z"));
+            repo.create(&first).await.expect("first");
+
+            let second = connection("shared-name", 2, timestamp("2026-01-02T00:00:00Z"));
+            let result = repo.create(&second).await;
+            assert!(matches!(
+                result,
+                Err(RepositoryError::DuplicateConnection(_))
+            ));
+        });
+    }
+
+    #[test]
+    fn list_returns_empty_when_no_connections() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.list().await.expect("list");
+            assert!(result.is_empty());
+        });
+    }
+
+    #[test]
+    fn find_returns_none_for_nonexistent_id() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo.find(&ConnectionId::new()).await.expect("find");
+            assert!(result.is_none());
         });
     }
 }

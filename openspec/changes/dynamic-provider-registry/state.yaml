@@ -1,0 +1,35 @@
+change: dynamic-provider-registry
+current_phase: sdd-apply
+completed:
+  - init
+  - sdd-spec
+  - sdd-design
+  - sdd-tasks
+  - sdd-apply
+next: PR1 complete — ready for PR2 (DI wiring + build_provider_from_connection)
+updated: "2026-05-30T01:30:00Z"
+pr1_status: |
+  PR1 (Phases 1-4) COMPLETE. All foundation work done:
+  - RegistryError enum added to ports.rs
+  - ProviderRegistryPort extended with replace_all/upsert/remove
+  - DecryptedCredentials enum created in rook-core
+  - ConnectionConfig.base_url added
+  - FallbackRouter.providers changed to Arc<RwLock<Vec<...>>>
+  - FallbackRouter::new_empty() constructor added
+  - parking_lot RwLock used (not tokio::sync::RwLock — different types for different use cases)
+  - round_robin_index uses AsyncRwLock (tokio) for .write().await
+  - refresh_registry() implemented in ManageConnections (stub — calls replace_all(Vec::new()))
+  - decrypt_credentials() implemented
+  - RegistryUpdateFailed error added to ManageConnectionsError
+  - Mock registries in tests updated with replace_all/upsert/remove
+  - All base_url fields added to test fixtures
+  - clippy warnings fixed (map_clone)
+  - Tests: 37 passed in rook-usecases, 5 passed in rook-core
+notes: |
+  Key implementation decisions made during PR1:
+  - parking_lot::RwLock for providers (sync, no async needed for interior mutability reads)
+  - tokio::sync::RwLock (AsyncRwLock) for round_robin_index (needs .write().await in async context)
+  - available_providers() returns Vec<Arc<dyn ProviderPort>> (owned clones, not refs to guard)
+  - All lock guards used without .unwrap() (parking_lot RwLock guards are not futures)
+  - DecryptedCredentials lives in rook-core, refresh_registry is a stub in PR1 (full build in PR2)
+  - parking_lot added as explicit dep to rook-usecases/Cargo.toml

@@ -5,6 +5,7 @@ members = [
     "crates/domain/rook-core",
     "crates/application/rook-usecases",
     "crates/infrastructure/transport-axum",
+    "crates/infrastructure/auth-sqlite",
     "crates/infrastructure/cache-memory",
     "crates/infrastructure/audit-sqlite",
     "crates/infrastructure/observability",
