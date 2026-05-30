@@ -12,8 +12,10 @@ pub mod provider_dto;
 pub mod provider_routes;
 pub mod routes;
 
+pub use middleware::{
+    ApiKeyRateLimitExceeded, ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter, RateLimitSnapshot,
+};
 pub use routes::router;
-pub use middleware::{ApiKeyRateLimiter, ApiKeyRateLimitExceeded, CsrfGuard, LoginRateLimiter, RateLimitSnapshot};
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
 

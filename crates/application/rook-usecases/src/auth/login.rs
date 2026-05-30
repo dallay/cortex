@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rook_core::{
-    PasswordHasher, SessionId, SessionRepositoryError, SessionRepositoryPort,
-    UserRepositoryError, UserRepositoryPort,
+    PasswordHasher, SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryError,
+    UserRepositoryPort,
 };
 use sha2::{Digest, Sha256};
 
@@ -45,10 +45,7 @@ impl Login {
     /// - SHA-256(token) → `token_hash`
     /// - `session_repo.create()` → `SessionCreationFailed` on error
     pub async fn execute(&self, input: LoginInput) -> Result<LoginOutput, LoginError> {
-        let LoginInput {
-            username,
-            password,
-        } = input;
+        let LoginInput { username, password } = input;
 
         // Step 1: Find user
         let user = self
@@ -59,12 +56,18 @@ impl Login {
             .ok_or(LoginError::UserNotFound)?;
 
         // Step 2: Check password_hash is not NULL
-        let password_hash = user.password_hash.as_deref().ok_or(LoginError::PasswordNotSet)?;
+        let password_hash = user
+            .password_hash
+            .as_deref()
+            .ok_or(LoginError::PasswordNotSet)?;
 
         // Step 3: Verify password
         let verified = self
             .hasher
-            .verify_password(&password, &rook_core::PasswordHash::from(password_hash.to_string()))
+            .verify_password(
+                &password,
+                &rook_core::PasswordHash::from(password_hash.to_string()),
+            )
             .map_err(|_| LoginError::PasswordHashError)?;
 
         if !verified {
@@ -144,8 +147,7 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use rook_core::{
-        NewSession, NewUser, PasswordHash, Session, SessionId, SessionRepositoryPort, User,
-        UserId,
+        NewSession, NewUser, PasswordHash, Session, SessionId, SessionRepositoryPort, User, UserId,
     };
 
     fn runtime() -> tokio::runtime::Runtime {
@@ -173,7 +175,7 @@ mod tests {
     #[async_trait]
     impl UserRepositoryPort for FakeUserRepository {
         async fn find_by_username(
-           &self,
+            &self,
             username: &str,
         ) -> Result<Option<User>, UserRepositoryError> {
             assert_eq!(username, "admin");
@@ -263,7 +265,9 @@ mod tests {
                     revoked: false,
                 }),
             });
-            let hasher = Arc::new(FakePasswordHasher { verify_result: true });
+            let hasher = Arc::new(FakePasswordHasher {
+                verify_result: true,
+            });
             let login = Login::new(user_repo, session_repo, hasher);
 
             let result = login
@@ -295,7 +299,9 @@ mod tests {
                     revoked: false,
                 }),
             });
-            let hasher = Arc::new(FakePasswordHasher { verify_result: false });
+            let hasher = Arc::new(FakePasswordHasher {
+                verify_result: false,
+            });
             let login = Login::new(user_repo, session_repo, hasher);
 
             let result = login
@@ -327,7 +333,9 @@ mod tests {
                     revoked: false,
                 }),
             });
-            let hasher = Arc::new(FakePasswordHasher { verify_result: true });
+            let hasher = Arc::new(FakePasswordHasher {
+                verify_result: true,
+            });
             let login = Login::new(user_repo, session_repo, hasher);
 
             let result = login
@@ -357,7 +365,9 @@ mod tests {
                     revoked: false,
                 }),
             });
-            let hasher = Arc::new(FakePasswordHasher { verify_result: true });
+            let hasher = Arc::new(FakePasswordHasher {
+                verify_result: true,
+            });
             let login = Login::new(user_repo, session_repo, hasher);
 
             let result = login

@@ -97,9 +97,7 @@ impl LoginRateLimiter {
     /// Returns `Err(RateLimitExceeded)` if rate limited.
     pub async fn check(&self, ip: IpAddr) -> Result<(), RateLimitExceeded> {
         let mut buckets = self.buckets.lock().await;
-        let bucket = buckets
-            .entry(ip)
-            .or_insert_with(TokenBucket::new);
+        let bucket = buckets.entry(ip).or_insert_with(TokenBucket::new);
 
         if bucket.try_consume() {
             Ok(())

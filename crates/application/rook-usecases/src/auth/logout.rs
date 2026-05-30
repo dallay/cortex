@@ -27,9 +27,9 @@ impl Logout {
             .await
             .map_err(|e| match e {
                 SessionRepositoryError::NotFound(_) => LogoutError::SessionNotFound,
-                SessionRepositoryError::Database(msg) => LogoutError::RevocationFailed(
-                    SessionRepositoryError::Database(msg),
-                ),
+                SessionRepositoryError::Database(msg) => {
+                    LogoutError::RevocationFailed(SessionRepositoryError::Database(msg))
+                }
             })
     }
 }
@@ -68,11 +68,7 @@ mod tests {
 
     #[async_trait]
     impl SessionRepositoryPort for FakeSessionRepository {
-        async fn create(
-&self,
-            _: &NewSession,
-            _: &str,
-        ) -> Result<Session, SessionRepositoryError> {
+        async fn create(&self, _: &NewSession, _: &str) -> Result<Session, SessionRepositoryError> {
             unreachable!()
         }
 

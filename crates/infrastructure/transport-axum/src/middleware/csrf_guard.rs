@@ -52,7 +52,11 @@ impl CsrfGuard {
     }
 
     /// Validate cookie and header values using constant-time comparison
-    pub fn validate(&self, cookie_value: Option<&str>, header_value: Option<&str>) -> CsrfValidation {
+    pub fn validate(
+        &self,
+        cookie_value: Option<&str>,
+        header_value: Option<&str>,
+    ) -> CsrfValidation {
         let cookie = match cookie_value {
             Some(v) => v,
             None => return CsrfValidation::MissingCookie,
@@ -132,15 +136,16 @@ pub async fn csrf_guard_middleware(
         CsrfValidation::MissingCookie | CsrfValidation::MissingHeader => {
             csrf_error_response("csrf_missing", "CSRF token required")
         }
-        CsrfValidation::Mismatch => {
-            csrf_error_response("csrf_mismatch", "CSRF token mismatch")
-        }
+        CsrfValidation::Mismatch => csrf_error_response("csrf_mismatch", "CSRF token mismatch"),
     }
 }
 
 /// Check if the HTTP method is state-changing
 fn is_state_changing_method(method: &Method) -> bool {
-    matches!(method, &Method::POST | &Method::PUT | &Method::DELETE | &Method::PATCH)
+    matches!(
+        method,
+        &Method::POST | &Method::PUT | &Method::DELETE | &Method::PATCH
+    )
 }
 
 /// Extract a cookie value from headers
@@ -195,7 +200,9 @@ mod tests {
         let token = guard.generate_token().expect("Should generate token");
 
         // Should be base64url encoded (32 bytes = ~43 chars base64)
-        let decoded = URL_SAFE_NO_PAD.decode(&token).expect("Should be valid base64");
+        let decoded = URL_SAFE_NO_PAD
+            .decode(&token)
+            .expect("Should be valid base64");
         assert_eq!(decoded.len(), 32);
     }
 

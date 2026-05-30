@@ -95,7 +95,7 @@ mod tests {
     #[async_trait]
     impl UserRepositoryPort for FakeUserRepository {
         async fn find_by_username(
-&self,
+            &self,
             username: &str,
         ) -> Result<Option<User>, UserRepositoryError> {
             assert_eq!(username, "admin");
@@ -178,7 +178,9 @@ mod tests {
     fn propagates_repository_error_on_find() {
         runtime().block_on(async {
             let repo = Arc::new(FakeUserRepository {
-                find_result: Some(Err(UserRepositoryError::Database("connection lost".to_string()))),
+                find_result: Some(Err(UserRepositoryError::Database(
+                    "connection lost".to_string(),
+                ))),
                 create_result: Ok(admin_user()),
                 find_after_duplicate: None,
             });

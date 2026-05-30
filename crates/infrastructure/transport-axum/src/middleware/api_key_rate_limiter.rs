@@ -153,10 +153,7 @@ impl ApiKeyRateLimiter {
     #[allow(dead_code)]
     pub async fn tokens_for(&self, key_id: &str) -> f64 {
         let buckets = self.buckets.lock().await;
-        buckets
-            .get(key_id)
-            .map(|b| b.tokens())
-            .unwrap_or(100.0) // Default capacity
+        buckets.get(key_id).map(|b| b.tokens()).unwrap_or(100.0) // Default capacity
     }
 
     /// Reset rate limit for a key (for testing)
@@ -201,7 +198,9 @@ mod tests {
     #[tokio::test]
     async fn first_request_is_allowed() {
         let limiter = ApiKeyRateLimiter::new();
-        let result = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check("key_1", ApiKeyTier::Free, Some(localhost()))
+            .await;
         assert!(result.is_ok());
     }
 
@@ -219,10 +218,14 @@ mod tests {
         let limiter = ApiKeyRateLimiter::new();
         // Exhaust the bucket
         for _ in 0..100 {
-            let _ = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+            let _ = limiter
+                .check("key_1", ApiKeyTier::Free, Some(localhost()))
+                .await;
         }
         // Next request should be rate limited
-        let result = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check("key_1", ApiKeyTier::Free, Some(localhost()))
+            .await;
         assert!(result.is_err());
     }
 
@@ -231,9 +234,13 @@ mod tests {
         let limiter = ApiKeyRateLimiter::new();
         // Exhaust the bucket
         for _ in 0..100 {
-            let _ = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+            let _ = limiter
+                .check("key_1", ApiKeyTier::Free, Some(localhost()))
+                .await;
         }
-        let result = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check("key_1", ApiKeyTier::Free, Some(localhost()))
+            .await;
         let err = result.expect_err("Should be rate limited");
         assert!(err.retry_after_secs >= 1);
         assert!(err.limit == 100);
@@ -246,11 +253,15 @@ mod tests {
 
         // Exhaust key_1's bucket
         for _ in 0..100 {
-            let _ = limiter.check("key_1", ApiKeyTier::Free, Some(localhost())).await;
+            let _ = limiter
+                .check("key_1", ApiKeyTier::Free, Some(localhost()))
+                .await;
         }
 
         // key_2 should still be allowed
-        let result = limiter.check("key_2", ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check("key_2", ApiKeyTier::Free, Some(localhost()))
+            .await;
         assert!(result.is_ok());
     }
 
@@ -260,19 +271,27 @@ mod tests {
 
         // Exhaust Free tier for key1 (100 requests)
         for _ in 0..100 {
-            let _ = limiter.check("key1", ApiKeyTier::Free, Some(localhost())).await;
+            let _ = limiter
+                .check("key1", ApiKeyTier::Free, Some(localhost()))
+                .await;
         }
 
         // key2 with Free tier should be allowed (separate bucket)
-        let result = limiter.check("key2", ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check("key2", ApiKeyTier::Free, Some(localhost()))
+            .await;
         assert!(result.is_ok());
 
         // key3 with Pro tier should also be allowed (separate bucket, 1000 capacity)
-        let result = limiter.check("key3", ApiKeyTier::Pro, Some(localhost())).await;
+        let result = limiter
+            .check("key3", ApiKeyTier::Pro, Some(localhost()))
+            .await;
         assert!(result.is_ok());
 
         // key4 with Enterprise tier should also be allowed (separate bucket, 10000 capacity)
-        let result = limiter.check("key4", ApiKeyTier::Enterprise, Some(localhost())).await;
+        let result = limiter
+            .check("key4", ApiKeyTier::Enterprise, Some(localhost()))
+            .await;
         assert!(result.is_ok());
     }
 
@@ -283,12 +302,16 @@ mod tests {
 
         // Exhaust the bucket
         for _ in 0..100 {
-            let _ = limiter.check(key, ApiKeyTier::Free, Some(localhost())).await;
+            let _ = limiter
+                .check(key, ApiKeyTier::Free, Some(localhost()))
+                .await;
         }
 
         // Reset and verify
         limiter.reset(key).await;
-        let result = limiter.check(key, ApiKeyTier::Free, Some(localhost())).await;
+        let result = limiter
+            .check(key, ApiKeyTier::Free, Some(localhost()))
+            .await;
         assert!(result.is_ok());
     }
 

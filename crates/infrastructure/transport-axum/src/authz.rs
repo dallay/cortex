@@ -612,10 +612,7 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
 
     // Check if session_validator is configured
     let Some(validator) = &config.session_validator else {
-        return AuthOutcome::reject(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "AUTH_MISCONFIGURED",
-        );
+        return AuthOutcome::reject(StatusCode::INTERNAL_SERVER_ERROR, "AUTH_MISCONFIGURED");
     };
 
     // Validate the session

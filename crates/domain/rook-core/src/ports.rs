@@ -263,7 +263,11 @@ pub enum PasswordHashError {
 #[async_trait]
 pub trait PasswordHasher: Send + Sync {
     fn hash_password(&self, password: &str) -> Result<PasswordHash, PasswordHashError>;
-    fn verify_password(&self, password: &str, hash: &PasswordHash) -> Result<bool, PasswordHashError>;
+    fn verify_password(
+        &self,
+        password: &str,
+        hash: &PasswordHash,
+    ) -> Result<bool, PasswordHashError>;
 }
 
 // ---------------------------------------------------------------------------

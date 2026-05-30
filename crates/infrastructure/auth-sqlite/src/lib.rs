@@ -505,8 +505,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: SessionId::parse_str(&id_str).map_err(|_| invalid_data("invalid session id"))?,
         token_hash,
-        user_id: UserId::parse_str(&user_id_str)
-            .map_err(|_| invalid_data("invalid user id"))?,
+        user_id: UserId::parse_str(&user_id_str).map_err(|_| invalid_data("invalid user id"))?,
         created_at,
         expires_at,
         revoked: revoked != 0,
@@ -562,7 +561,9 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository, TestApiKeyRecord};
+    use super::{
+        SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository, TestApiKeyRecord,
+    };
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -737,7 +738,7 @@ mod tests {
         });
     }
 
-// =============================================================================
+    // =============================================================================
     // SqliteSessionRepository tests
     // =============================================================================
 
@@ -818,7 +819,10 @@ mod tests {
                 .await
                 .expect("create session");
 
-            session_repo.revoke(&session.id).await.expect("revoke session");
+            session_repo
+                .revoke(&session.id)
+                .await
+                .expect("revoke session");
 
             let found = session_repo
                 .find_by_token_hash("token_hash_revoked")

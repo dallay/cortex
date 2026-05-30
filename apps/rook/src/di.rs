@@ -104,12 +104,16 @@ impl RookContainer {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2idHasher::new());
 
         // 6. Build ValidateSession for middleware
-        let validate_session = Arc::new(ValidateSession::new(session_repo.clone(), user_repo.clone()));
+        let validate_session = Arc::new(ValidateSession::new(
+            session_repo.clone(),
+            user_repo.clone(),
+        ));
 
         // 6. Auth use cases
         let ensure_admin_user = EnsureAdminUser::new(user_repo.clone());
         let set_admin_password = SetAdminPassword::new(user_repo.clone(), hasher.clone());
-        let login = rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
+        let login =
+            rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
         let logout = rook_usecases::Logout::new(session_repo.clone());
 
         //7. Ensure admin exists on first boot (before HTTP server starts)

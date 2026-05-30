@@ -15,13 +15,13 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         .context("invalid address")?;
 
     let router = transport_axum::router(
-            container.usecases.clone(),
-            container.authz_config.clone(),
-            container.login_rate_limiter.clone(),
-            container.api_key_rate_limiter.clone(),
-            container.csrf_guard.clone(),
-        )
-        .merge(crate::dashboard::dashboard_routes());
+        container.usecases.clone(),
+        container.authz_config.clone(),
+        container.login_rate_limiter.clone(),
+        container.api_key_rate_limiter.clone(),
+        container.csrf_guard.clone(),
+    )
+    .merge(crate::dashboard::dashboard_routes());
 
     info!(addr = %addr, "starting rook server");
 

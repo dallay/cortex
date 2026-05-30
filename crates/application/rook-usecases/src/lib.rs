@@ -9,12 +9,12 @@ pub mod auth;
 pub mod route_request;
 pub mod router_impl;
 
-pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use auth::{
-    EnsureAdminUser, Login, LoginError, LoginInput, LoginOutput, Logout, LogoutError,
-    LogoutInput, SetAdminPassword, SetAdminPasswordError, SetAdminPasswordInput, ValidateSession,
+    EnsureAdminUser, Login, LoginError, LoginInput, LoginOutput, Logout, LogoutError, LogoutInput,
+    SetAdminPassword, SetAdminPasswordError, SetAdminPasswordInput, ValidateSession,
     ValidateSessionError, ValidatedSession,
 };
+pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use health_check::HealthCheck;
 pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
@@ -47,7 +47,7 @@ impl RookUsecases {
     /// This is used by the logout handler which receives the raw cookie value.
     #[allow(dead_code)]
     pub async fn revoke_session_by_token_hash(
-&self,
+        &self,
         _token_hash: &str,
     ) -> Result<(), auth::LogoutError> {
         // The logout use case expects a session_id, but we have token_hash.

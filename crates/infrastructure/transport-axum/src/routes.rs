@@ -14,7 +14,10 @@ use rook_core::{CompletionRequest, HealthPort, HealthStatus};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
-use super::{anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*, provider_routes, HttpError};
+use super::{
+    anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*,
+    provider_routes, HttpError,
+};
 use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
@@ -76,9 +79,7 @@ pub async fn login_rate_limiter_middleware(
     next: middleware::Next,
 ) -> Response {
     // Only apply to POST /login
-    if request.method() != axum::http::Method::POST
-        || request.uri().path() != "/login"
-    {
+    if request.method() != axum::http::Method::POST || request.uri().path() != "/login" {
         return next.run(request).await;
     }
 

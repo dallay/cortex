@@ -5,9 +5,7 @@
 
 use std::sync::Arc;
 
-use rook_core::{
-    PasswordHashError, PasswordHasher, UserRepositoryError, UserRepositoryPort,
-};
+use rook_core::{PasswordHashError, PasswordHasher, UserRepositoryError, UserRepositoryPort};
 
 #[derive(Clone)]
 pub struct SetAdminPassword {
@@ -213,10 +211,7 @@ mod tests {
                 })
                 .await;
 
-            assert_eq!(
-                result.unwrap_err().to_string(),
-                "admin user not found"
-            );
+            assert_eq!(result.unwrap_err().to_string(), "admin user not found");
         });
     }
 

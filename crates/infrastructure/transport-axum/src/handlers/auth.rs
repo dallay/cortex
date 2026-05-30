@@ -54,11 +54,7 @@ pub async fn login_handler(
                 "expires_at": expires_at,
             });
 
-            (
-                AppendHeaders([(SET_COOKIE, cookie)]),
-                Json(body),
-            )
-                .into_response()
+            (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
         }
         Err(LoginError::PasswordNotSet) => {
             let body = serde_json::json!({
@@ -141,9 +137,8 @@ fn build_auth_token_cookie(token: &str) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-        HeaderValue::from_str("auth_token=invalid; HttpOnly; Path=/").unwrap()
-    })
+    HeaderValue::from_str(&cookie)
+        .unwrap_or_else(|_| HeaderValue::from_str("auth_token=invalid; HttpOnly; Path=/").unwrap())
 }
 
 /// Extract a cookie value by name from a HeaderMap
@@ -180,9 +175,7 @@ pub struct LoginResponse {
 /// Sets csrf_token cookie and returns the token in the response body.
 /// The client must echo this token back in the X-CSRF-Token header
 /// for state-changing requests (POST, PUT, DELETE).
-pub async fn get_login_handler(
-    State(_usecases): State<Arc<RookUsecases>>,
-) -> impl IntoResponse {
+pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
     // Generate CSRF token
     let token = generate_csrf_token();
 
@@ -193,11 +186,7 @@ pub async fn get_login_handler(
         "csrf_token": token,
     });
 
-    (
-        AppendHeaders([(SET_COOKIE, cookie)]),
-        Json(body),
-    )
-        .into_response()
+    (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
 }
 
 /// Generate a 32-byte random CSRF token encoded as base64url
@@ -218,7 +207,6 @@ fn build_csrf_token_cookie(token: &str, secure: bool) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-        HeaderValue::from_str("csrf_token=invalid; HttpOnly; Path=/").unwrap()
-    })
+    HeaderValue::from_str(&cookie)
+        .unwrap_or_else(|_| HeaderValue::from_str("csrf_token=invalid; HttpOnly; Path=/").unwrap())
 }

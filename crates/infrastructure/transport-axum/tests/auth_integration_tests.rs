@@ -16,9 +16,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use rook_core::{
-    NewSession as CoreNewSession, NewUser as CoreNewUser,
-    PasswordHash as CorePasswordHash, Session, SessionId, SessionRepositoryError,
-    SessionRepositoryPort, User, UserId, UserRepositoryError, UserRepositoryPort,
+    NewSession as CoreNewSession, NewUser as CoreNewUser, PasswordHash as CorePasswordHash,
+    Session, SessionId, SessionRepositoryError, SessionRepositoryPort, User, UserId,
+    UserRepositoryError, UserRepositoryPort,
 };
 use rook_usecases::{Login as LoginUsecase, LoginError, LoginInput};
 
@@ -43,7 +43,10 @@ impl FakePasswordHasher {
 }
 
 impl PasswordHasher for FakePasswordHasher {
-    fn hash_password(&self, password: &str) -> Result<CorePasswordHash, rook_core::PasswordHashError> {
+    fn hash_password(
+        &self,
+        password: &str,
+    ) -> Result<CorePasswordHash, rook_core::PasswordHashError> {
         self.inner.hash_password(password)
     }
 
@@ -143,7 +146,7 @@ impl FakeSessionRepository {
 #[async_trait]
 impl SessionRepositoryPort for FakeSessionRepository {
     async fn create(
-       &self,
+        &self,
         session: &CoreNewSession,
         token_hash: &str,
     ) -> Result<Session, SessionRepositoryError> {
@@ -163,7 +166,7 @@ impl SessionRepositoryPort for FakeSessionRepository {
     }
 
     async fn find_by_token_hash(
-&self,
+        &self,
         token_hash: &str,
     ) -> Result<Option<Session>, SessionRepositoryError> {
         let sessions = self.sessions.read().unwrap();
@@ -208,12 +211,12 @@ mod login_tests {
             .expect("runtime")
     }
 
-    fn create_admin_with_password(password: &str) -> (Arc<FakeUserRepository>, Arc<FakePasswordHasher>) {
+    fn create_admin_with_password(
+        password: &str,
+    ) -> (Arc<FakeUserRepository>, Arc<FakePasswordHasher>) {
         let user_repo = Arc::new(FakeUserRepository::new());
         let hasher = Arc::new(FakePasswordHasher::new());
-        let hash = hasher
-            .hash_password(password)
-            .expect("hash should succeed");
+        let hash = hasher.hash_password(password).expect("hash should succeed");
         let user = User {
             id: UserId::new(),
             username: "admin".to_string(),
@@ -378,7 +381,9 @@ mod login_tests {
 
             // Should decode to exactly 32 bytes
             use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-            let decoded = URL_SAFE_NO_PAD.decode(&output.token).expect("should decode");
+            let decoded = URL_SAFE_NO_PAD
+                .decode(&output.token)
+                .expect("should decode");
             assert_eq!(decoded.len(), 32);
         });
     }
@@ -398,7 +403,10 @@ mod csrf_guard_tests {
         let token = guard.generate_token().expect("should generate");
 
         let result = guard.validate(Some(&token), Some(&token));
-        assert_eq!(result, transport_axum::middleware::csrf_guard::CsrfValidation::Valid);
+        assert_eq!(
+            result,
+            transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+        );
     }
 
     #[test]
@@ -556,9 +564,7 @@ mod password_hashing_tests {
         let hasher = Argon2idHasher::new();
         let password = "SecurePass123!";
 
-        let hash = hasher
-            .hash_password(password)
-            .expect("hash should succeed");
+        let hash = hasher.hash_password(password).expect("hash should succeed");
         assert!(
             hash.as_str().starts_with("$argon2id$"),
             "hash should be Argon2id format"
@@ -575,9 +581,7 @@ mod password_hashing_tests {
         let hasher = Argon2idHasher::new();
         let password = "SecurePass123!";
 
-        let hash = hasher
-            .hash_password(password)
-            .expect("hash should succeed");
+        let hash = hasher.hash_password(password).expect("hash should succeed");
 
         let verified = hasher
             .verify_password("WrongPassword", &hash)
@@ -590,12 +594,8 @@ mod password_hashing_tests {
         let hasher = Argon2idHasher::new();
         let password = "SecurePass123!";
 
-        let hash1 = hasher
-            .hash_password(password)
-            .expect("hash should succeed");
-        let hash2 = hasher
-            .hash_password(password)
-            .expect("hash should succeed");
+        let hash1 = hasher.hash_password(password).expect("hash should succeed");
+        let hash2 = hasher.hash_password(password).expect("hash should succeed");
 
         assert_ne!(
             hash1.as_str(),
@@ -611,9 +611,6 @@ mod password_hashing_tests {
 
         let result = hasher.verify_password("any-password", &invalid_hash);
         assert!(result.is_ok(), "verify should not panic on invalid hash");
-        assert!(
-            !result.unwrap(),
-            "invalid hash should not verify"
-        );
+        assert!(!result.unwrap(), "invalid hash should not verify");
     }
 }

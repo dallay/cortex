@@ -58,7 +58,10 @@ impl PasswordHasher for Argon2idHasher {
         };
 
         // Verify the password against the parsed hash
-        match self.argon2.verify_password(password.as_bytes(), &parsed_hash) {
+        match self
+            .argon2
+            .verify_password(password.as_bytes(), &parsed_hash)
+        {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -157,10 +160,15 @@ mod tests {
     #[test]
     fn verify_fails_for_empty_password() {
         let h = hasher();
-        let hash = h.hash_password("real_password").expect("hash should succeed");
+        let hash = h
+            .hash_password("real_password")
+            .expect("hash should succeed");
         let result = h
             .verify_password("", &hash)
             .expect("verify should return Ok");
-        assert!(!result, "verify should return false for wrong (empty) password");
+        assert!(
+            !result,
+            "verify should return false for wrong (empty) password"
+        );
     }
 }

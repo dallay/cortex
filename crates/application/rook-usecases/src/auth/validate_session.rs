@@ -116,9 +116,7 @@ mod tests {
 
     use async_trait::async_trait;
     use chrono::Utc;
-    use rook_core::{
-        NewSession, NewUser, Session, SessionId, SessionRepositoryPort, User, UserId,
-    };
+    use rook_core::{NewSession, NewUser, Session, SessionId, SessionRepositoryPort, User, UserId};
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -134,11 +132,7 @@ mod tests {
 
     #[async_trait]
     impl SessionRepositoryPort for FakeSessionRepository {
-        async fn create(
-            &self,
-            _: &NewSession,
-            _: &str,
-        ) -> Result<Session, SessionRepositoryError> {
+        async fn create(&self, _: &NewSession, _: &str) -> Result<Session, SessionRepositoryError> {
             unreachable!()
         }
 
@@ -171,7 +165,10 @@ mod tests {
             unreachable!()
         }
 
-        async fn find_by_id(&self, _: &UserId) -> Result<Option<User>, rook_core::UserRepositoryError> {
+        async fn find_by_id(
+            &self,
+            _: &UserId,
+        ) -> Result<Option<User>, rook_core::UserRepositoryError> {
             self.find_by_id_result.clone()
         }
 
@@ -262,7 +259,10 @@ mod tests {
             // Not valid base64url
             let result = validator.execute("not-valid-base64!!!").await;
 
-            assert!(matches!(result, Err(ValidateSessionError::InvalidTokenFormat)));
+            assert!(matches!(
+                result,
+                Err(ValidateSessionError::InvalidTokenFormat)
+            ));
         });
     }
 }
