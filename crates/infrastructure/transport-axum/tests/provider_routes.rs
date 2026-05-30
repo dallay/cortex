@@ -8,9 +8,8 @@
 // End-to-end HTTP tests use axum-test (see below).
 
 use rook_core::{
-    ConnectionConfig, Credentials, EncryptedBlob, ModelId,
-    ProviderConnection, ProviderKind, ProviderRegistryPort, QuotaWindowThresholds,
-    RepositoryError, TestStatus,
+    ConnectionConfig, Credentials, EncryptedBlob, ModelId, ProviderConnection, ProviderKind,
+    ProviderRegistryPort, QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use rook_usecases::manage_connections::ManageConnectionsError;
 use shared_kernel::{ConnectionId, ProviderId};
