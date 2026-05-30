@@ -16,8 +16,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rook_core::{
-    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort,
-    RouterPort,
+    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
 };
 use shared_kernel::{NuxaError, NuxaResult, Utc};
 use tokio::sync::RwLock as AsyncRwLock;

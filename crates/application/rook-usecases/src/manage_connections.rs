@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use rook_core::{
     AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, DecryptedCredentials,
     EncryptedBlob, HealthStatus, KeyManager, ProviderConnection, ProviderKind,
-    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds,
-    RepositoryError, TestStatus, ValidationError,
+    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError,
+    TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
 
