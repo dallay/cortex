@@ -143,6 +143,12 @@ ci-local:
     cargo audit || echo "$(YELLOW)Audit warnings (non-blocking)$(RESET)"
     @echo "$(GREEN)=== CI local complete ===$(RESET)"
 
+# === Release ===
+
+release-dry-run:
+    @echo "$(YELLOW)Running release-please dry-run...$(RESET)"
+    npx release-please release-pr --token=$$GITHUB_TOKEN --dry-run
+
 # === Help ===
 
 help:

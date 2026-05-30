@@ -1,0 +1,61 @@
+{
+  "name": "@dallay/rook",
+  "version": "0.1.0",
+  "description": "AI proxy/router that routes LLM requests to multiple providers (OpenAI, Anthropic, Ollama, Gemini, Groq) with fallback, caching, and audit logging.",
+  "author": "Yuniel Acosta <yunielacosta738@gmail.com>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dallay/cortex.git"
+  },
+  "homepage": "https://github.com/dallay/cortex#readme",
+  "bugs": {
+    "url": "https://github.com/dallay/cortex/issues"
+  },
+  "keywords": [
+    "ai",
+    "proxy",
+    "router",
+    "llm",
+    "openai",
+    "anthropic",
+    "gemini",
+    "groq",
+    "ollama",
+    "fallback",
+    "caching",
+    "audit"
+  ],
+  "bin": {
+    "rook": "lib/index.js"
+  },
+  "main": "lib/index.js",
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "test": "pnpm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('lib', {recursive: true, force: true})\"",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  },
+  "optionalDependencies": {
+    "@dallay/rook-darwin-arm64": "0.1.0",
+    "@dallay/rook-darwin-x64": "0.1.0",
+    "@dallay/rook-linux-arm64": "0.1.0",
+    "@dallay/rook-linux-x64": "0.1.0",
+    "@dallay/rook-windows-arm64": "0.1.0",
+    "@dallay/rook-windows-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

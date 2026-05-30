@@ -2,8 +2,14 @@
   "name": "cortex",
   "private": true,
   "packageManager": "pnpm@9.15.9",
-  "scripts": {
-    "prepare": "lefthook install"
+"scripts": {
+    "prepare": "lefthook install",
+    "update-deps": "pnpm update -i -r --latest",
+    "preinstall": "npx only-allow pnpm",
+    "agents:sync": "pnpm exec agentsync apply",
+    "agents:sync:clean": "pnpm --filter agentsync run clean",
+    "release:dry-run": "release-please release-pr --dry-run",
+    "release:bootstrap": "release-please bootstrap --token=$GITHUB_TOKEN --repo-url=dallay/cortex --release-type=rust"
   },
   "devDependencies": {
     "lefthook": "^2.1.9",
