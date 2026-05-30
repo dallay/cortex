@@ -37,3 +37,4 @@ tracing = "0.1"
 
 [dev-dependencies]
 async-trait = { workspace = true }
+axum-test = "20"

@@ -1,0 +1,188 @@
+name: Security Deep
+
+on:
+  schedule:
+    - cron: '17 3 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: security-deep-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gitleaks-history:
+    name: security / gitleaks-history
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code with full history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+      - name: Install Gitleaks CLI
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
+            | tar -xzf - -C /usr/local/bin gitleaks
+          gitleaks --version
+      - name: Run full-history Gitleaks scan
+        run: |
+          mkdir -p reports/gitleaks
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts="--all" \
+            --report-format sarif \
+            --report-path reports/gitleaks/gitleaks-history.sarif \
+            --exit-code 0
+      - name: Upload Gitleaks SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: reports/gitleaks/gitleaks-history.sarif
+          category: gitleaks-history
+      - name: Upload Gitleaks artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: security-deep-gitleaks-history
+          path: reports/gitleaks/
+          retention-days: 21
+      - name: Summarize Gitleaks reporting channel
+        if: always()
+        run: |
+          echo '### security / gitleaks-history' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only scheduled secret scan with full repository history.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Merge gating: none. Review findings from the security tab.' >> "$GITHUB_STEP_SUMMARY"
+
+  semgrep-full:
+    name: security / semgrep-full
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Install Semgrep CLI
+        run: pip install semgrep==1.126.0
+      - name: Run full Semgrep scan
+        run: |
+          mkdir -p reports/semgrep
+          semgrep scan \
+            --config p/rust \
+            --config p/dockerfile \
+            --config p/github-actions \
+            --config p/secrets \
+            --sarif \
+            --output reports/semgrep/semgrep-full.sarif
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: reports/semgrep/semgrep-full.sarif
+          category: semgrep-full
+      - name: Upload Semgrep artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: security-deep-semgrep-full
+          path: reports/semgrep/
+          retention-days: 21
+      - name: Summarize Semgrep reporting channel
+        if: always()
+        run: |
+          echo '### security / semgrep-full' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only full-repository SAST and security-sensitive config scan.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Merge gating: none. Scheduled findings should feed triage.' >> "$GITHUB_STEP_SUMMARY"
+
+  trivy-full:
+    name: security / trivy-full
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Create reports directory
+        run: mkdir -p reports/trivy
+      - name: Run full Trivy filesystem, dependency, and IaC scan
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          format: sarif
+          output: reports/trivy/trivy-full.sarif
+          exit-code: '0'
+      - name: Verify SARIF file exists
+        if: always()
+        run: |
+          if [ -f reports/trivy/trivy-full.sarif ]; then
+            echo "✓ SARIF file created successfully"
+            ls -lh reports/trivy/trivy-full.sarif
+          else
+            echo "✗ SARIF file not found"
+            exit 1
+          fi
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: reports/trivy/trivy-full.sarif
+          category: trivy-full
+      - name: Upload Trivy artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: security-deep-trivy-full
+          path: reports/trivy/
+          retention-days: 21
+      - name: Summarize Trivy reporting channel
+        if: always()
+        run: |
+          echo '### security / trivy-full' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only full repository filesystem, dependency, and IaC drift scan.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Severity coverage: UNKNOWN through CRITICAL for deep visibility.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
+
+  retention-summary:
+    name: security / retention-summary
+    needs:
+      - gitleaks-history
+      - semgrep-full
+      - trivy-full
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Summarize scheduled deep scan
+        env:
+          GITLEAKS_RESULT: ${{ needs.gitleaks-history.result }}
+          SEMGREP_RESULT: ${{ needs.semgrep-full.result }}
+          TRIVY_RESULT: ${{ needs.trivy-full.result }}
+        run: |
+          {
+            echo '## Scheduled deep security summary'
+            echo ''
+            echo 'This workflow is reporting-oriented by design. It preserves evidence with non-cancelling concurrency and retained artifacts instead of acting as a pull-request gate.'
+            echo ''
+            echo '### Job results'
+            echo "- gitleaks-history: $GITLEAKS_RESULT"
+            echo "- semgrep-full: $SEMGREP_RESULT"
+            echo "- trivy-full: $TRIVY_RESULT"
+            echo ''
+            echo '### Artifact retention'
+            echo '- Deep-scan retained artifacts use 21-day retention for triage evidence.'
+          } >> "$GITHUB_STEP_SUMMARY"
