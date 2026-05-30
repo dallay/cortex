@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Install Gitleaks CLI
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
@@ -40,7 +41,7 @@ jobs:
             --exit-code 0
       - name: Upload Gitleaks SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/gitleaks/gitleaks-history.sarif
           category: gitleaks-history
@@ -69,6 +70,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
       - name: Install Semgrep CLI
         run: pip install semgrep==1.126.0
       - name: Run full Semgrep scan
@@ -83,7 +86,7 @@ jobs:
             --output reports/semgrep/semgrep-full.sarif
       - name: Upload Semgrep SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/semgrep/semgrep-full.sarif
           category: semgrep-full
@@ -112,6 +115,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
       - name: Create reports directory
         run: mkdir -p reports/trivy
       - name: Run full Trivy filesystem, dependency, and IaC scan
@@ -137,7 +142,7 @@ jobs:
           fi
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/trivy/trivy-full.sarif
           category: trivy-full

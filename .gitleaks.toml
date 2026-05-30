@@ -1,35 +1,27 @@
-[top]
-quiet = true
-verbose = false
-no-git = false
-
-[rules]
-allowlist = []
-
 [[rules]]
+id = "generic_api_key"
 description = "Generic API Key"
 regex = '''(?i)(api[_-]?key|apikey|api[_-]?token|apitoken)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
-hits = ["api_key", "apiKey", "api_token", "APITOKEN"]
 
 [[rules]]
+id = "aws_access_key"
 description = "AWS Access Key"
 regex = '''AKIA[0-9A-Z]{16}'''
-hits = ["AKIA"]
 
 [[rules]]
+id = "aws_secret_key"
 description = "AWS Secret Key"
 regex = '''(?i)aws[_-]?secret[_-]?access[_-]?key\s*[=:]\s*['"]?[a-zA-Z0-9/+=]{40}'''
-hits = ["aws_secret"]
 
 [[rules]]
+id = "generic_secret"
 description = "Generic Secret"
-regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{8,}'''
-hits = ["secret", "password", "token"]
+regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
 [[rules]]
+id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"
 regex = '''sk-[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35}|hf_[a-zA-Z0-9]{34,}'''
-hits = ["sk-", "AIza", "hf_"]
 
 [allowlist]
 paths = [

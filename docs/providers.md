@@ -103,7 +103,8 @@ timeout_secs = 300
 ```
 
 **Health check behavior:**
-- Always returns `is_healthy: true` (no health check implementation)
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check (e.g., `GET /api/tags`)
 
 **Implementation status:**
@@ -133,7 +134,8 @@ timeout_secs = 60
 ```
 
 **Health check behavior:**
-- Placeholder: always returns `is_healthy: true`
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**
@@ -161,7 +163,8 @@ timeout_secs = 60
 ```
 
 **Health check behavior:**
-- Placeholder: always returns `is_healthy: true`
+- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
+- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**

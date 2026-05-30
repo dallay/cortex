@@ -10,6 +10,7 @@ LABEL org.opencontainers.image.description="AI proxy/router for LLM requests wit
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
@@ -37,3 +38,6 @@ ENV RUST_LOG=info
 
 ENTRYPOINT ["/usr/local/bin/rook"]
 CMD ["server", "--config", "/app/config/rook.toml"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS http://localhost:8080/health || exit 1
