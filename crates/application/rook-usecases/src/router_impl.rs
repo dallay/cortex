@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rook_core::{
-    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RegistryError,
+    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort,
     RouterPort,
 };
 use shared_kernel::{NuxaError, NuxaResult, Utc};
@@ -566,7 +566,10 @@ mod tests {
         rt.block_on(async {
             for _ in 0..3 {
                 let _ = router
-                    .on_failure(&ProviderId::new("recoverable"), &NuxaError::provider("boom"))
+                    .on_failure(
+                        &ProviderId::new("recoverable"),
+                        &NuxaError::provider("boom"),
+                    )
                     .await;
             }
         });

@@ -108,7 +108,10 @@ pub trait HealthPort: Send + Sync {
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RegistryError {
     #[error("provider build failed for '{provider_id}': {reason}")]
-    ProviderBuildFailed { provider_id: ProviderId, reason: String },
+    ProviderBuildFailed {
+        provider_id: ProviderId,
+        reason: String,
+    },
     #[error("registry locked")]
     RegistryLocked,
 }

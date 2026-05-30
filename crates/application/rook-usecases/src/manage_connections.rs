@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use rook_core::{
     AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, DecryptedCredentials,
     EncryptedBlob, HealthStatus, KeyManager, ProviderConnection, ProviderKind,
-    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RegistryError,
+    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds,
     RepositoryError, TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
@@ -249,6 +249,7 @@ impl ManageConnections {
         Ok(EncryptedBlob(self.key_manager.encrypt(plaintext.trim())?))
     }
 
+    #[allow(dead_code)]
     fn decrypt_credentials(
         &self,
         credentials: &Credentials,
@@ -494,8 +495,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rook_core::{
-        BoxStream, CompletionRequest, CompletionResponse, NuxaResult, ModelId, ProviderPort,
-        StreamChunk,
+        BoxStream, CompletionRequest, CompletionResponse, ModelId, NuxaResult, ProviderPort,
+        RegistryError, StreamChunk,
     };
 
     struct NoopRepository;
@@ -1209,6 +1210,7 @@ mod tests {
     // delete() tests
     // ---------------------------------------------------------------------------
 
+    #[allow(dead_code)]
     struct DeletableRepo {
         conn: ProviderConnection,
     }

@@ -66,6 +66,7 @@ pub struct ConnectionConfigDto {
     #[serde(rename = "quotaWindowThresholds")]
     pub quota_window_thresholds: QuotaWindowThresholdsDto,
     pub default_model: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +292,7 @@ fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
             error: config.quota_window_thresholds.error,
         },
         default_model: config.default_model.as_ref().map(ModelId::new),
+        base_url: config.base_url.clone(),
     }
 }
 

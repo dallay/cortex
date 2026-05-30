@@ -139,6 +139,7 @@ fn map_error(error: ManageConnectionsError) -> HttpError {
         ManageConnectionsError::Repository(_) | ManageConnectionsError::Encryption(_) => {
             internal_error()
         }
+        ManageConnectionsError::RegistryUpdateFailed(_) => internal_error(),
     }
 }
 

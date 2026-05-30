@@ -348,6 +348,7 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             default_model: row
                 .get::<_, Option<String>>("default_model")?
                 .map(ModelId::new),
+            base_url: row.get("base_url")?,
         },
         test_status: parse_test_status(
             test_status.as_str(),
@@ -564,6 +565,7 @@ mod tests {
                     error: 0.9,
                 },
                 default_model: None,
+                base_url: None,
             },
             test_status: TestStatus::NeverTested,
             created_at,

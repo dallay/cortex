@@ -37,6 +37,7 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
             quota_warning       REAL    NOT NULL,
             quota_error         REAL    NOT NULL,
             default_model       TEXT,
+            base_url           TEXT,
 
             test_status         TEXT    NOT NULL,
             test_latency_ms     INTEGER,

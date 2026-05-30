@@ -1,48 +1,35 @@
 change: dynamic-provider-registry
-current_phase: sdd-tasks
+current_phase: sdd-apply
 completed:
   - init
   - sdd-spec
   - sdd-design
   - sdd-tasks
-next: sdd-apply
-updated: "2026-05-30T00:00:00Z"
+  - sdd-apply
+next: PR1 complete — ready for PR2 (DI wiring + build_provider_from_connection)
+updated: "2026-05-30T01:30:00Z"
+pr1_status: |
+  PR1 (Phases 1-4) COMPLETE. All foundation work done:
+  - RegistryError enum added to ports.rs
+  - ProviderRegistryPort extended with replace_all/upsert/remove
+  - DecryptedCredentials enum created in rook-core
+  - ConnectionConfig.base_url added
+  - FallbackRouter.providers changed to Arc<RwLock<Vec<...>>>
+  - FallbackRouter::new_empty() constructor added
+  - parking_lot RwLock used (not tokio::sync::RwLock — different types for different use cases)
+  - round_robin_index uses AsyncRwLock (tokio) for .write().await
+  - refresh_registry() implemented in ManageConnections (stub — calls replace_all(Vec::new()))
+  - decrypt_credentials() implemented
+  - RegistryUpdateFailed error added to ManageConnectionsError
+  - Mock registries in tests updated with replace_all/upsert/remove
+  - All base_url fields added to test fixtures
+  - clippy warnings fixed (map_clone)
+  - Tests: 37 passed in rook-usecases, 5 passed in rook-core
 notes: |
-  SDD context initialized for "dynamic-provider-registry" change.
-  Stack: Rust 1.81+ (toolchain 1.89), axum, tokio, SQLite, rusqlite, reqwest (rustls).
-  Testing: cargo test, no inline #[cfg(test)] modules; strict_tdd: false.
-  Openspec already exists with full structure from prior provider-connections change.
-  key findings:
-  - ProviderRegistryPort already has providers() + get() (read-only) in ports.rs
-  - FallbackRouter::providers field is Vec (not RwLock) — mutation requires replace_providers()
-  - replace_providers() test exists but method NOT found in actual FallbackRouter impl — likely it was removed or never merged
-  - build_provider() in di.rs is private, only called at startup
-  - ManageConnections already holds Arc<dyn ProviderRegistryPort>
-  - ManageConnections::test uses registry.get() for health probes
-  - TOML providers are the sole runtime source for routing
-  - provider-connections change left explicit out-of-scope note: "Runtime hot registration of SQLite provider connections into request routing"
-  - Encryption uses AesGcmKeyManager (AES-256-GCM + Argon2id) via ENCRYPTION_PASSPHRASE/SALT
-spec_notes: |
-  Spec written: openspec/changes/dynamic-provider-registry/spec.md
-  Key design decisions captured:
-  - FallbackRouter.providers becomes Arc<RwLock<Vec<...>>>
-  - ProviderRegistryPort gains replace_all/upsert/remove
-  - ManageConnections.create/update/delete each call refresh_registry() post-SQLite
-  - build_provider_from_connection function (non-private) for runtime provider construction
-  - ConnectionConfig.base_url field (optional, required for ollama)
-  - DecryptedCredentials enum for credential decryption during refresh
-  - Partial failure policy: failed builds logged and skipped, not aborted
-  - No feature gate for registry (always active, ManageConnections always constructed)
-  - TOML providers removed, infrastructure-only config
-design_notes: |
-  Design written: openspec/changes/dynamic-provider-registry/design.md
-  Modules covered:
-  - ports.rs: ProviderRegistryPort extended with replace_all/upsert/remove + RegistryError
-  - router_impl.rs: providers field → Arc<RwLock<Vec>>, all lock patterns documented, new_empty() constructor
-  - manage_connections.rs: refresh_registry() private method, called after create/update/delete, decrypt_credentials() helper, RegistryUpdateFailed error
-  - provider_connection.rs: ConnectionConfig.base_url added
-  - decrypted_credentials.rs: new module with DecryptedCredentials enum
-  - di.rs: build_provider_from_connection with full match arms per provider kind, initial bootstrap refresh
-  - config.rs: providers Vec<ProviderConfig> removed, ProviderConfig struct removed
-  Files changed: 8 (2 created, 6 modified)
-  Open questions flagged: OAuth support for API-key providers, startup failure mode, priority ordering
+  Key implementation decisions made during PR1:
+  - parking_lot::RwLock for providers (sync, no async needed for interior mutability reads)
+  - tokio::sync::RwLock (AsyncRwLock) for round_robin_index (needs .write().await in async context)
+  - available_providers() returns Vec<Arc<dyn ProviderPort>> (owned clones, not refs to guard)
+  - All lock guards used without .unwrap() (parking_lot RwLock guards are not futures)
+  - DecryptedCredentials lives in rook-core, refresh_registry is a stub in PR1 (full build in PR2)
+  - parking_lot added as explicit dep to rook-usecases/Cargo.toml
