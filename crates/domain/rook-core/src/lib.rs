@@ -3,11 +3,13 @@
 // Ports (traits) live here. Implementations live in `infrastructure/` and `application/`.
 
 pub mod api_key;
+pub mod decrypted_credentials;
 pub mod model;
 pub mod ports;
 pub mod provider_connection;
 
 pub use api_key::*;
+pub use decrypted_credentials::*;
 pub use model::*;
 pub use ports::*;
 pub use provider_connection::*;

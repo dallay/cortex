@@ -26,6 +26,9 @@ ring = "0.17"
 # DashMap for circuit breaker
 dashmap = "6"
 
+# Parking lot RwLock (sync, no async needed for interior mutability)
+parking_lot = "0.12"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 time = "0.3"

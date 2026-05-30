@@ -2160,6 +2160,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures",
+ "parking_lot",
  "rand 0.8.6",
  "ring",
  "rook-core",

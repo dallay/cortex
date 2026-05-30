@@ -12,6 +12,7 @@ pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiEr
 pub use health_check::HealthCheck;
 pub use manage_connections::ManageConnections;
 pub use manage_providers::ManageProviders;
+pub use rook_core::RegistryError;
 pub use route_request::RouteRequest;
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 

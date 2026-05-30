@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rook_core::{
-    AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, EncryptedBlob,
-    HealthStatus, KeyManager, ProviderConnection, ProviderKind, ProviderRegistryPort,
-    ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError, TestStatus, ValidationError,
+    AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, DecryptedCredentials,
+    EncryptedBlob, HealthStatus, KeyManager, ProviderConnection, ProviderKind,
+    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RegistryError,
+    RepositoryError, TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
 
@@ -18,6 +19,8 @@ pub enum ManageConnectionsError {
     Encryption(#[from] CredentialEncryptionError),
     #[error("provider runtime not found: {0}")]
     ProviderRuntimeNotFound(ProviderId),
+    #[error("registry update failed: {0}")]
+    RegistryUpdateFailed(String),
 }
 
 pub type ManageConnectionsResult<T> = Result<T, ManageConnectionsError>;
@@ -86,6 +89,7 @@ impl ManageConnections {
         };
 
         self.repo.create(&conn).await?;
+        self.refresh_registry().await?;
         Ok(conn)
     }
 
@@ -139,11 +143,17 @@ impl ManageConnections {
         self.repo
             .update(&updated, request.expected_updated_at)
             .await?;
+        self.refresh_registry().await?;
         Ok(updated)
     }
 
     pub async fn delete(&self, id: &ConnectionId) -> ManageConnectionsResult<()> {
-        self.repo.delete(id).await.map_err(Into::into)
+        self.repo
+            .delete(id)
+            .await
+            .map_err(ManageConnectionsError::from)?;
+        self.refresh_registry().await?;
+        Ok(())
     }
 
     pub async fn test(&self, id: &ConnectionId) -> ManageConnectionsResult<TestConnectionResult> {
@@ -237,6 +247,69 @@ impl ManageConnections {
 
     fn encrypt_blob(&self, plaintext: &str) -> ManageConnectionsResult<EncryptedBlob> {
         Ok(EncryptedBlob(self.key_manager.encrypt(plaintext.trim())?))
+    }
+
+    fn decrypt_credentials(
+        &self,
+        credentials: &Credentials,
+    ) -> ManageConnectionsResult<DecryptedCredentials> {
+        match credentials {
+            Credentials::ApiKey { api_key } => Ok(DecryptedCredentials::ApiKey {
+                api_key: self.key_manager.decrypt(api_key.as_str())?,
+            }),
+            Credentials::OAuth {
+                email,
+                access_token,
+                refresh_token,
+                expires_at,
+                scope,
+                id_token,
+                project_id,
+            } => Ok(DecryptedCredentials::OAuth {
+                email: self.key_manager.decrypt(email.as_str())?,
+                access_token: self.key_manager.decrypt(access_token.as_str())?,
+                refresh_token: self.key_manager.decrypt(refresh_token.as_str())?,
+                expires_at: *expires_at,
+                scope: self.key_manager.decrypt(scope.as_str())?,
+                id_token: self.key_manager.decrypt(id_token.as_str())?,
+                project_id: self.key_manager.decrypt(project_id.as_str())?,
+            }),
+        }
+    }
+
+    /// Refreshes the provider registry from the repository.
+    ///
+    /// Lists all connections, decrypts credentials for active ones, builds providers,
+    /// and replaces the entire registry atomically.
+    async fn refresh_registry(&self) -> ManageConnectionsResult<()> {
+        let connections = self.repo.list().await.map_err(|e| {
+            tracing::error!(error = %e, "failed to list connections for registry refresh");
+            ManageConnectionsError::RegistryUpdateFailed(format!("list failed: {e}"))
+        })?;
+
+        // Filter active connections and build a provider list.
+        // Note: build_provider_from_connection is implemented in PR 2.
+        // For PR 1, we simply clear the registry since no provider builder exists yet.
+        let providers = Vec::new();
+
+        for conn in connections.iter().filter(|c| c.is_active) {
+            // In PR 2, this will decrypt and build actual providers.
+            // For now, we skip since build_provider_from_connection doesn't exist.
+            tracing::debug!(
+                connection_id = %conn.id,
+                provider_kind = ?conn.provider_kind,
+                "connection marked active but provider build not yet implemented"
+            );
+        }
+
+        // Replace all providers in the registry.
+        // The registry will be empty until build_provider_from_connection is added in PR 2.
+        self.registry.replace_all(providers).map_err(|e| {
+            tracing::error!(error = %e, "failed to replace provider registry");
+            ManageConnectionsError::RegistryUpdateFailed(format!("replace_all failed: {e}"))
+        })?;
+
+        Ok(())
     }
 }
 
@@ -421,7 +494,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rook_core::{
-        BoxStream, CompletionRequest, CompletionResponse, ModelId, NuxaResult, ProviderPort,
+        BoxStream, CompletionRequest, CompletionResponse, NuxaResult, ModelId, ProviderPort,
         StreamChunk,
     };
 
@@ -467,6 +540,18 @@ mod tests {
         fn get(&self, _id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
             None
         }
+
+        fn replace_all(&self, _providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn upsert(&self, _provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), RegistryError> {
+            Ok(())
+        }
     }
 
     struct PlainKeyManager;
@@ -500,6 +585,7 @@ mod tests {
                 error: 0.9,
             },
             default_model: None,
+            base_url: None,
         }
     }
 
@@ -611,6 +697,7 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -670,6 +757,7 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -884,6 +972,7 @@ mod tests {
                         error: 0.9,
                     },
                     default_model: None,
+                    base_url: None,
                 };
                 let result = usecase()
                     .create(CreateConnectionRequest {
@@ -922,6 +1011,7 @@ mod tests {
                         error: 0.7, // error <= warning
                     },
                     default_model: None,
+                    base_url: None,
                 };
                 let result = usecase()
                     .create(CreateConnectionRequest {
@@ -1005,6 +1095,7 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -1184,18 +1275,18 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                 };
-                let repo = Arc::new(DeletableRepo { conn: conn.clone() });
+                let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
                 let mc = ManageConnections::new(
                     repo,
                     Arc::new(EmptyRegistry),
                     Arc::new(PlainKeyManager),
                 );
-
                 let result = mc.delete(&conn.id).await;
                 assert!(result.is_ok());
             });
@@ -1278,6 +1369,18 @@ mod tests {
                 None
             }
         }
+
+        fn replace_all(&self, _providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn upsert(&self, _provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), RegistryError> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -1305,6 +1408,7 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -1351,6 +1455,7 @@ mod tests {
                             error: 0.9,
                         },
                         default_model: None,
+                        base_url: None,
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),

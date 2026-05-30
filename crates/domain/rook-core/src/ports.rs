@@ -105,9 +105,20 @@ pub trait HealthPort: Send + Sync {
 // ProviderRegistryPort — lookup for runtime providers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum RegistryError {
+    #[error("provider build failed for '{provider_id}': {reason}")]
+    ProviderBuildFailed { provider_id: ProviderId, reason: String },
+    #[error("registry locked")]
+    RegistryLocked,
+}
+
 pub trait ProviderRegistryPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>>;
+    fn replace_all(&self, providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError>;
+    fn upsert(&self, provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError>;
+    fn remove(&self, id: &ProviderId) -> Result<(), RegistryError>;
 }
 
 // ---------------------------------------------------------------------------

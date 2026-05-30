@@ -14,11 +14,13 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use rook_core::{
-    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
+    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RegistryError,
+    RouterPort,
 };
 use shared_kernel::{NuxaError, NuxaResult, Utc};
-use tokio::sync::RwLock;
+use tokio::sync::RwLock as AsyncRwLock;
 
 /// Number of failures before opening the circuit
 const FAILURE_THRESHOLD: u32 = 3;
@@ -75,52 +77,95 @@ impl CircuitState {
 
 /// FallbackRouter — routes requests to providers with fallback support
 pub struct FallbackRouter {
-    providers: Vec<Arc<dyn ProviderPort>>,
+    providers: Arc<RwLock<Vec<Arc<dyn ProviderPort>>>>,
     strategy: RoutingStrategy,
     circuits: DashMap<ProviderId, CircuitState>,
-    round_robin_index: RwLock<usize>,
+    round_robin_index: AsyncRwLock<usize>,
 }
 
 impl FallbackRouter {
-    pub fn new(providers: Vec<Arc<dyn ProviderPort>>, strategy: RoutingStrategy) -> Self {
+    /// Creates a router with an empty provider registry.
+    pub fn new_empty(strategy: RoutingStrategy) -> Self {
         Self {
-            providers,
+            providers: Arc::new(RwLock::new(Vec::new())),
             strategy,
             circuits: DashMap::new(),
-            round_robin_index: RwLock::new(0),
+            round_robin_index: AsyncRwLock::new(0),
+        }
+    }
+
+    /// Constructs a router with the given providers.
+    pub fn new(providers: Vec<Arc<dyn ProviderPort>>, strategy: RoutingStrategy) -> Self {
+        Self {
+            providers: Arc::new(RwLock::new(providers)),
+            strategy,
+            circuits: DashMap::new(),
+            round_robin_index: AsyncRwLock::new(0),
         }
     }
 
     /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers<'a>(&'a self, model: &ModelId) -> Vec<&'a Arc<dyn ProviderPort>> {
-        self.providers
+    fn available_providers(&self, model: &ModelId) -> Vec<Arc<dyn ProviderPort>> {
+        let guard = self.providers.read();
+        guard
             .iter()
             .filter(|p| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
                 !circuit.is_open() && p.supports_model(model)
             })
+            .cloned()
             .collect()
     }
 }
 
 impl ProviderRegistryPort for FallbackRouter {
     fn providers(&self) -> Vec<ProviderId> {
-        self.providers.iter().map(|p| p.id().clone()).collect()
+        self.providers
+            .read()
+            .iter()
+            .map(|p| p.id().clone())
+            .collect()
     }
 
     fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         self.providers
+            .read()
             .iter()
             .find(|provider| provider.id() == id)
             .cloned()
+    }
+
+    fn replace_all(
+        &self,
+        new_providers: Vec<Arc<dyn ProviderPort>>,
+    ) -> Result<(), rook_core::RegistryError> {
+        let mut providers = self.providers.write();
+        *providers = new_providers;
+        Ok(())
+    }
+
+    fn upsert(&self, provider: Arc<dyn ProviderPort>) -> Result<(), rook_core::RegistryError> {
+        let mut providers = self.providers.write();
+        if let Some(existing) = providers.iter().position(|p| p.id() == provider.id()) {
+            providers[existing] = provider;
+        } else {
+            providers.push(provider);
+        }
+        Ok(())
+    }
+
+    fn remove(&self, id: &ProviderId) -> Result<(), rook_core::RegistryError> {
+        let mut providers = self.providers.write();
+        providers.retain(|p| p.id() != id);
+        Ok(())
     }
 }
 
 #[async_trait]
 impl RouterPort for FallbackRouter {
     async fn select(&self, req: &CompletionRequest) -> NuxaResult<Arc<dyn ProviderPort>> {
-        let candidates: Vec<_> = self.available_providers(&req.model).into_iter().collect();
+        let candidates = self.available_providers(&req.model);
 
         if candidates.is_empty() {
             return Err(NuxaError::all_providers_exhausted());
@@ -135,7 +180,7 @@ impl RouterPort for FallbackRouter {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % candidates.len();
                 *index = idx + 1;
-                Some(candidates[idx])
+                candidates.get(idx).cloned()
             }
             RoutingStrategy::WeightedRandom(weights) => {
                 if weights.len() != candidates.len() {
@@ -164,9 +209,7 @@ impl RouterPort for FallbackRouter {
             }
         };
 
-        selected
-            .ok_or_else(NuxaError::all_providers_exhausted)
-            .cloned()
+        selected.ok_or_else(NuxaError::all_providers_exhausted)
     }
 
     async fn on_failure(&self, provider: &ProviderId, _error: &NuxaError) {
@@ -181,7 +224,11 @@ impl RouterPort for FallbackRouter {
     }
 
     fn providers(&self) -> Vec<ProviderId> {
-        self.providers.iter().map(|p| p.id().clone()).collect()
+        self.providers
+            .read()
+            .iter()
+            .map(|p| p.id().clone())
+            .collect()
     }
 }
 
@@ -519,10 +566,7 @@ mod tests {
         rt.block_on(async {
             for _ in 0..3 {
                 let _ = router
-                    .on_failure(
-                        &ProviderId::new("recoverable"),
-                        &NuxaError::provider("boom"),
-                    )
+                    .on_failure(&ProviderId::new("recoverable"), &NuxaError::provider("boom"))
                     .await;
             }
         });
