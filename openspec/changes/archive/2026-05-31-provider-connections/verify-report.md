@@ -143,7 +143,7 @@ The minor design deviations (config organization for `db_path`) do not affect co
 
 ## Artifacts
 
-- `openspec/changes/provider-connections/verify-report.md` (this file)
+- `openspec/changes/archive/2026-05-31-provider-connections/verify-report.md` (this file)
 
 ## Next Recommended Phase
 

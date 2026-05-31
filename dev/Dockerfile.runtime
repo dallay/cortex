@@ -41,6 +41,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/target/release/rook /usr/local/bin/rook
 COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
+RUN groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
 EXPOSE 8080
 
 USER non-root

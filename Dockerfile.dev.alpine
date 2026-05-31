@@ -37,9 +37,11 @@ RUN apk add --no-cache \
 
 # Copy binary from builder (release build)
 COPY --from=builder /app/target/release/rook /usr/local/bin/rook
-
-# Copy test config
 COPY dev/test-configs/rook-minimal.toml /app/rook.toml
+
+RUN addgroup --system non-root \
+    && adduser --system --ingroup non-root --disabled-password --gecos '' non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
 
 EXPOSE 8080
 

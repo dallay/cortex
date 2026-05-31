@@ -36,11 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy binary from builder (release build)
 COPY --from=builder /app/target/release/rook /usr/local/bin/rook
-
-# Copy test config
 COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
-# Expose default port
+RUN groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
 EXPOSE 8080
 
 USER non-root

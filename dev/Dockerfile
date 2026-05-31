@@ -28,12 +28,6 @@ COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
 RUN chmod +x /usr/local/bin/rook
 
-EXPOSE 8080
-
-COPY target/debug/rook /usr/local/bin/rook
-COPY dev/test-configs/rook-minimal.toml /app/rook.toml
-
-RUN chmod +x /usr/local/bin/rook
 RUN groupadd --system rook \
     && useradd --system --gid rook --home-dir /app --no-create-home rook \
     && chown -R rook:rook /app
