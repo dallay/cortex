@@ -889,6 +889,42 @@ mod tests {
             });
     }
 
+    // 8.9 - create success with OAuth credentials
+    #[test]
+    fn create_success_with_oauth_credentials() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let result = usecase()
+                    .create(CreateConnectionRequest {
+                        provider_kind: ProviderKind::Gemini,
+                        provider_runtime_id: ProviderId::new("google-primary"),
+                        auth_type: AuthType::OAuth,
+                        name: "google-oauth".to_string(),
+                        priority: 1,
+                        is_active: true,
+                        credentials: CredentialsInput::OAuth {
+                            email: "user@example.com".to_string(),
+                            access_token: "ya29.access_token".to_string(),
+                            refresh_token: "1//refresh_token".to_string(),
+                            expires_at: Utc::now().timestamp() + 3600,
+                            scope: "https://www.googleapis.com/auth/bigquery".to_string(),
+                            id_token: "id.token".to_string(),
+                            project_id: "project-123".to_string(),
+                        },
+                        config: config(),
+                    })
+                    .await;
+                assert!(result.is_ok());
+                let conn = result.unwrap();
+                assert_eq!(conn.name, "google-oauth");
+                assert_eq!(conn.auth_type, AuthType::OAuth);
+                assert!(matches!(conn.credentials, Credentials::OAuth { .. }));
+                assert!(matches!(conn.test_status, TestStatus::NeverTested));
+            });
+    }
+
     #[test]
     fn create_rejects_empty_name() {
         tokio::runtime::Builder::new_current_thread()
@@ -1205,7 +1241,124 @@ mod tests {
             });
     }
 
+    // 8.9 - update preserves credentials when not provided in request
+    #[test]
+    fn update_preserves_credentials_when_not_provided() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "old-name".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-original".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                let expected_updated_at = conn.updated_at;
+                let result = mc
+                    .update(
+                        &conn.id,
+                        UpdateConnectionRequest {
+                            expected_updated_at,
+                            name: Some("new-name".to_string()),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+
+                assert!(result.is_ok());
+                let updated = result.unwrap();
+                assert_eq!(updated.name, "new-name");
+                assert!(matches!(updated.credentials, Credentials::ApiKey { .. }));
+            });
+    }
+
     struct NotFoundRepo;
+
+    // 8.9 - update replaces credentials when provided in request
+    #[test]
+    fn update_replaces_credentials() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "test".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-old".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                let expected_updated_at = conn.updated_at;
+                let result = mc
+                    .update(
+                        &conn.id,
+                        UpdateConnectionRequest {
+                            expected_updated_at,
+                            credentials: Some(CredentialsInput::ApiKey {
+                                api_key: "sk-new-replacement".to_string(),
+                            }),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+
+                assert!(result.is_ok());
+                let updated = result.unwrap();
+                assert!(matches!(updated.credentials, Credentials::ApiKey { .. }));
+            });
+    }
 
     impl Default for UpdateConnectionRequest {
         fn default() -> Self {
@@ -1465,6 +1618,192 @@ mod tests {
             Ok(())
         }
     }
+    struct RepoWithConnections {
+        connections: Vec<ProviderConnection>,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for RepoWithConnections {
+        async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
+            Ok(self.connections.clone())
+        }
+
+        async fn find(
+            &self,
+            id: &ConnectionId,
+        ) -> Result<Option<ProviderConnection>, RepositoryError> {
+            Ok(self.connections.iter().find(|c| c.id == *id).cloned())
+        }
+
+        async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &ProviderConnection,
+            _expected_updated_at: DateTime<Utc>,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
+    struct MockRegistry {
+        providers: std::sync::Mutex<Vec<Arc<dyn ProviderPort>>>,
+    }
+
+    impl MockRegistry {
+        fn new() -> Self {
+            Self {
+                providers: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Default for MockRegistry {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ProviderRegistryPort for MockRegistry {
+        fn providers(&self) -> Vec<ProviderId> {
+            self.providers
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.id().clone())
+                .collect()
+        }
+
+        fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+            self.providers
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.id() == id)
+                .cloned()
+        }
+
+        fn replace_all(
+            &self,
+            new_providers: Vec<Arc<dyn ProviderPort>>,
+        ) -> Result<(), RegistryError> {
+            *self.providers.lock().unwrap() = new_providers;
+            Ok(())
+        }
+
+        fn upsert(&self, _provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), RegistryError> {
+            Ok(())
+        }
+    }
+
+    struct FailDecryptKeyManager;
+
+    impl KeyManager for FailDecryptKeyManager {
+        fn encrypt(
+            &self,
+            _plaintext: &str,
+        ) -> Result<String, rook_core::CredentialEncryptionError> {
+            Ok("enc:v1:encrypted".to_string())
+        }
+
+        fn decrypt(
+            &self,
+            _ciphertext: &str,
+        ) -> Result<String, rook_core::CredentialEncryptionError> {
+            Err(rook_core::CredentialEncryptionError::Decrypt(
+                "intentional test failure".to_string(),
+            ))
+        }
+    }
+
+    struct SuccessProviderBuilder {
+        provider: Arc<dyn ProviderPort>,
+    }
+
+    #[async_trait]
+    impl ProviderBuilderPort for SuccessProviderBuilder {
+        async fn build(
+            &self,
+            _input: ProviderBuildInput,
+        ) -> ManageConnectionsResult<Arc<dyn ProviderPort>> {
+            Ok(self.provider.clone())
+        }
+    }
+
+    use std::sync::Mutex;
+
+    struct RepoWithRefreshTracker {
+        store: Arc<Mutex<Vec<ProviderConnection>>>,
+        refresh_count: Arc<Mutex<usize>>,
+    }
+
+    impl Default for RepoWithRefreshTracker {
+        fn default() -> Self {
+            Self {
+                store: Arc::new(Mutex::new(Vec::new())),
+                refresh_count: Arc::new(Mutex::new(0)),
+            }
+        }
+    }
+
+    impl RepoWithRefreshTracker {
+        fn refresh_count(&self) -> usize {
+            *self.refresh_count.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for RepoWithRefreshTracker {
+        async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
+            *self.refresh_count.lock().unwrap() += 1;
+            Ok(self.store.lock().unwrap().clone())
+        }
+
+        async fn find(
+            &self,
+            id: &ConnectionId,
+        ) -> Result<Option<ProviderConnection>, RepositoryError> {
+            Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|c| c.id == *id)
+                .cloned())
+        }
+
+        async fn create(&self, conn: &ProviderConnection) -> Result<(), RepositoryError> {
+            self.store.lock().unwrap().push(conn.clone());
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            conn: &ProviderConnection,
+            _expected_updated_at: DateTime<Utc>,
+        ) -> Result<(), RepositoryError> {
+            let mut store = self.store.lock().unwrap();
+            if let Some(existing) = store.iter_mut().find(|c| c.id == conn.id) {
+                *existing = conn.clone();
+            }
+            Ok(())
+        }
+
+        async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError> {
+            self.store.lock().unwrap().retain(|c| c.id != *id);
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_returns_unknown_when_provider_runtime_not_found() {
@@ -1574,6 +1913,121 @@ mod tests {
             });
     }
 
+    // 8.10 - test returns unhealthy when health check fails
+    #[test]
+    fn test_returns_unhealthy_when_health_check_fails() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "test".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let conn_id = conn.id;
+                let repo = Arc::new(PopulatedRepo { conn });
+                let mock_provider = Arc::new(MockProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    health_status: HealthStatus::Unhealthy {
+                        provider: ProviderId::new("openai-primary"),
+                        latency_ms: None,
+                        error: "connection refused".to_string(),
+                    },
+                });
+                let registry = Arc::new(MockRegistryWithProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    provider: mock_provider,
+                });
+                let mc = ManageConnections::new(
+                    repo,
+                    registry,
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                let result = mc.test(&conn_id).await;
+                assert!(result.is_ok());
+                let res = result.unwrap();
+                assert_eq!(res.ok, Some(false));
+                assert_eq!(res.status, "unhealthy");
+            });
+    }
+
+    // 8.10 - test returns expired OAuth when token is expired
+    #[test]
+    fn test_returns_expired_oauth() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let expired_at = Utc::now().timestamp() - 3600;
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::Gemini,
+                    provider_runtime_id: ProviderId::new("google-primary"),
+                    name: "test".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::OAuth,
+                    credentials: Credentials::OAuth {
+                        email: EncryptedBlob("enc:v1:user@example.com".to_string()),
+                        access_token: EncryptedBlob("enc:v1:ya29.access".to_string()),
+                        refresh_token: EncryptedBlob("enc:v1:refresh".to_string()),
+                        expires_at: expired_at,
+                        scope: EncryptedBlob("enc:v1:scope".to_string()),
+                        id_token: EncryptedBlob("enc:v1:id".to_string()),
+                        project_id: EncryptedBlob("enc:v1:project".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let conn_id = conn.id;
+                let repo = Arc::new(PopulatedRepo { conn });
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                let result = mc.test(&conn_id).await;
+                assert!(result.is_ok());
+                let res = result.unwrap();
+                assert_eq!(res.ok, Some(false));
+                assert_eq!(res.status, "expired");
+                assert!(res.error.is_some());
+            });
+    }
     // ---------------------------------------------------------------------------
     // Helper function tests
     // ---------------------------------------------------------------------------
@@ -1623,5 +2077,440 @@ mod tests {
             AuthType::ApiKey,
             &creds_oauth
         ));
+    }
+
+    // ---------------------------------------------------------------------------
+    // refresh_registry tests (5.6-5.12)
+    // ---------------------------------------------------------------------------
+
+    // 5.6 - refresh_registry skips inactive connections
+    #[test]
+    fn refresh_registry_skips_inactive_connections() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let active_conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "active".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-active".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let inactive_conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::Anthropic,
+                    provider_runtime_id: ProviderId::new("anthropic-backup"),
+                    name: "inactive".to_string(),
+                    priority: 2,
+                    is_active: false,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-inactive".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(RepoWithConnections {
+                    connections: vec![active_conn, inactive_conn],
+                });
+                let mock_provider = Arc::new(MockProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    health_status: HealthStatus::Healthy {
+                        provider: ProviderId::new("openai-primary"),
+                        latency_ms: 1,
+                    },
+                });
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(MockRegistry::new()),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(SuccessProviderBuilder {
+                        provider: mock_provider,
+                    }),
+                );
+                mc.refresh_registry()
+                    .await
+                    .expect("refresh_registry should succeed");
+                let providers = mc.registry.providers();
+                assert_eq!(providers.len(), 1);
+                assert_eq!(providers[0].as_str(), "openai-primary");
+            });
+    }
+
+    // 5.7 - refresh_registry decrypts and builds provider successfully
+    #[test]
+    fn refresh_registry_decrypts_and_builds_provider() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "primary".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test-key".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(PopulatedRepo { conn });
+                let mock_provider = Arc::new(MockProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    health_status: HealthStatus::Healthy {
+                        provider: ProviderId::new("openai-primary"),
+                        latency_ms: 1,
+                    },
+                });
+                let registry = Arc::new(MockRegistryWithProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    provider: mock_provider.clone(),
+                });
+                let mc = ManageConnections::new(
+                    repo,
+                    registry.clone(),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(SuccessProviderBuilder {
+                        provider: mock_provider,
+                    }),
+                );
+                mc.refresh_registry()
+                    .await
+                    .expect("refresh_registry should succeed");
+                let loaded = registry.get(&ProviderId::new("openai-primary"));
+                assert!(loaded.is_some());
+                assert_eq!(loaded.unwrap().id().as_str(), "openai-primary");
+            });
+    }
+
+    // 5.8 - refresh_registry partial failure: one decrypt fails, other still added
+    #[test]
+    fn refresh_registry_partial_failure_keeps_valid_providers() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn_ok = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "ok".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-ok".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let conn_bad = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::Anthropic,
+                    provider_runtime_id: ProviderId::new("anthropic-bad"),
+                    name: "bad".to_string(),
+                    priority: 2,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-bad".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(RepoWithConnections {
+                    connections: vec![conn_ok.clone(), conn_bad.clone()],
+                });
+                let mock_provider = Arc::new(MockProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    health_status: HealthStatus::Healthy {
+                        provider: ProviderId::new("openai-primary"),
+                        latency_ms: 1,
+                    },
+                });
+                let registry = Arc::new(MockRegistryWithProvider {
+                    provider_id: ProviderId::new("openai-primary"),
+                    provider: mock_provider.clone(),
+                });
+                let mc = ManageConnections::new(
+                    repo,
+                    registry.clone(),
+                    Arc::new(FailDecryptKeyManager),
+                    Arc::new(SuccessProviderBuilder {
+                        provider: mock_provider,
+                    }),
+                );
+                mc.refresh_registry()
+                    .await
+                    .expect("refresh_registry should succeed (partial failure is warn)");
+                let providers = registry.providers();
+                assert_eq!(providers.len(), 1);
+                assert_eq!(providers[0].as_str(), "openai-primary");
+            });
+    }
+
+    // 5.9 - refresh_registry all failures: results in empty registry
+    #[test]
+    fn refresh_registry_all_failures_results_in_empty_registry() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "primary".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(PopulatedRepo { conn });
+                let mc = ManageConnections::new(
+                    repo,
+                    Arc::new(EmptyRegistry),
+                    Arc::new(FailDecryptKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+                mc.refresh_registry()
+                    .await
+                    .expect("refresh_registry should succeed even when all fail");
+                let providers = mc.registry.providers();
+                assert!(providers.is_empty());
+            });
+    }
+
+    // 5.10 - create calls refresh_registry after write
+    #[test]
+    fn create_calls_refresh_after_write() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let repo = Arc::new(RepoWithRefreshTracker::default());
+                let mc = ManageConnections::new(
+                    repo.clone(),
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+                mc.create(CreateConnectionRequest {
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    auth_type: AuthType::ApiKey,
+                    name: "primary".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    credentials: CredentialsInput::ApiKey {
+                        api_key: "sk-test".to_string(),
+                    },
+                    config: config(),
+                })
+                .await
+                .expect("create should succeed");
+                assert_eq!(
+                    repo.refresh_count(),
+                    1,
+                    "refresh_registry should be called once after create"
+                );
+            });
+    }
+
+    // 5.11 - update calls refresh_registry after write
+    #[test]
+    fn update_calls_refresh_after_write() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let existing_conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "primary".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(RepoWithRefreshTracker::default());
+                repo.store
+                    .clone()
+                    .lock()
+                    .unwrap()
+                    .push(existing_conn.clone());
+                let mc = ManageConnections::new(
+                    repo.clone(),
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+                mc.update(
+                    &existing_conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: existing_conn.updated_at,
+                        provider_kind: None,
+                        provider_runtime_id: None,
+                        auth_type: None,
+                        name: Some("updated-name".to_string()),
+                        priority: None,
+                        is_active: None,
+                        credentials: None,
+                        config: None,
+                    },
+                )
+                .await
+                .expect("update should succeed");
+                assert_eq!(
+                    repo.refresh_count(),
+                    1,
+                    "refresh_registry should be called once after update"
+                );
+            });
+    }
+
+    // 5.12 - delete calls refresh_registry after write
+    #[test]
+    fn delete_calls_refresh_after_write() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let existing_conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "primary".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(RepoWithRefreshTracker::default());
+                repo.store
+                    .clone()
+                    .lock()
+                    .unwrap()
+                    .push(existing_conn.clone());
+                let mc = ManageConnections::new(
+                    repo.clone(),
+                    Arc::new(EmptyRegistry),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+                mc.delete(&existing_conn.id)
+                    .await
+                    .expect("delete should succeed");
+                assert_eq!(
+                    repo.refresh_count(),
+                    1,
+                    "refresh_registry should be called once after delete"
+                );
+            });
     }
 }

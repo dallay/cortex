@@ -34,7 +34,7 @@ pub struct RookContainer {
 }
 
 impl RookContainer {
-    pub fn build(config: &RookConfig) -> anyhow::Result<Self> {
+    pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
         // 1. Cache
         let cache: Arc<dyn CachePort> = if config.cache.enabled {
             Arc::new(InMemoryCache::new(config.cache.ttl()))
@@ -50,39 +50,6 @@ impl RookContainer {
         let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(strategy));
         let router: Arc<dyn RouterPort> = fallback_router.clone();
         let registry: Arc<dyn ProviderRegistryPort> = fallback_router;
-
-        let manage_connections = if config.provider_crud.enabled {
-            let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
-            let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
-            let key_manager = Arc::new(
-                AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
-                    .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
-            );
-            let repo: Arc<dyn ProviderRepositoryPort> =
-                Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
-            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
-            let mc = ManageConnections::new(repo, registry.clone(), key_manager, builder);
-
-            // Populate the registry from the database on startup.
-            // If this fails (e.g., encrypted connections with wrong key), log a warning
-            // and continue — the router starts empty and can be populated via CRUD.
-            if let Err(e) = tokio::runtime::Handle::current().block_on(mc.refresh_registry()) {
-                tracing::warn!(error = %e, "initial registry refresh failed, starting with empty registry");
-            }
-
-            Some(mc)
-        } else {
-            None
-        };
-
-        let authenticate_client_api = if config.auth.api_keys.enabled {
-            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
-            let repo: Arc<dyn ApiKeyRepositoryPort> =
-                Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
-            Some(AuthenticateClientApi::new(repo, hash_secret))
-        } else {
-            None
-        };
 
         // 4. Auth — user/session repos and password hasher
         let user_repo: Arc<dyn rook_core::UserRepositoryPort> =
@@ -104,17 +71,61 @@ impl RookContainer {
             rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
         let logout = rook_usecases::Logout::new(session_repo.clone());
 
-        // 7. Ensure admin exists on first boot (before HTTP server starts)
-        // This guarantees the admin record exists with NULL password_hash.
-        // Any login attempt before SetAdminPassword is called will fail with PASSWORD_NOT_SET.
-        {
-            let admin = tokio::runtime::Handle::current()
-                .block_on(ensure_admin_user.execute())
-                .map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
-            tracing::info!(admin_id = %admin.id, "admin user ready");
+        let authenticate_client_api = if config.auth.api_keys.enabled {
+            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
+            let repo: Arc<dyn ApiKeyRepositoryPort> =
+                Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
+            Some(AuthenticateClientApi::new(repo, hash_secret))
+        } else {
+            None
+        };
+
+        // 7. ManageConnections (provider CRUD) — built here so it can be used in join!
+        let manage_connections = if config.provider_crud.enabled {
+            let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
+            let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
+            let key_manager = Arc::new(
+                AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
+                    .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
+            );
+            let repo: Arc<dyn ProviderRepositoryPort> =
+                Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
+            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
+            Some(ManageConnections::new(
+                repo,
+                registry.clone(),
+                key_manager,
+                builder,
+            ))
+        } else {
+            None
+        };
+
+        // 8. Run async initialization tasks concurrently:
+        // - registry refresh (if provider_crud enabled)
+        // - ensure admin user exists
+        //
+        // Using tokio::join! to run both on the async runtime without blocking any thread.
+        let (refresh_result, admin_result) = tokio::join!(
+            async {
+                if let Some(ref mc) = manage_connections {
+                    mc.refresh_registry().await
+                } else {
+                    Ok(())
+                }
+            },
+            ensure_admin_user.execute()
+        );
+
+        if let Err(e) = refresh_result {
+            tracing::warn!(error = %e, "initial registry refresh failed, starting with empty registry");
         }
 
-        // 8. Use cases
+        let admin =
+            admin_result.map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
+        tracing::info!(admin_id = %admin.id, "admin user ready");
+
+        // 9. Use cases
         let usecases = Arc::new(RookUsecases {
             route_request: RouteRequest::new(router.clone(), cache.clone(), audit.clone()),
             manage_providers: ManageProviders::new(router.clone()),

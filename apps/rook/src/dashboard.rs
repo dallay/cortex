@@ -16,7 +16,7 @@ struct DashboardAssets;
 pub fn dashboard_routes() -> Router {
     Router::new()
         .route("/", get(serve_index))
-        .route("/*path", get(serve_assets))
+        .route("/{*path}", get(serve_assets))
         .fallback(serve_index_fallback)
 }
 
