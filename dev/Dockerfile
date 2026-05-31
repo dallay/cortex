@@ -30,7 +30,17 @@ RUN chmod +x /usr/local/bin/rook
 
 EXPOSE 8080
 
-USER non-root
+COPY target/debug/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-minimal.toml /app/rook.toml
+
+RUN chmod +x /usr/local/bin/rook
+RUN groupadd --system rook \
+    && useradd --system --gid rook --home-dir /app --no-create-home rook \
+    && chown -R rook:rook /app
+
+EXPOSE 8080
+
+USER rook
 
 ENTRYPOINT ["/usr/local/bin/rook"]
 CMD ["--config", "/app/rook.toml"]
