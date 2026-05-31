@@ -1,5 +1,5 @@
 change: dynamic-provider-registry
-current_phase: sdd-verify
+current_phase: sdd-archive
 completed:
   - init
   - sdd-spec
@@ -7,7 +7,8 @@ completed:
   - sdd-tasks
   - sdd-apply
   - sdd-verify
-next: Phase 5 unit tests (5.1-5.17) + Phase 6 integration tests (6.1-6.6)
+  - sdd-archive
+next: SDD cycle complete — ready for next change
 updated: "2026-05-31T00:00:00Z"
 pr1_status: |
   PR1 (Phases 1-4) COMPLETE. All foundation work done:
@@ -38,6 +39,10 @@ pr2_status: |
   - build_provider_from_connection exported as pub(crate)
   - docs updated: [[providers]] sections removed from configuration.md and providers.md
   - workspace tests: 217 passed, clippy clean
+archive_date: "2026-05-31"
+archived: true
+verification_status: PASS WITH WARNINGS
+deviation: R8 registry gated behind provider_crud.enabled (accepted)
 notes: |
   Key implementation decisions made during PR2 Phase 4:
   - OAuth access_token is used as api_key where the provider supports it (OpenAI, Anthropic, etc.)

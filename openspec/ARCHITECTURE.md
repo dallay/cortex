@@ -99,6 +99,43 @@ When exhausted: `429 Too Many Requests` with `Retry-After` header.
 
 ---
 
+## Runtime Provider Registry
+
+The runtime provider registry (`FallbackRouter`) is dynamic and SQLite-backed, replacing the prior TOML `[[providers]]` approach.
+
+### Architecture
+
+```
+SQLite (ProviderConnection rows)
+    → ManageConnections.refresh_registry()
+    → build_provider_from_connection()
+    → FallbackRouter.providers (Arc<RwLock<Vec<...>>)
+    → RouterPort::select() / ::get()
+```
+
+### Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|----------|
+| Provider list storage | `Arc<RwLock<Vec<Arc<dyn ProviderPort>>>` | Lock-free reads; exclusive write for atomicity |
+| RwLock type | `parking_lot::RwLock` (sync) | For `FallbackRouter.providers` — accessed from sync context |
+| round_robin_index | `tokio::sync::RwLock` (async) | For async `.write().await` in routing |
+| Refresh trigger | After every mutating CRUD op | Ensures registry is always current |
+| Partial failure | Survives with valid providers | `replace_all` with collected successes |
+| Startup seed | Initial refresh via `manage_connections` | Populates registry from existing SQLite state |
+
+### Registry Operations
+
+- **`replace_all`**: Atomic full replacement — used after refresh
+- **`upsert`**: Single provider add/update — available but refresh uses `replace_all`
+- **`remove`**: Single provider removal — available but refresh uses `replace_all`
+
+### Feature Gate
+
+The registry is gated behind `provider_crud.enabled = true`. When disabled, `manage_connections` is `None` and the registry starts empty. This is a pragmatic deviation from the spec (R8: "registry always active") with no functional impact — when CRUD is disabled, there are no connections to load.
+
+---
+
 ## Known Gaps (Archived Change)
 
 These items were identified during implementation but not completed:

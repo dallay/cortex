@@ -2,12 +2,12 @@
 
 ## Review Workload Forecast
 
-| Field                   | Value                                 |
-|-------------------------|---------------------------------------|
-| Estimated changed lines | 800–1100                              |
-| 400-line budget risk    | High                                  |
-| Chained PRs recommended | Yes                                   |
-| Suggested split         | PR1 (Foundation) → PR 2 (Integration) |
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | 800–1100 |
+| 400-line budget risk | High |
+| Chained PRs recommended | Yes |
+| Suggested split | PR1 (Foundation) → PR 2 (Integration) |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
@@ -16,10 +16,10 @@ Chain strategy: stacked-to-main
 
 ### Suggested Work Units
 
-| Unit | Goal                                                                                                 | Likely PR | Notes                               |
-|------|------------------------------------------------------------------------------------------------------|-----------|-------------------------------------|
-| 1    | Foundation types, trait extension, FallbackRouter RwLock conversion, ManageConnections refresh logic | PR 1      | Base = main; no previous PRs needed |
-| 2    | DI wiring, build_provider_from_connection, config removal, integration tests                         | PR 2      | Base = PR 1; stacked on top         |
+| Unit | Goal | Likely PR | Notes |
+|------|------|-----------|-------|
+| 1 | Foundation types, trait extension, FallbackRouter RwLock conversion, ManageConnections refresh logic | PR 1 | Base = main; no previous PRs needed |
+| 2 | DI wiring, build_provider_from_connection, config removal, integration tests | PR 2 | Base = PR 1; stacked on top |
 
 ## Phase 1: Foundation Types and Trait Extension
 
