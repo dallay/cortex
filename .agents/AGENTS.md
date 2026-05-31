@@ -1,6 +1,7 @@
 # Cortex — Agent Instructions
 
 <!-- agentsync:agent-config-layout:start -->
+
 ## Agent config layout
 
 `.agents/` is the canonical source for shared instructions, skills, and commands in this project.
@@ -8,10 +9,10 @@
 - Instructions: `.agents/AGENTS.md` is the canonical instructions file, and these `symlink` targets reflect it directly in `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`, `AGENTS.md`, `AGENTS.md`.
 
 - Skills: `.agents/skills/` is the canonical skills directory.
-  - `.claude/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
-  - `.codex/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
-  - `.gemini/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
-  - `.opencode/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
+    - `.claude/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
+    - `.codex/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
+    - `.gemini/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
+    - `.opencode/skills` reflects `.agents/skills/` directly because this target uses `symlink`.
 
 - Commands: `.agents/commands/` is the canonical commands directory, `agentsync apply` populates command entries into `.claude/commands`, `.gemini/commands`, `.opencode/command`, and `agentsync status` validates those destinations as managed container directories rather than requiring the destination path itself to be a symlink.
 
@@ -60,18 +61,18 @@ Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepo
 
 ## Package Boundaries
 
-| Package | Purpose |
-|---------|---------|
-| `apps/rook` | Binary — main.rs, config.rs, di.rs, server.rs |
-| `transport-axum` | HTTP server, wire-format ↔ domain adapters |
-| `rook-usecases` | Request routing, fallback, health checks |
-| `rook-core` | Domain model, port traits |
-| `shared-kernel` | Zero-deps types (IDs, errors) |
-| `providers-OPENAI\|anthropic\|ollama\|gemini\|groq` | Per-provider API implementations |
-| `cache-memory` | DashMap TTL cache |
-| `audit-sqlite` | SQLite audit log |
-| `encryption-inmemory` | AES-256-GCM + Argon2id |
-| `provider-sqlite` | Provider connection persistence |
+| Package                                             | Purpose                                       |
+|-----------------------------------------------------|-----------------------------------------------|
+| `apps/rook`                                         | Binary — main.rs, config.rs, di.rs, server.rs |
+| `transport-axum`                                    | HTTP server, wire-format ↔ domain adapters    |
+| `rook-usecases`                                     | Request routing, fallback, health checks      |
+| `rook-core`                                         | Domain model, port traits                     |
+| `shared-kernel`                                     | Zero-deps types (IDs, errors)                 |
+| `providers-OPENAI\|anthropic\|ollama\|gemini\|groq` | Per-provider API implementations              |
+| `cache-memory`                                      | DashMap TTL cache                             |
+| `audit-sqlite`                                      | SQLite audit log                              |
+| `encryption-inmemory`                               | AES-256-GCM + Argon2id                        |
+| `provider-sqlite`                                   | Provider connection persistence               |
 
 ## Quirks & Gotchas
 
