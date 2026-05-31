@@ -90,6 +90,24 @@ allow_env_fallback = true
 
 When `enabled = true`, `API_KEY_HASH_SECRET` is required and must be non-empty. Legacy `CLIENT_API_KEYS` may still be used for local compatibility only when `allow_env_fallback = true`.
 
+### CLI: seed-admin
+
+The `seed-admin` subcommand sets the initial admin password (stored as Argon2id hash):
+
+```bash
+rook seed-admin <password>
+```
+
+Requires `ROOK_CONFIG` and `API_KEY_HASH_SECRET` environment variables to be set. Use this for:
+- Initial setup when no admin password exists
+- E2E testing to bootstrap a known admin user
+
+```bash
+ROOK_CONFIG=dev/test-configs/rook.toml \
+API_KEY_HASH_SECRET="your-secret" \
+rook seed-admin admin123
+```
+
 ## Provider CRUD API
 
 Provider connection management is disabled by default. When enabled, Rook mounts `/api/providers` endpoints for storing provider connection metadata and encrypted credentials. The provider registry is populated from the database on startup and refreshed after each CRUD operation.
@@ -184,3 +202,57 @@ Rook validates config on startup:
 - If `auth.api_keys.enabled = true`, `API_KEY_HASH_SECRET` must be set
 
 There is no minimum provider requirement at startup — the registry starts empty and is populated from the database via `refresh_registry()`. If no connections exist in the database, Rook will return 503 for all routing requests until connections are added via the CRUD API.
+
+## E2E Testing
+
+### Prerequisites
+
+1. Build the Docker image with the current code:
+   ```bash
+   docker build -f Dockerfile.dev -t rook:e2e .
+   ```
+
+2. Create a test config with API key management enabled:
+   ```toml
+   # dev/test-configs/rook-e2e.toml
+   [server]
+   host = "0.0.0.0"
+   port = 8080
+
+   [database]
+   db_path = "/tmp/rook-e2e.db"
+
+   [auth.api_keys]
+   enabled = true
+   allow_env_fallback = false
+   ```
+
+3. Start the container and seed the admin password:
+   ```bash
+   docker run -d --name rook-e2e \
+     -p 8080:8080 \
+     -v $(pwd)/dev/test-configs/rook-e2e.toml:/app/rook.toml:ro \
+     -e ROOK_CONFIG=/app/rook.toml \
+     -e API_KEY_HASH_SECRET="test-secret" \
+     rook:e2e
+
+   # Seed admin password
+   docker exec rook-e2e rook seed-admin admin123
+
+   # Test health
+   curl http://localhost:8080/health
+   ```
+
+4. Run E2E tests:
+   ```bash
+   cd apps/rook/dashboard
+   pnpm playwright test e2e/api-keys.spec.ts
+   ```
+
+### Quick E2E Test Script
+
+```bash
+./dev/e2e/run-api-keys-e2e.sh --test
+```
+
+See `dev/e2e/run-api-keys-e2e.sh` for the full script.

@@ -1,0 +1,23 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 300
+
+[audit]
+db_path = ":memory:"
+
+[database]
+db_path = "/tmp/rook-e2e.db"
+
+[provider_crud]
+enabled = false
+
+[auth.api_keys]
+enabled = true
+allow_env_fallback = false

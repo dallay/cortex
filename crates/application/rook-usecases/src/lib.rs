@@ -16,6 +16,9 @@ pub use auth::{
 };
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use health_check::HealthCheck;
+pub use manage_api_keys::{
+    CreateApiKeyRequest, ManageApiKeys, ManageApiKeysError, UpdateApiKeyRequest,
+};
 pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
@@ -26,6 +29,7 @@ pub use router_impl::{FallbackRouter, RoutingStrategy};
 
 pub mod authenticate_client_api;
 pub mod health_check;
+pub mod manage_api_keys;
 pub mod manage_connections;
 pub mod manage_providers;
 
@@ -36,6 +40,7 @@ pub struct RookUsecases {
     pub health_check: HealthCheck,
     pub authenticate_client_api: Option<AuthenticateClientApi>,
     pub manage_connections: Option<ManageConnections>,
+    pub manage_api_keys: Option<ManageApiKeys>,
     pub ensure_admin_user: EnsureAdminUser,
     pub set_admin_password: SetAdminPassword,
     pub login: Login,

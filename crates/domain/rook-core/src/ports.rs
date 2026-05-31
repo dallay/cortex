@@ -13,8 +13,8 @@ use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
 
 use super::{
-    ApiKeyId, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser, PasswordHash,
-    ProviderConnection, RepositoryError, Session, SessionId, User, UserId,
+    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
+    PasswordHash, ProviderConnection, RepositoryError, Session, SessionId, User, UserId,
 };
 use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
 
@@ -160,6 +160,30 @@ pub trait ApiKeyRepositoryPort: Send + Sync {
         id: &ApiKeyId,
         used_at: DateTime<Utc>,
     ) -> Result<(), ApiKeyRepositoryError>;
+
+    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError>;
+
+    async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError>;
+
+    async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError>;
+
+    async fn update(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError>;
+
+    async fn delete(&self, id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError>;
+
+    async fn revoke(
+        &self,
+        id: &ApiKeyId,
+        revoked_at: DateTime<Utc>,
+    ) -> Result<(), ApiKeyRepositoryError>;
+
+    async fn list_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError>;
+
+    async fn count(&self) -> Result<i64, ApiKeyRepositoryError>;
 }
 
 // ---------------------------------------------------------------------------

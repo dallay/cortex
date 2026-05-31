@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { LucideIcon } from '@lucide/vue'
-import { LifeBuoy, Send } from '@lucide/vue'
+import type { Component } from 'vue'
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -10,7 +9,7 @@ import {
 } from '@/components/ui/sidebar'
 
 defineProps<{
-  items: { title: string; url: string; icon: LucideIcon }[]
+  items: { title: string; url: string; icon: Component }[]
 }>()
 </script>
 

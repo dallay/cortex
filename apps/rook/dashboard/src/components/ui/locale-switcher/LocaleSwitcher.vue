@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '@/i18n'
+import type { AcceptableValue } from 'reka-ui'
 import {
   Select,
   SelectContent,
@@ -16,8 +17,10 @@ const locales = [
   { code: 'es', label: 'Español' },
 ] as const
 
-function handleChange(newLocale: string) {
-  setLocale(newLocale as 'en' | 'es')
+function handleChange(value: AcceptableValue) {
+  if (typeof value === 'string') {
+    setLocale(value as 'en' | 'es')
+  }
 }
 </script>
 

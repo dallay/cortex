@@ -71,11 +71,25 @@ impl RookContainer {
             rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
         let logout = rook_usecases::Logout::new(session_repo.clone());
 
+        let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
+            Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
+
         let authenticate_client_api = if config.auth.api_keys.enabled {
             let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
-            let repo: Arc<dyn ApiKeyRepositoryPort> =
-                Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
-            Some(AuthenticateClientApi::new(repo, hash_secret))
+            Some(AuthenticateClientApi::new(
+                api_key_repo.clone(),
+                hash_secret,
+            ))
+        } else {
+            None
+        };
+
+        let manage_api_keys = if config.auth.api_keys.enabled {
+            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
+            Some(rook_usecases::ManageApiKeys::new(
+                api_key_repo.clone(),
+                hash_secret,
+            ))
         } else {
             None
         };
@@ -132,6 +146,7 @@ impl RookContainer {
             health_check: HealthCheck::new(registry),
             authenticate_client_api: authenticate_client_api.clone(),
             manage_connections,
+            manage_api_keys,
             ensure_admin_user,
             set_admin_password,
             login,

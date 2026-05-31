@@ -8,7 +8,7 @@ import { useProviders } from '@/composables/useProviders'
 const { t } = useI18n()
 
 const activeTab = ref<'list' | 'quotes'>('list')
-const { providers, loading, error, fetch, remove, test } = useProviders()
+const { providers, loading, error, fetch, test } = useProviders()
 
 onMounted(() => {
   fetch()

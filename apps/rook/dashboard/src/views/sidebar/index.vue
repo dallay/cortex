@@ -17,14 +17,8 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useRoute } from 'vue-router'
-import { computed } from 'vue'
 
 const route = useRoute()
-
-const breadcrumbs = computed(() => {
-  const name = route.name as string
-  return [{ label: name || 'Dashboard', href: '#' }]
-})
 </script>
 
 <template>

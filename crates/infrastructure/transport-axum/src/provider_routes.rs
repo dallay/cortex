@@ -22,10 +22,10 @@ pub fn router(usecases: Usecases) -> Router {
     Router::new()
         .route("/api/providers", get(list_providers))
         .route("/api/providers", post(create_provider))
-        .route("/api/providers/:id", get(get_provider))
-        .route("/api/providers/:id", put(update_provider))
-        .route("/api/providers/:id", delete(delete_provider))
-        .route("/api/providers/:id/test", post(test_provider))
+        .route("/api/providers/{id}", get(get_provider))
+        .route("/api/providers/{id}", put(update_provider))
+        .route("/api/providers/{id}", delete(delete_provider))
+        .route("/api/providers/{id}/test", post(test_provider))
         .with_state(usecases)
 }
 

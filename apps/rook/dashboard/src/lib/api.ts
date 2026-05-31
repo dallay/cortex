@@ -1,3 +1,55 @@
+// =============================================================================
+// API Key types
+// =============================================================================
+
+export interface ApiKeyRecordResponse {
+  id: string
+  label: string
+  keyPrefix: string
+  scopes: string[]
+  tier: string
+  isActive: boolean
+  revokedAt: string | null
+  expiresAt: string | null
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export interface CreateApiKeyResponse {
+  key: ApiKeyRecordResponse
+  plaintextKey: string
+}
+
+export interface PaginationResponse {
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface ListApiKeysResponse {
+  keys: ApiKeyRecordResponse[]
+  pagination: PaginationResponse
+}
+
+export interface CreateApiKeyRequest {
+  label: string
+  scopes: string[]
+  tier: string
+  expiresAt: string | null
+}
+
+export interface UpdateApiKeyRequest {
+  label?: string
+  scopes?: string[]
+  tier?: string
+  isActive?: boolean
+  expiresAt?: string | null
+}
+
+// =============================================================================
+// Rook API Client
+// =============================================================================
+
 /**
  * Rook API Client
  *
@@ -50,7 +102,7 @@ const STORAGE_KEY = 'rook-api-base-url'
 function getBaseUrl(): string {
   // Allow override for development/CI
   if (typeof window !== 'undefined' && (window as unknown as { __ROOK_API_BASE__?: string }).__ROOK_API_BASE__) {
-    return (window as unknown as { __ROOK_API_BASE__?: string }).__ROOK_API_BASE__
+    return (window as unknown as { __ROOK_API_BASE__: string }).__ROOK_API_BASE__
   }
   const stored = localStorage.getItem(STORAGE_KEY)
   if (stored) return stored
@@ -83,12 +135,24 @@ function createApiClient() {
   ): Promise<T> {
     const url = `${baseUrl}${path}`
 
+    // Extract CSRF token from cookie for state-changing requests
+    const method = (options.method || 'GET').toUpperCase()
+    const isStateChanging = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...options.headers as Record<string, string>,
+    }
+
+    if (isStateChanging && typeof document !== 'undefined') {
+      const csrfMatch = document.cookie.match(/csrf_token=([^;]+)/)
+      if (csrfMatch) {
+        headers['X-CSRF-Token'] = csrfMatch[1]
+      }
+    }
+
     const response = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
       credentials: 'include', // Include cookies for session auth
     })
 
@@ -145,6 +209,35 @@ function createApiClient() {
     async testProvider(id: string): Promise<TestConnectionResponse> {
       return request<TestConnectionResponse>(`/api/providers/${id}/test`, {
         method: 'POST',
+      })
+    },
+
+    // API Key management (requires session auth)
+    async getApiKeys(limit = 20, offset = 0): Promise<ListApiKeysResponse> {
+      return request<ListApiKeysResponse>(`/api/api-keys?limit=${limit}&offset=${offset}`)
+    },
+
+    async getApiKey(id: string): Promise<ApiKeyRecordResponse> {
+      return request<ApiKeyRecordResponse>(`/api/api-keys/${id}`)
+    },
+
+    async createApiKey(data: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
+      return request<CreateApiKeyResponse>('/api/api-keys', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    },
+
+    async updateApiKey(id: string, data: UpdateApiKeyRequest): Promise<ApiKeyRecordResponse> {
+      return request<ApiKeyRecordResponse>(`/api/api-keys/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    },
+
+    async revokeApiKey(id: string): Promise<void> {
+      return request<void>(`/api/api-keys/${id}`, {
+        method: 'DELETE',
       })
     },
   }

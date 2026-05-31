@@ -6,7 +6,7 @@
  */
 export interface Endpoint {
   path: string
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method: 'GET' | 'POST'
   descriptionKey: string
   category: 'core' | 'media' | 'utility'
 }

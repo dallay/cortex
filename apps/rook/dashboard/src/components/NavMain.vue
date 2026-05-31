@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import type { LucideIcon } from '@lucide/vue'
+import type { Component } from 'vue'
 import { ChevronRight } from '@lucide/vue'
 import {
   Collapsible,
@@ -25,7 +25,7 @@ defineProps<{
   items: {
     title: string
     url: string
-    icon: LucideIcon
+    icon: Component
     isActive?: boolean
     items?: {
       title: string

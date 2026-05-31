@@ -10,6 +10,14 @@ Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default:
 | `GET`  | `/v1/models`       | List available models (static)   | None     |
 | `POST` | `/v1/messages`    | Anthropic-compatible messages    | None     |
 | `GET`  | `/health`          | Health check with provider status| None     |
+| `GET`  | `/api/api-keys`    | List API keys (paginated)        | Session  |
+| `POST` | `/api/api-keys`    | Create API key                   | Session  |
+| `GET`  | `/api/api-keys/{id}` | Get API key details           | Session  |
+| `PUT`  | `/api/api-keys/{id}` | Update API key                | Session  |
+| `DELETE`| `/api/api-keys/{id}`| Revoke API key (soft delete)  | Session  |
+| `GET`  | `/login`           | Get CSRF token for login        | None     |
+| `POST` | `/login`           | Login (create session)           | None     |
+| `POST` | `/logout`          | Logout (revoke session)         | Session  |
 
 ## POST /v1/chat/completions
 
@@ -226,6 +234,189 @@ Aggregated health status of all configured providers.
 - `"healthy"` — all providers are healthy
 - `"degraded"` — some providers are unhealthy
 - `"no_providers_configured"` — no providers are configured
+
+---
+
+## Authentication
+
+Rook uses session-based authentication for management endpoints (`/api/*`). The dashboard UI handles this automatically.
+
+### CSRF Protection
+
+All state-changing requests (`POST`, `PUT`, `DELETE`) require CSRF protection via the double-submit cookie pattern:
+
+1. `GET /login` —获取 CSRF token and `csrf_token` cookie
+2. `POST /login` — Include both `csrf_token` cookie and `X-CSRF-Token` header with the token value
+
+### Login Flow
+
+```bash
+# 1. Get CSRF token
+curl -c cookies.txt http://localhost:8080/login
+
+# 2. Login (extract token from response body or cookies.txt)
+curl -X POST http://localhost:8080/login \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: <token-from-step-1>" \
+  -b cookies.txt \
+  -d '{"username":"admin","password":"your-password"}'
+```
+
+### CLI: Seed Admin Password
+
+For initial setup or E2E testing, use the `seed-admin` CLI command to set the admin password:
+
+```bash
+# Set admin password
+rook seed-admin <password>
+
+# Requires ROOK_CONFIG and API_KEY_HASH_SECRET environment variables
+ROOK_CONFIG=/path/to/rook.toml API_KEY_HASH_SECRET="secret" rook seed-admin mypassword
+```
+
+---
+
+## GET /api/api-keys
+
+List all API keys with pagination. Requires authenticated session.
+
+### Query Parameters
+
+| Parameter | Type    | Default | Description                    |
+|-----------|---------|---------|--------------------------------|
+| `limit`  | integer | `20`    | Max keys to return (1-100)     |
+| `offset` | integer | `0`      | Number of keys to skip         |
+
+### Response
+
+```json
+{
+  "keys": [
+    {
+      "id": "key_abc123",
+      "label": "opencode-agent",
+      "keyPrefix": "rk_abc1",
+      "scopes": ["read", "write"],
+      "tier": "free",
+      "isActive": true,
+      "revokedAt": null,
+      "expiresAt": null,
+      "createdAt": "2025-05-31T12:00:00Z",
+      "lastUsedAt": null
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+---
+
+## POST /api/api-keys
+
+Create a new API key. The plaintext key is returned **only once** — save it securely.
+
+### Request
+
+```json
+{
+  "label": "my-agent",
+  "scopes": ["read", "write"],
+  "tier": "free",
+  "expiresAt": null
+}
+```
+
+| Field       | Type     | Required | Description                          |
+|-------------|----------|----------|--------------------------------------|
+| `label`     | string   | Yes      | Human-readable name                  |
+| `scopes`    | string[] | Yes      | Permissions: `"read"`, `"write"`     |
+| `tier`      | string   | Yes      | `"free"`, `"pro"`, `"enterprise"`   |
+| `expiresAt` | string   | No       | ISO 8601 timestamp, null for no expiry |
+
+### Response (201 Created)
+
+```json
+{
+  "key": {
+    "id": "key_abc123",
+    "label": "my-agent",
+    "keyPrefix": "rk_abc1",
+    "scopes": ["read", "write"],
+    "tier": "free",
+    "isActive": true,
+    "revokedAt": null,
+    "expiresAt": null,
+    "createdAt": "2025-05-31T12:00:00Z",
+    "lastUsedAt": null
+  },
+  "plaintextKey": "rk_Nk7_PBl1teOf9z01kPXWR-sPLlTmwhB..."
+}
+```
+
+> ⚠️ **Important:** The `plaintextKey` is shown **only once** at creation time. Store it securely — it cannot be retrieved again.
+
+---
+
+## GET /api/api-keys/{id}
+
+Get details for a specific API key.
+
+### Response
+
+```json
+{
+  "id": "key_abc123",
+  "label": "my-agent",
+  "keyPrefix": "rk_abc1",
+  "scopes": ["read", "write"],
+  "tier": "free",
+  "isActive": true,
+  "revokedAt": null,
+  "expiresAt": null,
+  "createdAt": "2025-05-31T12:00:00Z",
+  "lastUsedAt": null
+}
+```
+
+---
+
+## PUT /api/api-keys/{id}
+
+Update an API key's metadata.
+
+### Request
+
+All fields are optional (only supplied fields are updated):
+
+```json
+{
+  "label": "updated-name",
+  "scopes": ["read"],
+  "tier": "pro",
+  "isActive": false,
+  "expiresAt": "2026-12-31T23:59:59Z"
+}
+```
+
+### Response
+
+Returns the updated API key record (same format as GET).
+
+---
+
+## DELETE /api/api-keys/{id}
+
+Revoke an API key (soft delete). Sets `isActive=false` and `revokedAt=now()`.
+
+### Response
+
+`204 No Content` on success.
+
+Revoked keys cannot be re-activated. Create a new key instead.
 
 ---
 
