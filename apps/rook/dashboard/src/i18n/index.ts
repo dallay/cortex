@@ -1,4 +1,5 @@
 import { createI18n } from 'vue-i18n'
+import type { WritableComputedRef } from 'vue'
 import en from '@/locales/en.json'
 import es from '@/locales/es.json'
 
@@ -21,6 +22,6 @@ export const i18n = createI18n<[MessageSchema], 'en' | 'es'>({
 })
 
 export function setLocale(locale: 'en' | 'es') {
-  i18n.global.locale.value = locale
+  ;(i18n.global.locale as unknown as WritableComputedRef<string>).value = locale
   localStorage.setItem(STORAGE_KEY, locale)
 }

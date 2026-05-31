@@ -883,6 +883,55 @@ mod tests {
         ) -> Result<(), ApiKeyRepositoryError> {
             Ok(())
         }
+
+        async fn list(&self) -> Result<Vec<rook_core::ApiKeyRecord>, ApiKeyRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find(
+            &self,
+            _id: &ApiKeyId,
+        ) -> Result<Option<rook_core::ApiKeyRecord>, ApiKeyRepositoryError> {
+            Ok(None)
+        }
+
+        async fn create(
+            &self,
+            _record: &rook_core::ApiKeyRecord,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _record: &rook_core::ApiKeyRecord,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+
+        async fn revoke(
+            &self,
+            _id: &ApiKeyId,
+            _revoked_at: DateTime<Utc>,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+
+        async fn list_paginated(
+            &self,
+            _limit: i64,
+            _offset: i64,
+        ) -> Result<Vec<rook_core::ApiKeyRecord>, ApiKeyRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
+            Ok(0)
+        }
     }
 
     fn runtime() -> tokio::runtime::Runtime {

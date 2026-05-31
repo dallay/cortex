@@ -108,8 +108,6 @@ const categories = [
                 :class="{
                   'bg-green-500': endpoint.method === 'GET',
                   'bg-blue-500': endpoint.method === 'POST',
-                  'bg-yellow-500': endpoint.method === 'PUT',
-                  'bg-red-500': endpoint.method === 'DELETE',
                 }"
               >
                 {{ endpoint.method }}

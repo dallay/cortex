@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     middleware,
     response::{AppendHeaders, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use rook_core::{CompletionRequest, HealthPort, HealthStatus};
@@ -49,6 +49,10 @@ pub fn router(
 
     if usecases.manage_connections.is_some() {
         router = router.merge(provider_routes::router(usecases.clone()));
+    }
+
+    if usecases.manage_api_keys.is_some() {
+        router = router.merge(api_key_routes(usecases.clone()));
     }
 
     router
@@ -244,4 +248,17 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
             })
         }).collect::<Vec<_>>()
     }))
+}
+
+fn api_key_routes(usecases: Usecases) -> Router {
+    Router::new()
+        .route("/api/api-keys", get(handlers::api_key::list_api_keys))
+        .route("/api/api-keys", post(handlers::api_key::create_api_key))
+        .route("/api/api-keys/{id}", get(handlers::api_key::get_api_key))
+        .route("/api/api-keys/{id}", put(handlers::api_key::update_api_key))
+        .route(
+            "/api/api-keys/{id}",
+            delete(handlers::api_key::revoke_api_key),
+        )
+        .with_state(usecases)
 }

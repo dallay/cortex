@@ -5,9 +5,10 @@ use std::sync::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
-    ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject, ApiKeyTier,
-    NewSession, NewUser, PasswordHash, Session, SessionId, SessionRepositoryError,
-    SessionRepositoryPort, User, UserId, UserRepositoryError, UserRepositoryPort,
+    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope,
+    ApiKeySubject, ApiKeyTier, NewSession, NewUser, PasswordHash, Session, SessionId,
+    SessionRepositoryError, SessionRepositoryPort, User, UserId, UserRepositoryError,
+    UserRepositoryPort,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
@@ -165,6 +166,155 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         }
         Ok(())
     }
+
+    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
+                        revoked_at, expires_at, created_at, last_used_at
+                 FROM api_keys
+                 ORDER BY created_at DESC",
+            )
+            .map_err(db_error)?;
+        let records = stmt
+            .query_map([], row_to_record)
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        Ok(records)
+    }
+
+    async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
+                    revoked_at, expires_at, created_at, last_used_at
+             FROM api_keys
+             WHERE id = ?1",
+            params![id.to_string()],
+            row_to_record,
+        )
+        .optional()
+        .map_err(db_error)
+    }
+
+    async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO api_keys (
+                id, label, key_hash, key_prefix, scopes_json, tier, is_active,
+                revoked_at, expires_at, created_at, last_used_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.id.to_string(),
+                record.label,
+                record.key_hash,
+                record.key_prefix,
+                scopes_to_json(&record.scopes)?,
+                record.tier.as_str(),
+                bool_to_i64(record.is_active),
+                optional_datetime(record.revoked_at),
+                optional_datetime(record.expires_at),
+                record.created_at.to_rfc3339(),
+                optional_datetime(record.last_used_at),
+            ],
+        )
+        .map_err(db_error)?;
+        Ok(())
+    }
+
+    async fn update(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let rows = conn
+            .execute(
+                "UPDATE api_keys SET
+                    label = ?1,
+                    scopes_json = ?2,
+                    tier = ?3,
+                    is_active = ?4,
+                    revoked_at = ?5,
+                    expires_at = ?6,
+                    last_used_at = ?7
+                 WHERE id = ?8",
+                params![
+                    record.label,
+                    scopes_to_json(&record.scopes)?,
+                    record.tier.as_str(),
+                    bool_to_i64(record.is_active),
+                    optional_datetime(record.revoked_at),
+                    optional_datetime(record.expires_at),
+                    optional_datetime(record.last_used_at),
+                    record.id.to_string(),
+                ],
+            )
+            .map_err(db_error)?;
+        if rows == 0 {
+            return Err(ApiKeyRepositoryError::NotFound(record.id.clone()));
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let rows = conn
+            .execute(
+                "DELETE FROM api_keys WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .map_err(db_error)?;
+        if rows == 0 {
+            return Err(ApiKeyRepositoryError::NotFound(id.clone()));
+        }
+        Ok(())
+    }
+
+    async fn revoke(
+        &self,
+        id: &ApiKeyId,
+        revoked_at: DateTime<Utc>,
+    ) -> Result<(), ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let rows = conn
+            .execute(
+                "UPDATE api_keys SET is_active = 0, revoked_at = ?1 WHERE id = ?2",
+                params![revoked_at.to_rfc3339(), id.to_string()],
+            )
+            .map_err(db_error)?;
+        if rows == 0 {
+            return Err(ApiKeyRepositoryError::NotFound(id.clone()));
+        }
+        Ok(())
+    }
+
+    async fn list_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
+                    revoked_at, expires_at, created_at, last_used_at
+             FROM api_keys
+             ORDER BY created_at DESC
+             LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(db_error)?;
+        let records = stmt
+            .query_map(params![limit, offset], row_to_record)
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        Ok(records)
+    }
+
+    async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| row.get(0))
+            .map_err(db_error)
+    }
 }
 
 fn run_migration(conn: &Connection) -> anyhow::Result<()> {
@@ -228,6 +378,39 @@ fn row_to_subject(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeySubject> {
     })
 }
 
+fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
+    let id: String = row.get("id")?;
+    let label: String = row.get("label")?;
+    let key_hash: String = row.get("key_hash")?;
+    let key_prefix: String = row.get("key_prefix")?;
+    let scopes_json: String = row.get("scopes_json")?;
+    let tier: String = row.get("tier")?;
+    let is_active: i64 = row.get("is_active")?;
+    let revoked_at_str: Option<String> = row.get("revoked_at")?;
+    let expires_at_str: Option<String> = row.get("expires_at")?;
+    let created_at_str: String = row.get("created_at")?;
+    let last_used_at_str: Option<String> = row.get("last_used_at")?;
+
+    let revoked_at = revoked_at_str.map(|s| parse_datetime(&s)).transpose()?;
+    let expires_at = expires_at_str.map(|s| parse_datetime(&s)).transpose()?;
+    let created_at = parse_datetime(&created_at_str)?;
+    let last_used_at = last_used_at_str.map(|s| parse_datetime(&s)).transpose()?;
+
+    Ok(ApiKeyRecord {
+        id: ApiKeyId::new(id),
+        label,
+        key_hash,
+        key_prefix,
+        scopes: scopes_from_json(&scopes_json).map_err(invalid_data)?,
+        tier: ApiKeyTier::from_str(&tier).map_err(|error| invalid_data(error.to_string()))?,
+        is_active: is_active != 0,
+        revoked_at,
+        expires_at,
+        created_at,
+        last_used_at,
+    })
+}
+
 fn scopes_from_json(value: &str) -> Result<Vec<ApiKeyScope>, String> {
     let values = serde_json::from_str::<Vec<String>>(value).map_err(|error| error.to_string())?;
     values
@@ -236,19 +419,16 @@ fn scopes_from_json(value: &str) -> Result<Vec<ApiKeyScope>, String> {
         .collect()
 }
 
-#[cfg(test)]
 fn scopes_to_json(scopes: &[ApiKeyScope]) -> Result<String, ApiKeyRepositoryError> {
     let values = scopes.iter().map(ApiKeyScope::as_str).collect::<Vec<_>>();
     serde_json::to_string(&values)
         .map_err(|error| ApiKeyRepositoryError::Database(error.to_string()))
 }
 
-#[cfg(test)]
 fn bool_to_i64(value: bool) -> i64 {
     i64::from(value)
 }
 
-#[cfg(test)]
 fn optional_datetime(value: Option<DateTime<Utc>>) -> Option<String> {
     value.map(|dt| dt.to_rfc3339())
 }
@@ -516,7 +696,6 @@ fn invalid_data(message: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName(message.into())
 }
 
-#[cfg(test)]
 fn parse_datetime(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
@@ -640,6 +819,143 @@ mod tests {
                 diff < 1000,
                 "last_used should be within 1 second of used_at"
             );
+        });
+    }
+
+    #[test]
+    fn api_key_repository_crud() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+
+            // 1. Create a key
+            let record = rook_core::ApiKeyRecord {
+                id: ApiKeyId::new("key-123"),
+                label: "Development Key".to_string(),
+                key_hash: "hash-123".to_string(),
+                key_prefix: "rk-123".to_string(),
+                scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                tier: ApiKeyTier::Free,
+                is_active: true,
+                revoked_at: None,
+                expires_at: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+            };
+            repo.create(&record).await.expect("create");
+
+            // 2. Find the key
+            let found = repo
+                .find(&ApiKeyId::new("key-123"))
+                .await
+                .expect("find")
+                .expect("some");
+            assert_eq!(found.label, "Development Key");
+            assert_eq!(found.key_hash, "hash-123");
+            assert!(found.is_active);
+
+            // 3. List keys
+            let list = repo.list().await.expect("list");
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].id, ApiKeyId::new("key-123"));
+
+            // 4. Update the key
+            let mut updated = found;
+            updated.label = "Production Key".to_string();
+            updated.tier = ApiKeyTier::Enterprise;
+            updated.is_active = false;
+            repo.update(&updated).await.expect("update");
+
+            let found_updated = repo
+                .find(&ApiKeyId::new("key-123"))
+                .await
+                .expect("find")
+                .expect("some");
+            assert_eq!(found_updated.label, "Production Key");
+            assert_eq!(found_updated.tier, ApiKeyTier::Enterprise);
+            assert!(!found_updated.is_active);
+
+            // 5. Delete the key
+            repo.delete(&ApiKeyId::new("key-123"))
+                .await
+                .expect("delete");
+            let found_deleted = repo.find(&ApiKeyId::new("key-123")).await.expect("find");
+            assert!(found_deleted.is_none());
+        });
+    }
+
+    #[test]
+    fn revoke_sets_is_active_false_and_revoked_at() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let record = TestApiKeyRecord::active("revoke-test", "hash-revoke");
+            repo.insert_test_key(record).await.expect("insert");
+
+            repo.revoke(&ApiKeyId::new("revoke-test"), Utc::now())
+                .await
+                .expect("revoke");
+
+            let found = repo
+                .find(&ApiKeyId::new("revoke-test"))
+                .await
+                .expect("find")
+                .expect("some");
+            assert!(!found.is_active);
+            assert!(found.revoked_at.is_some());
+        });
+    }
+
+    #[test]
+    fn revoke_idempotent() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let record = TestApiKeyRecord::active("idempotent-test", "hash-idempotent");
+            repo.insert_test_key(record).await.expect("insert");
+
+            // Revoke twice
+            repo.revoke(&ApiKeyId::new("idempotent-test"), Utc::now())
+                .await
+                .expect("first revoke");
+            let second = repo
+                .revoke(&ApiKeyId::new("idempotent-test"), Utc::now())
+                .await;
+            assert!(second.is_ok(), "second revoke should not error");
+        });
+    }
+
+    #[test]
+    fn list_paginated_returns_correct_slice() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+
+            // Insert 5 keys
+            for i in 0..5 {
+                let record = rook_core::ApiKeyRecord {
+                    id: ApiKeyId::new(format!("key-{}", i)),
+                    label: format!("Key {}", i),
+                    key_hash: format!("hash-{}", i),
+                    key_prefix: format!("rk-{}", i),
+                    scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                    tier: ApiKeyTier::Free,
+                    is_active: true,
+                    revoked_at: None,
+                    expires_at: None,
+                    created_at: Utc::now(),
+                    last_used_at: None,
+                };
+                repo.create(&record).await.expect("create");
+            }
+
+            // Get first page (limit 2, offset 0)
+            let page1 = repo.list_paginated(2, 0).await.expect("list paginated");
+            assert_eq!(page1.len(), 2);
+
+            // Get second page (limit 2, offset 2)
+            let page2 = repo.list_paginated(2, 2).await.expect("list paginated");
+            assert_eq!(page2.len(), 2);
+
+            // Get total count
+            let total = repo.count().await.expect("count");
+            assert_eq!(total, 5);
         });
     }
 

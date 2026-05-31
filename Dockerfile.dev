@@ -54,7 +54,9 @@ COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 # Expose default port
 EXPOSE 8080
 
+# Set config path via env var
+ENV ROOK_CONFIG=/app/rook.toml
+
 USER non-root
 
 ENTRYPOINT ["/usr/local/bin/rook"]
-CMD ["--config", "/app/rook.toml"]
