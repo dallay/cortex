@@ -15,7 +15,7 @@ root_cargo: Cargo.toml
 packages:
   - path: crates/domain/shared-kernel
     type: lib
-    purpose: Common types with zero external dependencies (ProviderId, ModelId, RequestId, NuxaError)
+    purpose: Common types with zero external dependencies (ProviderId, ModelId, RequestId, CortexError)
   - path: crates/domain/rook-core
     type: lib
     purpose: Domain model and port traits (CompletionRequest/Response, ProviderPort, RouterPort, CachePort, AuditPort)

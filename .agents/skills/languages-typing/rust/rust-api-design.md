@@ -23,7 +23,7 @@ En Cortex ya lo hacemos con ProviderPort. Es la forma correcta.
  }
 
 pub trait ProviderPort: private::Sealed {
-      async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse>;
+      async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse>;
   }
 
  // Solo providers internos pueden implementar

@@ -54,7 +54,7 @@ apps/rook (binary, DI bootstrap)
   → transport-axum (HTTP, OpenAI/Anthropic adapters)
     → rook-usecases (RouteRequest, FallbackRouter)
       → rook-core (domain model, ports)
-        → shared-kernel (no deps — ProviderId, ModelId, NuxaError)
+        → shared-kernel (no deps — ProviderId, ModelId, CortexError)
 ```
 
 Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepositoryPort`, `KeyManager`

@@ -8,9 +8,10 @@ mod di;
 mod server;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
 
+use db_migration::{run_db as db_migration_run_db, DbCommands as DbMigrationCommands};
 use observability::init_tracing;
 
 #[derive(Parser)]
@@ -21,12 +22,17 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(clap::Subcommand)]
 enum Commands {
     /// Seed the admin user with a password (for initial setup or E2E testing)
     SeedAdmin {
         /// The password to set for the admin user
         password: String,
+    },
+    /// Database migration commands
+    Db {
+        #[command(subcommand)]
+        command: DbMigrationCommands,
     },
 }
 
@@ -38,8 +44,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Handle CLI subcommands
-    if let Some(Commands::SeedAdmin { password }) = cli.command {
-        return seed_admin(password).await;
+    match cli.command {
+        Some(Commands::SeedAdmin { password }) => return seed_admin(password).await,
+        Some(Commands::Db { command }) => {
+            return run_db_command(command).await;
+        }
+        None => {}
     }
 
     // Default: start the server
@@ -100,13 +110,36 @@ async fn start_server() -> anyhow::Result<()> {
 
     tracing::info!(config = ?config, "configuration loaded");
 
-    // 2. Build DI container
+    // 2. Run pending migrations (fail-fast — server doesn't start if migrations fail)
+    let migrated = di::run_startup_migrations(&config.database.db_path)?;
+    if migrated > 0 {
+        tracing::info!(count = migrated, "migrations applied at startup");
+    }
+
+    // 3. Build DI container
     let container = di::RookContainer::build(&config)
         .await
         .context("failed to build container")?;
 
     tracing::info!("container built successfully");
 
-    // 3. Start HTTP server
+    // 4. Start HTTP server
     server::run(container, config.server).await
+}
+
+async fn run_db_command(cmd: DbMigrationCommands) -> anyhow::Result<()> {
+    // Load config to get db path
+    let config_path = std::env::var("ROOK_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("cortex")
+                .join("rook.toml")
+        });
+
+    let config = config::RookConfig::load(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+
+    db_migration_run_db(config.database.db_path.into(), cmd)
 }

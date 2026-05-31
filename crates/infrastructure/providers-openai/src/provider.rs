@@ -6,7 +6,7 @@ use rook_core::{
     CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort, StreamChunk,
     TokenUsage,
 };
-use shared_kernel::{NuxaError, NuxaResult, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ProviderId};
 
 /// Configuration for the OpenAI provider
 #[derive(Debug, Clone)]
@@ -117,7 +117,7 @@ impl ProviderPort for OpenAIProvider {
         }
     }
 
-    async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
         let body = OpenAIRequest {
             model: req.model.to_string(),
             messages: req
@@ -147,23 +147,23 @@ impl ProviderPort for OpenAIProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NuxaError::provider(format!("request failed: {e}")))?;
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(NuxaError::provider(format!("{status}: {body}")));
+            return Err(CortexError::provider(format!("{status}: {body}")));
         }
 
         let openai_resp: OpenAIResponse = resp
             .json()
             .await
-            .map_err(|e| NuxaError::provider(format!("json parse failed: {e}")))?;
+            .map_err(|e| CortexError::provider(format!("json parse failed: {e}")))?;
 
         let choice = openai_resp
             .choices
             .first()
-            .ok_or_else(|| NuxaError::not_found("no choices in response"))?;
+            .ok_or_else(|| CortexError::not_found("no choices in response"))?;
 
         Ok(CompletionResponse {
             id: req.id.clone(),
@@ -183,8 +183,8 @@ impl ProviderPort for OpenAIProvider {
     async fn stream(
         &self,
         _req: &CompletionRequest,
-    ) -> NuxaResult<futures::stream::BoxStream<'_, NuxaResult<StreamChunk>>> {
+    ) -> CortexResult<futures::stream::BoxStream<'_, CortexResult<StreamChunk>>> {
         // TODO: implement streaming with reqwest Events
-        Err(NuxaError::provider("streaming not yet implemented"))
+        Err(CortexError::provider("streaming not yet implemented"))
     }
 }

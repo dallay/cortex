@@ -40,7 +40,7 @@ Patrones async para Tokio, incluyendo errores críticos encontrados.
 
 ### [rust-error-handling](rust-error-handling.md)
 
-Patrones de manejo de errores alineados con NuxaError.
+Patrones de manejo de errores alineados con CortexError.
 
 - err-thiserror-lib
 - err-from-impl
@@ -149,7 +149,7 @@ Error de compilación: falta campo `base_url` en initializer.
  ```
  crates/
  ├── domain/
- │   ├── shared-kernel/     # NuxaError, IDs, sin deps
+ │   ├── shared-kernel/     # CortexError, IDs, sin deps
  │   └── rook-core/          # Ports, domain model
  ├── application/
  │   └── rook-usecases/     # RouteRequest, FallbackRouter
@@ -164,7 +164,7 @@ Las skills respetan esta estructura y layering.
 ## Reglas de Aplicación
 
 1. **Domain layer (shared-kernel, rook-core)** — NO usar anyhow
-    - Usar NuxaError y tipos domain-specific
+    - Usar CortexError y tipos domain-specific
     - thiserror para definiciones de error
 
 2. **Application layer (rook-usecases)** — Errores tipados
@@ -172,7 +172,7 @@ Las skills respetan esta estructura y layering.
     - No capturar y ocultar errores
 
 3. **Infrastructure (providers, transport)** — Adaptar errores
-    - Convertir errores externos a NuxaError
+    - Convertir errores externos a CortexError
     - Documentar errores de API externos
 
 4. **Binary (apps/rook)** — Puede usar anyhow

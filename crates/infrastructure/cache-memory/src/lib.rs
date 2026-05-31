@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use rook_core::{CacheKey, CachePort, CompletionResponse, NuxaResult};
+use rook_core::{CacheKey, CachePort, CompletionResponse, CortexResult};
 use std::time::{Duration, Instant};
 
 /// Thread-safe in-memory cache with TTL support.
@@ -30,7 +30,7 @@ impl InMemoryCache {
 
 #[async_trait]
 impl CachePort for InMemoryCache {
-    async fn get(&self, key: &CacheKey) -> NuxaResult<Option<CompletionResponse>> {
+    async fn get(&self, key: &CacheKey) -> CortexResult<Option<CompletionResponse>> {
         if self.is_expired(key) {
             self.store.remove(key);
             return Ok(None);
@@ -43,7 +43,7 @@ impl CachePort for InMemoryCache {
         key: &CacheKey,
         value: &CompletionResponse,
         ttl: Duration,
-    ) -> NuxaResult<()> {
+    ) -> CortexResult<()> {
         self.store.insert(key.clone(), value.clone());
         self.expiry.insert(
             key.clone(),
@@ -52,13 +52,13 @@ impl CachePort for InMemoryCache {
         Ok(())
     }
 
-    async fn delete(&self, key: &CacheKey) -> NuxaResult<()> {
+    async fn delete(&self, key: &CacheKey) -> CortexResult<()> {
         self.store.remove(key);
         self.expiry.remove(key);
         Ok(())
     }
 
-    async fn clear(&self) -> NuxaResult<()> {
+    async fn clear(&self) -> CortexResult<()> {
         self.store.clear();
         self.expiry.clear();
         Ok(())

@@ -462,7 +462,7 @@ The refresh loop processes connections sequentially. A failure to build a single
 
 ### 8.2 All Providers Fail
 
-If zero providers succeed, `replace_all([])` is called (empty registry). Subsequent requests return `NuxaError::all_providers_exhausted()`. The system is not crashed — it remains operational but will reject requests until the registry is repaired via CRUD.
+If zero providers succeed, `replace_all([])` is called (empty registry). Subsequent requests return `CortexError::all_providers_exhausted()`. The system is not crashed — it remains operational but will reject requests until the registry is repaired via CRUD.
 
 ### 8.3 Encryption Failure
 

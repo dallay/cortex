@@ -2,12 +2,14 @@
 //
 // This is the ONLY place where all crates are assembled.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use audit_sqlite::SqliteAudit;
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
+use db_migration::MigrationRunner;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
@@ -24,6 +26,39 @@ use rook_usecases::{
 };
 
 use crate::config::RookConfig;
+
+/// Run pending database migrations at startup.
+///
+/// This is called BEFORE building the DI container to ensure the schema is
+/// up-to-date before any repository tries to use the database.
+///
+/// Returns the number of migrations applied, or 0 if already current.
+pub fn run_startup_migrations(db_path: &str) -> anyhow::Result<usize> {
+    let db_path: PathBuf = db_path.into();
+    let migrations_dir = db_migration::migrations_dir();
+
+    let runner = MigrationRunner::new(&db_path, &migrations_dir);
+
+    let pending = runner.pending_migrations()?;
+    if pending.is_empty() {
+        tracing::info!("database schema is current (no pending migrations)");
+        return Ok(0);
+    }
+
+    tracing::info!(count = pending.len(), "running pending database migrations");
+
+    let applied = runner.run().map_err(|e| {
+        anyhow::anyhow!(
+            "migration failed: {e}\n\
+             ERROR: Rook cannot start until migrations are applied.\n\
+             If the migration file is corrupted, restore from backup and retry.\n\
+             For manual recovery, use: rook db rollback --to-version N"
+        )
+    })?;
+
+    tracing::info!(count = applied.len(), "migrations applied successfully");
+    Ok(applied.len())
+}
 
 pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
@@ -184,14 +219,14 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
 
 use async_trait::async_trait;
 use rook_core::CacheKey;
-use shared_kernel::NuxaResult;
+use shared_kernel::CortexResult;
 
 #[derive(Clone, Default)]
 struct NoOpCache;
 
 #[async_trait]
 impl CachePort for NoOpCache {
-    async fn get(&self, _: &CacheKey) -> NuxaResult<Option<rook_core::CompletionResponse>> {
+    async fn get(&self, _: &CacheKey) -> CortexResult<Option<rook_core::CompletionResponse>> {
         Ok(None)
     }
     async fn set(
@@ -199,13 +234,13 @@ impl CachePort for NoOpCache {
         _: &CacheKey,
         _: &rook_core::CompletionResponse,
         _: Duration,
-    ) -> NuxaResult<()> {
+    ) -> CortexResult<()> {
         Ok(())
     }
-    async fn delete(&self, _: &CacheKey) -> NuxaResult<()> {
+    async fn delete(&self, _: &CacheKey) -> CortexResult<()> {
         Ok(())
     }
-    async fn clear(&self) -> NuxaResult<()> {
+    async fn clear(&self) -> CortexResult<()> {
         Ok(())
     }
 }

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use rook_core::{AuditEntry, AuditPort, RequestStatus};
 use rusqlite::{params, Connection};
-use shared_kernel::{NuxaError, NuxaResult};
+use shared_kernel::{CortexError, CortexResult};
 use std::path::Path;
 use tokio::sync::Mutex;
 
@@ -56,7 +56,7 @@ impl SqliteAudit {
 
 #[async_trait]
 impl AuditPort for SqliteAudit {
-    async fn record(&self, entry: AuditEntry) -> NuxaResult<()> {
+    async fn record(&self, entry: AuditEntry) -> CortexResult<()> {
         let status_str = match entry.status {
             RequestStatus::Success => "success",
             RequestStatus::Failure => "failure",
@@ -96,7 +96,7 @@ impl AuditPort for SqliteAudit {
                 entry.timestamp.to_rfc3339(),
             ],
         )
-        .map_err(|e| NuxaError::provider(format!("sqlite insert failed: {e}")))?;
+        .map_err(|e| CortexError::provider(format!("sqlite insert failed: {e}")))?;
 
         Ok(())
     }
