@@ -79,8 +79,10 @@ Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepo
 - **No hot provider registration** — Provider CRUD stores connections in SQLite but TOML providers serve traffic. See `docs/architecture.md` §Provider CRUD Limitation.
 - **Encryption requires `provider_crud.enabled`** — needs `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` env vars.
 - **`~` and `${ENV_VAR}` expansion** in config — `config.rs` expands these in TOML paths and api_key values.
-| **lefthook is not in package.json** | Install via `npx lefthook@latest install` or standalone script in `lefthook.yml`. |
+- **lefthook not in package.json** — install via `npx lefthook@latest install` or standalone script in `lefthook.yml`.
 - **No inline `#[cfg(test)]` modules** — tests are separate test targets, not embedded in libs.
+- **Frontend dashboard at `apps/rook/dashboard/`** — Vue.js + Vitest, separate from Rust crate tests.
+- **CI uses common-actions** — workflows for cache-cleanup, stale, pr-labeler, greetings, labels-sync, coverage (codecov), and sonar (SonarCloud). Both coverage (Rust) and coverage-frontend (Vitest) upload to Codecov.
 
 ## Cross-Compilation Targets
 
