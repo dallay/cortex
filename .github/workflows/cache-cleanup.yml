@@ -1,0 +1,30 @@
+name: 🧹 Cache Cleanup
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      cache-type:
+        description: 'Type of cache to clean'
+        required: true
+        type: choice
+        options:
+          - all
+          - pnpm
+          - playwright
+          - build
+        default: 'all'
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: 🧹 Clean Caches
+    uses: dallay/common-actions/.github/workflows/cache-maintenance.yml@v2.2.0
+    with:
+      retention-days: 7
+      cache-types: ${{ inputs.cache-type || 'all' }}
+    secrets: inherit

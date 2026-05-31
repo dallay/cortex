@@ -1,0 +1,38 @@
+# Centralized label definitions for dallay/cortex
+# https://github.com/crazy-max/ghaction-github-labeler
+
+- name: area/ci
+  color: "4a9e2f"
+  description: "CI, tooling, and automation"
+
+- name: area/core
+  color: "3d66c4"
+  description: "Core domain logic and models"
+
+- name: area/docs
+  color: "7c3aed"
+  description: "Documentation and README"
+
+- name: area/providers
+  color: "0891b2"
+  description: "Provider integrations (OpenAI, Anthropic, etc.)"
+
+- name: area/testing
+  color: "db6d28"
+  description: "Tests and testing infrastructure"
+
+- name: priority/high
+  color: "ef4444"
+  description: "High priority issue or PR"
+
+- name: priority/low
+  color: "94a3b8"
+  description: "Low priority issue or PR"
+
+- name: security
+  color: "dc2626"
+  description: "Security-related changes"
+
+- name: stale
+  color: "fef3c7"
+  description: "Stale item pending closure"

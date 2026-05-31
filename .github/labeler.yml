@@ -1,0 +1,29 @@
+# Labeler config - maps paths to labels
+# https://github.com/actions/labeler
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/workflows/*'
+      - any-glob-to-any-file: 'justfile'
+      - any-glob-to-any-file: 'Cargo.toml'
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'
+
+area/core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'rook-core/**'
+          - 'shared-kernel/**'
+
+area/providers:
+  - changed-files:
+      - any-glob-to-any-file: 'providers-*/**'
+
+area/testing:
+  - changed-files:
+      - any-glob-to-any-file: '**/*test*.rs'
+      - any-glob-to-any-file: '**/tests/**'
