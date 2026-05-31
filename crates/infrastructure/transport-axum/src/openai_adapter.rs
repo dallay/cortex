@@ -1,6 +1,6 @@
 // OpenAI adapter — translates between OpenAI wire format and domain model
 
-use rook_core::{CompletionRequest, Message, RequestMetadata, Role};
+use rook_core::{CompletionRequest, FinishReason, Message, RequestMetadata, Role, StreamChunk};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ModelId, RequestId};
 
@@ -106,6 +106,68 @@ impl From<&rook_core::CompletionResponse> for OpenAIChatResponse {
                 completion_tokens: resp.usage.completion_tokens,
                 total_tokens: resp.usage.total_tokens,
             },
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct OpenAIChatCompletionChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<OpenAIChunkChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<OpenAIUsage>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIChunkChoice {
+    pub index: u32,
+    pub delta: OpenAIChunkDelta,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIChunkDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+impl From<&StreamChunk> for OpenAIChatCompletionChunk {
+    fn from(chunk: &StreamChunk) -> Self {
+        let finish_reason = chunk.finish_reason.map(|reason| match reason {
+            FinishReason::Stop => "stop",
+            FinishReason::Length => "length",
+            FinishReason::ContentFilter => "content_filter",
+            FinishReason::ToolCalls => "tool_calls",
+        });
+
+        Self {
+            id: format!("rook-{}", chunk.id),
+            object: "chat.completion.chunk".to_string(),
+            created: chrono::Utc::now().timestamp() as u64,
+            model: chunk.model.to_string(),
+            choices: vec![OpenAIChunkChoice {
+                index: 0,
+                delta: OpenAIChunkDelta {
+                    role: None,
+                    content: if chunk.delta.is_empty() {
+                        None
+                    } else {
+                        Some(chunk.delta.clone())
+                    },
+                },
+                finish_reason: finish_reason.map(str::to_string),
+            }],
+            usage: chunk.usage.as_ref().map(|usage| OpenAIUsage {
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+            }),
         }
     }
 }

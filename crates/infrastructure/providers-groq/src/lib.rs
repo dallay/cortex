@@ -55,7 +55,13 @@ impl ProviderPort for GroqProvider {
     async fn stream(
         &self,
         _req: &CompletionRequest,
-    ) -> CortexResult<futures::stream::BoxStream<'_, CortexResult<StreamChunk>>> {
-        Err(CortexError::provider("streaming not yet implemented"))
+    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        // TODO: translate Groq OpenAI-compatible SSE into StreamChunk once the
+        // non-streaming adapter is implemented. The port is wired for route support.
+        Ok(Box::pin(futures::stream::once(async {
+            Err(CortexError::provider(
+                "Groq streaming adapter not yet implemented",
+            ))
+        })))
     }
 }

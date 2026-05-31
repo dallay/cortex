@@ -1583,7 +1583,7 @@ mod tests {
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
+        ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>> {
             unreachable!("not used in tests")
         }
     }

@@ -294,7 +294,7 @@ mod tests {
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
+        ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>> {
             Err(CortexError::provider("streaming not supported"))
         }
     }
@@ -387,7 +387,7 @@ mod tests {
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
+        ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>> {
             Err(CortexError::provider("not supported"))
         }
     }

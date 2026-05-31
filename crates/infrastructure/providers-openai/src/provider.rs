@@ -1,10 +1,11 @@
 // OpenAI provider implementation — stub until existing impls are migrated
 
 use async_trait::async_trait;
+use futures::{StreamExt, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
-    CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort, StreamChunk,
-    TokenUsage,
+    CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId, ProviderPort,
+    StreamChunk, TokenUsage,
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
 
@@ -120,6 +121,36 @@ struct OpenAIUsage {
     total_tokens: u32,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIStreamResponse {
+    #[allow(dead_code)]
+    id: String,
+    model: String,
+    choices: Vec<OpenAIStreamChoice>,
+    usage: Option<OpenAIUsage>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIStreamChoice {
+    delta: OpenAIStreamDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIStreamDelta {
+    content: Option<String>,
+}
+
+fn parse_finish_reason(reason: &str) -> Option<FinishReason> {
+    match reason {
+        "stop" => Some(FinishReason::Stop),
+        "length" => Some(FinishReason::Length),
+        "content_filter" => Some(FinishReason::ContentFilter),
+        "tool_calls" => Some(FinishReason::ToolCalls),
+        _ => None,
+    }
+}
+
 #[async_trait]
 impl ProviderPort for OpenAIProvider {
     fn id(&self) -> &ProviderId {
@@ -226,9 +257,86 @@ impl ProviderPort for OpenAIProvider {
 
     async fn stream(
         &self,
-        _req: &CompletionRequest,
-    ) -> CortexResult<futures::stream::BoxStream<'_, CortexResult<StreamChunk>>> {
-        // TODO: implement streaming with reqwest Events
-        Err(CortexError::provider("streaming not yet implemented"))
+        req: &CompletionRequest,
+    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        let body = OpenAIRequest {
+            model: req.model.to_string(),
+            messages: req
+                .messages
+                .iter()
+                .map(|m| OpenAIMessage {
+                    role: match m.role {
+                        rook_core::Role::System => "system",
+                        rook_core::Role::User => "user",
+                        rook_core::Role::Assistant => "assistant",
+                        rook_core::Role::Developer => "developer",
+                    }
+                    .to_string(),
+                    content: m.content.clone(),
+                })
+                .collect(),
+            stream: true,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+        };
+
+        let resp = self
+            .client
+            .post(format!("{}/chat/completions", self.config.base_url))
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let sanitized_body = sanitize_error_body(&body);
+            return Err(CortexError::provider(format!("{status}: {sanitized_body}")));
+        }
+
+        let request_id = req.id.clone();
+        let stream = resp
+            .bytes_stream()
+            .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
+            .map(move |chunk| {
+                chunk.and_then(|bytes| {
+                    let text = String::from_utf8_lossy(&bytes);
+                    let data_lines = text
+                        .lines()
+                        .filter_map(|line| line.strip_prefix("data: "))
+                        .filter(|data| *data != "[DONE]");
+
+                    let mut chunks = Vec::new();
+                    for data in data_lines {
+                        let parsed: OpenAIStreamResponse =
+                            serde_json::from_str(data).map_err(|e| {
+                                CortexError::provider(format!("stream json parse failed: {e}"))
+                            })?;
+                        let choice = parsed.choices.first();
+                        chunks.push(StreamChunk {
+                            id: request_id.clone(),
+                            model: ModelId::new(parsed.model),
+                            delta: choice
+                                .and_then(|choice| choice.delta.content.clone())
+                                .unwrap_or_default(),
+                            finish_reason: choice
+                                .and_then(|choice| choice.finish_reason.as_deref())
+                                .and_then(parse_finish_reason),
+                            usage: parsed.usage.map(|usage| TokenUsage {
+                                prompt_tokens: usage.prompt_tokens,
+                                completion_tokens: usage.completion_tokens,
+                                total_tokens: usage.total_tokens,
+                                estimated_cost_usd: None,
+                            }),
+                        });
+                    }
+                    Ok(futures::stream::iter(chunks.into_iter().map(Ok)))
+                })
+            })
+            .try_flatten();
+
+        Ok(Box::pin(stream))
     }
 }

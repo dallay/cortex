@@ -1,15 +1,17 @@
 // HTTP routes — the axum router and all endpoint handlers
 
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
+use axum::response::sse::Event;
 use axum::{
     extract::{Json, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     middleware,
-    response::{AppendHeaders, IntoResponse, Response},
+    response::{AppendHeaders, IntoResponse, Response, Sse},
     routing::{delete, get, post, put},
     Router,
 };
+use futures::StreamExt;
 use rook_core::{CompletionRequest, HealthPort, HealthStatus};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
@@ -136,6 +138,10 @@ async fn chat_completions(
 ) -> Result<Response, HttpError> {
     let req = CompletionRequest::from(body);
 
+    if req.stream {
+        return chat_completions_stream(usecases, req).await;
+    }
+
     match usecases.route_request.execute(req).await {
         Ok(resp) => {
             let openai_resp = OpenAIChatResponse::from(&resp);
@@ -182,6 +188,79 @@ async fn chat_completions(
             Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response())
         }
     }
+}
+
+async fn chat_completions_stream(
+    usecases: Usecases,
+    req: CompletionRequest,
+) -> Result<Response, HttpError> {
+    let stream = match usecases.route_request.execute_stream(req).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let error_event = openai_error_event(error);
+            let body = futures::stream::once(async move { Ok::<Event, Infallible>(error_event) });
+            let mut response = Sse::new(body).into_response();
+            apply_sse_headers(response.headers_mut());
+            return Ok(response);
+        }
+    };
+
+    let events = stream
+        .map(|chunk| match chunk {
+            Ok(chunk) => serde_json::to_string(&OpenAIChatCompletionChunk::from(&chunk))
+                .map(|data| Event::default().data(data))
+                .unwrap_or_else(|error| {
+                    openai_error_event(shared_kernel::CortexError::provider(error.to_string()))
+                }),
+            Err(error) => openai_error_event(error),
+        })
+        .chain(futures::stream::once(async {
+            Event::default().data("[DONE]")
+        }))
+        .map(Ok::<Event, Infallible>);
+
+    let mut response = Sse::new(events).into_response();
+    apply_sse_headers(response.headers_mut());
+    Ok(response)
+}
+
+fn openai_error_event(error: shared_kernel::CortexError) -> Event {
+    let body = OpenAIErrorResponse {
+        error: OpenAIErrorBody {
+            error_type: if error.is_rate_limited() {
+                "rate_limit_exceeded".to_string()
+            } else {
+                "internal_error".to_string()
+            },
+            code: if error.is_rate_limited() {
+                Some("rate_limited".to_string())
+            } else {
+                None
+            },
+            message: error.to_string(),
+            param: None,
+        },
+    };
+
+    let data = serde_json::to_string(&body).unwrap_or_else(|_| {
+        r#"{"error":{"type":"internal_error","code":null,"message":"stream error","param":null}}"#.to_string()
+    });
+    Event::default().data(data)
+}
+
+fn apply_sse_headers(headers: &mut axum::http::HeaderMap) {
+    headers.insert(
+        header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    headers.insert(
+        header::CONNECTION,
+        axum::http::HeaderValue::from_static("keep-alive"),
+    );
 }
 
 /// GET /v1/models — list available models

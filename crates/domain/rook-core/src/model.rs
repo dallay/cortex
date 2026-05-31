@@ -189,8 +189,12 @@ pub struct CompletionResponse {
 
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
+    pub id: RequestId,
+    pub model: ModelId,
     pub delta: String,
     pub finish_reason: Option<FinishReason>,
+    /// Token usage is emitted on the final chunk only when the provider reports it.
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
