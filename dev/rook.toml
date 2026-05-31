@@ -1,0 +1,16 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 300
+
+[audit]
+db_path = ":memory:"
+
+[provider_crud]
+enabled = false
