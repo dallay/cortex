@@ -172,6 +172,10 @@ mod tests {
             self.find_by_id_result.clone()
         }
 
+        async fn has_any_user(&self) -> Result<bool, rook_core::UserRepositoryError> {
+            Ok(self.find_by_id_result.clone()?.is_some())
+        }
+
         async fn create(&self, _: &NewUser) -> Result<User, rook_core::UserRepositoryError> {
             unreachable!()
         }

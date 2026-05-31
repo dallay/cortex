@@ -9,6 +9,7 @@ mod server;
 
 use anyhow::Context;
 use clap::Parser;
+use std::io::Write;
 use std::path::PathBuf;
 
 use db_migration::MigrationRunner;
@@ -24,6 +25,11 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
+    /// Admin setup and user management commands
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommands,
+    },
     /// Seed the admin user with a password (for initial setup or E2E testing)
     SeedAdmin {
         /// The password to set for the admin user
@@ -34,6 +40,20 @@ enum Commands {
         #[command(subcommand)]
         command: DbCommands,
     },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum AdminCommands {
+    /// Prompt for and set the initial admin password
+    Bootstrap,
+    /// Create an additional admin user (placeholder; only one admin is currently supported)
+    CreateUser {
+        /// Email/username for the user to create
+        #[arg(long)]
+        email: String,
+    },
+    /// List admin users (placeholder; only bootstrap status is currently supported)
+    ListUsers,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -53,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::Admin { command }) => return run_admin_command(command).await,
         Some(Commands::SeedAdmin { password }) => return seed_admin(password).await,
         Some(Commands::Db { command }) => return run_db_command(command).await,
         None => {}
@@ -61,14 +82,50 @@ async fn main() -> anyhow::Result<()> {
     start_server().await
 }
 
+async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
+    match command {
+        AdminCommands::Bootstrap => {
+            let password = prompt_password()?;
+            seed_admin(password).await
+        }
+        AdminCommands::CreateUser { email } => {
+            anyhow::bail!(
+                "creating additional admin users is not supported yet (requested: {email})"
+            )
+        }
+        AdminCommands::ListUsers => {
+            let config = load_config()?;
+            let container = di::RookContainer::build(&config)
+                .await
+                .context("failed to build container")?;
+            let state = container
+                .usecases
+                .bootstrap_status
+                .execute(std::env::var("ROOK_SETUP_TOKEN").ok())
+                .await?;
+            println!("initialized: {}", state.is_initialized);
+            println!("admin_user_exists: {}", state.admin_user_exists);
+            Ok(())
+        }
+    }
+}
+
+fn prompt_password() -> anyhow::Result<String> {
+    print!("Admin password: ");
+    std::io::stdout().flush()?;
+    let mut password = String::new();
+    std::io::stdin().read_line(&mut password)?;
+    let password = password.trim_end_matches(['\r', '\n']).to_string();
+    if password.is_empty() {
+        anyhow::bail!("password must not be empty");
+    }
+    Ok(password)
+}
+
 async fn seed_admin(password: String) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
 
     let config = load_config()?;
-
-    // Run pending migrations (ensure schema exists before repository access)
-    di::run_startup_migrations(&config.database.db_path)?;
-
     let container = di::RookContainer::build(&config)
         .await
         .context("failed to build container")?;
@@ -97,8 +154,38 @@ async fn start_server() -> anyhow::Result<()> {
         .await
         .context("failed to build container")?;
 
+    announce_bootstrap_if_needed(&container).await?;
+
     tracing::info!("container built successfully");
     server::run(container, config.server).await
+}
+
+async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::Result<()> {
+    let setup_token = std::env::var("ROOK_SETUP_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty());
+    let state = container
+        .usecases
+        .bootstrap_status
+        .execute(setup_token.clone())
+        .await?;
+
+    if !state.is_initialized {
+        match setup_token {
+            Some(token) => {
+                tracing::warn!(setup_token = %token, "rook is in bootstrap mode; set the admin password before using the server");
+                eprintln!("rook bootstrap mode: use setup token {token} to set the admin password");
+            }
+            None => {
+                tracing::warn!("rook is in bootstrap mode; run `rook admin bootstrap` or set ROOK_SETUP_TOKEN and POST /api/bootstrap/setup");
+                eprintln!(
+                    "rook bootstrap mode: run `rook admin bootstrap` to set the admin password"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
@@ -131,8 +218,7 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
             println!("Refinery does not support automatic rollback.");
             println!("To rollback, create a new migration that undoes the last change:");
             println!("  1. Inspect the last applied migration in _migrations table");
-            println!("  2. Manually create a new migration file named V{{n}}__{{name}}.sql");
-            println!("     in crates/infrastructure/db-migration/src/migrations/");
+            println!("  2. Run: rook db create-migration <name>");
             println!("  3. Write SQL in the new migration file to undo the change");
             println!("  4. Run: rook db migrate");
         }

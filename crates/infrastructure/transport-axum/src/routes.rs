@@ -41,6 +41,15 @@ pub fn router(
         .route("/v1/messages", post(anthropic_messages))
         // Health
         .route("/health", get(health_check))
+        // First-run bootstrap endpoints
+        .route(
+            "/api/bootstrap/status",
+            get(handlers::bootstrap::status_handler),
+        )
+        .route(
+            "/api/bootstrap/setup",
+            post(handlers::bootstrap::setup_handler),
+        )
         // Auth endpoints
         .route("/login", post(handlers::auth::login_handler))
         .route("/login", get(handlers::auth::get_login_handler))

@@ -10,9 +10,10 @@ pub mod route_request;
 pub mod router_impl;
 
 pub use auth::{
-    EnsureAdminUser, Login, LoginError, LoginInput, LoginOutput, Logout, LogoutError, LogoutInput,
-    SetAdminPassword, SetAdminPasswordError, SetAdminPasswordInput, ValidateSession,
-    ValidateSessionError, ValidatedSession,
+    BootstrapSetupError, BootstrapSetupInput, BootstrapSetupOutput, BootstrapState,
+    BootstrapStatus, BootstrapStatusError, EnsureAdminUser, Login, LoginError, LoginInput,
+    LoginOutput, Logout, LogoutError, LogoutInput, SetAdminPassword, SetAdminPasswordError,
+    SetAdminPasswordInput, ValidateSession, ValidateSessionError, ValidatedSession,
 };
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use health_check::HealthCheck;
@@ -41,6 +42,7 @@ pub struct RookUsecases {
     pub authenticate_client_api: Option<AuthenticateClientApi>,
     pub manage_connections: Option<ManageConnections>,
     pub manage_api_keys: Option<ManageApiKeys>,
+    pub bootstrap_status: BootstrapStatus,
     pub ensure_admin_user: EnsureAdminUser,
     pub set_admin_password: SetAdminPassword,
     pub login: Login,

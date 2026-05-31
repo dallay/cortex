@@ -230,6 +230,7 @@ pub enum UserRepositoryError {
 pub trait UserRepositoryPort: Send + Sync {
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, UserRepositoryError>;
     async fn find_by_id(&self, user_id: &UserId) -> Result<Option<User>, UserRepositoryError>;
+    async fn has_any_user(&self) -> Result<bool, UserRepositoryError>;
     async fn create(&self, user: &NewUser) -> Result<User, UserRepositoryError>;
     async fn update_password_hash(
         &self,
