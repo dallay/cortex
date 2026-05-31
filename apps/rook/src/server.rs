@@ -3,7 +3,6 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use axum::routing::Router;
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -15,8 +14,14 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         .parse()
         .context("invalid address")?;
 
-    let router: Router =
-        transport_axum::router(container.usecases.clone(), container.authz_config.clone());
+    let router = transport_axum::router(
+        container.usecases.clone(),
+        container.authz_config.clone(),
+        container.login_rate_limiter.clone(),
+        container.api_key_rate_limiter.clone(),
+        container.csrf_guard.clone(),
+    )
+    .merge(crate::dashboard::dashboard_routes());
 
     info!(addr = %addr, "starting rook server");
 

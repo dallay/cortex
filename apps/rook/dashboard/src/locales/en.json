@@ -1,0 +1,45 @@
+{
+  "nav": {
+    "home": "Home",
+    "apiKeys": "API Keys",
+    "apiKeysList": "List",
+    "apiKeysCreate": "Create",
+    "endpoints": "Endpoints",
+    "providers": "Providers",
+    "providersList": "List",
+    "providersQuotes": "Quotes",
+    "combos": "Combos",
+    "settings": "Settings"
+  },
+  "sidebar": {
+    "platform": "Platform"
+  },
+  "breadcrumb": {
+    "home": "Home",
+    "apiKeys": "API Keys",
+    "apiKeysList": "List",
+    "apiKeysCreate": "Create New Key",
+    "endpoints": "Endpoints",
+    "providers": "Providers",
+    "providersQuotes": "Provider Quotes",
+    "combos": "Combos",
+    "settings": "Settings"
+  },
+  "theme": {
+    "toggle": "Toggle theme",
+    "light": "Switch to light mode",
+    "dark": "Switch to dark mode"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "noResults": "No results found",
+    "logout": "Log out"
+  }
+}

@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use audit_sqlite::SqliteAudit;
-use auth_sqlite::SqliteApiKeyRepository;
+use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
-use encryption_inmemory::AesGcmKeyManager;
+use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use provider_sqlite::SqliteProviderRepository;
 use providers_anthropic::AnthropicProvider;
 use providers_gemini::GeminiProvider;
@@ -16,13 +16,13 @@ use providers_groq::GroqProvider;
 use providers_ollama::OllamaProvider;
 use providers_openai::OpenAIProvider;
 use rook_core::{
-    ApiKeyRepositoryPort, AuditPort, CachePort, ProviderId, ProviderPort, ProviderRegistryPort,
-    ProviderRepositoryPort, RouterPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, PasswordHasher, ProviderId, ProviderPort,
+    ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
 };
 use rook_usecases::{
-    AuthenticateClientApi, FallbackRouter, HealthCheck, ManageConnections, ManageConnectionsError,
-    ManageProviders, ProviderBuildInput, ProviderBuilderPort, RookUsecases, RouteRequest,
-    RoutingStrategy,
+    AuthenticateClientApi, EnsureAdminUser, FallbackRouter, HealthCheck, ManageConnections,
+    ManageConnectionsError, ManageProviders, ProviderBuildInput, ProviderBuilderPort, RookUsecases,
+    RouteRequest, RoutingStrategy, SetAdminPassword, ValidateSession,
 };
 
 use crate::config::{ProviderConfig, RookConfig};
@@ -30,6 +30,9 @@ use crate::config::{ProviderConfig, RookConfig};
 pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
     pub authz_config: transport_axum::authz::AuthzConfig,
+    pub login_rate_limiter: Arc<transport_axum::LoginRateLimiter>,
+    pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
+    pub csrf_guard: Arc<transport_axum::CsrfGuard>,
 }
 
 impl RookContainer {
@@ -93,23 +96,61 @@ impl RookContainer {
             None
         };
 
-        // 5. Use cases
+        // 5. Auth — user/session repos and password hasher
+        let user_repo: Arc<dyn rook_core::UserRepositoryPort> =
+            Arc::new(SqliteUserRepository::new(&config.database.db_path)?);
+        let session_repo: Arc<dyn SessionRepositoryPort> =
+            Arc::new(SqliteSessionRepository::new(&config.database.db_path)?);
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2idHasher::new());
+
+        // 6. Build ValidateSession for middleware
+        let validate_session = Arc::new(ValidateSession::new(
+            session_repo.clone(),
+            user_repo.clone(),
+        ));
+
+        // 6. Auth use cases
+        let ensure_admin_user = EnsureAdminUser::new(user_repo.clone());
+        let set_admin_password = SetAdminPassword::new(user_repo.clone(), hasher.clone());
+        let login =
+            rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
+        let logout = rook_usecases::Logout::new(session_repo.clone());
+
+        //7. Ensure admin exists on first boot (before HTTP server starts)
+        // This guarantees the admin record exists with NULL password_hash.
+        // Any login attempt before SetAdminPassword is called will fail with PASSWORD_NOT_SET.
+        {
+            let admin = tokio::runtime::Handle::current()
+                .block_on(ensure_admin_user.execute())
+                .map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
+            tracing::info!(admin_id = %admin.id, "admin user ready");
+        }
+
+        // 8. Use cases
         let usecases = Arc::new(RookUsecases {
             route_request: RouteRequest::new(router.clone(), cache.clone(), audit.clone()),
             manage_providers: ManageProviders::new(router.clone()),
             health_check: HealthCheck::new(registry),
             authenticate_client_api: authenticate_client_api.clone(),
             manage_connections,
+            ensure_admin_user,
+            set_admin_password,
+            login,
+            logout,
         });
 
         let authz_config = transport_axum::authz::AuthzConfig::from_env_with_client_auth(
             authenticate_client_api,
             config.auth.api_keys.allow_env_fallback,
-        );
+        )
+        .with_session_validator(validate_session);
 
         Ok(Self {
             usecases,
             authz_config,
+            login_rate_limiter: Arc::new(transport_axum::LoginRateLimiter::new()),
+            api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::new()),
+            csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
         })
     }
 }

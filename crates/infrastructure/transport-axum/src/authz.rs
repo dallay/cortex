@@ -16,9 +16,8 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ring::hmac;
 use rook_core::ApiKeyTier;
-use rook_usecases::{AuthenticateClientApi, AuthenticateClientApiError};
+use rook_usecases::{AuthenticateClientApi, AuthenticateClientApiError, ValidateSession};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -39,10 +38,11 @@ pub struct AuthzConfig {
     api_keys: Vec<ApiKeyCredential>,
     client_api_auth: Option<AuthenticateClientApi>,
     allow_env_api_key_fallback: bool,
-    jwt_secret: Option<String>,
     max_body_size_bytes: u64,
     cors: CorsConfig,
     rate_limiter: RateLimiter,
+    /// Session validator for MANAGEMENT routes (replaces JWT-based auth)
+    session_validator: Option<Arc<ValidateSession>>,
 }
 
 impl AuthzConfig {
@@ -69,9 +69,6 @@ impl AuthzConfig {
                 )
             })
             .collect();
-        let jwt_secret = std::env::var("JWT_SECRET")
-            .ok()
-            .filter(|secret| !secret.trim().is_empty());
         let max_body_size_bytes = std::env::var("MAX_BODY_SIZE_BYTES")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -81,10 +78,10 @@ impl AuthzConfig {
             api_keys,
             client_api_auth,
             allow_env_api_key_fallback,
-            jwt_secret,
             max_body_size_bytes,
             cors: CorsConfig::from_env(),
             rate_limiter: RateLimiter::default(),
+            session_validator: None,
         }
     }
 
@@ -92,16 +89,29 @@ impl AuthzConfig {
         self.max_body_size_bytes as usize
     }
 
+    /// Returns true if running in production mode (affects Secure cookie flag).
     #[cfg(test)]
-    fn new(api_keys: Vec<ApiKeyCredential>, jwt_secret: &str) -> Self {
+    pub fn is_production(&self) -> bool {
+        !cfg!(debug_assertions)
+    }
+
+    #[cfg(not(test))]
+    pub fn is_production(&self) -> bool {
+        std::env::var("ROOK_ENV")
+            .map(|v| v == "production")
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    fn new(api_keys: Vec<ApiKeyCredential>, _jwt_secret: &str) -> Self {
         Self {
             api_keys,
             client_api_auth: None,
             allow_env_api_key_fallback: true,
-            jwt_secret: Some(jwt_secret.to_string()),
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
             rate_limiter: RateLimiter::default(),
+            session_validator: None,
         }
     }
 
@@ -109,17 +119,23 @@ impl AuthzConfig {
     fn with_client_auth(
         client_api_auth: AuthenticateClientApi,
         allow_env_api_key_fallback: bool,
-        jwt_secret: &str,
+        _jwt_secret: &str,
     ) -> Self {
         Self {
             api_keys: Vec::new(),
             client_api_auth: Some(client_api_auth),
             allow_env_api_key_fallback,
-            jwt_secret: Some(jwt_secret.to_string()),
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
             rate_limiter: RateLimiter::default(),
+            session_validator: None,
         }
+    }
+
+    /// Set the session validator for MANAGEMENT route auth.
+    pub fn with_session_validator(mut self, validator: Arc<ValidateSession>) -> Self {
+        self.session_validator = Some(validator);
+        self
     }
 }
 
@@ -196,13 +212,13 @@ impl Default for CorsConfig {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum RouteClass {
+pub enum AuthTier {
     Public,
     ClientApi,
     Management,
 }
 
-impl RouteClass {
+impl AuthTier {
     fn as_header(self) -> &'static str {
         match self {
             Self::Public => "PUBLIC",
@@ -216,7 +232,7 @@ impl RouteClass {
 pub enum AuthKind {
     Anonymous,
     ApiKey,
-    Jwt,
+    Session,
 }
 
 impl AuthKind {
@@ -224,7 +240,7 @@ impl AuthKind {
         match self {
             Self::Anonymous => "anonymous",
             Self::ApiKey => "api_key",
-            Self::Jwt => "jwt",
+            Self::Session => "session",
         }
     }
 }
@@ -404,7 +420,7 @@ pub async fn middleware(
 
     let mut response = next.run(request).await;
     apply_cors_headers(response.headers_mut(), origin.as_ref(), &config.cors);
-    if route_class == RouteClass::ClientApi {
+    if route_class == AuthTier::ClientApi {
         if let Some(snapshot) = rate_limit {
             apply_rate_limit_headers(response.headers_mut(), snapshot);
         }
@@ -412,7 +428,7 @@ pub async fn middleware(
     response
 }
 
-pub fn classify_route(method: &Method, path: &str) -> RouteClass {
+pub fn classify_route(method: &Method, path: &str) -> AuthTier {
     if method == Method::OPTIONS
         || path == "/health"
         || path == "/status"
@@ -421,30 +437,30 @@ pub fn classify_route(method: &Method, path: &str) -> RouteClass {
         || path.starts_with("/assets/")
         || path.starts_with("/static/")
     {
-        RouteClass::Public
+        AuthTier::Public
     } else if path.starts_with("/v1/") {
-        RouteClass::ClientApi
+        AuthTier::ClientApi
     } else {
-        RouteClass::Management
+        AuthTier::Management
     }
 }
 
 pub async fn evaluate_policy(
-    route_class: RouteClass,
+    route_class: AuthTier,
     headers: &HeaderMap,
     config: &AuthzConfig,
 ) -> AuthOutcome {
     match route_class {
-        RouteClass::Public => AuthOutcome::allow(Subject::anonymous()),
-        RouteClass::ClientApi => client_api_policy(headers, config).await,
-        RouteClass::Management => management_policy(headers, config),
+        AuthTier::Public => AuthOutcome::allow(Subject::anonymous()),
+        AuthTier::ClientApi => client_api_policy(headers, config).await,
+        AuthTier::Management => management_policy(headers, config).await,
     }
 }
 
 pub fn stamp_trusted_headers(
     headers: &mut HeaderMap,
     request_id: &str,
-    route_class: RouteClass,
+    route_class: AuthTier,
     subject: &Subject,
 ) {
     remove_trusted_headers(headers);
@@ -588,21 +604,43 @@ async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
     }
 }
 
-fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
-    let Some(secret) = config.jwt_secret.as_deref() else {
-        return AuthOutcome::reject(StatusCode::INTERNAL_SERVER_ERROR, "AUTH_MISCONFIGURED");
-    };
-    let Some(token) = extract_cookie(headers, "auth_token") else {
+async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
+    // Extract auth_token cookie
+    let Some(cookie_value) = extract_cookie(headers, "auth_token") else {
         return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "MISSING_AUTH_TOKEN");
     };
 
-    match verify_jwt(&token, secret) {
-        Ok(subject) => AuthOutcome::allow(subject),
-        Err("TOKEN_EXPIRED") => AuthOutcome::reject(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED"),
-        Err(_) => AuthOutcome::reject(StatusCode::UNAUTHORIZED, "INVALID_TOKEN"),
+    // Check if session_validator is configured
+    let Some(validator) = &config.session_validator else {
+        return AuthOutcome::reject(StatusCode::INTERNAL_SERVER_ERROR, "AUTH_MISCONFIGURED");
+    };
+
+    // Validate the session
+    match validator.execute(&cookie_value).await {
+        Ok(Some(validated)) => {
+            // Session is valid - build subject with user info
+            let subject = Subject {
+                kind: AuthKind::Session,
+                id: validated.session.user_id.to_string(),
+                label: validated.username,
+                scopes: vec!["admin".to_string()],
+            };
+            AuthOutcome::allow(subject)
+        }
+        Ok(None) => {
+            // Session not found, expired, or revoked
+            AuthOutcome::reject(StatusCode::UNAUTHORIZED, "SESSION_NOT_FOUND")
+        }
+        Err(_) => {
+            // Any validation error (invalid format, repo error)
+            AuthOutcome::reject(StatusCode::INTERNAL_SERVER_ERROR, "AUTH_BACKEND_ERROR")
+        }
     }
 }
 
+// verify_jwt is kept for backward compatibility with existing JWT-based auth
+// but is no longer used for MANAGEMENT routes (replaced by session validation)
+#[allow(dead_code)]
 fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
     let mut parts = token.split('.');
     let header = parts.next().ok_or("INVALID_TOKEN")?;
@@ -616,8 +654,8 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
     let signature = URL_SAFE_NO_PAD
         .decode(signature)
         .map_err(|_| "INVALID_TOKEN")?;
-    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-    hmac::verify(&key, signing_input.as_bytes(), &signature).map_err(|_| "INVALID_TOKEN")?;
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
+    ring::hmac::verify(&key, signing_input.as_bytes(), &signature).map_err(|_| "INVALID_TOKEN")?;
 
     let payload = URL_SAFE_NO_PAD
         .decode(payload)
@@ -644,7 +682,7 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
         .unwrap_or("dashboard")
         .to_string();
     Ok(Subject {
-        kind: AuthKind::Jwt,
+        kind: AuthKind::Session,
         id: id.clone(),
         label: id,
         scopes: vec!["admin".to_string()],
@@ -680,8 +718,8 @@ fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         })
 }
 
-fn rejection_response(path: &str, route_class: RouteClass, outcome: AuthOutcome) -> Response {
-    if route_class == RouteClass::Management
+fn rejection_response(path: &str, route_class: AuthTier, outcome: AuthOutcome) -> Response {
+    if route_class == AuthTier::Management
         && path.starts_with("/dashboard/")
         && matches!(
             outcome.code,
@@ -853,24 +891,24 @@ mod tests {
             .expect("runtime")
     }
 
-    fn evaluate(route_class: RouteClass, headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
+    fn evaluate(route_class: AuthTier, headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
         runtime().block_on(evaluate_policy(route_class, headers, config))
     }
 
     #[test]
     fn classifies_public_client_api_and_management_routes() {
-        assert_eq!(classify_route(&Method::GET, "/health"), RouteClass::Public);
+        assert_eq!(classify_route(&Method::GET, "/health"), AuthTier::Public);
         assert_eq!(
             classify_route(&Method::POST, "/v1/chat/completions"),
-            RouteClass::ClientApi
+            AuthTier::ClientApi
         );
         assert_eq!(
             classify_route(&Method::GET, "/api/providers"),
-            RouteClass::Management
+            AuthTier::Management
         );
         assert_eq!(
             classify_route(&Method::GET, "/dashboard/providers"),
-            RouteClass::Management
+            AuthTier::Management
         );
     }
 
@@ -888,7 +926,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
-        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
 
         assert!(outcome.allow);
         let subject = outcome.subject.expect("subject");
@@ -900,7 +938,7 @@ mod tests {
     #[test]
     fn client_api_rejects_missing_api_key() {
         let config = AuthzConfig::new(Vec::new(), "test-secret");
-        let outcome = evaluate(RouteClass::ClientApi, &HeaderMap::new(), &config);
+        let outcome = evaluate(AuthTier::ClientApi, &HeaderMap::new(), &config);
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
@@ -917,7 +955,7 @@ mod tests {
         stamp_trusted_headers(
             &mut headers,
             "550e8400-e29b-41d4-a716-446655440000",
-            RouteClass::Public,
+            AuthTier::Public,
             &subject,
         );
 
@@ -991,7 +1029,7 @@ mod tests {
     fn management_api_auth_failures_return_unauthorized_instead_of_redirect() {
         let response = rejection_response(
             "/api/providers",
-            RouteClass::Management,
+            AuthTier::Management,
             AuthOutcome::reject(StatusCode::UNAUTHORIZED, "MISSING_AUTH_TOKEN"),
         );
 
@@ -1003,7 +1041,7 @@ mod tests {
     fn dashboard_auth_failures_redirect_to_login() {
         let response = rejection_response(
             "/dashboard/providers",
-            RouteClass::Management,
+            AuthTier::Management,
             AuthOutcome::reject(StatusCode::UNAUTHORIZED, "MISSING_AUTH_TOKEN"),
         );
 
@@ -1028,7 +1066,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
-        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
 
         let snapshot = outcome.rate_limit.expect("rate limit snapshot");
         assert_eq!(snapshot.limit, 100);
@@ -1050,10 +1088,10 @@ mod tests {
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
         for _ in 0..100 {
-            let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+            let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
             assert!(outcome.allow);
         }
-        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::TOO_MANY_REQUESTS));
@@ -1075,7 +1113,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
-        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
 
         assert!(outcome.allow);
         let subject = outcome.subject.expect("subject");
@@ -1092,7 +1130,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-invalid"));
 
-        let outcome = evaluate(RouteClass::ClientApi, &headers, &config);
+        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));

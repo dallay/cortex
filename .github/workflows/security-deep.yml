@@ -9,7 +9,9 @@ concurrency:
   group: security-deep-${{ github.ref }}
   cancel-in-progress: false
 
-permissions: {}
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   gitleaks-history:

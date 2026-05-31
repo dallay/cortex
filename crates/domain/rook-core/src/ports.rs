@@ -12,7 +12,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
 
-use super::{ApiKeyId, ApiKeyRepositoryError, ApiKeySubject, ProviderConnection, RepositoryError};
+use super::{
+    ApiKeyId, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser, PasswordHash,
+    ProviderConnection, RepositoryError, Session, SessionId, User, UserId,
+};
 use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
 
 /// ---------------------------------------------------------------------------
@@ -183,6 +186,88 @@ impl std::error::Error for CredentialEncryptionError {}
 pub trait KeyManager: Send + Sync {
     fn encrypt(&self, plaintext: &str) -> Result<String, CredentialEncryptionError>;
     fn decrypt(&self, ciphertext: &str) -> Result<String, CredentialEncryptionError>;
+}
+
+// ---------------------------------------------------------------------------
+// UserRepositoryPort — persistence for admin user
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum UserRepositoryError {
+    #[error("user not found: {0}")]
+    NotFound(UserId),
+    #[error("duplicate username")]
+    DuplicateUsername,
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait UserRepositoryPort: Send + Sync {
+    async fn find_by_username(&self, username: &str) -> Result<Option<User>, UserRepositoryError>;
+    async fn find_by_id(&self, user_id: &UserId) -> Result<Option<User>, UserRepositoryError>;
+    async fn create(&self, user: &NewUser) -> Result<User, UserRepositoryError>;
+    async fn update_password_hash(
+        &self,
+        user_id: &UserId,
+        hash: &PasswordHash,
+    ) -> Result<(), UserRepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// SessionRepositoryPort — session token persistence
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum SessionRepositoryError {
+    #[error("session not found: {0}")]
+    NotFound(SessionId),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait SessionRepositoryPort: Send + Sync {
+    /// Create a new session. `token_hash` is the SHA-256 of the raw token bytes.
+    async fn create(
+        &self,
+        session: &NewSession,
+        token_hash: &str,
+    ) -> Result<Session, SessionRepositoryError>;
+
+    /// Find a valid (non-revoked, non-expired) session by token hash.
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<Session>, SessionRepositoryError>;
+
+    /// Revoke a session by ID.
+    async fn revoke(&self, session_id: &SessionId) -> Result<(), SessionRepositoryError>;
+
+    /// Delete all expired sessions. Returns the count of deleted rows.
+    async fn delete_expired(&self) -> Result<u64, SessionRepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// PasswordHasher — Argon2id password hashing
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum PasswordHashError {
+    #[error("hash generation failed")]
+    HashGeneration,
+    #[error("hash verification failed")]
+    Verification,
+}
+
+#[async_trait]
+pub trait PasswordHasher: Send + Sync {
+    fn hash_password(&self, password: &str) -> Result<PasswordHash, PasswordHashError>;
+    fn verify_password(
+        &self,
+        password: &str,
+        hash: &PasswordHash,
+    ) -> Result<bool, PasswordHashError>;
 }
 
 // ---------------------------------------------------------------------------
