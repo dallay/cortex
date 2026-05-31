@@ -27,12 +27,8 @@ fn build_provider_from_connection_openai_uses_override() {
     };
     let id = conn_id();
     let override_url = "https://custom.openai.example.com/v1".to_string();
-    let result = build_provider_from_connection(
-        &id,
-        ProviderKind::OpenAI,
-        &creds,
-        Some(override_url),
-    );
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, Some(override_url));
     let provider = result.expect("expected Ok for OpenAI with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -46,7 +42,10 @@ fn build_provider_from_connection_ollama_requires_base_url() {
     let id = conn_id();
     let result = build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None);
     let err = match result {
-        Ok(provider) => panic!("expected OllamaRequiresBaseUrl error, got Ok({:?})", provider.id()),
+        Ok(provider) => panic!(
+            "expected OllamaRequiresBaseUrl error, got Ok({:?})",
+            provider.id()
+        ),
         Err(e) => e,
     };
     let msg = err.to_string();

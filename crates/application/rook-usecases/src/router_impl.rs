@@ -660,7 +660,10 @@ mod tests {
             <FallbackRouter as ProviderRegistryPort>::providers(&router),
             &[ProviderId::new("p1")]
         );
-        assert_eq!(router.get(&ProviderId::new("p1")).unwrap().id().as_str(), "p1");
+        assert_eq!(
+            router.get(&ProviderId::new("p1")).unwrap().id().as_str(),
+            "p1"
+        );
 
         // replace_all again — should replace, not append
         router
@@ -672,7 +675,10 @@ mod tests {
             &[ProviderId::new("p2")]
         );
         assert!(router.get(&ProviderId::new("p1")).is_none());
-        assert_eq!(router.get(&ProviderId::new("p2")).unwrap().id().as_str(), "p2");
+        assert_eq!(
+            router.get(&ProviderId::new("p2")).unwrap().id().as_str(),
+            "p2"
+        );
     }
 
     // 5.3 — upsert adds a new provider when not already present
@@ -681,9 +687,7 @@ mod tests {
         let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
 
-        router
-            .upsert(p1.clone())
-            .expect("upsert should succeed");
+        router.upsert(p1.clone()).expect("upsert should succeed");
 
         assert_eq!(
             <FallbackRouter as ProviderRegistryPort>::providers(&router),
