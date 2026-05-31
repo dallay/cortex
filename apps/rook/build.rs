@@ -3,11 +3,12 @@ use std::process::Command;
 
 fn main() {
     let dashboard_dir = Path::new("dashboard");
-    let status = Command::new("bash")
+    let status = Command::new("sh")
         .current_dir(dashboard_dir)
-        .arg("build.sh")
+        .arg("-c")
+        .arg("./node_modules/.bin/vite build")
         .status()
-        .expect("failed to run dashboard build script");
+        .expect("failed to run dashboard build: sh or vite not found");
 
     if !status.success() {
         eprintln!("dashboard build failed with exit code: {}", status);
