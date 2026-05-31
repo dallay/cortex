@@ -83,8 +83,20 @@ pub enum SetAdminPasswordError {
 }
 
 #[cfg(test)]
+mod test_constants {
+    //! Test fixtures — intentionally hard-coded strings used as test inputs,
+    //! not actual secrets or cryptographic keys.
+
+    /// A password that satisfies `is_strong_password` requirements.
+    pub const STRONG_TEST_PASSWORD: &str = "Super-secret-123!";
+    /// A long password that lacks uppercase, digit, and symbol requirements.
+    pub const WEAK_TEST_PASSWORD: &str = "longbutweakpassword";
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use test_constants::{STRONG_TEST_PASSWORD, WEAK_TEST_PASSWORD};
 
     use async_trait::async_trait;
     use chrono::Utc;
@@ -172,7 +184,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "Super-secret-123!".to_string(),
+                    new_password: STRONG_TEST_PASSWORD.to_string(),
                 })
                 .await;
 
@@ -219,7 +231,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "longbutweakpassword".to_string(),
+                    new_password: WEAK_TEST_PASSWORD.to_string(),
                 })
                 .await;
 
@@ -244,7 +256,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "Super-secret-123!".to_string(),
+                    new_password: STRONG_TEST_PASSWORD.to_string(),
                 })
                 .await;
 
@@ -266,7 +278,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "Super-secret-123!".to_string(),
+                    new_password: STRONG_TEST_PASSWORD.to_string(),
                 })
                 .await;
 
@@ -291,7 +303,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "Super-secret-123!".to_string(),
+                    new_password: STRONG_TEST_PASSWORD.to_string(),
                 })
                 .await;
 
