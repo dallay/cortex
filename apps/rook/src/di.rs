@@ -2,14 +2,12 @@
 //
 // This is the ONLY place where all crates are assembled.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use audit_sqlite::SqliteAudit;
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
-use db_migration::MigrationRunner;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
@@ -29,35 +27,10 @@ use crate::config::RookConfig;
 
 /// Run pending database migrations at startup.
 ///
-/// This is called BEFORE building the DI container to ensure the schema is
-/// up-to-date before any repository tries to use the database.
-///
-/// Returns the number of migrations applied, or 0 if already current.
+/// Called BEFORE building the DI container to ensure the schema is up-to-date
+/// before any repository uses the database. Fails fast if migrations fail.
 pub fn run_startup_migrations(db_path: &str) -> anyhow::Result<usize> {
-    let db_path: PathBuf = db_path.into();
-    let migrations_dir = db_migration::migrations_dir();
-
-    let runner = MigrationRunner::new(&db_path, &migrations_dir);
-
-    let pending = runner.pending_migrations()?;
-    if pending.is_empty() {
-        tracing::info!("database schema is current (no pending migrations)");
-        return Ok(0);
-    }
-
-    tracing::info!(count = pending.len(), "running pending database migrations");
-
-    let applied = runner.run().map_err(|e| {
-        anyhow::anyhow!(
-            "migration failed: {e}\n\
-             ERROR: Rook cannot start until migrations are applied.\n\
-             If the migration file is corrupted, restore from backup and retry.\n\
-             For manual recovery, use: rook db rollback --to-version N"
-        )
-    })?;
-
-    tracing::info!(count = applied.len(), "migrations applied successfully");
-    Ok(applied.len())
+    db_migration::run_migrations(db_path)
 }
 
 pub struct RookContainer {

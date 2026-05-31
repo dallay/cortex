@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+db-migration = { path = "../../infrastructure/db-migration" }
 rook-core = { path = "../../domain/rook-core" }
 shared-kernel = { path = "../../domain/shared-kernel" }
 

@@ -1,0 +1,20 @@
+[package]
+name = "db-migration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { workspace = true }
+refinery = { version = "0.9", features = ["rusqlite"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lib]
+path = "src/lib.rs"
