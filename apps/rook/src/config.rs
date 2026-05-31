@@ -17,7 +17,6 @@ pub struct RookConfig {
     pub auth: AuthConfig,
     #[serde(default)]
     pub provider_crud: ProviderCrudConfig,
-    pub providers: Vec<ProviderConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,18 +106,6 @@ impl CacheConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProviderConfig {
-    pub id: String,
-    pub kind: String,
-    pub api_key: Option<String>,
-    #[serde(rename = "base_url")]
-    pub base_url: Option<String>,
-    pub models: Vec<String>,
-    #[serde(rename = "timeout_secs")]
-    pub timeout_secs: Option<u64>,
-}
-
 impl RookConfig {
     /// Load config from a TOML file, expanding ~ in paths.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -131,16 +118,6 @@ impl RookConfig {
                 .database
                 .db_path
                 .replace('~', home.to_str().unwrap_or(""));
-        }
-
-        // Expand env vars in api_key values (${VAR} syntax)
-        for provider in &mut config.providers {
-            if let Some(ref key) = provider.api_key {
-                if key.starts_with("${") && key.ends_with('}') {
-                    let var = &key[2..key.len() - 1];
-                    provider.api_key = Some(std::env::var(var).unwrap_or_default());
-                }
-            }
         }
 
         Ok(config)

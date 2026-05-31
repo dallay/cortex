@@ -7,8 +7,9 @@ edition = "2021"
 name = "rook"
 path = "src/main.rs"
 
+
+
 [dependencies]
-# Workspace deps
 shared-kernel = { path = "../../crates/domain/shared-kernel" }
 rook-core = { path = "../../crates/domain/rook-core" }
 rook-usecases = { path = "../../crates/application/rook-usecases" }
@@ -24,29 +25,19 @@ providers-groq = { path = "../../crates/infrastructure/providers-groq" }
 encryption-inmemory = { path = "../../crates/infrastructure/encryption-inmemory" }
 provider-sqlite = { path = "../../crates/infrastructure/provider-sqlite" }
 auth-sqlite = { path = "../../crates/infrastructure/auth-sqlite" }
-
-# Runtime
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"
-
-# Web
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 bytes = "1"
-
-# Dashboard embedding
 rust-embed = "8"
 mime = "0.3"
 mime_guess = "2"
-
-# Config
 toml = "1.1"
 figment = { version = "0.10", features = ["toml", "env"] }
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# Async
 async-trait = "0.1"
 futures = "0.3"

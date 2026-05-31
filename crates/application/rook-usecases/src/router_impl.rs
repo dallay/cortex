@@ -636,4 +636,114 @@ mod tests {
         let s4 = s3.clone();
         assert!(matches!(s4, RoutingStrategy::WeightedRandom(_)));
     }
+
+    // 5.1 — FallbackRouter::new_empty creates a router with empty registry
+    #[test]
+    fn fallback_router_new_empty_creates_empty_registry() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let ids = <FallbackRouter as ProviderRegistryPort>::providers(&router);
+        assert!(ids.is_empty(), "expected empty providers list, got {ids:?}");
+    }
+
+    // 5.2 — replace_all atomically replaces the entire provider list
+    #[test]
+    fn provider_registry_replace_all_atomic() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        let p2 = StubProvider::new("p2", &["model-b"]);
+
+        router
+            .replace_all(vec![p1.clone()])
+            .expect("replace_all should succeed");
+
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p1")]
+        );
+        assert_eq!(router.get(&ProviderId::new("p1")).unwrap().id().as_str(), "p1");
+
+        // replace_all again — should replace, not append
+        router
+            .replace_all(vec![p2.clone()])
+            .expect("replace_all should succeed");
+
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p2")]
+        );
+        assert!(router.get(&ProviderId::new("p1")).is_none());
+        assert_eq!(router.get(&ProviderId::new("p2")).unwrap().id().as_str(), "p2");
+    }
+
+    // 5.3 — upsert adds a new provider when not already present
+    #[test]
+    fn provider_registry_upsert_adds_new_provider() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+
+        router
+            .upsert(p1.clone())
+            .expect("upsert should succeed");
+
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p1")]
+        );
+        assert!(router.get(&ProviderId::new("p1")).is_some());
+    }
+
+    // 5.4 — upsert replaces existing provider when same ID is used (no duplicates)
+    #[test]
+    fn provider_registry_upsert_updates_existing_provider() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1a = StubProvider::new("p1", &["model-a"]);
+        let p1b = StubProvider::new("p1", &["model-b", "model-c"]);
+
+        router.upsert(p1a.clone()).expect("first upsert ok");
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router).len(),
+            1
+        );
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p1")]
+        );
+
+        // second upsert with same ID — should replace, not duplicate
+        router.upsert(p1b.clone()).expect("second upsert ok");
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router).len(),
+            1,
+            "upsert should not create duplicates"
+        );
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p1")]
+        );
+    }
+
+    // 5.5 — remove eliminates a provider from the registry
+    #[test]
+    fn provider_registry_remove_eliminates_provider() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        let p2 = StubProvider::new("p2", &["model-b"]);
+
+        router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router).len(),
+            2
+        );
+
+        router
+            .remove(&ProviderId::new("p1"))
+            .expect("remove should succeed");
+
+        assert_eq!(
+            <FallbackRouter as ProviderRegistryPort>::providers(&router),
+            &[ProviderId::new("p2")]
+        );
+        assert!(router.get(&ProviderId::new("p1")).is_none());
+        assert!(router.get(&ProviderId::new("p2")).is_some());
+    }
 }

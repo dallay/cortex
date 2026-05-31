@@ -4,37 +4,39 @@ Each provider implements `ProviderPort` for a specific LLM API. All providers sh
 
 ## Common Config Fields
 
-Every provider accepts:
+Every provider accepts these fields when created via the CRUD API:
 
-```toml
-[[providers]]
-id = "provider-id"           # unique name (e.g., "openai-primary")
-kind = "openai"             # provider type
-api_key = "${API_KEY}"      # provider-specific
-base_url = "https://..."    # provider-specific
-models = ["model-a", "model-b"]  # supported model IDs
-timeout_secs = 60           # request timeout (provider-specific default)
-```
+| Field         | Type     | Required | Default                    | Description                        |
+|---------------|----------|----------|----------------------------|------------------------------------|
+| `name`        | string   | Yes      | —                          | Human-readable connection name      |
+| `provider_kind` | string | Yes      | —                          | Provider type (see below)          |
+| `auth_type`   | string   | Yes      | —                          | `api_key` or `oauth`              |
+| `credentials` | object   | Yes      | —                          | Key-value pairs (see per provider) |
+| `base_url`    | string   | No       | Provider-specific           | API base URL                      |
+| `is_active`   | bool     | No       | `false`                    | Whether connection is in rotation  |
+| `priority`    | u8       | No       | 0                          | Priority for routing (higher = preferred) |
+| `default_model` | string | No       | —                          | Default model ID if provider has multiple |
 
 ## OpenAI
 
 **Kind:** `openai`
 
-**Auth:** API key (Bearer token)
+**Auth:** API key (Bearer token) or OAuth access token
 
 **Default base URL:** `https://api.openai.com`
 
 **Default timeout:** 60s
 
-**Config example:**
-```toml
-[[providers]]
-id = "openai-primary"
-kind = "openai"
-api_key = "${OPENAI_API_KEY}"
-base_url = "https://api.openai.com"  # optional, this is the default
-models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-timeout_secs = 60
+**API example:**
+```json
+{
+  "name": "openai-primary",
+  "provider_kind": "openai",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${OPENAI_API_KEY}" },
+  "is_active": true,
+  "priority": 1
+}
 ```
 
 **Health check behavior:**
@@ -55,21 +57,22 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 **Kind:** `anthropic`
 
-**Auth:** API key (x-api-key header)
+**Auth:** API key (x-api-key header) or OAuth access token
 
 **Default base URL:** `https://api.anthropic.com`
 
 **Default timeout:** 60s
 
-**Config example:**
-```toml
-[[providers]]
-id = "anthropic-primary"
-kind = "anthropic"
-api_key = "${ANTHROPIC_API_KEY}"
-base_url = "https://api.anthropic.com"  # optional, this is the default
-models = ["claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-haiku", "claude-3-haiku"]
-timeout_secs = 60
+**API example:**
+```json
+{
+  "name": "anthropic-primary",
+  "provider_kind": "anthropic",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${ANTHROPIC_API_KEY}" },
+  "is_active": true,
+  "priority": 1
+}
 ```
 
 **Health check behavior:**
@@ -92,15 +95,20 @@ timeout_secs = 60
 
 **Default timeout:** 300s (higher than cloud providers — local models are slower)
 
-**Config example:**
-```toml
-[[providers]]
-id = "ollama-local"
-kind = "ollama"
-base_url = "http://localhost:11434"  # required (no default for non-local)
-models = ["llama3.2", "llama3.2:1b", "codellama", "mistral", "phi3"]
-timeout_secs = 300
+**API example:**
+```json
+{
+  "name": "ollama-local",
+  "provider_kind": "ollama",
+  "auth_type": "api_key",
+  "credentials": {},
+  "base_url": "http://localhost:11434",
+  "is_active": true,
+  "priority": 1
+}
 ```
+
+> **Note:** `base_url` is required for Ollama since there is no sensible default for non-local deployments.
 
 **Health check behavior:**
 - Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
@@ -119,18 +127,20 @@ timeout_secs = 300
 
 **Kind:** `gemini`
 
-**Auth:** API key (query param `?key=...`)
+**Auth:** API key (query param `?key=...`) or OAuth access token
 
 **Default timeout:** 60s
 
-**Config example:**
-```toml
-[[providers]]
-id = "gemini-primary"
-kind = "gemini"
-api_key = "${GEMINI_API_KEY}"
-models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
-timeout_secs = 60
+**API example:**
+```json
+{
+  "name": "gemini-primary",
+  "provider_kind": "gemini",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${GEMINI_API_KEY}" },
+  "is_active": true,
+  "priority": 1
+}
 ```
 
 **Health check behavior:**
@@ -148,18 +158,20 @@ timeout_secs = 60
 
 **Kind:** `groq`
 
-**Auth:** API key (Bearer token)
+**Auth:** API key (Bearer token) or OAuth access token
 
 **Default timeout:** 60s
 
-**Config example:**
-```toml
-[[providers]]
-id = "groq-fast"
-kind = "groq"
-api_key = "${GROQ_API_KEY}"
-models = ["llama-3.1-8b-instant", "mixtral-8x7b-32768", "llama-3.2-1b-preview"]
-timeout_secs = 60
+**API example:**
+```json
+{
+  "name": "groq-fast",
+  "provider_kind": "groq",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${GROQ_API_KEY}" },
+  "is_active": true,
+  "priority": 1
+}
 ```
 
 **Health check behavior:**
@@ -206,17 +218,17 @@ pub enum HealthStatus {
 
 OpenAI performs a real `/models` probe. Provider adapters without a real probe (Anthropic, Ollama, Gemini, Groq) return `Unknown { reason: "health_check_not_supported" }`. For these providers, `HealthStatus::is_healthy()` returns `false`, and the public `/health` endpoint renders `healthy: false`, `latency_ms: null`, and `last_error` containing the reason string.
 
-## Runtime-Managed Provider Connections
+## Dynamic Provider Registry
 
 When `[provider_crud].enabled = true`, Rook exposes `/api/providers` CRUD endpoints backed by SQLite. Credentials are encrypted at rest using `enc:v1:{nonce}:{ciphertext_and_tag}` and API responses always return `credentials: {}`.
 
-These stored provider connections are not automatically added to request routing in v1. Existing TOML-configured providers remain the routing source; runtime-managed connections support metadata management and health probes only.
+The provider registry is populated from the database on startup via `refresh_registry()`, which lists all active connections, decrypts credentials, and builds providers. The registry is also refreshed after each create, update, or delete operation. If `provider_crud.enabled = false`, no providers are routed (all requests return 503).
 
 ## Adding a New Provider
 
 1. Create `crates/infrastructure/providers-{name}/src/lib.rs`
-2. Define `ProviderConfig` struct (id, api_key, base_url, models, timeout_secs)
+2. Define a provider config struct and constructor
 3. Implement `ProviderPort` with `#[async_trait]`
 4. Add to `Cargo.toml` workspace members
-5. Add match arm in `apps/rook/src/di.rs` → `build_provider()`
+5. Add match arm in `apps/rook/src/di.rs` → `build_provider_from_connection()`
 6. Add tests

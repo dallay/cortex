@@ -32,31 +32,10 @@ allow_env_fallback = true
 
 [provider_crud]
 enabled = false
-
-# At least one provider is required
-[[providers]]
-id = "openai-primary"
-kind = "openai"                    # required
-api_key = "${OPENAI_API_KEY}"      # env var expansion supported
-base_url = "https://api.openai.com"  # default for openai
-models = ["gpt-4o", "gpt-4o-mini"]
-timeout_secs = 60                  # default per provider kind
-
-[[providers]]
-id = "anthropic-primary"
-kind = "anthropic"
-api_key = "${ANTHROPIC_API_KEY}"
-base_url = "https://api.anthropic.com"  # default for anthropic
-models = ["claude-opus-4-5", "claude-sonnet-4-5"]
-timeout_secs = 60
-
-[[providers]]
-id = "ollama-local"
-kind = "ollama"
-base_url = "http://localhost:11434"   # required for ollama (no auth)
-models = ["llama3.2", "codellama"]
-timeout_secs = 300                # ollama default is 300s (local models are slow)
 ```
+
+> **Note:** Provider configuration is no longer in TOML. Providers are managed dynamically
+> via the Provider CRUD API (`/api/providers`). See [Provider CRUD API](#provider-crud-api) below.
 
 ## Field Reference
 
@@ -71,7 +50,7 @@ timeout_secs = 300                # ollama default is 300s (local models are slo
 
 | Field      | Type   | Default     | Description                               |
 |------------|--------|-------------|-------------------------------------------|
-| `strategy` | enum   | `"priority"`| Routing strategy. See Routing Strategies  |
+| `strategy` | enum   | `"priority"` | Routing strategy. See Routing Strategies  |
 
 Supported values for `strategy`: `priority`, `round-robin`, `model-based`
 
@@ -88,7 +67,7 @@ Supported values for `strategy`: `priority`, `round-robin`, `model-based`
 |-----------|--------|------------------------------------------|--------------------------------------------------|
 | `db_path` | string | `~/.local/share/cortex/rook/rook.db`     | Single SQLite database path. `~` expands to `$HOME` |
 
-Rook currently stores local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a TOML-backed adapter later should require a new adapter rather than changes to use cases or domain types.
+Rook stores all local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a different adapter later requires a new adapter rather than changes to use cases or domain types.
 
 ### `[audit]`
 
@@ -111,47 +90,9 @@ allow_env_fallback = true
 
 When `enabled = true`, `API_KEY_HASH_SECRET` is required and must be non-empty. Legacy `CLIENT_API_KEYS` may still be used for local compatibility only when `allow_env_fallback = true`.
 
-### `[[providers]]`
-
-| Field         | Type     | Required | Default                    | Description                        |
-|---------------|----------|----------|----------------------------|------------------------------------|
-| `id`          | string   | Yes      | —                          | Unique provider identifier         |
-| `kind`        | string   | Yes      | —                          | Provider type. See Provider Kinds  |
-| `api_key`     | string   | varies   | —                          | API key. Supports `${ENV_VAR}`     |
-| `base_url`    | string   | varies   | Provider-specific          | API base URL                       |
-| `models`      | array    | Yes      | —                          | List of supported model IDs        |
-| `timeout_secs`| u64      | No       | Provider-specific (see below) | Request timeout in seconds     |
-
-**Provider defaults for `timeout_secs`:**
-- `openai`: 60s
-- `anthropic`: 60s
-- `gemini`: 60s
-- `groq`: 60s
-- `ollama`: 300s (local models are slower)
-
-## Provider Kinds
-
-| Kind       | api_key required? | base_url default                |
-|------------|-------------------|---------------------------------|
-| `openai`   | Yes               | `https://api.openai.com`        |
-| `anthropic`| Yes               | `https://api.anthropic.com`     |
-| `ollama`   | No                | `http://localhost:11434`         |
-| `gemini`   | Yes               | (uses Google's API)             |
-| `groq`     | Yes               | (uses Groq's API)               |
-
-## Environment Variable Expansion
-
-`api_key` fields support `${VAR}` syntax:
-```toml
-api_key = "${OPENAI_API_KEY}"   # reads from OPENAI_API_KEY env var
-api_key = "${ANTHROPIC_KEY}"    # reads from ANTHROPIC_KEY env var
-```
-
-The `${}` wrapper is required. Bare `${VAR}` without closing brace is not expanded.
-
 ## Provider CRUD API
 
-Provider connection CRUD is disabled by default. When enabled, Rook mounts `/api/providers` endpoints for storing provider connection metadata and encrypted credentials.
+Provider connection management is disabled by default. When enabled, Rook mounts `/api/providers` endpoints for storing provider connection metadata and encrypted credentials. The provider registry is populated from the database on startup and refreshed after each CRUD operation.
 
 ```toml
 [provider_crud]
@@ -171,10 +112,26 @@ When `enabled = true`, both environment variables are required and must be non-e
 
 Rollback: setting `enabled = false` unmounts the provider CRUD routes. It does not delete the SQLite database or stored connection rows.
 
+### Dynamic Provider Registry
+
+When `provider_crud.enabled = true`, the provider registry starts empty and is populated by calling `refresh_registry()` at startup — this reads all active connections from the database, decrypts credentials, and builds providers. The registry is also refreshed after each create, update, or delete operation.
+
+If the initial refresh fails (e.g., encrypted connections with an incorrect key), Rook logs a warning and starts with an empty registry. Connections can be re-created or the server restarted once the correct key is available.
+
+### Supported Provider Kinds
+
+| Kind       | Auth required           | base_url default                |
+|------------|-------------------------|----------------------------------|
+| `openai`   | API key or OAuth token  | `https://api.openai.com`        |
+| `anthropic`| API key or OAuth token  | `https://api.anthropic.com`     |
+| `ollama`   | None (local)            | `http://localhost:11434`         |
+| `gemini`   | API key or OAuth token  | (uses Google's API)             |
+| `groq`     | API key or OAuth token  | (uses Groq's API)               |
+
 ## Routing Strategies
 
 ### `priority` (default)
-Providers are tried in config order. First available provider that supports the model is used.
+Providers are tried in priority order. First available provider that supports the model is used.
 
 ### `round-robin`
 Providers are rotated in round-robin order (among available providers that support the model).
@@ -201,39 +158,29 @@ ttl_secs = 600
 [database]
 db_path = "~/.local/share/cortex/rook/rook.db"
 
-[[providers]]
-id = "openai-primary"
-kind = "openai"
-api_key = "${OPENAI_API_KEY}"
-models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
-timeout_secs = 60
-
-[[providers]]
-id = "anthropic-primary"
-kind = "anthropic"
-api_key = "${ANTHROPIC_API_KEY}"
-models = ["claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-haiku"]
-timeout_secs = 60
-
-[[providers]]
-id = "ollama-local"
-kind = "ollama"
-base_url = "http://localhost:11434"
-models = ["llama3.2", "codellama"]
-timeout_secs = 300
-
-[[providers]]
-id = "groq-fast"
-kind = "groq"
-api_key = "${GROQ_API_KEY}"
-models = ["llama-3.1-8b-instant", "mixtral-8x7b-32768"]
-timeout_secs = 30
+[provider_crud]
+enabled = true
 ```
+
+> Providers are added via the CRUD API after Rook starts:
+> ```bash
+> curl -X POST http://localhost:8080/api/providers \
+>   -H "Content-Type: application/json" \
+>   -d '{
+>     "name": "openai-primary",
+>     "provider_kind": "openai",
+>     "auth_type": "api_key",
+>     "credentials": { "api_key": "${OPENAI_API_KEY}" },
+>     "is_active": true,
+>     "priority": 1
+>   }'
+> ```
 
 ## Validation
 
 Rook validates config on startup:
-- At least one provider must be configured
-- Provider `kind` must be one of: `openai`, `anthropic`, `ollama`, `gemini`, `groq`
-- `api_key` must be non-empty for providers that require it (unless the placeholder `${VAR}` is used, which resolves at runtime)
 - `db_path` must be writable (directory must exist; file is created on first write)
+- If `provider_crud.enabled = true`, `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` must be set
+- If `auth.api_keys.enabled = true`, `API_KEY_HASH_SECRET` must be set
+
+There is no minimum provider requirement at startup — the registry starts empty and is populated from the database via `refresh_registry()`. If no connections exist in the database, Rook will return 503 for all routing requests until connections are added via the CRUD API.

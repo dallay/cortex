@@ -286,7 +286,7 @@ impl ManageConnections {
     ///
     /// Lists all connections, decrypts credentials for active ones, builds providers,
     /// and replaces the entire registry atomically.
-    async fn refresh_registry(&self) -> ManageConnectionsResult<()> {
+    pub async fn refresh_registry(&self) -> ManageConnectionsResult<()> {
         let connections = self.repo.list().await.map_err(|e| {
             tracing::error!(error = %e, "failed to list connections for registry refresh");
             ManageConnectionsError::RegistryUpdateFailed(format!("list failed: {e}"))

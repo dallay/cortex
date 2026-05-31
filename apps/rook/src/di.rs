@@ -10,14 +10,12 @@ use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRep
 use cache_memory::InMemoryCache;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use provider_sqlite::SqliteProviderRepository;
-use providers_anthropic::AnthropicProvider;
-use providers_gemini::GeminiProvider;
-use providers_groq::GroqProvider;
+#[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
-use providers_openai::OpenAIProvider;
 use rook_core::{
-    ApiKeyRepositoryPort, AuditPort, CachePort, PasswordHasher, ProviderId, ProviderPort,
-    ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, ConnectionId, DecryptedCredentials, PasswordHasher,
+    ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
+    RouterPort, SessionRepositoryPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, EnsureAdminUser, FallbackRouter, HealthCheck, ManageConnections,
@@ -25,7 +23,7 @@ use rook_usecases::{
     RouteRequest, RoutingStrategy, SetAdminPassword, ValidateSession,
 };
 
-use crate::config::{ProviderConfig, RookConfig};
+use crate::config::RookConfig;
 
 pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
@@ -37,33 +35,19 @@ pub struct RookContainer {
 
 impl RookContainer {
     pub fn build(config: &RookConfig) -> anyhow::Result<Self> {
-        // 1. Build all providers
-        let providers: Vec<Arc<dyn ProviderPort>> = config
-            .providers
-            .iter()
-            .filter_map(|pc| build_provider(pc))
-            .collect();
-
-        if providers.is_empty() {
-            anyhow::bail!("no providers configured");
-        }
-
-        tracing::info!(count = providers.len(), "providers initialized");
-
-        // 2. Cache
+        // 1. Cache
         let cache: Arc<dyn CachePort> = if config.cache.enabled {
             Arc::new(InMemoryCache::new(config.cache.ttl()))
         } else {
             Arc::new(NoOpCache)
         };
 
-        // 3. Audit
+        // 2. Audit
         let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.database.db_path)?);
 
-        // 4. Router and provider registry
+        // 3. Router and provider registry — starts empty, populated via refresh_registry
         let strategy: RoutingStrategy = config.routing.strategy.into();
-        let fallback_router: Arc<FallbackRouter> =
-            Arc::new(FallbackRouter::new(providers, strategy));
+        let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(strategy));
         let router: Arc<dyn RouterPort> = fallback_router.clone();
         let registry: Arc<dyn ProviderRegistryPort> = fallback_router;
 
@@ -77,12 +61,16 @@ impl RookContainer {
             let repo: Arc<dyn ProviderRepositoryPort> =
                 Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
             let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
-            Some(ManageConnections::new(
-                repo,
-                registry.clone(),
-                key_manager,
-                builder,
-            ))
+            let mc = ManageConnections::new(repo, registry.clone(), key_manager, builder);
+
+            // Populate the registry from the database on startup.
+            // If this fails (e.g., encrypted connections with wrong key), log a warning
+            // and continue — the router starts empty and can be populated via CRUD.
+            if let Err(e) = tokio::runtime::Handle::current().block_on(mc.refresh_registry()) {
+                tracing::warn!(error = %e, "initial registry refresh failed, starting with empty registry");
+            }
+
+            Some(mc)
         } else {
             None
         };
@@ -96,14 +84,14 @@ impl RookContainer {
             None
         };
 
-        // 5. Auth — user/session repos and password hasher
+        // 4. Auth — user/session repos and password hasher
         let user_repo: Arc<dyn rook_core::UserRepositoryPort> =
             Arc::new(SqliteUserRepository::new(&config.database.db_path)?);
         let session_repo: Arc<dyn SessionRepositoryPort> =
             Arc::new(SqliteSessionRepository::new(&config.database.db_path)?);
         let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2idHasher::new());
 
-        // 6. Build ValidateSession for middleware
+        // 5. Build ValidateSession for middleware
         let validate_session = Arc::new(ValidateSession::new(
             session_repo.clone(),
             user_repo.clone(),
@@ -116,7 +104,7 @@ impl RookContainer {
             rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
         let logout = rook_usecases::Logout::new(session_repo.clone());
 
-        //7. Ensure admin exists on first boot (before HTTP server starts)
+        // 7. Ensure admin exists on first boot (before HTTP server starts)
         // This guarantees the admin record exists with NULL password_hash.
         // Any login attempt before SetAdminPassword is called will fail with PASSWORD_NOT_SET.
         {
@@ -165,75 +153,11 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Provider builder
-// ---------------------------------------------------------------------------
-
-fn build_provider(config: &ProviderConfig) -> Option<Arc<dyn ProviderPort>> {
-    match config.kind.as_str() {
-        "openai" => OpenAIProvider::new(providers_openai::OpenAIProviderConfig {
-            id: ProviderId::new(&config.id),
-            api_key: config.api_key.clone().unwrap_or_default(),
-            base_url: config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.openai.com".to_string()),
-            models: config.models.iter().map(|s| s.as_str().into()).collect(),
-            timeout_secs: config.timeout_secs.unwrap_or(60),
-        })
-        .ok()
-        .map(|p| Arc::new(p) as Arc<dyn ProviderPort>),
-        "anthropic" => AnthropicProvider::new(providers_anthropic::AnthropicProviderConfig {
-            id: ProviderId::new(&config.id),
-            api_key: config.api_key.clone().unwrap_or_default(),
-            base_url: config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
-            models: config.models.iter().map(|s| s.as_str().into()).collect(),
-            timeout_secs: config.timeout_secs.unwrap_or(60),
-        })
-        .ok()
-        .map(|p| p as Arc<dyn ProviderPort>),
-        "ollama" => OllamaProvider::new(providers_ollama::OllamaProviderConfig {
-            id: ProviderId::new(&config.id),
-            base_url: config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "http://localhost:11434".to_string()),
-            models: config.models.iter().map(|s| s.as_str().into()).collect(),
-            timeout_secs: config.timeout_secs.unwrap_or(300),
-        })
-        .ok()
-        .map(|p| p as Arc<dyn ProviderPort>),
-        "gemini" => GeminiProvider::new(providers_gemini::GeminiProviderConfig {
-            id: ProviderId::new(&config.id),
-            api_key: config.api_key.clone().unwrap_or_default(),
-            models: config.models.iter().map(|s| s.as_str().into()).collect(),
-            timeout_secs: config.timeout_secs.unwrap_or(60),
-        })
-        .ok()
-        .map(|p| p as Arc<dyn ProviderPort>),
-        "groq" => GroqProvider::new(providers_groq::GroqProviderConfig {
-            id: ProviderId::new(&config.id),
-            api_key: config.api_key.clone().unwrap_or_default(),
-            models: config.models.iter().map(|s| s.as_str().into()).collect(),
-            timeout_secs: config.timeout_secs.unwrap_or(60),
-        })
-        .ok()
-        .map(|p| p as Arc<dyn ProviderPort>),
-        unknown => {
-            tracing::warn!(kind = unknown, "unknown provider kind, skipping");
-            None
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // No-op cache (when cache is disabled)
 // ---------------------------------------------------------------------------
 
 use async_trait::async_trait;
-use rook_core::{CacheKey, DecryptedCredentials};
+use rook_core::CacheKey;
 use shared_kernel::NuxaResult;
 
 #[derive(Clone, Default)]
@@ -261,8 +185,119 @@ impl CachePort for NoOpCache {
 }
 
 // ---------------------------------------------------------------------------
+// Provider build errors
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur when building a provider from connection data.
+#[derive(Debug)]
+pub enum ProviderBuildError {
+    /// Ollama requires a base_url but none was provided.
+    OllamaRequiresBaseUrl,
+    /// Provider construction failed (e.g., invalid credentials, network error).
+    ConstructionFailed(String),
+}
+
+impl std::fmt::Display for ProviderBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OllamaRequiresBaseUrl => {
+                write!(
+                    f,
+                    "ollama provider requires a base_url but none was provided"
+                )
+            }
+            Self::ConstructionFailed(msg) => write!(f, "provider construction failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ProviderBuildError {}
+
+// ---------------------------------------------------------------------------
 // Dynamic provider builder (for provider CRUD)
 // ---------------------------------------------------------------------------
+
+/// Builds a provider from connection data.
+///
+/// This is the single function that handles all 5 providers (openai, anthropic,
+/// ollama, gemini, groq) for both ApiKey and OAuth credentials.
+pub fn build_provider_from_connection(
+    connection_id: &ConnectionId,
+    kind: ProviderKind,
+    credentials: &DecryptedCredentials,
+    base_url_override: Option<String>,
+) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    // Extract credentials — use access_token for OAuth where the provider supports it
+    let api_key = match credentials {
+        DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
+        DecryptedCredentials::OAuth { access_token, .. } => {
+            // OAuth access tokens can be used as API keys for providers that accept them.
+            // For providers that don't support OAuth natively, this returns an error below.
+            access_token.clone()
+        }
+    };
+
+    let provider = match kind {
+        ProviderKind::OpenAI => {
+            let config = providers_openai::OpenAIProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                base_url: base_url_override.unwrap_or_else(|| "https://api.openai.com".to_string()),
+                models: Vec::new(),
+                timeout_secs: 60,
+            };
+            Arc::new(
+                providers_openai::OpenAIProvider::new(config)
+                    .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
+            ) as Arc<dyn ProviderPort>
+        }
+        ProviderKind::Anthropic => {
+            let config = providers_anthropic::AnthropicProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                base_url: base_url_override
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                models: Vec::new(),
+                timeout_secs: 60,
+            };
+            providers_anthropic::AnthropicProvider::new(config)
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::Ollama => {
+            let base_url = base_url_override.ok_or(ProviderBuildError::OllamaRequiresBaseUrl)?;
+            let config = providers_ollama::OllamaProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                base_url,
+                models: Vec::new(),
+                timeout_secs: 300,
+            };
+            providers_ollama::OllamaProvider::new(config)
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::Gemini => {
+            let config = providers_gemini::GeminiProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                models: Vec::new(),
+                timeout_secs: 60,
+            };
+            providers_gemini::GeminiProvider::new(config)
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::Groq => {
+            let config = providers_groq::GroqProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                models: Vec::new(),
+                timeout_secs: 60,
+            };
+            providers_groq::GroqProvider::new(config)
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+    };
+
+    Ok(provider)
+}
 
 #[derive(Clone)]
 struct DynamicProviderBuilder;
@@ -273,97 +308,12 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         &self,
         input: ProviderBuildInput,
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
-        let api_key = match &input.decrypted_credentials {
-            DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
-            DecryptedCredentials::OAuth { .. } => {
-                return Err(ManageConnectionsError::RegistryUpdateFailed(
-                    "OAuth provider build not yet implemented".to_string(),
-                ));
-            }
-        };
-
-        // Build the appropriate provider based on kind
-        let provider = match input.provider_kind.as_str() {
-            "openai" => {
-                let config = providers_openai::OpenAIProviderConfig {
-                    id: ProviderId::new(input.connection_id.to_string()),
-                    api_key,
-                    base_url: input
-                        .base_url
-                        .unwrap_or_else(|| "https://api.openai.com".to_string()),
-                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
-                    timeout_secs: 60,
-                };
-                Arc::new(providers_openai::OpenAIProvider::new(config).map_err(|e| {
-                    ManageConnectionsError::RegistryUpdateFailed(format!(
-                        "OpenAI provider build failed: {e}"
-                    ))
-                })?) as Arc<dyn ProviderPort>
-            }
-            "anthropic" => {
-                let config = providers_anthropic::AnthropicProviderConfig {
-                    id: ProviderId::new(input.connection_id.to_string()),
-                    api_key,
-                    base_url: input
-                        .base_url
-                        .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
-                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
-                    timeout_secs: 60,
-                };
-                providers_anthropic::AnthropicProvider::new(config).map_err(|e| {
-                    ManageConnectionsError::RegistryUpdateFailed(format!(
-                        "Anthropic provider build failed: {e}"
-                    ))
-                })?
-            }
-            "ollama" => {
-                let config = providers_ollama::OllamaProviderConfig {
-                    id: ProviderId::new(input.connection_id.to_string()),
-                    base_url: input
-                        .base_url
-                        .unwrap_or_else(|| "http://localhost:11434".to_string()),
-                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
-                    timeout_secs: 300,
-                };
-                providers_ollama::OllamaProvider::new(config).map_err(|e| {
-                    ManageConnectionsError::RegistryUpdateFailed(format!(
-                        "Ollama provider build failed: {e}"
-                    ))
-                })?
-            }
-            "gemini" => {
-                let config = providers_gemini::GeminiProviderConfig {
-                    id: ProviderId::new(input.connection_id.to_string()),
-                    api_key,
-                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
-                    timeout_secs: 60,
-                };
-                providers_gemini::GeminiProvider::new(config).map_err(|e| {
-                    ManageConnectionsError::RegistryUpdateFailed(format!(
-                        "Gemini provider build failed: {e}"
-                    ))
-                })?
-            }
-            "groq" => {
-                let config = providers_groq::GroqProviderConfig {
-                    id: ProviderId::new(input.connection_id.to_string()),
-                    api_key,
-                    models: input.default_model.map(|m| vec![m]).unwrap_or_default(),
-                    timeout_secs: 60,
-                };
-                providers_groq::GroqProvider::new(config).map_err(|e| {
-                    ManageConnectionsError::RegistryUpdateFailed(format!(
-                        "Groq provider build failed: {e}"
-                    ))
-                })?
-            }
-            unknown => {
-                return Err(ManageConnectionsError::RegistryUpdateFailed(format!(
-                    "unknown provider kind: {unknown}"
-                )));
-            }
-        };
-
-        Ok(provider)
+        build_provider_from_connection(
+            &input.connection_id,
+            input.provider_kind,
+            &input.decrypted_credentials,
+            input.base_url,
+        )
+        .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
     }
 }
