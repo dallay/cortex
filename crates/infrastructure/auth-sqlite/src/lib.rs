@@ -459,6 +459,14 @@ impl UserRepositoryPort for SqliteUserRepository {
         Ok(result)
     }
 
+    async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+        let conn = self.lock()?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .map_err(user_db_error)?;
+        Ok(count > 0)
+    }
+
     async fn create(&self, user: &NewUser) -> Result<User, UserRepositoryError> {
         let conn = self.lock()?;
         let id = UserId::new();

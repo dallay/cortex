@@ -27,8 +27,8 @@ impl SetAdminPassword {
         let SetAdminPasswordInput { new_password } = input;
 
         // Validate password strength
-        if new_password.len() < 8 {
-            return Err(SetAdminPasswordError::PasswordTooShort);
+        if !is_strong_password(&new_password) {
+            return Err(SetAdminPasswordError::WeakPassword);
         }
 
         // Find admin
@@ -60,12 +60,20 @@ pub struct SetAdminPasswordInput {
     pub new_password: String,
 }
 
+fn is_strong_password(password: &str) -> bool {
+    password.len() >= 12
+        && password.chars().any(char::is_uppercase)
+        && password.chars().any(char::is_lowercase)
+        && password.chars().any(|c| c.is_ascii_digit())
+        && password.chars().any(|c| !c.is_alphanumeric())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SetAdminPasswordError {
     #[error("admin user not found")]
     AdminNotFound,
-    #[error("password must be at least 8 characters")]
-    PasswordTooShort,
+    #[error("password must be at least 12 characters and include uppercase, lowercase, number, and symbol")]
+    WeakPassword,
     #[error("hashing error: {0}")]
     HashingError(#[from] PasswordHashError),
     #[error("user repository error: {0}")]
@@ -119,6 +127,10 @@ mod tests {
             Ok(None)
         }
 
+        async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+            Ok(self.find_result.clone().unwrap_or(Ok(None))?.is_some())
+        }
+
         async fn create(&self, _: &NewUser) -> Result<User, UserRepositoryError> {
             unreachable!()
         }
@@ -160,7 +172,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "super-secret-123".to_string(),
+                    new_password: "Super-secret-123!".to_string(),
                 })
                 .await;
 
@@ -188,7 +200,32 @@ mod tests {
 
             assert_eq!(
                 result.unwrap_err().to_string(),
-                "password must be at least 8 characters"
+                "password must be at least 12 characters and include uppercase, lowercase, number, and symbol"
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_password_without_required_complexity() {
+        runtime().block_on(async {
+            let repo = Arc::new(FakeUserRepository {
+                find_result: Some(Ok(Some(admin_user()))),
+                update_result: Ok(()),
+            });
+            let hasher = Arc::new(FakePasswordHasher {
+                hash_result: Ok(PasswordHash::from("hashed".to_string())),
+            });
+            let usecase = SetAdminPassword::new(repo.clone(), hasher.clone());
+
+            let result = usecase
+                .execute(SetAdminPasswordInput {
+                    new_password: "longbutweakpassword".to_string(),
+                })
+                .await;
+
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "password must be at least 12 characters and include uppercase, lowercase, number, and symbol"
             );
         });
     }
@@ -207,7 +244,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "super-secret-123".to_string(),
+                    new_password: "Super-secret-123!".to_string(),
                 })
                 .await;
 
@@ -229,7 +266,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "super-secret-123".to_string(),
+                    new_password: "Super-secret-123!".to_string(),
                 })
                 .await;
 
@@ -254,7 +291,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: "super-secret-123".to_string(),
+                    new_password: "Super-secret-123!".to_string(),
                 })
                 .await;
 

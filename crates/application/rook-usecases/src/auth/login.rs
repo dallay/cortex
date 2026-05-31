@@ -186,6 +186,10 @@ mod tests {
             Ok(None)
         }
 
+        async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+            Ok(self.find_result.clone().unwrap_or(Ok(None))?.is_some())
+        }
+
         async fn create(&self, _: &NewUser) -> Result<User, UserRepositoryError> {
             unreachable!()
         }

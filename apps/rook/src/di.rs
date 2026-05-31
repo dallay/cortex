@@ -18,9 +18,10 @@ use rook_core::{
     RouterPort, SessionRepositoryPort,
 };
 use rook_usecases::{
-    AuthenticateClientApi, EnsureAdminUser, FallbackRouter, HealthCheck, ManageConnections,
-    ManageConnectionsError, ManageProviders, ProviderBuildInput, ProviderBuilderPort, RookUsecases,
-    RouteRequest, RoutingStrategy, SetAdminPassword, ValidateSession,
+    AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
+    ManageConnections, ManageConnectionsError, ManageProviders, ProviderBuildInput,
+    ProviderBuilderPort, RookUsecases, RouteRequest, RoutingStrategy, SetAdminPassword,
+    ValidateSession,
 };
 
 use crate::config::RookConfig;
@@ -73,6 +74,7 @@ impl RookContainer {
         ));
 
         // 6. Auth use cases
+        let bootstrap_status = BootstrapStatus::new(user_repo.clone());
         let ensure_admin_user = EnsureAdminUser::new(user_repo.clone());
         let set_admin_password = SetAdminPassword::new(user_repo.clone(), hasher.clone());
         let login =
@@ -155,6 +157,7 @@ impl RookContainer {
             authenticate_client_api: authenticate_client_api.clone(),
             manage_connections,
             manage_api_keys,
+            bootstrap_status: bootstrap_status.clone(),
             ensure_admin_user,
             set_admin_password,
             login,
@@ -165,7 +168,8 @@ impl RookContainer {
             authenticate_client_api,
             config.auth.api_keys.allow_env_fallback,
         )
-        .with_session_validator(validate_session);
+        .with_session_validator(validate_session)
+        .with_bootstrap_status(bootstrap_status.clone());
 
         Ok(Self {
             usecases,

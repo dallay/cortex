@@ -17,7 +17,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rook_core::ApiKeyTier;
-use rook_usecases::{AuthenticateClientApi, AuthenticateClientApiError, ValidateSession};
+use rook_usecases::{
+    AuthenticateClientApi, AuthenticateClientApiError, BootstrapStatus, ValidateSession,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -43,6 +45,7 @@ pub struct AuthzConfig {
     rate_limiter: RateLimiter,
     /// Session validator for MANAGEMENT routes (replaces JWT-based auth)
     session_validator: Option<Arc<ValidateSession>>,
+    bootstrap_status: Option<BootstrapStatus>,
 }
 
 impl AuthzConfig {
@@ -82,6 +85,7 @@ impl AuthzConfig {
             cors: CorsConfig::from_env(),
             rate_limiter: RateLimiter::default(),
             session_validator: None,
+            bootstrap_status: None,
         }
     }
 
@@ -112,6 +116,7 @@ impl AuthzConfig {
             cors: CorsConfig::default(),
             rate_limiter: RateLimiter::default(),
             session_validator: None,
+            bootstrap_status: None,
         }
     }
 
@@ -129,12 +134,19 @@ impl AuthzConfig {
             cors: CorsConfig::default(),
             rate_limiter: RateLimiter::default(),
             session_validator: None,
+            bootstrap_status: None,
         }
     }
 
     /// Set the session validator for MANAGEMENT route auth.
     pub fn with_session_validator(mut self, validator: Arc<ValidateSession>) -> Self {
         self.session_validator = Some(validator);
+        self
+    }
+
+    /// Set bootstrap status checker so normal operations can be blocked until initialized.
+    pub fn with_bootstrap_status(mut self, bootstrap_status: BootstrapStatus) -> Self {
+        self.bootstrap_status = Some(bootstrap_status);
         self
     }
 }
@@ -404,6 +416,12 @@ pub async fn middleware(
         return resp;
     }
 
+    if let Some(rejection) = bootstrap_rejection(route_class, request.uri().path(), &config).await {
+        let mut resp = rejection.into_response();
+        apply_cors_headers(resp.headers_mut(), origin.as_ref(), &config.cors);
+        return resp;
+    }
+
     remove_trusted_headers(request.headers_mut());
     let outcome = evaluate_policy(route_class, request.headers(), &config).await;
     if !outcome.allow {
@@ -434,6 +452,8 @@ pub fn classify_route(method: &Method, path: &str) -> AuthTier {
         || path == "/status"
         || path == "/login"
         || path == "/logout"
+        || path == "/api/bootstrap/status"
+        || path == "/api/bootstrap/setup"
         || path.starts_with("/assets/")
         || path.starts_with("/static/")
     {
@@ -454,6 +474,41 @@ pub async fn evaluate_policy(
         AuthTier::Public => AuthOutcome::allow(Subject::anonymous()),
         AuthTier::ClientApi => client_api_policy(headers, config).await,
         AuthTier::Management => management_policy(headers, config).await,
+    }
+}
+
+async fn bootstrap_rejection(
+    route_class: AuthTier,
+    path: &str,
+    config: &AuthzConfig,
+) -> Option<Response> {
+    if route_class == AuthTier::Public || path.starts_with("/api/bootstrap/") {
+        return None;
+    }
+
+    let bootstrap_status = config.bootstrap_status.as_ref()?;
+    match bootstrap_status.execute(None).await {
+        Ok(state) if state.is_initialized => None,
+        Ok(_) => Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "bootstrap_required",
+                    "message": "Rook is in bootstrap mode. Set the admin password before using this endpoint."
+                })),
+            )
+                .into_response(),
+        ),
+        Err(_) => Some(
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "bootstrap_status_failed",
+                    "message": "Unable to read bootstrap state."
+                })),
+            )
+                .into_response(),
+        ),
     }
 }
 

@@ -97,6 +97,10 @@ impl UserRepositoryPort for FakeUserRepository {
         Ok(None)
     }
 
+    async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+        Ok(!self.users.read().unwrap().is_empty())
+    }
+
     async fn create(&self, user: &CoreNewUser) -> Result<User, UserRepositoryError> {
         let mut users = self.users.write().unwrap();
         let key = user.username.to_lowercase();
