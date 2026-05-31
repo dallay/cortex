@@ -23,10 +23,16 @@ fn sanitize_error_body(body: &str) -> String {
     // Try to parse as JSON and redact sensitive fields
     if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(obj) = json.as_object_mut() {
-            for key in SENSITIVE_KEYS {
-                if obj.contains_key(*key) {
-                    obj.insert(key.to_string(), serde_json::Value::String("(redacted)".to_string()));
-                }
+            let keys_to_redact: Vec<String> = obj
+                .keys()
+                .filter(|k| {
+                    let lower = k.to_lowercase();
+                    SENSITIVE_KEYS.iter().any(|s| lower.contains(s))
+                })
+                .cloned()
+                .collect();
+            for key in keys_to_redact {
+                obj.insert(key, serde_json::Value::String("(redacted)".to_string()));
             }
         }
         let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
