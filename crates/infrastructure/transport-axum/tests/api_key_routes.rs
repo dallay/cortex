@@ -87,7 +87,10 @@ fn create_api_key_response_serializes_correctly() {
     let json = serde_json::to_value(&dto).expect("should serialize");
     assert_eq!(json["plaintextKey"], "rook_test_123456789");
     // Ensure keyHash is not exposed in response
-    assert!(json["key"]["keyHash"].is_null(), "keyHash should not be exposed");
+    assert!(
+        json["key"]["keyHash"].is_null(),
+        "keyHash should not be exposed"
+    );
     assert_eq!(json["key"]["id"], "key_123");
     assert_eq!(json["key"]["tier"], "pro");
 }

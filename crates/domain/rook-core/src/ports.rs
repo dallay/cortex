@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use shared_kernel::{CacheKey, ConnectionId, ModelId, CortexResult, ProviderId};
+use shared_kernel::{CacheKey, ConnectionId, CortexResult, ModelId, ProviderId};
 
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,

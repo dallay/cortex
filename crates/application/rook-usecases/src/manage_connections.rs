@@ -555,7 +555,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rook_core::{
-        BoxStream, CompletionRequest, CompletionResponse, ModelId, CortexResult, ProviderPort,
+        BoxStream, CompletionRequest, CompletionResponse, CortexResult, ModelId, ProviderPort,
         RegistryError, StreamChunk,
     };
 

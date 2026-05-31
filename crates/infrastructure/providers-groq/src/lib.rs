@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use rook_core::{CompletionRequest, CompletionResponse, HealthStatus, ProviderPort, StreamChunk};
-use shared_kernel::{ModelId as KModelId, CortexError, CortexResult, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
