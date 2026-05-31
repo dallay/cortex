@@ -1,11 +1,11 @@
 // OpenAI provider implementation — stub until existing impls are migrated
 
 use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt};
+use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
     CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId, ProviderPort,
-    StreamChunk, TokenUsage,
+    RequestId, StreamChunk, TokenUsage,
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
 
@@ -149,6 +149,80 @@ fn parse_finish_reason(reason: &str) -> Option<FinishReason> {
         "tool_calls" => Some(FinishReason::ToolCalls),
         _ => None,
     }
+}
+
+/// SSE buffer that accumulates raw bytes until a complete SSE event ( delimited by "\n\n")
+/// is available, then yields the event text and keeps any remainder for the next chunk.
+struct SseBuffer {
+    buffer: Vec<u8>,
+}
+
+impl SseBuffer {
+    fn new() -> Self {
+        Self { buffer: Vec::new() }
+    }
+
+    /// Push incoming bytes, return an iterator of complete SSE event strings.
+    /// A complete SSE event is text followed by "\n\n". Partial data is kept in the buffer.
+    fn push(&mut self, incoming: &[u8]) -> impl Iterator<Item = String> + '_ {
+        self.buffer.extend_from_slice(incoming);
+        let mut events = Vec::new();
+        let mut start = 0;
+
+        loop {
+            // Scan for "\n\n" from current position
+            let mut search_start = start;
+            let mut found_double_nl = None;
+
+            while search_start < self.buffer.len() {
+                if let Some(pos) = byte_memchr(b'\n', &self.buffer[search_start..]) {
+                    let abs_pos = search_start + pos;
+                    if abs_pos + 1 < self.buffer.len() && self.buffer[abs_pos + 1] == b'\n' {
+                        found_double_nl = Some(abs_pos);
+                        break;
+                    }
+                    // Not a double-nl, skip past this '\n' and continue searching
+                    search_start = abs_pos + 1;
+                } else {
+                    break;
+                }
+            }
+
+            match found_double_nl {
+                Some(event_end) => {
+                    // Yield the event text (everything before the first '\n')
+                    let event_text_len = event_end - start;
+                    if let Ok(event) =
+                        String::from_utf8(self.buffer[start..start + event_text_len].to_vec())
+                    {
+                        events.push(event);
+                    }
+                    // Move past the "\n\n"
+                    start = event_end + 2;
+                }
+                None => break,
+            }
+        }
+
+        // Drain processed bytes, keeping any remainder
+        if start > 0 {
+            self.buffer.drain(0..start);
+        }
+
+        events.into_iter()
+    }
+}
+
+impl Default for SseBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Portable byte search — returns index of `needle` in `haystack` or None.
+#[inline]
+fn byte_memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
+    haystack.iter().position(|&b| b == needle)
 }
 
 #[async_trait]
@@ -297,43 +371,59 @@ impl ProviderPort for OpenAIProvider {
         }
 
         let request_id = req.id.clone();
+        let mut sse_buffer = SseBuffer::new();
+
+        fn process_bytes(
+            request_id: &RequestId,
+            sse_buffer: &mut SseBuffer,
+            bytes: &[u8],
+        ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
+            let events = sse_buffer.push(bytes);
+            let mut chunks = Vec::new();
+
+            for event_text in events {
+                for data_line in event_text.lines().filter_map(|l| l.strip_prefix("data: ")) {
+                    if data_line.trim() == "[DONE]" {
+                        continue;
+                    }
+
+                    let parsed: OpenAIStreamResponse = match serde_json::from_str(data_line) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+
+                    let choice = parsed.choices.first();
+
+                    let usage = parsed.usage.map(|usage| TokenUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                        estimated_cost_usd: None,
+                    });
+
+                    chunks.push(StreamChunk {
+                        id: request_id.clone(),
+                        model: ModelId::new(parsed.model),
+                        delta: choice
+                            .and_then(|c| c.delta.content.clone())
+                            .unwrap_or_default(),
+                        finish_reason: choice
+                            .and_then(|c| c.finish_reason.as_deref())
+                            .and_then(parse_finish_reason),
+                        usage,
+                    });
+                }
+            }
+
+            futures::stream::iter(chunks.into_iter().map(Ok))
+        }
+
         let stream = resp
             .bytes_stream()
             .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
-            .map(move |chunk| {
-                chunk.and_then(|bytes| {
-                    let text = String::from_utf8_lossy(&bytes);
-                    let data_lines = text
-                        .lines()
-                        .filter_map(|line| line.strip_prefix("data: "))
-                        .filter(|data| *data != "[DONE]");
-
-                    let mut chunks = Vec::new();
-                    for data in data_lines {
-                        let parsed: OpenAIStreamResponse =
-                            serde_json::from_str(data).map_err(|e| {
-                                CortexError::provider(format!("stream json parse failed: {e}"))
-                            })?;
-                        let choice = parsed.choices.first();
-                        chunks.push(StreamChunk {
-                            id: request_id.clone(),
-                            model: ModelId::new(parsed.model),
-                            delta: choice
-                                .and_then(|choice| choice.delta.content.clone())
-                                .unwrap_or_default(),
-                            finish_reason: choice
-                                .and_then(|choice| choice.finish_reason.as_deref())
-                                .and_then(parse_finish_reason),
-                            usage: parsed.usage.map(|usage| TokenUsage {
-                                prompt_tokens: usage.prompt_tokens,
-                                completion_tokens: usage.completion_tokens,
-                                total_tokens: usage.total_tokens,
-                                estimated_cost_usd: None,
-                            }),
-                        });
-                    }
-                    Ok(futures::stream::iter(chunks.into_iter().map(Ok)))
-                })
+            .and_then(move |bytes| {
+                let request_id = request_id.clone();
+                futures::future::ok(process_bytes(&request_id, &mut sse_buffer, &bytes))
             })
             .try_flatten();
 
