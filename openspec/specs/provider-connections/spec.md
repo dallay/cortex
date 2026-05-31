@@ -24,10 +24,10 @@ The Provider Connections CRUD system lets operators store, manage, and health-te
 
 ### 1.3 Key Identifiers
 
-| Identifier | Meaning |
-|-----------|---------|
-| `ConnectionId` | Unique id for a stored provider connection (UUID v4). |
-| `ProviderId` | Existing runtime provider id (already defined in `shared-kernel`). |
+| Identifier     | Meaning                                                                                                                 |
+|----------------|-------------------------------------------------------------------------------------------------------------------------|
+| `ConnectionId` | Unique id for a stored provider connection (UUID v4).                                                                   |
+| `ProviderId`   | Existing runtime provider id (already defined in `shared-kernel`).                                                      |
 | `ProviderKind` | Derived from `"openai"`, `"anthropic"`, `"ollama"`, `"gemini"`, `"groq"` strings. NOT stored as an enum in persistence. |
 
 `ConnectionId` MUST NOT equal `ProviderId`. A connection row and a runtime provider are different concepts.
@@ -40,38 +40,40 @@ The Provider Connections CRUD system lets operators store, manage, and health-te
 
 A stored provider connection has the following attributes:
 
-| Field | Type | Constraints |
-|-------|------|------------|
-| `id` | `ConnectionId` (UUID v4) | System-generated, immutable after creation. |
-| `provider_kind` | String | One of: `openai`, `anthropic`, `ollama`, `gemini`, `groq`. |
-| `provider_runtime_id` | `ProviderId` | Reference to an existing registered runtime provider. |
-| `name` | String | Non-empty Unicode string, max 256 scalar values. Unique per `provider_kind`. |
-| `priority` | Integer (1–255) | Lower number = higher priority. Used for ordering, not enforcement. |
-| `is_active` | Boolean | If `false`, the connection exists but is not used for probing. Inactive connections remain stored and returned by repository list/get operations (unless explicitly filtered); they are excluded from v1 routing probe/selection decisions. Metrics, health checks, and UI visibility may treat inactive connections differently. |
-| `auth_type` | Enum: `apiKey` \| `oauth` | Determines which credential fields are present. |
-| `credentials` | Credential value | Encrypted at rest; never stored or returned in plaintext. |
-| `config` | ConnectionConfig | Contains concurrency limit and quota thresholds. |
-| `test_status` | TestStatus | Result of last health probe or `neverTested`. |
-| `created_at` | Timestamp (UTC) | System-generated at creation. |
-| `updated_at` | Timestamp (UTC) | System-generated at every mutation. |
+| Field                 | Type                      | Constraints                                                                                                                                                                                                                                                                                                                       |
+|-----------------------|---------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `id`                  | `ConnectionId` (UUID v4)  | System-generated, immutable after creation.                                                                                                                                                                                                                                                                                       |
+| `provider_kind`       | String                    | One of: `openai`, `anthropic`, `ollama`, `gemini`, `groq`.                                                                                                                                                                                                                                                                        |
+| `provider_runtime_id` | `ProviderId`              | Reference to an existing registered runtime provider.                                                                                                                                                                                                                                                                             |
+| `name`                | String                    | Non-empty Unicode string, max 256 scalar values. Unique per `provider_kind`.                                                                                                                                                                                                                                                      |
+| `priority`            | Integer (1–255)           | Lower number = higher priority. Used for ordering, not enforcement.                                                                                                                                                                                                                                                               |
+| `is_active`           | Boolean                   | If `false`, the connection exists but is not used for probing. Inactive connections remain stored and returned by repository list/get operations (unless explicitly filtered); they are excluded from v1 routing probe/selection decisions. Metrics, health checks, and UI visibility may treat inactive connections differently. |
+| `auth_type`           | Enum: `apiKey` \| `oauth` | Determines which credential fields are present.                                                                                                                                                                                                                                                                                   |
+| `credentials`         | Credential value          | Encrypted at rest; never stored or returned in plaintext.                                                                                                                                                                                                                                                                         |
+| `config`              | ConnectionConfig          | Contains concurrency limit and quota thresholds.                                                                                                                                                                                                                                                                                  |
+| `test_status`         | TestStatus                | Result of last health probe or `neverTested`.                                                                                                                                                                                                                                                                                     |
+| `created_at`          | Timestamp (UTC)           | System-generated at creation.                                                                                                                                                                                                                                                                                                     |
+| `updated_at`          | Timestamp (UTC)           | System-generated at every mutation.                                                                                                                                                                                                                                                                                               |
 
 ### 2.2 ConnectionConfig
 
-| Field | Type | Constraints |
-|-------|------|------------|
-| `max_concurrent` | Integer ≥ 1 | Maximum concurrent requests allowed. |
-| `quota_window_thresholds.warning` | Float [0.0, 1.0] | Warning threshold for quota window. |
-| `quota_window_thresholds.error` | Float [0.0, 1.0] | Error threshold; MUST be > `warning`. |
-| `default_model` | String (optional) | Model id to use as default for this connection. |
+| Field                             | Type              | Constraints                                     |
+|-----------------------------------|-------------------|-------------------------------------------------|
+| `max_concurrent`                  | Integer ≥ 1       | Maximum concurrent requests allowed.            |
+| `quota_window_thresholds.warning` | Float [0.0, 1.0]  | Warning threshold for quota window.             |
+| `quota_window_thresholds.error`   | Float [0.0, 1.0]  | Error threshold; MUST be > `warning`.           |
+| `default_model`                   | String (optional) | Model id to use as default for this connection. |
 
 **`default_model` semantics**: `defaultModel: null` (or omitted) explicitly means "no default model configured" and will not be used for routing. Connections may be created without a default model. When routing a request that does not specify a model and the connection has no default, the caller must supply a model or the request returns an error (error code: `MODEL_REQUIRED` or similar). There is no global fallback to a system-wide default for connection-scoped routing.
 
 ### 2.3 Credential Variants
 
 **ApiKey** variant stores:
+
 - `apiKey` — the secret key.
 
 **OAuth** variant stores:
+
 - `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, `projectId` — all encrypted.
 - `expiresAt` — Unix timestamp (UTC), stored unencrypted.
 
@@ -79,13 +81,13 @@ OAuth tokens that expire after persistence are NOT rejected on read. They are su
 
 ### 2.4 TestStatus States
 
-| State | Meaning |
-|-------|---------|
-| `neverTested` | Connection created but never probed. |
-| `active` | Last probe succeeded; includes `lastTestAt` and `latencyMs`. |
-| `unhealthy` | Last probe failed; includes `lastTestAt`, `latencyMs`, and `error`. |
-| `expired` | OAuth token passed its `expiresAt`; includes `lastTestAt`. |
-| `unknown` | Provider does not support health probes; includes `reason`. |
+| State         | Meaning                                                             |
+|---------------|---------------------------------------------------------------------|
+| `neverTested` | Connection created but never probed.                                |
+| `active`      | Last probe succeeded; includes `lastTestAt` and `latencyMs`.        |
+| `unhealthy`   | Last probe failed; includes `lastTestAt`, `latencyMs`, and `error`. |
+| `expired`     | OAuth token passed its `expiresAt`; includes `lastTestAt`.          |
+| `unknown`     | Provider does not support health probes; includes `reason`.         |
 
 ### 2.5 ProviderKind
 
@@ -101,19 +103,19 @@ Any other provider kind MUST be rejected with `400 VALIDATION_ERROR`. Extensible
 
 The following rules MUST be enforced on every create and update operation:
 
-| # | Rule | Error |
-|---|------|-------|
-| V1 | `provider_kind` MUST be one of: `openai`, `anthropic`, `ollama`, `gemini`, `groq`. | `400 VALIDATION_ERROR` |
-| V2 | `provider_runtime_id` MUST be non-empty after trimming whitespace. | `400 VALIDATION_ERROR` |
-| V3 | `name` MUST be non-empty after trimming whitespace and at most 256 Unicode scalar values. | `400 VALIDATION_ERROR` |
-| V4 | `priority` MUST be an integer between 1 and 255 inclusive. | `400 VALIDATION_ERROR` |
-| V5 | `max_concurrent` MUST be at least 1. | `400 VALIDATION_ERROR` |
-| V6 | `quota_window_thresholds.warning` and `error` MUST be finite floats in [0.0, 1.0]. | `400 VALIDATION_ERROR` |
-| V7 | `quota_window_thresholds.error` MUST be strictly greater than `warning`. | `400 VALIDATION_ERROR` |
-| V8 | For `ApiKey`: `credentials.apiKey` MUST be non-empty before encryption. | `400 VALIDATION_ERROR` |
-| V9 | For `OAuth`: `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, and `projectId` MUST all be non-empty before encryption. | `400 VALIDATION_ERROR` |
+| #   | Rule                                                                                                                                                                                                                                                                                                                                                        | Error                  |
+|-----|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------|
+| V1  | `provider_kind` MUST be one of: `openai`, `anthropic`, `ollama`, `gemini`, `groq`.                                                                                                                                                                                                                                                                          | `400 VALIDATION_ERROR` |
+| V2  | `provider_runtime_id` MUST be non-empty after trimming whitespace.                                                                                                                                                                                                                                                                                          | `400 VALIDATION_ERROR` |
+| V3  | `name` MUST be non-empty after trimming whitespace and at most 256 Unicode scalar values.                                                                                                                                                                                                                                                                   | `400 VALIDATION_ERROR` |
+| V4  | `priority` MUST be an integer between 1 and 255 inclusive.                                                                                                                                                                                                                                                                                                  | `400 VALIDATION_ERROR` |
+| V5  | `max_concurrent` MUST be at least 1.                                                                                                                                                                                                                                                                                                                        | `400 VALIDATION_ERROR` |
+| V6  | `quota_window_thresholds.warning` and `error` MUST be finite floats in [0.0, 1.0].                                                                                                                                                                                                                                                                          | `400 VALIDATION_ERROR` |
+| V7  | `quota_window_thresholds.error` MUST be strictly greater than `warning`.                                                                                                                                                                                                                                                                                    | `400 VALIDATION_ERROR` |
+| V8  | For `ApiKey`: `credentials.apiKey` MUST be non-empty before encryption.                                                                                                                                                                                                                                                                                     | `400 VALIDATION_ERROR` |
+| V9  | For `OAuth`: `email`, `accessToken`, `refreshToken`, `scope`, `idToken`, and `projectId` MUST all be non-empty before encryption.                                                                                                                                                                                                                           | `400 VALIDATION_ERROR` |
 | V10 | OAuth `email` MUST contain exactly one `@`, a non-empty local part, and a domain composed of dot-separated labels where: no label is empty, no label starts or ends with `-`, the TLD label is at least 2 characters, and the domain contains at least one `.`. Rejects addresses like `test@domain.`, `user@localhost.localdomain.`, and single-char TLDs. | `400 VALIDATION_ERROR` |
-| V11 | OAuth `expiresAt` MUST be a future Unix timestamp UTC at create or credential replacement time. | `400 VALIDATION_ERROR` |
+| V11 | OAuth `expiresAt` MUST be a future Unix timestamp UTC at create or credential replacement time.                                                                                                                                                                                                                                                             | `400 VALIDATION_ERROR` |
 
 ---
 
@@ -121,15 +123,15 @@ The following rules MUST be enforced on every create and update operation:
 
 ### 4.1 Fields Encrypted At Rest
 
-| Field | Auth Type | Stored As |
-|-------|-----------|-----------|
-| `apiKey` | ApiKey | `enc:v1:{nonce}:{ciphertext}` |
-| `email` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
-| `accessToken` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
-| `refreshToken` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
-| `scope` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
-| `idToken` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
-| `projectId` | OAuth | `enc:v1:{nonce}:{ciphertext}` |
+| Field          | Auth Type | Stored As                     |
+|----------------|-----------|-------------------------------|
+| `apiKey`       | ApiKey    | `enc:v1:{nonce}:{ciphertext}` |
+| `email`        | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
+| `accessToken`  | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
+| `refreshToken` | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
+| `scope`        | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
+| `idToken`      | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
+| `projectId`    | OAuth     | `enc:v1:{nonce}:{ciphertext}` |
 
 All other fields, including `expiresAt`, are stored unencrypted.
 
@@ -151,6 +153,7 @@ The system MUST reject malformed encrypted blobs with an encryption error and MU
 ### 4.3 Key Derivation
 
 The encryption key is derived from:
+
 - **Passphrase source**: environment variable `ENCRYPTION_PASSPHRASE`.
 - **Salt**: environment variable `ENCRYPTION_SALT` (per deployment, 16 bytes base64url-no-pad encoded).
 - **KDF**: Argon2id — 64 MiB memory, 3 iterations, parallelism 4, 32-byte output.
@@ -163,14 +166,14 @@ Both `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` MUST be present and non-empty
 
 The persistence layer implements these operations:
 
-| Operation | Behavior |
-|----------|----------|
-| **List** | Returns all connections ordered by `priority ASC`, then `created_at DESC`. |
-| **Find** | Returns the connection with given `ConnectionId`, or `None` if not found. |
-| **Create** | Inserts a new connection. Returns `409 CONFLICT` if `id` already exists or if `(provider_kind, name)` already exists. |
-| **Update** | Updates an existing connection. Returns `404 NOT_FOUND` if no row matches. Returns `409 CONFLICT` if `updated_at` does not equal `expected_updated_at` (optimistic lock). |
-| **Delete** | Removes the connection. Returns `404 NOT_FOUND` if not found. |
-| **UpdateTestStatus** | Updates only the `test_status` fields for a given `ConnectionId`. |
+| Operation            | Behavior                                                                                                                                                                  |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **List**             | Returns all connections ordered by `priority ASC`, then `created_at DESC`.                                                                                                |
+| **Find**             | Returns the connection with given `ConnectionId`, or `None` if not found.                                                                                                 |
+| **Create**           | Inserts a new connection. Returns `409 CONFLICT` if `id` already exists or if `(provider_kind, name)` already exists.                                                     |
+| **Update**           | Updates an existing connection. Returns `404 NOT_FOUND` if no row matches. Returns `409 CONFLICT` if `updated_at` does not equal `expected_updated_at` (optimistic lock). |
+| **Delete**           | Removes the connection. Returns `404 NOT_FOUND` if not found.                                                                                                             |
+| **UpdateTestStatus** | Updates only the `test_status` fields for a given `ConnectionId`.                                                                                                         |
 
 All mutating operations (**Create**, **Update**, **Delete**) MUST run inside a database transaction.
 
@@ -191,13 +194,13 @@ The test endpoint probes a stored connection by:
 
 ### 6.1 Health Status Variants
 
-| Status | Meaning | When Used |
-|--------|---------|-----------|
-| `active` | Provider responded with healthy status. | Probe succeeds. |
-| `unhealthy` | Provider probe failed. | Probe returns an error; includes `latencyMs` and `error`. |
-| `expired` | OAuth token has passed its expiry time. | `expiresAt` in the past BEFORE probe is called. |
-| `unknown` | Provider does not support health probes. | Provider's health check returns `Unknown`. |
-| `neverTested` | No probe has been run yet. | Connection newly created or test never called. |
+| Status        | Meaning                                  | When Used                                                 |
+|---------------|------------------------------------------|-----------------------------------------------------------|
+| `active`      | Provider responded with healthy status.  | Probe succeeds.                                           |
+| `unhealthy`   | Provider probe failed.                   | Probe returns an error; includes `latencyMs` and `error`. |
+| `expired`     | OAuth token has passed its expiry time.  | `expiresAt` in the past BEFORE probe is called.           |
+| `unknown`     | Provider does not support health probes. | Provider's health check returns `Unknown`.                |
+| `neverTested` | No probe has been run yet.               | Connection newly created or test never called.            |
 
 The aggregate health endpoint `/health` MUST remain backwards-compatible. After migration, it MUST still render `healthy`, `latency_ms`, and `last_error` fields derived from the new `HealthStatus` enum.
 
@@ -216,11 +219,13 @@ The aggregate health endpoint `/health` MUST remain backwards-compatible. After 
 ### 7.2 Error Responses
 
 **4xx errors** return:
+
 ```json
 { "error": "human-readable description", "code": "ERROR_CODE" }
 ```
 
 **5xx errors** return:
+
 ```json
 { "error": "internal server error", "code": "INTERNAL_ERROR" }
 ```
@@ -229,14 +234,14 @@ Plaintext credential values, encryption keys, internal paths, and stack traces M
 
 ### 7.3 Endpoint Summary
 
-| Method | Path | Summary |
-|--------|------|---------|
-| `GET` | `/api/providers` | List all connections (priority order). |
-| `POST` | `/api/providers` | Create a new connection. |
-| `GET` | `/api/providers/:id` | Get a connection by `ConnectionId` (UUID). |
-| `PUT` | `/api/providers/:id` | Update a connection (optimistic locking required). |
-| `DELETE` | `/api/providers/:id` | Delete a connection. |
-| `POST` | `/api/providers/:id/test` | Run a health probe on a connection. |
+| Method   | Path                      | Summary                                            |
+|----------|---------------------------|----------------------------------------------------|
+| `GET`    | `/api/providers`          | List all connections (priority order).             |
+| `POST`   | `/api/providers`          | Create a new connection.                           |
+| `GET`    | `/api/providers/:id`      | Get a connection by `ConnectionId` (UUID).         |
+| `PUT`    | `/api/providers/:id`      | Update a connection (optimistic locking required). |
+| `DELETE` | `/api/providers/:id`      | Delete a connection.                               |
+| `POST`   | `/api/providers/:id/test` | Run a health probe on a connection.                |
 
 ---
 
@@ -245,6 +250,7 @@ Plaintext credential values, encryption keys, internal paths, and stack traces M
 Returns all stored connections ordered by `priority ASC`, then `createdAt DESC`.
 
 **Example response:**
+
 ```json
 [
   {
@@ -280,26 +286,31 @@ Empty list returns `200 OK` with `[]`.
 Each `testStatus` variant includes the `status` string plus appropriate fields:
 
 **neverTested:**
+
 ```json
 { "testStatus": { "status": "neverTested" } }
 ```
 
 **active:**
+
 ```json
 { "testStatus": { "status": "active", "lastTestAt": "2026-05-29T12:00:00Z", "latencyMs": 42 } }
 ```
 
 **unhealthy:**
+
 ```json
 { "testStatus": { "status": "unhealthy", "lastTestAt": "2026-05-29T12:00:00Z", "latencyMs": 1023, "error": "connection refused" } }
 ```
 
 **expired:**
+
 ```json
 { "testStatus": { "status": "expired", "lastTestAt": "2026-05-29T12:00:00Z" } }
 ```
 
 **unknown:**
+
 ```json
 { "testStatus": { "status": "unknown", "lastTestAt": "2026-05-29T12:00:00Z", "error": "health_check_not_supported" } }
 ```
@@ -311,6 +322,7 @@ Each `testStatus` variant includes the `status` string plus appropriate fields:
 Creates a new provider connection. The server generates `id`, `createdAt`, `updatedAt`, and `testStatus`.
 
 **Request body — ApiKey:**
+
 ```json
 {
   "providerKind": "openai",
@@ -334,6 +346,7 @@ Creates a new provider connection. The server generates `id`, `createdAt`, `upda
 ```
 
 **Request body — OAuth:**
+
 ```json
 {
   "providerKind": "openai",
@@ -363,6 +376,7 @@ Creates a new provider connection. The server generates `id`, `createdAt`, `upda
 ```
 
 **Responses:**
+
 - `201 Created` — Connection created with `credentials: {}`.
 - `400 VALIDATION_ERROR` — One or more fields failed validation (see section 3).
 - `409 CONFLICT` — A connection with the same `(providerKind, name)` already exists.
@@ -374,6 +388,7 @@ Creates a new provider connection. The server generates `id`, `createdAt`, `upda
 Gets a single connection by its `ConnectionId`.
 
 **Responses:**
+
 - `200 OK` — Connection found with `credentials: {}`.
 - `400 VALIDATION_ERROR` — `:id` is not a valid UUID.
 - `404 NOT_FOUND` — No connection with that `id` exists.
@@ -387,6 +402,7 @@ Updates an existing connection. Omitted fields retain their current values. If `
 `expectedUpdatedAt` MUST be included. If the stored `updatedAt` differs, returns `409 CONFLICT`.
 
 **Request body (partial update):**
+
 ```json
 {
   "expectedUpdatedAt": "2026-05-29T00:00:00Z",
@@ -397,6 +413,7 @@ Updates an existing connection. Omitted fields retain their current values. If `
 ```
 
 **Responses:**
+
 - `200 OK` — Connection updated with `credentials: {}`.
 - `400 VALIDATION_ERROR` — Invalid fields or missing `expectedUpdatedAt`.
 - `404 NOT_FOUND` — No connection with that `id` exists.
@@ -407,6 +424,7 @@ Updates an existing connection. Omitted fields retain their current values. If `
 ### 7.8 `DELETE /api/providers/:id`
 
 **Responses:**
+
 - `204 No Content` — Deleted.
 - `400 VALIDATION_ERROR` — `:id` is not a valid UUID.
 - `404 NOT_FOUND` — No connection with that `id` exists.
@@ -418,26 +436,31 @@ Updates an existing connection. Omitted fields retain their current values. If `
 Runs a health probe. OAuth expiry is checked BEFORE the runtime provider is called.
 
 **`200 OK` (healthy):**
+
 ```json
 { "ok": true, "status": "active", "latencyMs": 42, "error": null }
 ```
 
 **`200 OK` (unhealthy):**
+
 ```json
 { "ok": false, "status": "unhealthy", "latencyMs": 203, "error": "invalid api key" }
 ```
 
 **`200 OK` (expired OAuth):**
+
 ```json
 { "ok": false, "status": "expired", "latencyMs": null, "error": "OAuth token expired at 1772150400" }
 ```
 
 **`200 OK` (unknown — provider does not support probes):**
+
 ```json
 { "ok": null, "status": "unknown", "latencyMs": null, "error": "health_check_not_supported" }
 ```
 
 **Rules**:
+
 - `400 VALIDATION_ERROR` if `:id` is not a valid UUID.
 - `404 NOT_FOUND` if connection does not exist.
 - `404 NOT_FOUND` if `provider_runtime_id` has no registered runtime provider.
@@ -450,10 +473,10 @@ Runs a health probe. OAuth expiry is checked BEFORE the runtime provider is call
 
 Provider CRUD is disabled by default.
 
-| Setting | Type | Default | Meaning |
-|---------|------|---------|---------|
-| `provider_crud.enabled` | Boolean | `false` | Enable/disable the provider CRUD HTTP routes. |
-| `provider_crud.db_path` | String | `~/.local/share/cortex/rook/providers.db` | Path to the SQLite database. `~` is expanded. |
+| Setting                 | Type    | Default                                   | Meaning                                       |
+|-------------------------|---------|-------------------------------------------|-----------------------------------------------|
+| `provider_crud.enabled` | Boolean | `false`                                   | Enable/disable the provider CRUD HTTP routes. |
+| `provider_crud.db_path` | String  | `~/.local/share/cortex/rook/providers.db` | Path to the SQLite database. `~` is expanded. |
 
 When `enabled = false`: no routes are mounted, no encryption env vars required.
 
@@ -479,18 +502,18 @@ Existing TOML providers continue to load as before. SQLite-stored connections do
 
 ## 10. Acceptance Criteria
 
-| # | Criterion | Validation Method |
-|---|-----------|-------------------|
-| AC1 | All workspace tests pass. | `cargo test --workspace` |
-| AC2 | Clippy passes with no warnings. | `cargo clippy --workspace --all-targets -- -D warnings` |
-| AC3 | Provider CRUD routes are absent when `provider_crud.enabled = false`. | Integration test |
-| AC4 | App fails to start with provider CRUD enabled and missing `ENCRYPTION_PASSPHRASE` or `ENCRYPTION_SALT`. | Config/DI test |
-| AC5 | All encrypted storage values start with `enc:v1:` and no plaintext credentials are stored. | Repository test |
-| AC6 | API responses always return `credentials: {}`. | Integration test |
-| AC7 | Create/update validation covers all rules in section 3. | Unit/integration tests |
-| AC8 | Optimistic locking returns `409 CONFLICT` when `expectedUpdatedAt` is stale. | Repository/integration test |
-| AC9 | Test endpoint covers all health status variants including expired OAuth. | Unit/integration tests |
-| AC10 | `/health` remains backwards-compatible after the `HealthStatus` migration. | Integration test |
+| #    | Criterion                                                                                               | Validation Method                                       |
+|------|---------------------------------------------------------------------------------------------------------|---------------------------------------------------------|
+| AC1  | All workspace tests pass.                                                                               | `cargo test --workspace`                                |
+| AC2  | Clippy passes with no warnings.                                                                         | `cargo clippy --workspace --all-targets -- -D warnings` |
+| AC3  | Provider CRUD routes are absent when `provider_crud.enabled = false`.                                   | Integration test                                        |
+| AC4  | App fails to start with provider CRUD enabled and missing `ENCRYPTION_PASSPHRASE` or `ENCRYPTION_SALT`. | Config/DI test                                          |
+| AC5  | All encrypted storage values start with `enc:v1:` and no plaintext credentials are stored.              | Repository test                                         |
+| AC6  | API responses always return `credentials: {}`.                                                          | Integration test                                        |
+| AC7  | Create/update validation covers all rules in section 3.                                                 | Unit/integration tests                                  |
+| AC8  | Optimistic locking returns `409 CONFLICT` when `expectedUpdatedAt` is stale.                            | Repository/integration test                             |
+| AC9  | Test endpoint covers all health status variants including expired OAuth.                                | Unit/integration tests                                  |
+| AC10 | `/health` remains backwards-compatible after the `HealthStatus` migration.                              | Integration test                                        |
 
 ---
 

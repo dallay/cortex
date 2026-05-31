@@ -29,54 +29,57 @@ struct Session {
 
 ### Value Objects
 
-| Type | Wraps | Notes |
-|------|-------|-------|
-| `UserId` | `uuid::Uuid` | Newtype for user IDs |
-| `SessionId` | `uuid::Uuid` | Newtype for session IDs |
-| `PasswordHash` | `String` | Argon2id hash output |
+| Type           | Wraps        | Notes                   |
+|----------------|--------------|-------------------------|
+| `UserId`       | `uuid::Uuid` | Newtype for user IDs    |
+| `SessionId`    | `uuid::Uuid` | Newtype for session IDs |
+| `PasswordHash` | `String`     | Argon2id hash output    |
 
 ### Input Structs
 
-| Struct | Fields | Purpose |
-|--------|--------|---------|
-| `NewUser` | `username`, `password_hash: Option<String>` | Create a new user |
-| `NewSession` | `user_id`, `token: Vec<u8>` | Create a new session (token is 32 random bytes) |
+| Struct       | Fields                                      | Purpose                                         |
+|--------------|---------------------------------------------|-------------------------------------------------|
+| `NewUser`    | `username`, `password_hash: Option<String>` | Create a new user                               |
+| `NewSession` | `user_id`, `token: Vec<u8>`                 | Create a new session (token is 32 random bytes) |
 
 ### Error Types
 
-| Error | Variants | Domain |
-|-------|----------|--------|
-| `UserRepositoryError` | `NotFound`, `DuplicateUsername`, `Database` | User persistence failures |
-| `SessionRepositoryError` | `NotFound`, `Database` | Session persistence failures |
-| `PasswordHashError` | `KeyDerivation`, `InvalidFormat` | Password hashing failures |
+| Error                    | Variants                                    | Domain                       |
+|--------------------------|---------------------------------------------|------------------------------|
+| `UserRepositoryError`    | `NotFound`, `DuplicateUsername`, `Database` | User persistence failures    |
+| `SessionRepositoryError` | `NotFound`, `Database`                      | Session persistence failures |
+| `PasswordHashError`      | `KeyDerivation`, `InvalidFormat`            | Password hashing failures    |
 
 ### Port Traits
 
 **`UserRepositoryPort`:**
+
 - `find_by_username(username: &str) → Option<User>` — case-insensitive lookup
 - `find_by_id(user_id: UserId) → Option<User>`
 - `create(user: NewUser) → Result<User, UserRepositoryError>` — errors on duplicate username
 - `update_password_hash(user_id: UserId, hash: &str) → Result<(), UserRepositoryError>`
 
 **`SessionRepositoryPort`:**
+
 - `create(session: NewSession, token_hash: &str) → Result<Session, SessionRepositoryError>`
 - `find_by_token_hash(token_hash: &str) → Result<Option<Session>, SessionRepositoryError>` — filters expired/revoked
 - `revoke(session_id: SessionId) → Result<(), SessionRepositoryError>`
 - `delete_expired() → Result<u64, SessionRepositoryError>` — returns count of deleted sessions
 
 **`PasswordHasher`:**
+
 - `hash_password(plain: &str) → Result<String, PasswordHashError>` — Argon2id with OWASP params
 - `verify_password(plain: &str, hash: &str) → bool` — constant-time comparison
 
 ### Auth Use Cases
 
-| Use Case | Input | Output | Errors |
-|----------|-------|--------|--------|
-| `EnsureAdminUser` | — | Creates admin user on first boot | `UserRepositoryError` |
-| `Login` | `username`, `password` | `Session` + raw token (caller encodes to cookie) | `InvalidCredentials`, `PasswordNotSet`, `UserRepo`, `SessionRepo` |
-| `ValidateSession` | `auth_token` cookie (base64url) | `Option<Session>` (None if expired/revoked/not found) | — |
-| `SetAdminPassword` | `plain_password` | Updates admin's `password_hash` | `UserRepositoryError` |
-| `Logout` | `session_id` | Sets `revoked = TRUE` | `SessionRepositoryError` |
+| Use Case           | Input                           | Output                                                | Errors                                                            |
+|--------------------|---------------------------------|-------------------------------------------------------|-------------------------------------------------------------------|
+| `EnsureAdminUser`  | —                               | Creates admin user on first boot                      | `UserRepositoryError`                                             |
+| `Login`            | `username`, `password`          | `Session` + raw token (caller encodes to cookie)      | `InvalidCredentials`, `PasswordNotSet`, `UserRepo`, `SessionRepo` |
+| `ValidateSession`  | `auth_token` cookie (base64url) | `Option<Session>` (None if expired/revoked/not found) | —                                                                 |
+| `SetAdminPassword` | `plain_password`                | Updates admin's `password_hash`                       | `UserRepositoryError`                                             |
+| `Logout`           | `session_id`                    | Sets `revoked = TRUE`                                 | `SessionRepositoryError`                                          |
 
 ### AuthFlow
 
@@ -106,7 +109,7 @@ Session Validation Flow:
 
 ## Known Gaps (Archived Change)
 
-| Issue | Status | Notes |
-|-------|--------|-------|
-| `POST /logout` returns 501 | Not implemented | Needs `session_repo` wiring to handler |
-| Per-key API rate limiter not actively enforced | Deferred | Wired but not actively enforcing |
+| Issue                                          | Status          | Notes                                  |
+|------------------------------------------------|-----------------|----------------------------------------|
+| `POST /logout` returns 501                     | Not implemented | Needs `session_repo` wiring to handler |
+| Per-key API rate limiter not actively enforced | Deferred        | Wired but not actively enforcing       |

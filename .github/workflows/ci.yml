@@ -183,11 +183,13 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     needs: [test]
+    if: secrets.SONAR_TOKEN != ''
     steps:
       - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
-      - uses: sonarsource/sonarcloud-action@9ab91c80e06747c8d9324b3b2d8aa442c6fb317c
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 

@@ -1,0 +1,51 @@
+# Stage 1: Build
+FROM rust:1.89-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies (Alpine)
+RUN apk add --no-cache \
+    musl-dev \
+    openssl-dev \
+    pkgconfig \
+    sqlite-dev \
+    ca-certificates \
+    build-base
+
+# Copy manifests first for dependency caching
+COPY Cargo.lock* ./
+COPY Cargo.toml ./
+COPY rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+# Build the project
+RUN cargo build --bin rook --release 2>&1
+
+# Stage 2: Minimal runtime
+FROM alpine:3.20
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    openssl \
+    sqlite \
+    libstdc++ \
+    libgcc
+
+# Copy binary from builder (release build)
+COPY --from=builder /app/target/release/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-minimal.toml /app/rook.toml
+
+RUN addgroup --system non-root \
+    && adduser --system --ingroup non-root --disabled-password --gecos '' non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
+EXPOSE 8080
+
+USER non-root
+
+ENTRYPOINT ["rook"]
+CMD ["--config", "/app/rook.toml"]

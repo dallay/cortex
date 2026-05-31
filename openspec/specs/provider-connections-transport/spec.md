@@ -37,27 +37,27 @@ All error responses follow this shape:
 
 **Error sanitization**: The `error` field MUST NOT contain plaintext credentials, encryption keys, internal file paths, or stack traces. For `500` errors, the `error` field MUST be the static string `"internal server error"`.
 
-| Domain Condition | HTTP Status | Error Code |
-|-----------------|-------------|------------|
-| Invalid input / validation failure | `400` | `VALIDATION_ERROR` |
-| Connection not found | `404` | `NOT_FOUND` |
-| Runtime provider not found on test | `404` | `NOT_FOUND` |
-| Duplicate `(providerKind, name)` | `409` | `CONFLICT` |
-| Stale `expectedUpdatedAt` (optimistic lock failure) | `409` | `CONFLICT` |
-| Internal / encryption error | `500` | `INTERNAL_ERROR` |
+| Domain Condition                                    | HTTP Status | Error Code         |
+|-----------------------------------------------------|-------------|--------------------|
+| Invalid input / validation failure                  | `400`       | `VALIDATION_ERROR` |
+| Connection not found                                | `404`       | `NOT_FOUND`        |
+| Runtime provider not found on test                  | `404`       | `NOT_FOUND`        |
+| Duplicate `(providerKind, name)`                    | `409`       | `CONFLICT`         |
+| Stale `expectedUpdatedAt` (optimistic lock failure) | `409`       | `CONFLICT`         |
+| Internal / encryption error                         | `500`       | `INTERNAL_ERROR`   |
 
 ---
 
 ## 3. REST Endpoints
 
-| Method | Path | Summary |
-|--------|------|---------|
-| `GET` | `/api/providers` | List all connections (priority order). |
-| `POST` | `/api/providers` | Create a new connection. |
-| `GET` | `/api/providers/:id` | Get a connection by `ConnectionId` (UUID format). |
-| `PUT` | `/api/providers/:id` | Update a connection (optimistic locking required). |
-| `DELETE` | `/api/providers/:id` | Delete a connection. |
-| `POST` | `/api/providers/:id/test` | Run a health probe. |
+| Method   | Path                      | Summary                                            |
+|----------|---------------------------|----------------------------------------------------|
+| `GET`    | `/api/providers`          | List all connections (priority order).             |
+| `POST`   | `/api/providers`          | Create a new connection.                           |
+| `GET`    | `/api/providers/:id`      | Get a connection by `ConnectionId` (UUID format).  |
+| `PUT`    | `/api/providers/:id`      | Update a connection (optimistic locking required). |
+| `DELETE` | `/api/providers/:id`      | Delete a connection.                               |
+| `POST`   | `/api/providers/:id/test` | Run a health probe.                                |
 
 ### 3.1 Feature-Gated Mounting
 
@@ -169,11 +169,13 @@ When `provider_crud.enabled = true`: the 6 routes above are available.
 **Response `201 Created`** — The created connection, with `credentials: {}`.
 
 **Response `400 VALIDATION_ERROR`**:
+
 ```json
 { "error": "...", "code": "VALIDATION_ERROR" }
 ```
 
 **Response `409 CONFLICT`**:
+
 ```json
 { "error": "A connection with this name already exists for this provider kind.", "code": "CONFLICT" }
 ```
@@ -216,6 +218,7 @@ When `provider_crud.enabled = true`: the 6 routes above are available.
 Omitted fields retain current values. If `credentials` is omitted, existing credentials are preserved. If `credentials` is present, it replaces all credential fields for that `authType`.
 
 **Responses:**
+
 - `200 OK` — Updated connection with `credentials: {}`.
 - `400 VALIDATION_ERROR` — Invalid fields or missing `expectedUpdatedAt`.
 - `404 NOT_FOUND` — No connection with that `id`.
@@ -238,21 +241,25 @@ Omitted fields retain current values. If `credentials` is omitted, existing cred
 Runs a health probe. OAuth expiry is checked BEFORE the runtime provider is called.
 
 **Response `200 OK` (healthy):**
+
 ```json
 { "ok": true, "status": "active", "latencyMs": 42, "error": null }
 ```
 
 **Response `200 OK` (unhealthy):**
+
 ```json
 { "ok": false, "status": "unhealthy", "latencyMs": 203, "error": "invalid api key" }
 ```
 
 **Response `200 OK` (expired OAuth — checked BEFORE probe):**
+
 ```json
 { "ok": false, "status": "expired", "latencyMs": null, "error": "OAuth token expired at 1772150400" }
 ```
 
 **Response `200 OK` (unknown — provider does not support probes):**
+
 ```json
 { "ok": null, "status": "unknown", "latencyMs": null, "error": "health_check_not_supported" }
 ```
@@ -266,95 +273,113 @@ Runs a health probe. OAuth expiry is checked BEFORE the runtime provider is call
 ## 5. Scenario Library
 
 ### S-GET-LIST-01: List — happy path
+
 - **Given** provider CRUD is enabled and 2 connections are stored
 - **When** a client sends `GET /api/providers`
 - **Then** response is `200 OK` with a JSON array of 2 connections ordered by `priority ASC`
 - **And** every item has `credentials: {}`
 
 ### S-GET-LIST-02: List — empty
+
 - **Given** provider CRUD is enabled and zero connections are stored
 - **When** a client sends `GET /api/providers`
 - **Then** response is `200 OK` with `[]`
 
 ### S-GET-LIST-03: Routes not mounted
+
 - **Given** provider CRUD is disabled in configuration
 - **When** a client sends `GET /api/providers`
 - **Then** response is `404 Not Found` with `{ "error": "not found", "code": "NOT_FOUND" }`
 
 ### S-POST-CREATE-01: Create — ApiKey happy path
+
 - **Given** provider CRUD is enabled and input is valid with ApiKey credentials
 - **When** a client sends `POST /api/providers`
 - **Then** response is `201 Created` with the created connection and `credentials: {}`
 - **And** encrypted credentials are stored in the database
 
 ### S-POST-CREATE-02: Create — OAuth happy path
+
 - **Given** provider CRUD is enabled and input is valid with OAuth credentials
 - **When** a client sends `POST /api/providers`
 - **Then** response is `201 Created` with the created connection and `credentials: {}`
 
 ### S-POST-CREATE-03: Create — validation error
+
 - **Given** provider CRUD is enabled
 - **When** a client sends `POST /api/providers` with an invalid `providerKind`
 - **Then** response is `400 Bad Request` with `{ "error": "...", "code": "VALIDATION_ERROR" }`
 
 ### S-POST-CREATE-04: Create — duplicate name
+
 - **Given** provider CRUD is enabled and a connection named "Production Key" exists for `providerKind: "openai"`
 - **When** a client sends `POST /api/providers` with `name: "Production Key"` and `providerKind: "openai"`
 - **Then** response is `409 Conflict` with `{ "error": "...", "code": "CONFLICT" }`
 
 ### S-GET-ONE-01: Get connection — happy path
+
 - **Given** provider CRUD is enabled and a connection with `ConnectionId = id` exists
 - **When** a client sends `GET /api/providers/:id` with a valid UUID
 - **Then** response is `200 OK` with the connection and `credentials: {}`
 
 ### S-GET-ONE-02: Get connection — invalid UUID
+
 - **Given** provider CRUD is enabled
 - **When** a client sends `GET /api/providers/:id` with an invalid UUID format
 - **Then** response is `400 Bad Request` with `{ "error": "...", "code": "VALIDATION_ERROR" }`
 
 ### S-GET-ONE-03: Get connection — not found
+
 - **Given** provider CRUD is enabled and no connection with `ConnectionId = id` exists
 - **When** a client sends `GET /api/providers/:id` with a valid UUID not in the database
 - **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
 
 ### S-PUT-UPDATE-01: Update — happy path
+
 - **Given** provider CRUD is enabled, a connection with `ConnectionId = id` exists, and `updatedAt` matches `expectedUpdatedAt`
 - **When** a client sends `PUT /api/providers/:id` with valid input and matching `expectedUpdatedAt`
 - **Then** response is `200 OK` with the updated connection and `credentials: {}`
 
 ### S-PUT-UPDATE-02: Update — stale optimistic lock
+
 - **Given** provider CRUD is enabled and a connection has `updatedAt` that differs from `expectedUpdatedAt`
 - **When** a client sends `PUT /api/providers/:id` with a stale `expectedUpdatedAt`
 - **Then** response is `409 Conflict` with `{ "error": "...", "code": "CONFLICT" }`
 
 ### S-DELETE-01: Delete — happy path
+
 - **Given** provider CRUD is enabled and a connection with `ConnectionId = id` exists
 - **When** a client sends `DELETE /api/providers/:id`
 - **Then** response is `204 No Content`
 
 ### S-DELETE-02: Delete — not found
+
 - **Given** provider CRUD is enabled and no connection with `ConnectionId = id` exists
 - **When** a client sends `DELETE /api/providers/:id`
 - **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
 
 ### S-TEST-01: Test — healthy provider
+
 - **Given** provider CRUD is enabled, a connection with `ConnectionId = id` exists, and the referenced runtime provider is reachable
 - **When** a client sends `POST /api/providers/:id/test`
 - **Then** response is `200 OK` with `{ "ok": true, "status": "active", "latencyMs": <ms>, "error": null }`
 - **And** the connection's stored `testStatus` is updated to `active`
 
 ### S-TEST-02: Test — OAuth token expired
+
 - **Given** provider CRUD is enabled, a connection with `ConnectionId = id` exists, and OAuth credentials have `expiresAt` in the past
 - **When** a client sends `POST /api/providers/:id/test`
 - **Then** response is `200 OK` with `{ "ok": false, "status": "expired", "latencyMs": null, "error": "OAuth token expired at <timestamp>" }`
 - **And** the runtime provider probe is NOT called
 
 ### S-TEST-03: Test — runtime provider not registered
+
 - **Given** provider CRUD is enabled and a connection with `ConnectionId = id` exists, but `providerRuntimeId` has no registered runtime provider
 - **When** a client sends `POST /api/providers/:id/test`
 - **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
 
 ### S-TEST-04: Test — connection not found
+
 - **Given** provider CRUD is enabled and no connection with `ConnectionId = id` exists
 - **When** a client sends `POST /api/providers/:id/test` with a valid UUID not in the database
 - **Then** response is `404 Not Found` with `{ "error": "...", "code": "NOT_FOUND" }`
@@ -371,13 +396,13 @@ This is a structural requirement, not a sanitization step: the field is physical
 
 ## 7. Acceptance Criteria
 
-| AC | Criterion |
-|----|----------|
-| T-AC1 | All 6 endpoints return correct HTTP status codes per the error mapping table. |
-| T-AC2 | `credentials` is always `{}` in all API responses (list, single, create, update, test). |
-| T-AC3 | Invalid UUID in path returns `400 VALIDATION_ERROR`. |
-| T-AC4 | Duplicate `(providerKind, name)` returns `409 CONFLICT`. |
-| T-AC5 | Stale `expectedUpdatedAt` returns `409 CONFLICT`. |
-| T-AC6 | Missing feature flag returns `404 NOT_FOUND` for all provider paths. |
-| T-AC7 | OAuth expiry is checked before the runtime provider probe is called. |
+| AC    | Criterion                                                                                                             |
+|-------|-----------------------------------------------------------------------------------------------------------------------|
+| T-AC1 | All 6 endpoints return correct HTTP status codes per the error mapping table.                                         |
+| T-AC2 | `credentials` is always `{}` in all API responses (list, single, create, update, test).                               |
+| T-AC3 | Invalid UUID in path returns `400 VALIDATION_ERROR`.                                                                  |
+| T-AC4 | Duplicate `(providerKind, name)` returns `409 CONFLICT`.                                                              |
+| T-AC5 | Stale `expectedUpdatedAt` returns `409 CONFLICT`.                                                                     |
+| T-AC6 | Missing feature flag returns `404 NOT_FOUND` for all provider paths.                                                  |
+| T-AC7 | OAuth expiry is checked before the runtime provider probe is called.                                                  |
 | T-AC8 | Error messages are sanitized — no plaintext credentials, keys, internal paths, or stack traces in any error response. |

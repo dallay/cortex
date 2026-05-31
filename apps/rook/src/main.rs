@@ -33,7 +33,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(config = ?config, "configuration loaded");
 
     // 3. Build DI container
-    let container = di::RookContainer::build(&config).context("failed to build container")?;
+    let container = di::RookContainer::build(&config)
+        .await
+        .context("failed to build container")?;
 
     tracing::info!("container built successfully");
 

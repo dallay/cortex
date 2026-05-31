@@ -1,0 +1,53 @@
+# =============================================================================
+# dev/Dockerfile.runtime — Minimal runtime image with pre-built rook binary
+#
+# Self-contained: builds binary in builder stage, copies to runtime stage.
+# Usage:
+#   docker build -f dev/Dockerfile.runtime -t rook:runtime .
+# =============================================================================
+
+# Stage 1: Build
+FROM rust:1.89-bookworm AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.lock* ./
+COPY Cargo.toml ./
+COPY rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+RUN cargo build --bin rook --release 2>&1
+
+# Stage 2: Minimal runtime
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-minimal.toml /app/rook.toml
+
+RUN groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
+EXPOSE 8080
+
+USER non-root
+
+ENTRYPOINT ["/usr/local/bin/rook"]
+CMD ["--config", "/app/rook.toml"]

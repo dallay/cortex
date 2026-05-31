@@ -1,0 +1,50 @@
+# Stage 1: Build
+FROM rust:1.89-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies (Debian)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first for dependency caching
+COPY Cargo.lock* ./
+COPY Cargo.toml ./
+COPY rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+# Build the project (release mode)
+RUN cargo build --bin rook --release 2>&1
+
+# Stage 2: Minimal runtime
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary from builder (release build)
+COPY --from=builder /app/target/release/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-minimal.toml /app/rook.toml
+
+RUN groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
+EXPOSE 8080
+
+USER non-root
+
+ENTRYPOINT ["rook"]
+CMD ["--config", "/app/rook.toml"]
