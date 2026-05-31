@@ -17,13 +17,10 @@ COPY Cargo.lock* ./
 COPY Cargo.toml ./
 COPY rust-toolchain.toml ./
 COPY crates crates
+COPY apps apps
 
-# Build with musl target for static linking (optional, uncomment if needed)
-# RUN rustup target add x86_64-unknown-linux-musl
-# RUN cargo build --release --target x86_64-unknown-linux-musl --bin rook
-
-# Build normally
-RUN cargo build --bin rook 2>&1
+# Build the project
+RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime
 FROM alpine:3.20
@@ -36,16 +33,17 @@ RUN apk add --no-cache \
     openssl \
     sqlite \
     libstdc++ \
-    libgcc \
-    wget
+    libgcc
 
-# Copy binary from builder
-COPY --from=builder /app/target/debug/rook /usr/local/bin/rook
+# Copy binary from builder (release build)
+COPY --from=builder /app/target/release/rook /usr/local/bin/rook
 
 # Copy test config
 COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
 EXPOSE 8080
+
+USER non-root
 
 ENTRYPOINT ["rook"]
 CMD ["--config", "/app/rook.toml"]

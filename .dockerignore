@@ -7,6 +7,10 @@ target/
 dist/
 build/
 
+# dev/Dockerfile needs the pre-built binary from local cargo build
+# Only allow target/debug/rook for dev/Dockerfile workflow
+!target/debug/rook
+
 # Node modules (will be installed inside Docker for correct arch)
 **/node_modules
 

@@ -17,9 +17,10 @@ COPY Cargo.lock* ./
 COPY Cargo.toml ./
 COPY rust-toolchain.toml ./
 COPY crates crates
+COPY apps apps
 
-# Build the project (debug mode for speed in CI)
-RUN cargo build --bin rook 2>&1
+# Build the project (release mode)
+RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime
 FROM debian:bookworm-slim
@@ -33,16 +34,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary from builder
+# Copy binary from builder (release build)
 COPY --from=builder /app/target/release/rook /usr/local/bin/rook
-# Fallback to debug if release not built
-COPY --from=builder /app/target/debug/rook /usr/local/bin/rook 2>/dev/null || true
 
 # Copy test config
 COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
 # Expose default port
 EXPOSE 8080
+
+USER non-root
 
 ENTRYPOINT ["rook"]
 CMD ["--config", "/app/rook.toml"]

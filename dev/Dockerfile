@@ -30,5 +30,7 @@ RUN chmod +x /usr/local/bin/rook
 
 EXPOSE 8080
 
+USER non-root
+
 ENTRYPOINT ["/usr/local/bin/rook"]
 CMD ["--config", "/app/rook.toml"]
