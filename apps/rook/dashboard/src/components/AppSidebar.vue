@@ -4,8 +4,6 @@ import { SlidersHorizontal } from '@lucide/vue'
 import NavMain from '@/components/NavMain.vue'
 import NavSecondary from '@/components/NavSecondary.vue'
 import NavUser from '@/components/NavUser.vue'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { LocaleSwitcher } from '@/components/ui/locale-switcher'
 import {
   Sidebar,
   SidebarContent,
@@ -35,10 +33,6 @@ const { navMain, navSecondary } = useNavigation()
       <NavSecondary :items="navSecondary" />
     </SidebarContent>
     <SidebarFooter>
-      <div class="flex items-center justify-between gap-2 px-2 py-1">
-        <LocaleSwitcher />
-        <ThemeToggle />
-      </div>
       <NavUser />
     </SidebarFooter>
   </Sidebar>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppSidebar from '@/components/AppSidebar.vue'
 import ThemeToggle from '@/components/ui/theme-toggle/ThemeToggle.vue'
+import { LocaleSwitcher } from '@/components/ui/locale-switcher'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -49,7 +50,8 @@ const breadcrumbs = computed(() => {
             </BreadcrumbList>
           </Breadcrumb>
         </div>
-        <div class="ml-auto">
+        <div class="ml-auto flex items-center gap-2">
+          <LocaleSwitcher />
           <ThemeToggle />
         </div>
       </header>
