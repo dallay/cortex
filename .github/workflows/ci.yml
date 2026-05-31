@@ -141,6 +141,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
       - name: Generate coverage report
         run: cargo llvm-cov --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
