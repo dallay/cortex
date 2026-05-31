@@ -8,13 +8,13 @@
 
 The system MUST store user records in a `users` table with the following schema:
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID v4 | PRIMARY KEY, NOT NULL |
-| `username` | TEXT | NOT NULL, UNIQUE, COLLATE NOCASE |
-| `password_hash` | TEXT | NULLABLE (NULL = not set) |
-| `created_at` | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
-| `updated_at` | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| Column          | Type          | Constraints                         |
+|-----------------|---------------|-------------------------------------|
+| `id`            | UUID v4       | PRIMARY KEY, NOT NULL               |
+| `username`      | TEXT          | NOT NULL, UNIQUE, COLLATE NOCASE    |
+| `password_hash` | TEXT          | NULLABLE (NULL = not set)           |
+| `created_at`    | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| `updated_at`    | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
 
 The `username` MUST be unique. The `password_hash` column being NULL indicates the user has no password set (first-boot state).
 
@@ -36,14 +36,14 @@ The `username` MUST be unique. The `password_hash` column being NULL indicates t
 
 The system MUST store session records in a `sessions` table with the following schema:
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID v4 | PRIMARY KEY, NOT NULL |
-| `token_hash` | TEXT | NOT NULL, UNIQUE, indexed |
-| `user_id` | UUID | NOT NULL, FK → users.id ON DELETE CASCADE |
-| `created_at` | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
-| `expires_at` | TIMESTAMP UTC | NOT NULL |
-| `revoked` | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| Column       | Type          | Constraints                               |
+|--------------|---------------|-------------------------------------------|
+| `id`         | UUID v4       | PRIMARY KEY, NOT NULL                     |
+| `token_hash` | TEXT          | NOT NULL, UNIQUE, indexed                 |
+| `user_id`    | UUID          | NOT NULL, FK → users.id ON DELETE CASCADE |
+| `created_at` | TIMESTAMP UTC | NOT NULL, DEFAULT CURRENT_TIMESTAMP       |
+| `expires_at` | TIMESTAMP UTC | NOT NULL                                  |
+| `revoked`    | BOOLEAN       | NOT NULL, DEFAULT FALSE                   |
 
 Indexes: `token_hash` (UNIQUE), `user_id`, `expires_at`.
 
@@ -65,12 +65,12 @@ Indexes: `token_hash` (UNIQUE), `user_id`, `expires_at`.
 
 The domain layer MUST define a `UserRepositoryPort` trait with these operations:
 
-| Operation | Signature | Behavior |
-|-----------|-----------|----------|
-| `find_by_username` | `(username: &str) → Option<User>` | Returns user by username, case-insensitive |
-| `create` | `(user: NewUser) → Result<User, CreateError>` | Creates user, errors on duplicate username |
-| `update_password_hash` | `(user_id: UUID, hash: &str) → Result<(), UpdateError>` | Updates password_hash for user |
-| `find_by_id` | `(user_id: UUID) → Option<User>` | Returns user by ID |
+| Operation              | Signature                                               | Behavior                                   |
+|------------------------|---------------------------------------------------------|--------------------------------------------|
+| `find_by_username`     | `(username: &str) → Option<User>`                       | Returns user by username, case-insensitive |
+| `create`               | `(user: NewUser) → Result<User, CreateError>`           | Creates user, errors on duplicate username |
+| `update_password_hash` | `(user_id: UUID, hash: &str) → Result<(), UpdateError>` | Updates password_hash for user             |
+| `find_by_id`           | `(user_id: UUID) → Option<User>`                        | Returns user by ID                         |
 
 #### Scenario: Find existing user
 
@@ -90,12 +90,12 @@ The domain layer MUST define a `UserRepositoryPort` trait with these operations:
 
 The domain layer MUST define a `SessionRepositoryPort` trait with these operations:
 
-| Operation | Signature | Behavior |
-|-----------|-----------|----------|
-| `create` | `(session: NewSession) → Result<Session, CreateError>` | Creates session, returns Session with ID |
-| `find_by_token_hash` | `(hash: &str) → Option<Session>` | Finds valid (non-revoked, non-expired) session |
-| `revoke` | `(session_id: UUID) → Result<(), RevokeError>` | Sets `revoked = TRUE` |
-| `delete_expired` | `() → u64` | Deletes all expired sessions, returns count |
+| Operation            | Signature                                              | Behavior                                       |
+|----------------------|--------------------------------------------------------|------------------------------------------------|
+| `create`             | `(session: NewSession) → Result<Session, CreateError>` | Creates session, returns Session with ID       |
+| `find_by_token_hash` | `(hash: &str) → Option<Session>`                       | Finds valid (non-revoked, non-expired) session |
+| `revoke`             | `(session_id: UUID) → Result<(), RevokeError>`         | Sets `revoked = TRUE`                          |
+| `delete_expired`     | `() → u64`                                             | Deletes all expired sessions, returns count    |
 
 #### Scenario: Create new session
 
@@ -122,6 +122,7 @@ The domain layer MUST define a `SessionRepositoryPort` trait with these operatio
 The system MUST provide a password hashing function using Argon2id.
 
 The system MUST expose `hash_password(plain: &str) → String` that:
+
 1. Uses Argon2id with OWASP-recommended parameters (≥64 MiB memory, ≥3 iterations, ≥4 parallelism)
 2. Generates a cryptographically random salt (≥16 bytes)
 3. Returns the hash in the standard `$argon2id$...` format
@@ -181,6 +182,7 @@ The system MUST ensure stored password hashes never equal the plaintext password
 On application startup, the system MUST ensure an `admin` user exists.
 
 The system MUST:
+
 1. Query `users` table for username = "admin" (case-insensitive)
 2. If no user exists, INSERT a new user: `username = "admin"`, `password_hash = NULL`
 3. If user exists, do nothing
@@ -204,6 +206,7 @@ The system MUST:
 The system MUST provide a CLI command `rook admin set-password`.
 
 The command MUST:
+
 1. Prompt securely for the new password (no echo)
 2. Validate password strength (≥8 characters)
 3. Prompt to confirm the password
@@ -241,6 +244,7 @@ The system MUST allow updating the admin password hash via the `update_password_
 `POST /login` with valid credentials MUST return an auth token cookie.
 
 Request:
+
 ```http
 POST /login
 Content-Type: application/json
@@ -249,6 +253,7 @@ Content-Type: application/json
 ```
 
 Response:
+
 - `200 OK`
 - `Set-Cookie: auth_token=<token>; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`
 - Body: `{ "user_id": "<uuid>", "username": "admin", "expires_at": "<ISO8601>" }`
@@ -268,6 +273,7 @@ The session token MUST be a 32-byte random value (base64url encoded).
 `POST /login` with invalid credentials MUST return `401 Unauthorized`.
 
 Request:
+
 ```http
 POST /login
 Content-Type: application/json
@@ -276,6 +282,7 @@ Content-Type: application/json
 ```
 
 Response:
+
 - `401 Unauthorized`
 - `Content-Type: application/json`
 - Body: `{ "error": "Invalid username or password", "code": "AUTH_FAILED" }`
@@ -310,14 +317,14 @@ Session tokens MUST be stored as SHA-256 hashes, never in plaintext.
 
 The `auth_token` cookie MUST have these attributes:
 
-| Attribute | Value |
-|-----------|-------|
-| `Name` | `auth_token` |
-| `HttpOnly` | `true` |
-| `SameSite` | `Lax` |
-| `Secure` | `true` (production), `false` (dev) |
-| `Path` | `/` |
-| `Max-Age` | `86400` (24 hours in seconds) |
+| Attribute  | Value                              |
+|------------|------------------------------------|
+| `Name`     | `auth_token`                       |
+| `HttpOnly` | `true`                             |
+| `SameSite` | `Lax`                              |
+| `Secure`   | `true` (production), `false` (dev) |
+| `Path`     | `/`                                |
+| `Max-Age`  | `86400` (24 hours in seconds)      |
 
 #### Scenario: Cookie has correct attributes
 
@@ -343,6 +350,7 @@ Routes matching `AuthTier::MANAGEMENT` include: `/dashboard/*`, `/api/providers`
 ### SPEC-041: Invalid/Expired/Revoked Session Returns 401
 
 Session validation MUST reject requests with:
+
 - Missing `auth_token` cookie
 - Session not found in database
 - Session expired (`expires_at < now`)
@@ -369,9 +377,9 @@ All cases MUST return `401 Unauthorized`.
 
 A valid, non-expired, non-revoked session MUST cause these trusted headers to be stamped:
 
-| Header | Value |
-|--------|-------|
-| `X-Authz-Auth-ID` | User's UUID |
+| Header               | Value                    |
+|----------------------|--------------------------|
+| `X-Authz-Auth-ID`    | User's UUID              |
 | `X-Authz-Auth-Label` | Username (e.g., "admin") |
 
 Handlers for MANAGEMENT routes can trust these headers because the middleware owns their creation.
@@ -418,12 +426,12 @@ When rate limit is exceeded, `POST /login` MUST return:
 
 `GET /login` MUST set a `csrf_token` cookie for CSRF protection.
 
-| Attribute | Value |
-|-----------|-------|
-| `Name` | `csrf_token` |
-| `HttpOnly` | `true` |
-| `Secure` | `true` (production), `false` (dev) |
-| `SameSite` | `Strict` |
+| Attribute  | Value                              |
+|------------|------------------------------------|
+| `Name`     | `csrf_token`                       |
+| `HttpOnly` | `true`                             |
+| `Secure`   | `true` (production), `false` (dev) |
+| `SameSite` | `Strict`                           |
 
 The CSRF token value MUST be a 32-byte random value, base64url encoded.
 
@@ -468,6 +476,7 @@ Requests to CSRF-protected MANAGEMENT routes with missing or mismatched `X-CSRF-
 `CLIENT_API` routes MUST enforce per-key rate limiting using a token bucket algorithm.
 
 Configuration (per key or per scope):
+
 - `capacity`: Maximum tokens in bucket
 - `refill_rate`: Tokens added per second
 - Default: 1000 tokens, 100/second (configurable)

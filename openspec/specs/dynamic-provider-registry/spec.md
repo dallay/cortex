@@ -253,13 +253,13 @@ pub enum DecryptedCredentials {
 
 ### 6.3 base_url Override Rules
 
-| ProviderKind | base_url required? | Default if not provided |
-|---------------|-------------------|------------------------|
-| `openai` | No | `https://api.openai.com` |
-| `anthropic` | No | `https://api.anthropic.com` |
-| `ollama` | **Yes** | N/A — error if missing |
-| `gemini` | No | Uses provider's own default |
-| `groq` | No | `https://api.groq.com` |
+| ProviderKind | base_url required? | Default if not provided     |
+|--------------|--------------------|-----------------------------|
+| `openai`     | No                 | `https://api.openai.com`    |
+| `anthropic`  | No                 | `https://api.anthropic.com` |
+| `ollama`     | **Yes**            | N/A — error if missing      |
+| `gemini`     | No                 | Uses provider's own default |
+| `groq`       | No                 | `https://api.groq.com`      |
 
 If `base_url_override` is provided, it is used regardless of provider kind.
 
@@ -280,6 +280,7 @@ pub enum ProviderBuildError {
 ### 6.5 Construction Per Kind
 
 **openai**:
+
 ```rust
 OpenAIProvider::new(OpenAIProviderConfig {
     id: conn.provider_runtime_id.clone(),
@@ -293,6 +294,7 @@ OpenAIProvider::new(OpenAIProviderConfig {
 **anthropic**: analogous, default `https://api.anthropic.com`.
 
 **ollama**:
+
 ```rust
 OllamaProvider::new(OllamaProviderConfig {
     id: conn.provider_runtime_id.clone(),
@@ -615,6 +617,7 @@ The dynamic registry is always active. It does not depend on `provider_crud.enab
 ## 14. Scenarios
 
 ### S-REG-01: Registry populated on startup
+
 - **Given** SQLite contains 2 active `ProviderConnection` rows
 - **When** `rook` starts and `RookContainer::build` runs
 - **Then** `manage_connections.refresh_registry()` is called
@@ -622,6 +625,7 @@ The dynamic registry is always active. It does not depend on `provider_crud.enab
 - **And** routing requests to `gpt-4o` hits the `openai` provider
 
 ### S-REG-02: Create triggers refresh
+
 - **Given** the registry has 1 provider (from startup)
 - **When** `POST /api/providers` creates a new connection
 - **Then** after the SQLite insert, `refresh_registry()` runs
@@ -629,24 +633,28 @@ The dynamic registry is always active. It does not depend on `provider_crud.enab
 - **And** routing to the new provider's model succeeds
 
 ### S-REG-03: Update triggers refresh
+
 - **Given** 2 providers are registered
 - **When** `PUT /api/providers/:id` updates a connection's `priority`
 - **Then** after the SQLite update, `refresh_registry()` runs
 - **And** the registry reflects the current SQLite state
 
 ### S-REG-04: Delete triggers refresh
+
 - **Given** 2 providers are registered
 - **When** `DELETE /api/providers/:id` removes a connection
 - **Then** after the SQLite delete, `refresh_registry()` runs
 - **And** the registry now has 1 provider
 
 ### S-REG-05: Inactive connection not registered
+
 - **Given** a `ProviderConnection` row has `is_active = false`
 - **When** `refresh_registry()` runs
 - **Then** that provider is not added to the router's provider list
 - **And** routing does not use that provider
 
 ### S-REG-06: Provider build failure during refresh — partial
+
 - **Given** 2 connections exist, one with corrupt credentials
 - **When** `refresh_registry()` runs
 - **Then** the valid connection's provider is added to the registry
@@ -654,24 +662,28 @@ The dynamic registry is always active. It does not depend on `provider_crud.enab
 - **And** the registry has 1 provider
 
 ### S-REG-07: All providers fail to build
+
 - **Given** all `ProviderConnection` rows have invalid credentials
 - **When** `refresh_registry()` runs
 - **Then** `replace_all([])` is called with an empty vec
 - **And** subsequent requests return `all_providers_exhausted`
 
 ### S-REG-08: ollama missing base_url
+
 - **Given** a connection has `provider_kind = "ollama"` with no `base_url` in config
 - **When** `build_provider_from_connection` is called
 - **Then** `ProviderBuildError::OllamaRequiresBaseUrl` is returned
 - **And** the connection is skipped in refresh with an error log
 
 ### S-REG-09: OAuth expiry checked before probe
+
 - **Given** a connection has OAuth credentials where `expires_at` is in the past
 - **When** `POST /api/providers/:id/test` is called
 - **Then** `status: "expired"` is returned without calling the runtime provider
 - **And** the runtime registry is NOT consulted
 
 ### S-REG-10: Health endpoint unchanged
+
 - **Given** the registry has 2 providers
 - **When** a client calls `GET /health`
 - **Then** response includes both providers with `healthy: true` or `false`
@@ -681,22 +693,22 @@ The dynamic registry is always active. It does not depend on `provider_crud.enab
 
 ## 15. Acceptance Criteria
 
-| # | Criterion | Validation |
-|---|-----------|------------|
-| AC1 | `FallbackRouter.providers` is `Arc<RwLock<Vec<...>>>` | Code review |
-| AC2 | `ProviderRegistryPort` has `replace_all`, `upsert`, `remove` methods | Trait compilation |
-| AC3 | `FallbackRouter::new_empty` exists and creates empty registry | Unit test |
-| AC4 | `ManageConnections.create/update/delete` each call `refresh_registry()` after SQLite write | Code review |
-| AC5 | Registry refresh skips `is_active = false` connections | Scenario S-REG-05 |
-| AC6 | Registry refresh skips providers that fail to build, logs errors, continues | Scenario S-REG-06 |
-| AC7 | All providers fail → empty registry, `all_providers_exhausted` on requests | Scenario S-REG-07 |
-| AC8 | `ollama` without `base_url` returns `ProviderBuildError::OllamaRequiresBaseUrl` | Scenario S-REG-08 |
-| AC9 | `/health` response shape unchanged | Integration test |
-| AC10 | TOML `config.toml` has no `[[providers]]` section in deployed config | Config review |
-| AC11 | `build_provider` from TOML removed from `di.rs` | Code review |
-| AC12 | Initial bootstrap refresh on startup populates registry from SQLite | Scenario S-REG-01 |
-| AC13 | Workspace tests pass | `cargo test --workspace` |
-| AC14 | Clippy passes with no warnings | `cargo clippy --workspace --all-targets -- -D warnings` |
+| #    | Criterion                                                                                  | Validation                                              |
+|------|--------------------------------------------------------------------------------------------|---------------------------------------------------------|
+| AC1  | `FallbackRouter.providers` is `Arc<RwLock<Vec<...>>>`                                      | Code review                                             |
+| AC2  | `ProviderRegistryPort` has `replace_all`, `upsert`, `remove` methods                       | Trait compilation                                       |
+| AC3  | `FallbackRouter::new_empty` exists and creates empty registry                              | Unit test                                               |
+| AC4  | `ManageConnections.create/update/delete` each call `refresh_registry()` after SQLite write | Code review                                             |
+| AC5  | Registry refresh skips `is_active = false` connections                                     | Scenario S-REG-05                                       |
+| AC6  | Registry refresh skips providers that fail to build, logs errors, continues                | Scenario S-REG-06                                       |
+| AC7  | All providers fail → empty registry, `all_providers_exhausted` on requests                 | Scenario S-REG-07                                       |
+| AC8  | `ollama` without `base_url` returns `ProviderBuildError::OllamaRequiresBaseUrl`            | Scenario S-REG-08                                       |
+| AC9  | `/health` response shape unchanged                                                         | Integration test                                        |
+| AC10 | TOML `config.toml` has no `[[providers]]` section in deployed config                       | Config review                                           |
+| AC11 | `build_provider` from TOML removed from `di.rs`                                            | Code review                                             |
+| AC12 | Initial bootstrap refresh on startup populates registry from SQLite                        | Scenario S-REG-01                                       |
+| AC13 | Workspace tests pass                                                                       | `cargo test --workspace`                                |
+| AC14 | Clippy passes with no warnings                                                             | `cargo clippy --workspace --all-targets -- -D warnings` |
 
 ---
 

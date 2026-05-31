@@ -41,6 +41,7 @@ CRUD request (POST/PUT/DELETE /api/providers)
 ```
 
 Startup flow:
+
 ```
 RookContainer::build
   → FallbackRouter::new_empty(strategy)   // empty registry
@@ -563,16 +564,16 @@ pub struct RookConfig {
 
 ## File Changes
 
-| File | Action | Description |
-|------|--------|-------------|
-| `crates/domain/rook-core/src/ports.rs` | Modify | Add `replace_all`, `upsert`, `remove` to `ProviderRegistryPort`; add `RegistryError` |
-| `crates/domain/rook-core/src/provider_connection.rs` | Modify | Add `base_url: Option<String>` to `ConnectionConfig` |
-| `crates/domain/rook-core/src/decrypted_credentials.rs` | Create | New module: `DecryptedCredentials` enum |
-| `crates/application/rook-usecases/src/router_impl.rs` | Modify | `providers` field → `Arc<RwLock<Vec<...>>>`, all lock patterns updated |
-| `crates/application/rook-usecases/src/manage_connections.rs` | Modify | Add `RegistryUpdateFailed` error, `refresh_registry()` method, call it from create/update/delete |
-| `crates/application/rook-usecases/src/lib.rs` | Modify | Re-export `RegistryError` from `rook_core` |
-| `apps/rook/src/di.rs` | Modify | Remove TOML provider build; add `build_provider_from_connection` and `ProviderBuildError`; add initial `refresh_registry` call |
-| `apps/rook/src/config.rs` | Modify | Remove `providers: Vec<ProviderConfig>` from `RookConfig`; remove `ProviderConfig` struct |
+| File                                                         | Action | Description                                                                                                                    |
+|--------------------------------------------------------------|--------|--------------------------------------------------------------------------------------------------------------------------------|
+| `crates/domain/rook-core/src/ports.rs`                       | Modify | Add `replace_all`, `upsert`, `remove` to `ProviderRegistryPort`; add `RegistryError`                                           |
+| `crates/domain/rook-core/src/provider_connection.rs`         | Modify | Add `base_url: Option<String>` to `ConnectionConfig`                                                                           |
+| `crates/domain/rook-core/src/decrypted_credentials.rs`       | Create | New module: `DecryptedCredentials` enum                                                                                        |
+| `crates/application/rook-usecases/src/router_impl.rs`        | Modify | `providers` field → `Arc<RwLock<Vec<...>>>`, all lock patterns updated                                                         |
+| `crates/application/rook-usecases/src/manage_connections.rs` | Modify | Add `RegistryUpdateFailed` error, `refresh_registry()` method, call it from create/update/delete                               |
+| `crates/application/rook-usecases/src/lib.rs`                | Modify | Re-export `RegistryError` from `rook_core`                                                                                     |
+| `apps/rook/src/di.rs`                                        | Modify | Remove TOML provider build; add `build_provider_from_connection` and `ProviderBuildError`; add initial `refresh_registry` call |
+| `apps/rook/src/config.rs`                                    | Modify | Remove `providers: Vec<ProviderConfig>` from `RookConfig`; remove `ProviderConfig` struct                                      |
 
 ---
 
@@ -581,6 +582,7 @@ pub struct RookConfig {
 ### Unit Tests
 
 **`router_impl.rs`** (existing test module extended):
+
 - `fallback_router_new_empty_creates_empty_registry`: verifies `providers()` returns empty after `new_empty`
 - `provider_registry_replace_all_atomic`: calls `replace_all([p1, p2])` on router created via `new_empty`, verifies both `providers()` and `get()` return correct results
 - `provider_registry_upsert_adds_new_provider`: verifies upserting a new provider adds it to the list
@@ -590,6 +592,7 @@ pub struct RookConfig {
 - `select_reads_from_locked_provider_list`: concurrent reads during `replace_all` — stress test with multiple readers and one writer
 
 **`manage_connections.rs`** (test module extended):
+
 - `refresh_registry_skips_inactive_connections`: repo returns mixed active/inactive, verify only active are in registry
 - `refresh_registry_decrypts_and_builds_provider`: mock repo returns a connection, mock key_manager returns plaintext, verify correct provider kind built
 - `refresh_registry_partial_failure_keeps_valid_providers`: two connections, one decrypt fails, verify the other is still added via `replace_all`
@@ -599,6 +602,7 @@ pub struct RookConfig {
 - `delete_calls_refresh_after_write`: mock repo, verify `refresh_registry` called once after `repo.delete`
 
 **`di.rs`** (new test module):
+
 - `build_provider_from_connection_openai_uses_default_base_url`: no override, verify default URL used
 - `build_provider_from_connection_openai_uses_override`: override provided, verify it takes precedence
 - `build_provider_from_connection_ollama_requires_base_url`: no override, verify `ProviderBuildError::OllamaRequiresBaseUrl`
@@ -619,11 +623,11 @@ pub struct RookConfig {
 
 ### `ProviderBuildError` variants
 
-| Variant | When triggered | Effect on refresh |
-|---------|---------------|-------------------|
-| `UnsupportedKind(String)` | Unknown `ProviderKind` (exhaustive enum — should not occur) | Provider skipped, logged at ERROR with connection_id |
-| `OllamaRequiresBaseUrl` | `provider_kind = "ollama"` and no `base_url` in `ConnectionConfig` | Provider skipped, logged at ERROR with connection_id |
-| `ConstructionFailed(String)` | Provider constructor returns `Err` | Provider skipped, logged at ERROR with connection_id |
+| Variant                      | When triggered                                                     | Effect on refresh                                    |
+|------------------------------|--------------------------------------------------------------------|------------------------------------------------------|
+| `UnsupportedKind(String)`    | Unknown `ProviderKind` (exhaustive enum — should not occur)        | Provider skipped, logged at ERROR with connection_id |
+| `OllamaRequiresBaseUrl`      | `provider_kind = "ollama"` and no `base_url` in `ConnectionConfig` | Provider skipped, logged at ERROR with connection_id |
+| `ConstructionFailed(String)` | Provider constructor returns `Err`                                 | Provider skipped, logged at ERROR with connection_id |
 
 ### `refresh_registry` failure modes
 

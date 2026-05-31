@@ -122,7 +122,9 @@ SQLite adapter stores all fields; credentials ciphertext is stored as `TEXT` in 
     },
     "defaultModel": "gpt-4o"
   },
-  "testStatus": { "status": "active" },
+  "testStatus": {
+    "status": "active"
+  },
   "createdAt": "ISO8601",
   "updatedAt": "ISO8601"
 }
@@ -131,6 +133,7 @@ SQLite adapter stores all fields; credentials ciphertext is stored as `TEXT` in 
 **Test endpoint**: returns `{ "ok": true|false|null, "status": "active|unhealthy|unknown|expired", "error": "optional message", "latencyMs": 123|null }`.
 
 **HealthStatus to test-status mapping**:
+
 - `HealthStatus::Healthy` → `"active"` (is_healthy() = true)
 - `HealthStatus::Unhealthy` → `"unhealthy"` (is_healthy() = false)
 - `HealthStatus::Unknown` → `"unknown"` (is_healthy() = false)

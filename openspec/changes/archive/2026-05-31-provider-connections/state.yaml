@@ -1,5 +1,5 @@
 change: provider-connections
-current_phase: verify
+current_phase: sdd-archive
 completed:
   - init
   - explore
@@ -12,7 +12,10 @@ completed:
   - tasks
   - apply
   - verify
-next: archive
+  - sdd-archive
+next: none
+archived: true
+archive_date: "2026-05-31"
 updated: "2026-05-31T00:00:00Z"
 notes: |
   Verification PASSED with WARNINGS (non-critical):

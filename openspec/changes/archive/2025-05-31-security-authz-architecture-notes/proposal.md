@@ -27,6 +27,7 @@ The Rook proxy has a partial authz layer: route classification (`PUBLIC`/`CLIENT
 ### What We Are Solving
 
 Formalize the auth model so that:
+
 - `PUBLIC` routes are unauthenticated but still receive request ID, CORS, body-size guard, and trusted-header cleanup.
 - `CLIENT_API` routes use API key auth with per-key rate limiting.
 - `MANAGEMENT` routes use SQLite-backed sessions with Argon2id password hashing and secure cookies.
@@ -37,22 +38,22 @@ Formalize the auth model so that:
 
 ### In Scope
 
-| Area | Deliverable |
-|------|-------------|
-| **SQLite schema** | New `users` table (id, username, password_hash, created_at, updated_at), `sessions` table (id, token_hash, user_id, created_at, expires_at, revoked) |
-| **Argon2id password hashing** | Integrate `argon2` crate into `encryption-inmemory` for password hashing; refactor `KeyManager` to expose a password hash function |
-| **Session repository** | New `SessionRepository` trait and `SqliteSessionRepository` in `provider-sqlite` (or new `auth-sqlite` crate) |
-| **User repository** | New `UserRepository` trait and `SqliteUserRepository` in the same location |
-| **First-boot admin creation** | On startup, if the `admin` user does not exist, create it with a `NULL` password hash |
-| **TUI admin password setter** | New `rook admin set-password` CLI command to set/reset admin password via terminal |
-| **Web first-time setup** | `/login` endpoint returns a "First-Time Admin Setup" UI when admin password hash is `NULL` |
-| **Login endpoint** | `POST /login` accepts username + password, returns `auth_token` cookie; validates against Argon2id hash |
-| **Session validation middleware** | Read `auth_token` cookie, look up session in SQLite, stamp trusted headers (`X-Authz-Auth-ID`, etc.) |
-| **Secure cookie attributes** | `HttpOnly`, `SameSite=Lax`, `Secure` (when not in dev mode), `auth_token` |
-| **Login rate limiting** | Token-bucket rate limit on `/login` (e.g., 5 attempts per minute per IP) |
-| **CSRF protection** | Double-submit cookie pattern for state-changing `MANAGEMENT` routes (`POST`/`PUT`/`DELETE`) |
-| **API key rate limiting** | Per-key token-bucket rate limits in the existing `ClientApi` auth path (in-memory initially) |
-| **Trusted-header enforcement** | Middleware strips all client-supplied `X-Authz-*` headers before stamping |
+| Area                              | Deliverable                                                                                                                                          |
+|-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **SQLite schema**                 | New `users` table (id, username, password_hash, created_at, updated_at), `sessions` table (id, token_hash, user_id, created_at, expires_at, revoked) |
+| **Argon2id password hashing**     | Integrate `argon2` crate into `encryption-inmemory` for password hashing; refactor `KeyManager` to expose a password hash function                   |
+| **Session repository**            | New `SessionRepository` trait and `SqliteSessionRepository` in `provider-sqlite` (or new `auth-sqlite` crate)                                        |
+| **User repository**               | New `UserRepository` trait and `SqliteUserRepository` in the same location                                                                           |
+| **First-boot admin creation**     | On startup, if the `admin` user does not exist, create it with a `NULL` password hash                                                                |
+| **TUI admin password setter**     | New `rook admin set-password` CLI command to set/reset admin password via terminal                                                                   |
+| **Web first-time setup**          | `/login` endpoint returns a "First-Time Admin Setup" UI when admin password hash is `NULL`                                                           |
+| **Login endpoint**                | `POST /login` accepts username + password, returns `auth_token` cookie; validates against Argon2id hash                                              |
+| **Session validation middleware** | Read `auth_token` cookie, look up session in SQLite, stamp trusted headers (`X-Authz-Auth-ID`, etc.)                                                 |
+| **Secure cookie attributes**      | `HttpOnly`, `SameSite=Lax`, `Secure` (when not in dev mode), `auth_token`                                                                            |
+| **Login rate limiting**           | Token-bucket rate limit on `/login` (e.g., 5 attempts per minute per IP)                                                                             |
+| **CSRF protection**               | Double-submit cookie pattern for state-changing `MANAGEMENT` routes (`POST`/`PUT`/`DELETE`)                                                          |
+| **API key rate limiting**         | Per-key token-bucket rate limits in the existing `ClientApi` auth path (in-memory initially)                                                         |
+| **Trusted-header enforcement**    | Middleware strips all client-supplied `X-Authz-*` headers before stamping                                                                            |
 
 ### Out of Scope
 
@@ -80,6 +81,7 @@ transport-axum (HTTP handlers + middleware)
 ```
 
 Key decisions:
+
 - **New ports**: `UserRepositoryPort`, `SessionRepositoryPort` in `rook-core`.
 - **New use cases**: `Login`, `ValidateSession`, `CreateAdminUser`, `SetAdminPassword`.
 - **Middleware stays thin**: Authz middleware only classifies routes, stamps trusted headers, and rejects early. Business logic lives in use cases.
@@ -233,23 +235,23 @@ Client → POST /api/... (cookie + X-CSRF-Token header)
 
 ## Constraints & Risks
 
-| Constraint | Description |
-|---|---|
-| **No multi-user** | Only `admin` user; no registration, no additional users |
-| **No token revocation API** | Sessions expire on timeout; TUI can revoke |
-| **In-memory rate limiting** | API key rate limits are per-instance; Redis migration needed before clustered deployment |
-| **Argon2id already in use** | Must not break existing AES-256-GCM key derivation usage in `encryption-inmemory` |
-| **No migration plan** | Existing hardcoded admin credential will not be migrated; users must set new password via TUI or first-boot UI |
-| **Same-site cookies** | `SameSite=Lax` is default; `Strict` only if UX permits |
-| **No HTTP auth in dev** | Secure cookie requires HTTPS; dev mode must allow `SameSite=Lax` without `Secure` |
+| Constraint                  | Description                                                                                                    |
+|-----------------------------|----------------------------------------------------------------------------------------------------------------|
+| **No multi-user**           | Only `admin` user; no registration, no additional users                                                        |
+| **No token revocation API** | Sessions expire on timeout; TUI can revoke                                                                     |
+| **In-memory rate limiting** | API key rate limits are per-instance; Redis migration needed before clustered deployment                       |
+| **Argon2id already in use** | Must not break existing AES-256-GCM key derivation usage in `encryption-inmemory`                              |
+| **No migration plan**       | Existing hardcoded admin credential will not be migrated; users must set new password via TUI or first-boot UI |
+| **Same-site cookies**       | `SameSite=Lax` is default; `Strict` only if UX permits                                                         |
+| **No HTTP auth in dev**     | Secure cookie requires HTTPS; dev mode must allow `SameSite=Lax` without `Secure`                              |
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| Argon2id misconfiguration (wrong parameters) | Medium | Use `argon2::password_hash::Default` settings; write parametrized tests |
-| Session table schema conflicts with existing migrations | Low | Add migrations in `provider-sqlite` with up/down scripts; test on fresh DB |
-| Cookie hijacking if `Secure` not enforced | High | Only omit `Secure` in dev profile; document that production requires HTTPS |
-| Rate limiter state lost on restart | Medium | Acceptable for MVP; document Redis migration as next step |
-| CSRF token leak via referrer | Low | Use `SameSite=Lax` + double-submit; avoid sensitive data in URL params |
+| Risk                                                    | Likelihood | Mitigation                                                                 |
+|---------------------------------------------------------|------------|----------------------------------------------------------------------------|
+| Argon2id misconfiguration (wrong parameters)            | Medium     | Use `argon2::password_hash::Default` settings; write parametrized tests    |
+| Session table schema conflicts with existing migrations | Low        | Add migrations in `provider-sqlite` with up/down scripts; test on fresh DB |
+| Cookie hijacking if `Secure` not enforced               | High       | Only omit `Secure` in dev profile; document that production requires HTTPS |
+| Rate limiter state lost on restart                      | Medium     | Acceptable for MVP; document Redis migration as next step                  |
+| CSRF token leak via referrer                            | Low        | Use `SameSite=Lax` + double-submit; avoid sensitive data in URL params     |
 
 ---
 
@@ -275,16 +277,16 @@ Client → POST /api/... (cookie + X-CSRF-Token header)
 
 ## Dependencies
 
-| Dependency | Type | Notes |
-|---|---|---|
-| `transport-axum/src/authz.rs` | Existing | Contains `AuthTier (formerly RouteClass)`, `AuthKind`, existing authz middleware |
-| `encryption-inmemory` | Existing | Already has Argon2id; must extend without breaking AES-256-GCM usage |
-| `provider-sqlite` | Existing | Will host new `UserRepository` and `SessionRepository` implementations |
-| `apps/rook` (binary) | Existing | Bootstrap point for first-boot admin creation |
-| `rook-core` | Existing | Will add `UserRepositoryPort` and `SessionRepositoryPort` traits |
-| `rook-usecases` | Existing | Will add `Login`, `ValidateSession`, `EnsureAdminUser`, `SetAdminPassword` use cases |
-| `argon2` crate | New dep | Must add to `encryption-inmemory` |
-| `uuid` crate | Existing | Already in workspace (used by `shared-kernel`) |
-| `sqlite-migrations` | TBD | If `provider-sqlite` uses a migration system, use same pattern; otherwise raw SQL |
+| Dependency                    | Type     | Notes                                                                                |
+|-------------------------------|----------|--------------------------------------------------------------------------------------|
+| `transport-axum/src/authz.rs` | Existing | Contains `AuthTier (formerly RouteClass)`, `AuthKind`, existing authz middleware     |
+| `encryption-inmemory`         | Existing | Already has Argon2id; must extend without breaking AES-256-GCM usage                 |
+| `provider-sqlite`             | Existing | Will host new `UserRepository` and `SessionRepository` implementations               |
+| `apps/rook` (binary)          | Existing | Bootstrap point for first-boot admin creation                                        |
+| `rook-core`                   | Existing | Will add `UserRepositoryPort` and `SessionRepositoryPort` traits                     |
+| `rook-usecases`               | Existing | Will add `Login`, `ValidateSession`, `EnsureAdminUser`, `SetAdminPassword` use cases |
+| `argon2` crate                | New dep  | Must add to `encryption-inmemory`                                                    |
+| `uuid` crate                  | Existing | Already in workspace (used by `shared-kernel`)                                       |
+| `sqlite-migrations`           | TBD      | If `provider-sqlite` uses a migration system, use same pattern; otherwise raw SQL    |
 
 No external service dependencies. All persistence is local SQLite.

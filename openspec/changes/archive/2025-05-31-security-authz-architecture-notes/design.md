@@ -7,6 +7,7 @@ Implement a complete session-based auth system for MANAGEMENT routes backed by S
 Key rename: RouteClass → AuthTier throughout the codebase (in authz.rs and all references).
 
 Architecture flow:
+
 ```
 Request → AuthTier classification (PUBLIC/CLIENT_API/MANAGEMENT)
        → Trusted-header cleanup
@@ -93,12 +94,14 @@ GET /api/providers (MANAGEMENT)
 ### New ports in crates/domain/rook-core/src/ports.rs
 
 **UserRepositoryPort**:
+
 - find_by_username(username) → Option User
 - find_by_id(user_id) → Option User
 - create(user: NewUser) → Result User, UserRepositoryError
 - update_password_hash(user_id, hash) → Result (), UserRepositoryError
 
 **SessionRepositoryPort**:
+
 - create(session: NewSession, token_hash) → Result Session, SessionRepositoryError
 - find_by_token_hash(token_hash) → Result Option Session, SessionRepositoryError (filters expired/revoked)
 - revoke(session_id) → Result (), SessionRepositoryError
@@ -179,10 +182,12 @@ Note: Existing AesGcmKeyManager uses Argon2id with specific params (65_536 memor
 ### New use cases in crates/application/rook-usecases/src/
 
 **EnsureAdminUser** - creates admin on first boot:
+
 - find_by_username("admin") → if None, create admin with NULL password_hash
 - UNIQUE constraint with COLLATE NOCASE prevents duplicates
 
 **Login** - authenticates and creates session:
+
 - Input: username, password
 - Verifies password against Argon2id hash
 - Generates 32 random bytes, stores SHA-256(token) as token_hash
@@ -191,15 +196,18 @@ Note: Existing AesGcmKeyManager uses Argon2id with specific params (65_536 memor
 - Errors: InvalidCredentials, PasswordNotSet, UserRepo, SessionRepo
 
 **ValidateSession** - middleware helper:
+
 - Input: base64url-encoded cookie value
 - Decodes, computes SHA-256, looks up in session repo
 - Returns Option Session (None if expired/revoked/not found)
 
 **SetAdminPassword** - TUI command handler:
+
 - Input: plain password
 - Hashes with Argon2id, updates user record
 
 **Logout** - revoke session:
+
 - Input: session_id
 - Sets revoked = TRUE
 
@@ -212,6 +220,7 @@ Note: Existing AesGcmKeyManager uses Argon2id with specific params (65_536 memor
 **Rename**: RouteClass → AuthTier, AuthKind::Jwt → AuthKind::Session
 
 **New middleware flow for MANAGEMENT**:
+
 ```rust
 fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
     let Some(cookie) = extract_cookie(headers, "auth_token") else {
@@ -239,6 +248,7 @@ fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
 ### New CSRF middleware
 
 Applied only to POST/PUT/DELETE on MANAGEMENT routes:
+
 - Extract csrf_token cookie and X-CSRF-Token header
 - Validate they match (double-submit cookie pattern)
 - Return 403 if missing or mismatched
@@ -246,6 +256,7 @@ Applied only to POST/PUT/DELETE on MANAGEMENT routes:
 ### Login rate limiter middleware
 
 Applied only to POST /login:
+
 - 5 tokens per IP, refill 1 per minute
 - Return 429 + Retry-After when exhausted
 
@@ -275,14 +286,14 @@ Applied only to POST /login:
 
 ## Error Handling
 
-| Error | HTTP Status | Code |
-|-------|-------------|------|
-| LoginError::InvalidCredentials | 401 | AUTH_FAILED |
-| LoginError::PasswordNotSet | 401 | PASSWORD_NOT_SET |
-| SessionRepositoryError::NotFound | 401 | INVALID_TOKEN |
-| CSRF missing/mismatch | 403 | CSRF_INVALID |
-| Login rate limit exceeded | 429 | RATE_LIMITED |
-| API key rate limit exceeded | 429 | RATE_LIMIT_EXCEEDED |
+| Error                            | HTTP Status | Code                |
+|----------------------------------|-------------|---------------------|
+| LoginError::InvalidCredentials   | 401         | AUTH_FAILED         |
+| LoginError::PasswordNotSet       | 401         | PASSWORD_NOT_SET    |
+| SessionRepositoryError::NotFound | 401         | INVALID_TOKEN       |
+| CSRF missing/mismatch            | 403         | CSRF_INVALID        |
+| Login rate limit exceeded        | 429         | RATE_LIMITED        |
+| API key rate limit exceeded      | 429         | RATE_LIMIT_EXCEEDED |
 
 Error response format: { "error": { "code": "...", "message": "...", "retry_after": N } }
 
@@ -294,26 +305,27 @@ Error response format: { "error": { "code": "...", "message": "...", "retry_afte
 
 | Attribute | Production | Development |
 |-----------|------------|-------------|
-| HttpOnly | true | true |
-| SameSite | Lax | Lax |
-| Secure | true | false |
-| Path | / | / |
-| Max-Age | 86400 | 86400 |
+| HttpOnly  | true       | true        |
+| SameSite  | Lax        | Lax         |
+| Secure    | true       | false       |
+| Path      | /          | /           |
+| Max-Age   | 86400      | 86400       |
 
 **csrf_token cookie**:
 
 | Attribute | Production | Development |
 |-----------|------------|-------------|
-| HttpOnly | true | true |
-| SameSite | Strict | Strict |
-| Secure | true | false |
-| Path | / | / |
+| HttpOnly  | true       | true        |
+| SameSite  | Strict     | Strict      |
+| Secure    | true       | false       |
+| Path      | /          | /           |
 
 ---
 
 ## CSRF Implementation
 
 Double-submit cookie pattern:
+
 1. GET /login: Server generates 32 random bytes, sets as csrf_token cookie
 2. Client sends X-CSRF-Token header with same value
 3. Middleware validates cookie == header
@@ -325,6 +337,7 @@ Token generation: 32 random bytes via OsRng, base64url encoded.
 ## Rate Limiter Design
 
 **Login rate limiter (per IP)**:
+
 - capacity: 5 tokens
 - refill_rate: 1 token/minute
 - key: Source IP
@@ -336,32 +349,32 @@ Token generation: 32 random bytes via OsRng, base64url encoded.
 
 ## File Changes
 
-| File | Action | Description |
-|------|--------|-------------|
-| crates/infrastructure/transport-axum/src/authz.rs | Modify | Rename RouteClass→AuthTier; replace JWT with session validation; add CSRF middleware |
-| crates/infrastructure/transport-axum/src/routes.rs | Modify | Add /login, /logout routes |
-| crates/domain/rook-core/src/model.rs | Modify | Add User, UserId, Session, SessionId, NewUser, NewSession |
-| crates/domain/rook-core/src/ports.rs | Modify | Add UserRepositoryPort, SessionRepositoryPort, PasswordHasher traits |
-| crates/infrastructure/auth-sqlite/src/lib.rs | Modify | Add SqliteUserRepository, SqliteSessionRepository; add migrations |
-| crates/infrastructure/encryption-inmemory/src/key_manager.rs | Modify | Add PasswordHasher impl for AesGcmKeyManager |
-| crates/application/rook-usecases/src/lib.rs | Modify | Add EnsureAdminUser, Login, ValidateSession, SetAdminPassword, Logout |
-| apps/rook/src/di.rs | Modify | Wire new repos, use cases, update AuthzConfig |
-| apps/rook/src/main.rs | Modify | Add rook admin set-password CLI command |
+| File                                                         | Action | Description                                                                          |
+|--------------------------------------------------------------|--------|--------------------------------------------------------------------------------------|
+| crates/infrastructure/transport-axum/src/authz.rs            | Modify | Rename RouteClass→AuthTier; replace JWT with session validation; add CSRF middleware |
+| crates/infrastructure/transport-axum/src/routes.rs           | Modify | Add /login, /logout routes                                                           |
+| crates/domain/rook-core/src/model.rs                         | Modify | Add User, UserId, Session, SessionId, NewUser, NewSession                            |
+| crates/domain/rook-core/src/ports.rs                         | Modify | Add UserRepositoryPort, SessionRepositoryPort, PasswordHasher traits                 |
+| crates/infrastructure/auth-sqlite/src/lib.rs                 | Modify | Add SqliteUserRepository, SqliteSessionRepository; add migrations                    |
+| crates/infrastructure/encryption-inmemory/src/key_manager.rs | Modify | Add PasswordHasher impl for AesGcmKeyManager                                         |
+| crates/application/rook-usecases/src/lib.rs                  | Modify | Add EnsureAdminUser, Login, ValidateSession, SetAdminPassword, Logout                |
+| apps/rook/src/di.rs                                          | Modify | Wire new repos, use cases, update AuthzConfig                                        |
+| apps/rook/src/main.rs                                        | Modify | Add rook admin set-password CLI command                                              |
 
 ---
 
 ## Testing Strategy
 
-| Layer | What to Test | Approach |
-|-------|-------------|----------|
-| Unit | hash_password/verify_password round-trip | Direct test in encryption-inmemory |
-| Unit | SqliteUserRepository::create duplicate detection | In-memory SQLite test |
-| Unit | SqliteSessionRepository find_by_token_hash filtering | In-memory SQLite test |
-| Unit | Login use case - correct/wrong/no password | Mock repos |
-| Unit | CSRF double-submit validation | Unit test for validation logic |
-| Unit | Rate limiter token consumption | Unit test with mock time |
-| Integration | Full login flow with real SQLite | #[tokio::test] with temp DB |
-| Integration | Session validation middleware | axum test request |
+| Layer       | What to Test                                         | Approach                           |
+|-------------|------------------------------------------------------|------------------------------------|
+| Unit        | hash_password/verify_password round-trip             | Direct test in encryption-inmemory |
+| Unit        | SqliteUserRepository::create duplicate detection     | In-memory SQLite test              |
+| Unit        | SqliteSessionRepository find_by_token_hash filtering | In-memory SQLite test              |
+| Unit        | Login use case - correct/wrong/no password           | Mock repos                         |
+| Unit        | CSRF double-submit validation                        | Unit test for validation logic     |
+| Unit        | Rate limiter token consumption                       | Unit test with mock time           |
+| Integration | Full login flow with real SQLite                     | #[tokio::test] with temp DB        |
+| Integration | Session validation middleware                        | axum test request                  |
 
 ---
 
