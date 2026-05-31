@@ -31,7 +31,8 @@ impl SqliteAudit {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS audit (
+            "PRAGMA foreign_keys = ON;
+            CREATE TABLE IF NOT EXISTS audit (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_id  TEXT NOT NULL,
                 provider    TEXT NOT NULL,

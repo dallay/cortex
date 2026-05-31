@@ -8,6 +8,43 @@ use rook_core::{
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
 
+/// Sanitize and truncate error response body to prevent sensitive data leakage.
+fn sanitize_error_body(body: &str) -> String {
+    const MAX_LENGTH: usize = 200;
+    const SENSITIVE_KEYS: &[&str] = &[
+        "api_key",
+        "authorization",
+        "token",
+        "access_token",
+        "secret",
+        "headers",
+    ];
+
+    // Try to parse as JSON and redact sensitive fields
+    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(obj) = json.as_object_mut() {
+            for key in SENSITIVE_KEYS {
+                if obj.contains_key(*key) {
+                    obj.insert(key.to_string(), serde_json::Value::String("(redacted)".to_string()));
+                }
+            }
+        }
+        let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
+        if sanitized.len() > MAX_LENGTH {
+            format!("{}... (truncated)", &sanitized[..MAX_LENGTH])
+        } else {
+            sanitized
+        }
+    } else {
+        // Fall back to plain text truncation
+        if body.len() > MAX_LENGTH {
+            format!("{}... (truncated)", &body[..MAX_LENGTH])
+        } else {
+            body.to_string()
+        }
+    }
+}
+
 /// Configuration for the OpenAI provider
 #[derive(Debug, Clone)]
 pub struct OpenAIProviderConfig {
@@ -152,7 +189,8 @@ impl ProviderPort for OpenAIProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!("{status}: {body}")));
+            let sanitized_body = sanitize_error_body(&body);
+            return Err(CortexError::provider(format!("{status}: {sanitized_body}")));
         }
 
         let openai_resp: OpenAIResponse = resp

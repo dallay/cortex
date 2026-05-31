@@ -101,13 +101,9 @@ once_cell = "1"
 parking_lot = "0.12"
 dirs = "6"
 rand = "0.8"
-hex = "0.4"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
-
-# Crypto
-sha2 = "0.10"
 
 # Encryption
 aes-gcm = "0.10"

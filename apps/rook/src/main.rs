@@ -65,6 +65,10 @@ async fn seed_admin(password: String) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
 
     let config = load_config()?;
+
+    // Run pending migrations (ensure schema exists before repository access)
+    di::run_startup_migrations(&config.database.db_path)?;
+
     let container = di::RookContainer::build(&config)
         .await
         .context("failed to build container")?;
@@ -127,7 +131,8 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
             println!("Refinery does not support automatic rollback.");
             println!("To rollback, create a new migration that undoes the last change:");
             println!("  1. Inspect the last applied migration in _migrations table");
-            println!("  2. Run: rook db create-migration <name>");
+            println!("  2. Manually create a new migration file named V{{n}}__{{name}}.sql");
+            println!("     in crates/infrastructure/db-migration/src/migrations/");
             println!("  3. Write SQL in the new migration file to undo the change");
             println!("  4. Run: rook db migrate");
         }

@@ -1,11 +1,13 @@
 -- V0__initial.sql
 -- Creates all initial tables for provider, auth, and audit
--- Idempotent: uses CREATE TABLE IF NOT EXISTS
+
+-- Enable foreign key enforcement
+PRAGMA foreign_keys = ON;
 
 -- =============================================================================
 -- provider_connections table
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS provider_connections (
+CREATE TABLE provider_connections (
     id                  TEXT PRIMARY KEY,
     provider_kind       TEXT    NOT NULL,
     provider_runtime_id TEXT    NOT NULL,
@@ -36,15 +38,15 @@ CREATE TABLE IF NOT EXISTS provider_connections (
     UNIQUE (provider_kind, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pc_provider_kind ON provider_connections (provider_kind);
-CREATE INDEX IF NOT EXISTS idx_pc_runtime_id ON provider_connections (provider_runtime_id);
-CREATE INDEX IF NOT EXISTS idx_pc_active ON provider_connections (is_active) WHERE is_active = 1;
-CREATE INDEX IF NOT EXISTS idx_pc_priority_created ON provider_connections (priority ASC, created_at DESC);
+CREATE INDEX idx_pc_provider_kind ON provider_connections (provider_kind);
+CREATE INDEX idx_pc_runtime_id ON provider_connections (provider_runtime_id);
+CREATE INDEX idx_pc_active ON provider_connections (is_active) WHERE is_active = 1;
+CREATE INDEX idx_pc_priority_created ON provider_connections (priority ASC, created_at DESC);
 
 -- =============================================================================
 -- api_keys table
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS api_keys (
+CREATE TABLE api_keys (
     id           TEXT PRIMARY KEY,
     label        TEXT NOT NULL,
     key_hash     TEXT NOT NULL UNIQUE,
@@ -58,14 +60,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys (is_active);
-CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_at ON api_keys (revoked_at);
-CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys (expires_at);
+CREATE INDEX idx_api_keys_active ON api_keys (is_active);
+CREATE INDEX idx_api_keys_revoked_at ON api_keys (revoked_at);
+CREATE INDEX idx_api_keys_expires_at ON api_keys (expires_at);
 
 -- =============================================================================
 -- users table
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id           TEXT PRIMARY KEY,
     username     TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT,
@@ -73,12 +75,12 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at   TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_username ON users (username COLLATE NOCASE);
+CREATE INDEX idx_users_username ON users (username COLLATE NOCASE);
 
 -- =============================================================================
 -- sessions table
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE sessions (
     id          TEXT PRIMARY KEY,
     token_hash  TEXT NOT NULL UNIQUE,
     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -87,14 +89,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     revoked     INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1))
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions (token_hash);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+CREATE INDEX idx_sessions_token_hash ON sessions (token_hash);
+CREATE INDEX idx_sessions_user_id ON sessions (user_id);
+CREATE INDEX idx_sessions_expires_at ON sessions (expires_at);
 
 -- =============================================================================
 -- audit table
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS audit (
+CREATE TABLE audit (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id  TEXT NOT NULL,
     provider    TEXT NOT NULL,
@@ -108,6 +110,6 @@ CREATE TABLE IF NOT EXISTS audit (
     timestamp   TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit(request_id);
-CREATE INDEX IF NOT EXISTS idx_audit_provider ON audit(provider);
-CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp);
+CREATE INDEX idx_audit_request_id ON audit(request_id);
+CREATE INDEX idx_audit_provider ON audit(provider);
+CREATE INDEX idx_audit_timestamp ON audit(timestamp);

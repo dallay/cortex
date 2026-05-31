@@ -7,6 +7,13 @@ mod embedded {
 
 pub use embedded::migrations;
 
+/// Build the migration runner with the configured migration table name.
+fn build_runner() -> refinery::Runner {
+    let mut r = embedded::migrations::runner();
+    r.set_migration_table_name("_migrations");
+    r
+}
+
 /// Run all pending migrations on the given database path.
 pub fn run_migrations(db_path: &str) -> anyhow::Result<usize> {
     let mut conn = rusqlite::Connection::open(db_path)?;
@@ -15,11 +22,7 @@ pub fn run_migrations(db_path: &str) -> anyhow::Result<usize> {
 
 /// Run all pending migrations on an existing open connection.
 pub fn run_on_connection(conn: &mut rusqlite::Connection) -> anyhow::Result<usize> {
-    let runner = {
-        let mut r = embedded::migrations::runner();
-        r.set_migration_table_name("_migrations");
-        r
-    };
+    let runner = build_runner();
 
     let report = runner.run(conn)?;
     let count = report.applied_migrations().len();
@@ -46,11 +49,7 @@ impl MigrationRunner {
     pub fn status(&self) -> anyhow::Result<MigrationStatus> {
         let mut conn = rusqlite::Connection::open(&self.db_path)?;
 
-        let runner = {
-            let mut r = embedded::migrations::runner();
-            r.set_migration_table_name("_migrations");
-            r
-        };
+        let runner = build_runner();
 
         let applied = runner.get_applied_migrations(&mut conn)?;
 
@@ -69,11 +68,7 @@ impl MigrationRunner {
     pub fn run(&self) -> anyhow::Result<usize> {
         let mut conn = rusqlite::Connection::open(&self.db_path)?;
 
-        let runner = {
-            let mut r = embedded::migrations::runner();
-            r.set_migration_table_name("_migrations");
-            r
-        };
+        let runner = build_runner();
 
         let report = runner.run(&mut conn)?;
         Ok(report.applied_migrations().len())

@@ -20,7 +20,8 @@ impl SqliteProviderRepository {
         let mut conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
         )?;
         db_migration::run_on_connection(&mut conn)?;
         Ok(Self {
