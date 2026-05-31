@@ -135,12 +135,24 @@ function createApiClient() {
   ): Promise<T> {
     const url = `${baseUrl}${path}`
 
+    // Extract CSRF token from cookie for state-changing requests
+    const method = (options.method || 'GET').toUpperCase()
+    const isStateChanging = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...options.headers as Record<string, string>,
+    }
+
+    if (isStateChanging && typeof document !== 'undefined') {
+      const csrfMatch = document.cookie.match(/csrf_token=([^;]+)/)
+      if (csrfMatch) {
+        headers['X-CSRF-Token'] = csrfMatch[1]
+      }
+    }
+
     const response = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
       credentials: 'include', // Include cookies for session auth
     })
 

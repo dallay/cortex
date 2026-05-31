@@ -84,17 +84,6 @@ async function createApiKeyViaApi(
 }
 
 // =============================================================================
-// Helper: Get auth cookies for API requests
-// =============================================================================
-
-async function getAuthCookies(page: Page): Promise<string> {
-  const cookies = await page.request.getCookies(`${API_BASE_URL}`)
-  const csrfCookie = cookies.find(c => c.name === 'csrf_token')?.value || ''
-  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
-  return `csrf_token=${csrfCookie}; auth_token=${authCookie}`
-}
-
-// =============================================================================
 // Test: Dashboard loads without crashing
 // =============================================================================
 

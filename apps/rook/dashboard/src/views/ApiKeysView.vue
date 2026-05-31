@@ -115,7 +115,7 @@ function openEditModal(key: typeof apiKeys.value[0]) {
   editingKey.value = key.id
   editForm.value = {
     label: key.label,
-    scopes: key.scopes,
+    scopes: [...key.scopes],
     tier: key.tier,
     isActive: key.isActive,
     expiresAt: key.expiresAt,

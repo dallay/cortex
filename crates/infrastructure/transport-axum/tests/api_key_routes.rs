@@ -12,7 +12,7 @@ fn test_record() -> ApiKeyRecord {
         id: ApiKeyId::new("key_123"),
         label: "Production Key".to_string(),
         key_hash: "hash_abc123".to_string(),
-        key_prefix: "rk-abcde".to_string(),
+        key_prefix: "rook_test".to_string(),
         scopes: vec![
             ApiKeyScope::parse("read").unwrap(),
             ApiKeyScope::parse("write").unwrap(),
@@ -33,7 +33,7 @@ fn api_key_record_response_dto_converts_correctly() {
 
     assert_eq!(dto.id, "key_123");
     assert_eq!(dto.label, "Production Key");
-    assert_eq!(dto.key_prefix, "rk-abcde");
+    assert_eq!(dto.key_prefix, "rook_test");
     assert_eq!(dto.scopes, vec!["read".to_string(), "write".to_string()]);
     assert_eq!(dto.tier, "pro");
     assert!(dto.is_active);
@@ -81,11 +81,13 @@ fn create_api_key_response_serializes_correctly() {
     let record = test_record();
     let dto = CreateApiKeyResponseDto {
         key: ApiKeyRecordResponseDto::from(&record),
-        plaintext_key: "rk-live-123456789".to_string(),
+        plaintext_key: "rook_test_123456789".to_string(),
     };
 
     let json = serde_json::to_value(&dto).expect("should serialize");
-    assert_eq!(json["plaintextKey"], "rk-live-123456789");
+    assert_eq!(json["plaintextKey"], "rook_test_123456789");
+    // Ensure keyHash is not exposed in response
+    assert!(json["key"]["keyHash"].is_null(), "keyHash should not be exposed");
     assert_eq!(json["key"]["id"], "key_123");
     assert_eq!(json["key"]["tier"], "pro");
 }

@@ -15,11 +15,15 @@
 
 set -e
 
+# Resolve repo root relative to script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
 CONTAINER_NAME="rook-e2e-api-keys"
-API_PORT=8081
-TEST_CONFIG="/Users/acosta/Dev/dallay/cortex/dev/test-configs/rook-api-keys-test.toml"
+export API_PORT=8081
+TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
 ADMIN_PASSWORD="admin123"
-DASHBOARD_DIR="/Users/acosta/Dev/dallay/cortex/apps/rook/dashboard"
+DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
 
 # Colors
 RED='\033[0;31m'
@@ -48,7 +52,7 @@ fi
 cleanup
 
 log_info "Building Docker image..."
-cd /Users/acosta/Dev/dallay/cortex
+cd "$REPO_ROOT"
 docker build -f Dockerfile.dev -t rook:e2e-api-keys . 2>&1 | tail -5
 
 log_info "Starting rook container..."
@@ -87,13 +91,13 @@ log_info ""
 
 if [ "$MODE" = "--test" ]; then
     log_info "Running Playwright tests..."
-    
+
     # Start dashboard dev server in background
     log_info "Starting dashboard dev server..."
     cd "$DASHBOARD_DIR"
     pnpm run dev > /tmp/dashboard-dev.log 2>&1 &
     DASHBOARD_PID=$!
-    
+
     # Wait for dashboard to be ready
     for i in {1..30}; do
         if curl -sf http://localhost:5173 > /dev/null 2>&1; then
@@ -102,7 +106,7 @@ if [ "$MODE" = "--test" ]; then
         fi
         sleep 2
     done
-    
+
     # Run Playwright tests
     cd "$DASHBOARD_DIR"
     if pnpm playwright test e2e/api-keys.spec.ts; then
@@ -112,13 +116,13 @@ if [ "$MODE" = "--test" ]; then
         log_error "Tests failed!"
         TEST_RESULT=1
     fi
-    
+
     # Cleanup
     log_info "Stopping dashboard..."
     kill $DASHBOARD_PID 2>/dev/null || true
-    
+
     cleanup
-    
+
     exit $TEST_RESULT
 else
     echo "Press Ctrl+C to stop the container, or run with --test to run tests automatically"
@@ -127,8 +131,9 @@ else
     echo "  2. pnpm run dev"
     echo "  3. pnpm playwright test e2e/api-keys.spec.ts"
     echo ""
-    
-    # Wait for user interrupt
+
+    # Wait for user interrupt - use docker logs to block
     trap cleanup INT TERM
+    docker logs -f "$CONTAINER_NAME" &
     wait
 fi

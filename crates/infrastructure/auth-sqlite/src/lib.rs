@@ -275,15 +275,27 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         revoked_at: DateTime<Utc>,
     ) -> Result<(), ApiKeyRepositoryError> {
         let conn = self.lock()?;
-        let rows = conn
-            .execute(
-                "UPDATE api_keys SET is_active = 0, revoked_at = ?1 WHERE id = ?2",
-                params![revoked_at.to_rfc3339(), id.to_string()],
+
+        // First check if the key exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM api_keys WHERE id = ?1)",
+                params![id.to_string()],
+                |row| row.get(0),
             )
             .map_err(db_error)?;
-        if rows == 0 {
+
+        if !exists {
             return Err(ApiKeyRepositoryError::NotFound(id.clone()));
         }
+
+        // Use COALESCE to preserve original revoked_at if already set (idempotent)
+        conn.execute(
+            "UPDATE api_keys SET is_active = 0, revoked_at = COALESCE(revoked_at, ?1) WHERE id = ?2",
+            params![revoked_at.to_rfc3339(), id.to_string()],
+        )
+        .map_err(db_error)?;
+
         Ok(())
     }
 
