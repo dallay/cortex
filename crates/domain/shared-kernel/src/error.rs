@@ -6,12 +6,12 @@ use std::fmt;
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct NuxaError {
+pub struct CortexError {
     #[from]
     source: Box<dyn std::error::Error + Send + Sync + 'static>,
 }
 
-impl NuxaError {
+impl CortexError {
     pub fn provider(msg: impl Into<String>) -> Self {
         Self {
             source: Box::new(ProviderError(msg.into())),
@@ -109,4 +109,4 @@ impl std::error::Error for AllProvidersExhaustedError {}
 // Result type alias
 // ---------------------------------------------------------------------------
 
-pub type NuxaResult<T> = Result<T, NuxaError>;
+pub type CortexResult<T> = Result<T, CortexError>;

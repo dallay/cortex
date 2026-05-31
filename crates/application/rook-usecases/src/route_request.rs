@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rook_core::{
-    AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse, NuxaError,
+    AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse, CortexError,
     RequestStatus, RouterPort,
 };
 
@@ -38,7 +38,7 @@ impl RouteRequest {
         }
     }
 
-    pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, NuxaError> {
+    pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
         let cache_key = req.cache_key();
         let start = Instant::now();
 

@@ -11,20 +11,19 @@ use rook_core::provider_connection::{
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use shared_kernel::{ConnectionId, ModelId, ProviderId};
 
-use super::migration;
-
 pub struct SqliteProviderRepository {
     conn: Mutex<Connection>,
 }
 
 impl SqliteProviderRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
         )?;
-        migration::run(&conn)?;
+        db_migration::run_on_connection(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })

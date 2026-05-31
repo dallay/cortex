@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use shared_kernel::{CacheKey, ConnectionId, ModelId, NuxaResult, ProviderId};
+use shared_kernel::{CacheKey, ConnectionId, CortexResult, ModelId, ProviderId};
 
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
@@ -40,13 +40,13 @@ pub trait ProviderPort: Send + Sync + 'static {
     async fn health_check(&self) -> HealthStatus;
 
     /// Execute a completion request
-    async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse>;
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse>;
 
     /// Stream a completion response
     async fn stream(
         &self,
         req: &CompletionRequest,
-    ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>>;
+    ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,11 +59,11 @@ pub trait ProviderPort: Send + Sync + 'static {
 pub trait RouterPort: Send + Sync {
     /// Select the best provider for this request.
     /// Returns the selected provider, never an error if at least one provider is available.
-    async fn select(&self, req: &CompletionRequest) -> NuxaResult<Arc<dyn ProviderPort>>;
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
 
     /// Called when a provider call fails — allows the router to update
     /// internal state (circuit breaker, weights, etc.)
-    async fn on_failure(&self, provider: &ProviderId, error: &shared_kernel::NuxaError);
+    async fn on_failure(&self, provider: &ProviderId, error: &shared_kernel::CortexError);
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
@@ -75,15 +75,15 @@ pub trait RouterPort: Send + Sync {
 
 #[async_trait]
 pub trait CachePort: Send + Sync {
-    async fn get(&self, key: &CacheKey) -> NuxaResult<Option<CompletionResponse>>;
+    async fn get(&self, key: &CacheKey) -> CortexResult<Option<CompletionResponse>>;
     async fn set(
         &self,
         key: &CacheKey,
         value: &CompletionResponse,
         ttl: Duration,
-    ) -> NuxaResult<()>;
-    async fn delete(&self, key: &CacheKey) -> NuxaResult<()>;
-    async fn clear(&self) -> NuxaResult<()>;
+    ) -> CortexResult<()>;
+    async fn delete(&self, key: &CacheKey) -> CortexResult<()>;
+    async fn clear(&self) -> CortexResult<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ pub trait CachePort: Send + Sync {
 
 #[async_trait]
 pub trait AuditPort: Send + Sync {
-    async fn record(&self, entry: AuditEntry) -> NuxaResult<()>;
+    async fn record(&self, entry: AuditEntry) -> CortexResult<()>;
 }
 
 // ---------------------------------------------------------------------------

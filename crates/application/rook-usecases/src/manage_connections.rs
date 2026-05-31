@@ -555,7 +555,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rook_core::{
-        BoxStream, CompletionRequest, CompletionResponse, ModelId, NuxaResult, ProviderPort,
+        BoxStream, CompletionRequest, CompletionResponse, CortexResult, ModelId, ProviderPort,
         RegistryError, StreamChunk,
     };
 
@@ -1576,14 +1576,14 @@ mod tests {
             self.health_status.clone()
         }
 
-        async fn complete(&self, _req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+        async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
             unreachable!("not used in tests")
         }
 
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>> {
+        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
             unreachable!("not used in tests")
         }
     }

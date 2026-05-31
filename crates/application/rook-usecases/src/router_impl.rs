@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use rook_core::{
     CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
 };
-use shared_kernel::{NuxaError, NuxaResult, Utc};
+use shared_kernel::{CortexError, CortexResult, Utc};
 use tokio::sync::RwLock as AsyncRwLock;
 
 /// Number of failures before opening the circuit
@@ -163,11 +163,11 @@ impl ProviderRegistryPort for FallbackRouter {
 
 #[async_trait]
 impl RouterPort for FallbackRouter {
-    async fn select(&self, req: &CompletionRequest) -> NuxaResult<Arc<dyn ProviderPort>> {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
         let candidates = self.available_providers(&req.model);
 
         if candidates.is_empty() {
-            return Err(NuxaError::all_providers_exhausted());
+            return Err(CortexError::all_providers_exhausted());
         }
 
         let selected = match &self.strategy {
@@ -208,10 +208,10 @@ impl RouterPort for FallbackRouter {
             }
         };
 
-        selected.ok_or_else(NuxaError::all_providers_exhausted)
+        selected.ok_or_else(CortexError::all_providers_exhausted)
     }
 
-    async fn on_failure(&self, provider: &ProviderId, _error: &NuxaError) {
+    async fn on_failure(&self, provider: &ProviderId, _error: &CortexError) {
         let mut state = self.circuits.entry(provider.clone()).or_default();
         state.record_failure();
         tracing::warn!(
@@ -275,7 +275,7 @@ mod tests {
             }
         }
 
-        async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
             Ok(CompletionResponse {
                 id: req.id.clone(),
                 provider: self.id.clone(),
@@ -294,8 +294,8 @@ mod tests {
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>> {
-            Err(NuxaError::provider("streaming not supported"))
+        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
+            Err(CortexError::provider("streaming not supported"))
         }
     }
 
@@ -368,7 +368,7 @@ mod tests {
                 latency_ms: 1,
             }
         }
-        async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
             *self.inner.select_count.lock().unwrap() += 1;
             Ok(CompletionResponse {
                 id: req.id.clone(),
@@ -387,8 +387,8 @@ mod tests {
         async fn stream(
             &self,
             _req: &CompletionRequest,
-        ) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>> {
-            Err(NuxaError::provider("not supported"))
+        ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>> {
+            Err(CortexError::provider("not supported"))
         }
     }
 
@@ -526,19 +526,19 @@ mod tests {
         // Record 2 failures — circuit should NOT open yet
         rt.block_on(async {
             router
-                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err1"))
+                .on_failure(&ProviderId::new("failing"), &CortexError::provider("err1"))
                 .await;
         });
         rt.block_on(async {
             router
-                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err2"))
+                .on_failure(&ProviderId::new("failing"), &CortexError::provider("err2"))
                 .await;
         });
 
         // 3rd failure — circuit opens
         rt.block_on(async {
             router
-                .on_failure(&ProviderId::new("failing"), &NuxaError::provider("err3"))
+                .on_failure(&ProviderId::new("failing"), &CortexError::provider("err3"))
                 .await;
         });
 
@@ -567,7 +567,7 @@ mod tests {
                 let _ = router
                     .on_failure(
                         &ProviderId::new("recoverable"),
-                        &NuxaError::provider("boom"),
+                        &CortexError::provider("boom"),
                     )
                     .await;
             }

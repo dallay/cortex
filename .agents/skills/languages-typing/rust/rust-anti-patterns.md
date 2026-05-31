@@ -83,7 +83,7 @@ Especialmente crítico en providers y use cases. El código de transporte
 
  // GOOD
 let response = provider.complete(req)
-      .map_err(|e| NuxaError::provider(e.to_string()))?;
+      .map_err(|e| CortexError::provider(e.to_string()))?;
  ```
 
 Excepciones válidas:

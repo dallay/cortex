@@ -6,7 +6,50 @@ use rook_core::{
     CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort, StreamChunk,
     TokenUsage,
 };
-use shared_kernel::{NuxaError, NuxaResult, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ProviderId};
+
+/// Sanitize and truncate error response body to prevent sensitive data leakage.
+fn sanitize_error_body(body: &str) -> String {
+    const MAX_LENGTH: usize = 200;
+    const SENSITIVE_KEYS: &[&str] = &[
+        "api_key",
+        "authorization",
+        "token",
+        "access_token",
+        "secret",
+        "headers",
+    ];
+
+    // Try to parse as JSON and redact sensitive fields
+    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(obj) = json.as_object_mut() {
+            let keys_to_redact: Vec<String> = obj
+                .keys()
+                .filter(|k| {
+                    let lower = k.to_lowercase();
+                    SENSITIVE_KEYS.iter().any(|s| lower.contains(s))
+                })
+                .cloned()
+                .collect();
+            for key in keys_to_redact {
+                obj.insert(key, serde_json::Value::String("(redacted)".to_string()));
+            }
+        }
+        let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
+        if sanitized.len() > MAX_LENGTH {
+            format!("{}... (truncated)", &sanitized[..MAX_LENGTH])
+        } else {
+            sanitized
+        }
+    } else {
+        // Fall back to plain text truncation
+        if body.len() > MAX_LENGTH {
+            format!("{}... (truncated)", &body[..MAX_LENGTH])
+        } else {
+            body.to_string()
+        }
+    }
+}
 
 /// Configuration for the OpenAI provider
 #[derive(Debug, Clone)]
@@ -117,7 +160,7 @@ impl ProviderPort for OpenAIProvider {
         }
     }
 
-    async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
         let body = OpenAIRequest {
             model: req.model.to_string(),
             messages: req
@@ -147,23 +190,24 @@ impl ProviderPort for OpenAIProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NuxaError::provider(format!("request failed: {e}")))?;
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(NuxaError::provider(format!("{status}: {body}")));
+            let sanitized_body = sanitize_error_body(&body);
+            return Err(CortexError::provider(format!("{status}: {sanitized_body}")));
         }
 
         let openai_resp: OpenAIResponse = resp
             .json()
             .await
-            .map_err(|e| NuxaError::provider(format!("json parse failed: {e}")))?;
+            .map_err(|e| CortexError::provider(format!("json parse failed: {e}")))?;
 
         let choice = openai_resp
             .choices
             .first()
-            .ok_or_else(|| NuxaError::not_found("no choices in response"))?;
+            .ok_or_else(|| CortexError::not_found("no choices in response"))?;
 
         Ok(CompletionResponse {
             id: req.id.clone(),
@@ -183,8 +227,8 @@ impl ProviderPort for OpenAIProvider {
     async fn stream(
         &self,
         _req: &CompletionRequest,
-    ) -> NuxaResult<futures::stream::BoxStream<'_, NuxaResult<StreamChunk>>> {
+    ) -> CortexResult<futures::stream::BoxStream<'_, CortexResult<StreamChunk>>> {
         // TODO: implement streaming with reqwest Events
-        Err(NuxaError::provider("streaming not yet implemented"))
+        Err(CortexError::provider("streaming not yet implemented"))
     }
 }

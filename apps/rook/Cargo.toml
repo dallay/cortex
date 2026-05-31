@@ -25,6 +25,7 @@ providers-groq = { path = "../../crates/infrastructure/providers-groq" }
 encryption-inmemory = { path = "../../crates/infrastructure/encryption-inmemory" }
 provider-sqlite = { path = "../../crates/infrastructure/provider-sqlite" }
 auth-sqlite = { path = "../../crates/infrastructure/auth-sqlite" }
+db-migration = { path = "../../crates/infrastructure/db-migration" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

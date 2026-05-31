@@ -7,23 +7,23 @@ Patrones de error handling para Rust, adaptados para el monorepo Cortex.
 ## Propósito
 
 Estandarizar el manejo de errores en todo el codebase, respetando el patrón
-de domain-driven errors establecido con NuxaError.
+de domain-driven errors establecido con CortexError.
 
 ## Arquitectura de Errores en Cortex
 
   ```
   shared-kernel (sin deps)
-    └── NuxaError (error wrapper con Box<dyn Error>)
+    └── CortexError (error wrapper con Box<dyn Error>)
         ├── ProviderError
         ├── NotFoundError
         ├── RateLimitedError
         └── AllProvidersExhaustedError
 
   rook-core (domain)
-    └── Define ports con NuxaResult<T>
+    └── Define ports con CortexResult<T>
 
   transport-axum (infrastructure)
-    └── Adapta errores de providers a NuxaError
+    └── Adapta errores de providers a CortexError
 
   apps/rook (application)
     └── Maneja errores, logging, respuesta HTTP
@@ -46,7 +46,7 @@ Ya lo usamos bien en shared-kernel. Mantener este padrão.
  ```rust
 #[derive(Debug, thiserror::Error)]
   #[error(transparent)]
-  pub struct NuxaError {
+  pub struct CortexError {
       #[from]
       source: Box<dyn std::error::Error + Send + Sync + 'static>,
   }
@@ -59,7 +59,7 @@ Ya lo usamos bien en shared-kernel. Mantener este padrão.
 > Implementa From<E> para conversiones automáticas.
 
   ```rust
-  impl From<std::io::Error> for NuxaError {
+  impl From<std::io::Error> for CortexError {
       fn from(err: std::io::Error) -> Self {
           Self::provider(err.to_string())
       }
@@ -76,15 +76,15 @@ Encontrado en provider implementations y adapters.
 
   ```rust
   // BAD
-  fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+  fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
       Ok(self.client.post(&url).unwrap()) // Panic on error!
   }
 
   // GOOD
-  fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
+  fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
       self.client.post(&url)
           .await
-          .map_err(|e| NuxaError::provider(e.to_string()))
+          .map_err(|e| CortexError::provider(e.to_string()))
   }
   ```
 
@@ -138,7 +138,7 @@ Decision guide:
 | Situación                          | Use                                |
  |------------------------------------|------------------------------------|
 | Provider no disponible             | `Result`                           |
-| Rate limited                       | `Result` (NuxaError::rate_limited) |
+| Rate limited                       | `Result` (CortexError::rate_limited) |
 | Index out of bounds (user data)    | `Result`                           |
 | Index out of bounds (internal bug) | `panic!` con expect                |
 | Invariant violated (program bug)   | `panic!`                           |
@@ -185,8 +185,8 @@ Decision guide:
      // Caller no puede matchear específicamente
  }
 
-// ✅ USAR NuxaError con tipos domain-specific
-  fn good() -> NuxaResult<Response> {
+// ✅ USAR CortexError con tipos domain-specific
+  fn good() -> CortexResult<Response> {
      // Callers pueden hacer:
      // match err {
      //     e if e.is_rate_limited() => handle_rate_limit(e),
@@ -197,8 +197,8 @@ Decision guide:
 
 ## Archivos Relacionados
 
-- `crates/domain/shared-kernel/src/error.rs` — NuxaError y variants
-- `crates/domain/rook-core/src/` — Ports con NuxaResult
+- `crates/domain/shared-kernel/src/error.rs` — CortexError y variants
+- `crates/domain/rook-core/src/` — Ports con CortexResult
 - `crates/infrastructure/providers-*/src/` — Provider implementations
 
 ## See Also

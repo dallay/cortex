@@ -145,15 +145,15 @@ Create `crates/domain/rook-core/src/provider_repo.rs`:
 ```rust
 #[async_trait]
 pub trait ProviderRepositoryPort: Send + Sync {
-    async fn list(&self) -> NuxaResult<Vec<ProviderConnection>>;
-    async fn find(&self, id: &ConnectionId) -> NuxaResult<Option<ProviderConnection>>;
-    async fn create(&self, conn: &ProviderConnection) -> NuxaResult<()>;
+    async fn list(&self) -> CortexResult<Vec<ProviderConnection>>;
+    async fn find(&self, id: &ConnectionId) -> CortexResult<Option<ProviderConnection>>;
+    async fn create(&self, conn: &ProviderConnection) -> CortexResult<()>;
     async fn update(
         &self,
         conn: &ProviderConnection,
         expected_updated_at: DateTime<Utc>,
-    ) -> NuxaResult<()>;
-    async fn delete(&self, id: &ConnectionId) -> NuxaResult<()>;
+    ) -> CortexResult<()>;
+    async fn delete(&self, id: &ConnectionId) -> CortexResult<()>;
 }
 ```
 

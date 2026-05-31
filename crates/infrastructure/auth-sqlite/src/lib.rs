@@ -18,12 +18,13 @@ pub struct SqliteApiKeyRepository {
 
 impl SqliteApiKeyRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
         )?;
-        run_migration(&conn)?;
+        db_migration::run_on_connection(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -329,54 +330,6 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
     }
 }
 
-fn run_migration(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS api_keys (
-            id           TEXT PRIMARY KEY,
-            label        TEXT NOT NULL,
-            key_hash     TEXT NOT NULL UNIQUE,
-            key_prefix   TEXT NOT NULL,
-            scopes_json  TEXT NOT NULL,
-            tier         TEXT NOT NULL CHECK (tier IN ('free', 'pro', 'enterprise')),
-            is_active    INTEGER NOT NULL CHECK (is_active IN (0, 1)),
-            revoked_at   TEXT,
-            expires_at   TEXT,
-            created_at   TEXT NOT NULL,
-            last_used_at TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys (is_active);
-        CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_at ON api_keys (revoked_at);
-        CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys (expires_at);
-
-        CREATE TABLE IF NOT EXISTS users (
-            id           TEXT PRIMARY KEY,
-            username     TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash TEXT,
-            created_at   TEXT NOT NULL,
-            updated_at   TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_users_username ON users (username COLLATE NOCASE);
-
-        CREATE TABLE IF NOT EXISTS sessions (
-            id          TEXT PRIMARY KEY,
-            token_hash  TEXT NOT NULL UNIQUE,
-            user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            created_at  TEXT NOT NULL,
-            expires_at  TEXT NOT NULL,
-            revoked     INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1))
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions (token_hash);
-        CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
-        "#,
-    )?;
-    Ok(())
-}
-
 fn row_to_subject(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeySubject> {
     let id: String = row.get("id")?;
     let label: String = row.get("label")?;
@@ -455,12 +408,13 @@ pub struct SqliteUserRepository {
 
 impl SqliteUserRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
         )?;
-        run_migration(&conn)?;
+        db_migration::run_on_connection(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -560,12 +514,13 @@ pub struct SqliteSessionRepository {
 
 impl SqliteSessionRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
         )?;
-        run_migration(&conn)?;
+        db_migration::run_on_connection(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })

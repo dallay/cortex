@@ -25,6 +25,14 @@ use rook_usecases::{
 
 use crate::config::RookConfig;
 
+/// Run pending database migrations at startup.
+///
+/// Called BEFORE building the DI container to ensure the schema is up-to-date
+/// before any repository uses the database. Fails fast if migrations fail.
+pub fn run_startup_migrations(db_path: &str) -> anyhow::Result<usize> {
+    db_migration::run_migrations(db_path)
+}
+
 pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
     pub authz_config: transport_axum::authz::AuthzConfig,
@@ -184,14 +192,14 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
 
 use async_trait::async_trait;
 use rook_core::CacheKey;
-use shared_kernel::NuxaResult;
+use shared_kernel::CortexResult;
 
 #[derive(Clone, Default)]
 struct NoOpCache;
 
 #[async_trait]
 impl CachePort for NoOpCache {
-    async fn get(&self, _: &CacheKey) -> NuxaResult<Option<rook_core::CompletionResponse>> {
+    async fn get(&self, _: &CacheKey) -> CortexResult<Option<rook_core::CompletionResponse>> {
         Ok(None)
     }
     async fn set(
@@ -199,13 +207,13 @@ impl CachePort for NoOpCache {
         _: &CacheKey,
         _: &rook_core::CompletionResponse,
         _: Duration,
-    ) -> NuxaResult<()> {
+    ) -> CortexResult<()> {
         Ok(())
     }
-    async fn delete(&self, _: &CacheKey) -> NuxaResult<()> {
+    async fn delete(&self, _: &CacheKey) -> CortexResult<()> {
         Ok(())
     }
-    async fn clear(&self) -> NuxaResult<()> {
+    async fn clear(&self) -> CortexResult<()> {
         Ok(())
     }
 }

@@ -42,7 +42,7 @@
 ### `shared-kernel`
 Common types with zero external dependencies.
 - `ProviderId`, `ModelId`, `RequestId` — newtype wrappers (prevents mixing at type level)
-- `NuxaError` — error types: ProviderError, NotFoundError, RateLimitedError, AllProvidersExhaustedError
+- `CortexError` — error types: ProviderError, NotFoundError, RateLimitedError, AllProvidersExhaustedError
 - `CacheKey` — derived from request ID for caching
 
 ### `rook-core`
@@ -111,8 +111,8 @@ pub trait ProviderPort: Send + Sync + 'static {
     fn supported_models(&self) -> &[ModelId];
     fn is_available(&self) -> bool;
     async fn health_check(&self) -> HealthStatus;
-    async fn complete(&self, req: &CompletionRequest) -> NuxaResult<CompletionResponse>;
-    async fn stream(&self, req: &CompletionRequest) -> NuxaResult<BoxStream<'_, NuxaResult<StreamChunk>>>;
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse>;
+    async fn stream(&self, req: &CompletionRequest) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>>;
 }
 ```
 
@@ -120,8 +120,8 @@ pub trait ProviderPort: Send + Sync + 'static {
 ```rust
 #[async_trait]
 pub trait RouterPort: Send + Sync {
-    async fn select(&self, req: &CompletionRequest) -> NuxaResult<Arc<dyn ProviderPort>>;
-    async fn on_failure(&self, provider: &ProviderId, error: &NuxaError);
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError);
     fn providers(&self) -> Vec<ProviderId>;
 }
 ```
@@ -130,10 +130,10 @@ pub trait RouterPort: Send + Sync {
 ```rust
 #[async_trait]
 pub trait CachePort: Send + Sync {
-    async fn get(&self, key: &CacheKey) -> NuxaResult<Option<CompletionResponse>>;
-    async fn set(&self, key: &CacheKey, value: &CompletionResponse, ttl: Duration) -> NuxaResult<()>;
-    async fn delete(&self, key: &CacheKey) -> NuxaResult<()>;
-    async fn clear(&self) -> NuxaResult<()>;
+    async fn get(&self, key: &CacheKey) -> CortexResult<Option<CompletionResponse>>;
+    async fn set(&self, key: &CacheKey, value: &CompletionResponse, ttl: Duration) -> CortexResult<()>;
+    async fn delete(&self, key: &CacheKey) -> CortexResult<()>;
+    async fn clear(&self) -> CortexResult<()>;
 }
 ```
 
@@ -141,7 +141,7 @@ pub trait CachePort: Send + Sync {
 ```rust
 #[async_trait]
 pub trait AuditPort: Send + Sync {
-    async fn record(&self, entry: AuditEntry) -> NuxaResult<()>;
+    async fn record(&self, entry: AuditEntry) -> CortexResult<()>;
 }
 ```
 

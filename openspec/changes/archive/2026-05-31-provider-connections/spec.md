@@ -236,11 +236,11 @@ All provider implementations MUST return one of these variants.
 ```rust
 #[async_trait]
 pub trait ProviderRepositoryPort: Send + Sync {
-    async fn list(&self) -> NuxaResult<Vec<ProviderConnection>>;
-    async fn find(&self, id: &ConnectionId) -> NuxaResult<Option<ProviderConnection>>;
-    async fn create(&self, conn: &ProviderConnection) -> NuxaResult<()>;
-    async fn update(&self, conn: &ProviderConnection, expected_updated_at: DateTime<Utc>) -> NuxaResult<()>;
-    async fn delete(&self, id: &ConnectionId) -> NuxaResult<()>;
+    async fn list(&self) -> CortexResult<Vec<ProviderConnection>>;
+    async fn find(&self, id: &ConnectionId) -> CortexResult<Option<ProviderConnection>>;
+    async fn create(&self, conn: &ProviderConnection) -> CortexResult<()>;
+    async fn update(&self, conn: &ProviderConnection, expected_updated_at: DateTime<Utc>) -> CortexResult<()>;
+    async fn delete(&self, id: &ConnectionId) -> CortexResult<()>;
 }
 ```
 

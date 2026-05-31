@@ -8,9 +8,10 @@ mod di;
 mod server;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
 
+use db_migration::MigrationRunner;
 use observability::init_tracing;
 
 #[derive(Parser)]
@@ -21,55 +22,57 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(clap::Subcommand)]
 enum Commands {
     /// Seed the admin user with a password (for initial setup or E2E testing)
     SeedAdmin {
         /// The password to set for the admin user
         password: String,
     },
+    /// Database migration commands
+    Db {
+        #[command(subcommand)]
+        command: DbCommands,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DbCommands {
+    /// Run pending database migrations
+    Migrate,
+    /// Show current migration status
+    Status,
+    /// Rollback: create a new migration to undo the last applied migration
+    Rollback,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. Init tracing
     init_tracing();
 
     let cli = Cli::parse();
 
-    // Handle CLI subcommands
-    if let Some(Commands::SeedAdmin { password }) = cli.command {
-        return seed_admin(password).await;
+    match cli.command {
+        Some(Commands::SeedAdmin { password }) => return seed_admin(password).await,
+        Some(Commands::Db { command }) => return run_db_command(command).await,
+        None => {}
     }
 
-    // Default: start the server
     start_server().await
 }
 
 async fn seed_admin(password: String) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
 
-    // Load config
-    let config_path = std::env::var("ROOK_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("cortex")
-                .join("rook.toml")
-        });
+    let config = load_config()?;
 
-    let config = config::RookConfig::load(&config_path)
-        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+    // Run pending migrations (ensure schema exists before repository access)
+    di::run_startup_migrations(&config.database.db_path)?;
 
-    tracing::info!(config = ?config, "configuration loaded");
-
-    // Build DI container
     let container = di::RookContainer::build(&config)
         .await
         .context("failed to build container")?;
 
-    // Set admin password
     let input = SetAdminPasswordInput {
         new_password: password,
     };
@@ -85,7 +88,60 @@ async fn seed_admin(password: String) -> anyhow::Result<()> {
 }
 
 async fn start_server() -> anyhow::Result<()> {
-    // 1. Load config
+    let config = load_config()?;
+
+    // Run pending migrations (fail-fast — server doesn't start if migrations fail)
+    di::run_startup_migrations(&config.database.db_path)?;
+
+    let container = di::RookContainer::build(&config)
+        .await
+        .context("failed to build container")?;
+
+    tracing::info!("container built successfully");
+    server::run(container, config.server).await
+}
+
+async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
+    let config = load_config()?;
+    let runner = MigrationRunner::new(&config.database.db_path);
+
+    match cmd {
+        DbCommands::Migrate => {
+            let count = runner.run()?;
+            if count > 0 {
+                println!("Applied {} migration(s)", count);
+            } else {
+                println!("No pending migrations");
+            }
+        }
+        DbCommands::Status => {
+            let status = runner.status()?;
+            match status.current_version {
+                Some(v) => println!("Current version: {}", v),
+                None => println!("No migrations applied"),
+            }
+            if !status.applied.is_empty() {
+                println!("\nApplied migrations:");
+                for m in &status.applied {
+                    println!("  V{}  {}", m.version, m.name);
+                }
+            }
+        }
+        DbCommands::Rollback => {
+            println!("Refinery does not support automatic rollback.");
+            println!("To rollback, create a new migration that undoes the last change:");
+            println!("  1. Inspect the last applied migration in _migrations table");
+            println!("  2. Manually create a new migration file named V{{n}}__{{name}}.sql");
+            println!("     in crates/infrastructure/db-migration/src/migrations/");
+            println!("  3. Write SQL in the new migration file to undo the change");
+            println!("  4. Run: rook db migrate");
+        }
+    }
+
+    Ok(())
+}
+
+fn load_config() -> anyhow::Result<config::RookConfig> {
     let config_path = std::env::var("ROOK_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -95,18 +151,6 @@ async fn start_server() -> anyhow::Result<()> {
                 .join("rook.toml")
         });
 
-    let config = config::RookConfig::load(&config_path)
-        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
-
-    tracing::info!(config = ?config, "configuration loaded");
-
-    // 2. Build DI container
-    let container = di::RookContainer::build(&config)
-        .await
-        .context("failed to build container")?;
-
-    tracing::info!("container built successfully");
-
-    // 3. Start HTTP server
-    server::run(container, config.server).await
+    config::RookConfig::load(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))
 }

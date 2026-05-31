@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use rook_core::{AuditEntry, AuditPort, RequestStatus};
 use rusqlite::{params, Connection};
-use shared_kernel::{NuxaError, NuxaResult};
+use shared_kernel::{CortexError, CortexResult};
 use std::path::Path;
 use tokio::sync::Mutex;
 
@@ -31,7 +31,8 @@ impl SqliteAudit {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS audit (
+            "PRAGMA foreign_keys = ON;
+            CREATE TABLE IF NOT EXISTS audit (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_id  TEXT NOT NULL,
                 provider    TEXT NOT NULL,
@@ -56,7 +57,7 @@ impl SqliteAudit {
 
 #[async_trait]
 impl AuditPort for SqliteAudit {
-    async fn record(&self, entry: AuditEntry) -> NuxaResult<()> {
+    async fn record(&self, entry: AuditEntry) -> CortexResult<()> {
         let status_str = match entry.status {
             RequestStatus::Success => "success",
             RequestStatus::Failure => "failure",
@@ -96,7 +97,7 @@ impl AuditPort for SqliteAudit {
                 entry.timestamp.to_rfc3339(),
             ],
         )
-        .map_err(|e| NuxaError::provider(format!("sqlite insert failed: {e}")))?;
+        .map_err(|e| CortexError::provider(format!("sqlite insert failed: {e}")))?;
 
         Ok(())
     }

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use rook_core::{CompletionRequest, CompletionResponse, HealthStatus, ProviderPort, StreamChunk};
-use shared_kernel::{ModelId as KModelId, NuxaError, NuxaResult, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -48,14 +48,14 @@ impl ProviderPort for GroqProvider {
         }
     }
 
-    async fn complete(&self, _req: &CompletionRequest) -> NuxaResult<CompletionResponse> {
-        Err(NuxaError::provider("Groq provider not yet implemented"))
+    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        Err(CortexError::provider("Groq provider not yet implemented"))
     }
 
     async fn stream(
         &self,
         _req: &CompletionRequest,
-    ) -> NuxaResult<futures::stream::BoxStream<'_, NuxaResult<StreamChunk>>> {
-        Err(NuxaError::provider("streaming not yet implemented"))
+    ) -> CortexResult<futures::stream::BoxStream<'_, CortexResult<StreamChunk>>> {
+        Err(CortexError::provider("streaming not yet implemented"))
     }
 }
