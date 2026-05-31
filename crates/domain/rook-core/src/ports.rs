@@ -46,7 +46,7 @@ pub trait ProviderPort: Send + Sync + 'static {
     async fn stream(
         &self,
         req: &CompletionRequest,
-    ) -> CortexResult<BoxStream<'_, CortexResult<StreamChunk>>>;
+    ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
 }
 
 // ---------------------------------------------------------------------------
