@@ -9,7 +9,10 @@
     "providersList": "List",
     "providersQuotes": "Quotes",
     "combos": "Combos",
-    "settings": "Settings"
+    "settings": "Settings",
+    "support": "Support",
+    "issues": "Issues",
+    "feedback": "Feedback"
   },
   "sidebar": {
     "platform": "Platform"
@@ -40,6 +43,104 @@
     "create": "Create",
     "search": "Search",
     "noResults": "No results found",
-    "logout": "Log out"
+    "logout": "Log out",
+    "actions": "Actions"
+  },
+  "home": {
+    "title": "Dashboard",
+    "subtitle": "Overview of your Rook instance",
+    "requestsToday": "Requests Today",
+    "activeProviders": "Active Providers",
+    "avgLatency": "Avg Latency",
+    "apiKeys": "API Keys",
+    "systemStatus": "System Status",
+    "providerStatus": "Provider Status",
+    "viewEndpoints": "View Endpoints",
+    "viewEndpointsDescription": "See all available API endpoints",
+    "manageKeys": "Manage Keys",
+    "manageKeysDescription": "Create and manage API keys",
+    "viewProviders": "View Providers",
+    "viewProvidersDescription": "Configure your AI providers",
+    "recentActivity": "Recent Activity",
+    "noProvidersTitle": "No providers configured",
+    "noProvidersDescription": "Add your first AI provider to start routing requests"
+  },
+  "endpoints": {
+    "title": "Endpoints",
+    "description": "Available API endpoints for connecting to Rook",
+    "baseUrl": "Base URL",
+    "copyUrl": "Copy URL",
+    "copied": "Copied!",
+    "categories": {
+      "core": "Core APIs",
+      "media": "Media & Multi-Modal",
+      "utility": "Utility"
+    },
+    "chatCompletions": "Chat completions",
+    "responses": "Responses API",
+    "completions": "Legacy completions",
+    "messages": "Anthropic messages",
+    "embeddings": "Embeddings creation",
+    "imagesGenerations": "Image generation",
+    "audioTranscriptions": "Whisper transcription",
+    "audioSpeech": "Text-to-speech",
+    "models": "List models catalog",
+    "files": "Files API",
+    "batches": "Batch processing"
+  },
+  "apiKeys": {
+    "description": "Manage your API keys for accessing Rook",
+    "create": "Create Key",
+    "createNew": "Create new API key",
+    "namePlaceholder": "Enter key name",
+    "name": "Name",
+    "key": "Key",
+    "created": "Created",
+    "lastUsed": "Last Used",
+    "empty": "No API keys yet",
+    "copyKey": "Copy key"
+  },
+  "providers": {
+    "description": "Configure your AI providers and their status",
+    "add": "Add Provider",
+    "name": "Name",
+    "kind": "Kind",
+    "status": "Status",
+    "latency": "Latency",
+    "priority": "Priority",
+    "empty": "No providers yet",
+    "emptyDescription": "Add your first provider to start routing AI requests",
+    "quotes": {
+      "provider": "Provider",
+      "model": "Model",
+      "inputCost": "Input",
+      "outputCost": "Output",
+      "updated": "Updated"
+    }
+  },
+  "combos": {
+    "description": "Create fallback chains of AI providers",
+    "create": "Create Combo",
+    "createNew": "Create new combo",
+    "createFirst": "Create your first combo",
+    "empty": "No combos yet",
+    "emptyDescription": "Combos let you chain providers with automatic fallback"
+  },
+  "settings": {
+    "description": "Configure your Rook instance",
+    "api": "API Settings",
+    "baseUrl": "Custom Base URL",
+    "baseUrlAuto": "Using auto-detected URL",
+    "baseUrlCustom": "Using custom URL",
+    "port": "Port",
+    "security": "Security",
+    "auditLog": "Audit Log",
+    "auditLogDescription": "Log all API requests",
+    "metrics": "Metrics",
+    "metricsDescription": "Enable metrics collection",
+    "general": "General",
+    "logLevel": "Log Level",
+    "maxConcurrent": "Max Concurrent Requests",
+    "about": "About"
   }
 }

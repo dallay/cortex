@@ -1,17 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import {
-  CircleDot,
-  Globe,
-  Home,
-  Key,
-  LifeBuoy,
-  ListOrdered,
-  Settings,
-  SlidersHorizontal,
-  Send,
-} from '@lucide/vue'
+import { SlidersHorizontal } from '@lucide/vue'
 
 import NavMain from '@/components/NavMain.vue'
 import NavSecondary from '@/components/NavSecondary.vue'
@@ -24,56 +12,9 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from '@/components/ui/sidebar'
+import { useNavigation } from '@/composables/useNavigation'
 
-const { t } = useI18n()
-
-const data = computed(() => ({
-  navMain: [
-    {
-      title: t('nav.home'),
-      url: '/',
-      icon: Home,
-      isActive: true,
-    },
-    {
-      title: t('nav.apiKeys'),
-      url: '/api-keys',
-      icon: Key,
-      items: [
-        { title: t('nav.apiKeysList'), url: '/api-keys' },
-        { title: t('nav.apiKeysCreate'), url: '/api-keys/new' },
-      ],
-    },
-    {
-      title: t('nav.endpoints'),
-      url: '/endpoints',
-      icon: ListOrdered,
-    },
-    {
-      title: t('nav.providers'),
-      url: '/providers',
-      icon: Globe,
-      items: [
-        { title: t('nav.providersList'), url: '/providers' },
-        { title: t('nav.providersQuotes'), url: '/providers/quotes' },
-      ],
-    },
-    {
-      title: t('nav.combos'),
-      url: '/combos',
-      icon: CircleDot,
-    },
-    {
-      title: t('nav.settings'),
-      url: '/settings',
-      icon: Settings,
-    },
-  ],
-  navSecondary: [
-    { title: 'Support', url: '#', icon: LifeBuoy },
-    { title: 'Feedback', url: '#', icon: Send },
-  ],
-}))
+const { navMain, navSecondary } = useNavigation()
 </script>
 
 <template>
@@ -90,8 +31,8 @@ const data = computed(() => ({
       </div>
     </SidebarHeader>
     <SidebarContent>
-      <NavMain :items="data.navMain" />
-      <NavSecondary :items="data.navSecondary" />
+      <NavMain :items="navMain" />
+      <NavSecondary :items="navSecondary" />
     </SidebarContent>
     <SidebarFooter>
       <div class="flex items-center justify-between gap-2 px-2 py-1">

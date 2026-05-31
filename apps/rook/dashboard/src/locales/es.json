@@ -9,7 +9,10 @@
     "providersList": "Listar",
     "providersQuotes": "Cotizaciones",
     "combos": "Combos",
-    "settings": "Configuración"
+    "settings": "Configuración",
+    "support": "Soporte",
+    "issues": "Issues",
+    "feedback": "Comentarios"
   },
   "sidebar": {
     "platform": "Plataforma"
@@ -40,6 +43,104 @@
     "create": "Crear",
     "search": "Buscar",
     "noResults": "No se encontraron resultados",
-    "logout": "Cerrar sesión"
+    "logout": "Cerrar sesión",
+    "actions": "Acciones"
+  },
+  "home": {
+    "title": "Panel",
+    "subtitle": "Resumen de tu instancia de Rook",
+    "requestsToday": "Solicitudes Hoy",
+    "activeProviders": "Proveedores Activos",
+    "avgLatency": "Latencia Prom.",
+    "apiKeys": "Claves API",
+    "systemStatus": "Estado del Sistema",
+    "providerStatus": "Estado de Proveedores",
+    "viewEndpoints": "Ver Endpoints",
+    "viewEndpointsDescription": "Ver todos los endpoints disponibles",
+    "manageKeys": "Gestionar Claves",
+    "manageKeysDescription": "Crear y gestionar claves API",
+    "viewProviders": "Ver Proveedores",
+    "viewProvidersDescription": "Configurar tus proveedores AI",
+    "recentActivity": "Actividad Reciente",
+    "noProvidersTitle": "Sin proveedores configurados",
+    "noProvidersDescription": "Añade tu primer proveedor para empezar a rutear solicitudes"
+  },
+  "endpoints": {
+    "title": "Endpoints",
+    "description": "Endpoints disponibles para conectar a Rook",
+    "baseUrl": "URL Base",
+    "copyUrl": "Copiar URL",
+    "copied": "¡Copiado!",
+    "categories": {
+      "core": "APIs Core",
+      "media": "Media y Multi-Modal",
+      "utility": "Utilidades"
+    },
+    "chatCompletions": "Chat completions",
+    "responses": "API de respuestas",
+    "completions": "Completions legacy",
+    "messages": "Mensajes Anthropic",
+    "embeddings": "Creación de embeddings",
+    "imagesGenerations": "Generación de imágenes",
+    "audioTranscriptions": "Transcripción Whisper",
+    "audioSpeech": "Texto a voz",
+    "models": "Catálogo de modelos",
+    "files": "API de archivos",
+    "batches": "Procesamiento por lotes"
+  },
+  "apiKeys": {
+    "description": "Gestiona tus claves API para acceder a Rook",
+    "create": "Crear Clave",
+    "createNew": "Crear nueva clave API",
+    "namePlaceholder": "Nombre de la clave",
+    "name": "Nombre",
+    "key": "Clave",
+    "created": "Creada",
+    "lastUsed": "Último Uso",
+    "empty": "Sin claves API",
+    "copyKey": "Copiar clave"
+  },
+  "providers": {
+    "description": "Configura tus proveedores AI y su estado",
+    "add": "Añadir Proveedor",
+    "name": "Nombre",
+    "kind": "Tipo",
+    "status": "Estado",
+    "latency": "Latencia",
+    "priority": "Prioridad",
+    "empty": "Sin proveedores aún",
+    "emptyDescription": "Añade tu primer proveedor para empezar a rutear solicitudes AI",
+    "quotes": {
+      "provider": "Proveedor",
+      "model": "Modelo",
+      "inputCost": "Entrada",
+      "outputCost": "Salida",
+      "updated": "Actualizado"
+    }
+  },
+  "combos": {
+    "description": "Crea cadenas de fallover de proveedores AI",
+    "create": "Crear Combo",
+    "createNew": "Crear nuevo combo",
+    "createFirst": "Crea tu primer combo",
+    "empty": "Sin combos aún",
+    "emptyDescription": "Los combos te permiten encadenar proveedores con fallback automático"
+  },
+  "settings": {
+    "description": "Configura tu instancia de Rook",
+    "api": "Configuración de API",
+    "baseUrl": "URL Base Personalizada",
+    "baseUrlAuto": "Usando URL auto-detectada",
+    "baseUrlCustom": "Usando URL personalizada",
+    "port": "Puerto",
+    "security": "Seguridad",
+    "auditLog": "Registro de Auditoría",
+    "auditLogDescription": "Registrar todas las solicitudes API",
+    "metrics": "Métricas",
+    "metricsDescription": "Habilitar recolección de métricas",
+    "general": "General",
+    "logLevel": "Nivel de Log",
+    "maxConcurrent": "Solicitudes Concurrentes Máx",
+    "about": "Acerca de"
   }
 }
