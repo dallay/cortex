@@ -152,6 +152,31 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  coverage-frontend:
+    name: Coverage (Frontend)
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: pnpm/action-setup@v4.1.0
+      - uses: actions/setup-node@v4.2.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install dashboard dependencies
+        run: pnpm install --filter @dallay/rook-dashboard
+      - name: Run Vitest with coverage
+        working-directory: apps/rook/dashboard
+        run: pnpm exec vitest run --coverage --reporter=json --output-filename=coverage/coverage-final.json
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        with:
+          files: apps/rook/dashboard/coverage/lcov.info
+          fail_ci_if_error: true
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   sonar:
     name: SonarCloud
     runs-on: ubuntu-latest
