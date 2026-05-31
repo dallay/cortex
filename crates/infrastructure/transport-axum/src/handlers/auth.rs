@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 /// POST /login — authenticate admin and create session
 ///
 /// Request body: { "username": "...", "password": "..." }
-/// Success: 200 OK, Set-Cookie: auth_token=<token>, body: { "session_id": "...", "expires_at": "..." }
+/// Success: 200 OK, Set-Cookie: auth_token=\<token\>, body: { "session_id": "...", "expires_at": "..." }
 /// Error: 401 Unauthorized with error details
 /// Rate limited: 429 Too Many Requests with Retry-After header
 pub async fn login_handler(
