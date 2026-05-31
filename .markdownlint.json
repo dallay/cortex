@@ -1,5 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint/main/schema/markdownlint-v1.schema.json",
+  "MD007": false,
   "MD013": false,
   "MD022": false,
   "MD024": false,
@@ -13,5 +14,6 @@
   "MD049": false,
   "MD050": false,
   "MD051": false,
-  "MD053": false
+  "MD053": false,
+  "MD060": false
 }

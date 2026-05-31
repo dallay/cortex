@@ -29,7 +29,7 @@ pre-commit:
       fail-fast: true
 
     markdown:
-      run: npx markdownlint-cli2 "*.md" "docs/**/*.md"
+      run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
       glob: "*.md"
       stage_prepended: true
 
