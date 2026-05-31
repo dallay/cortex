@@ -1,7 +1,7 @@
 {
   "name": "cortex",
   "private": true,
-  "packageManager": "pnpm@11.4.0",
+  "packageManager": "pnpm@11.5.0",
   "scripts": {
     "prepare": "lefthook install",
     "update-deps": "pnpm update -i -r --latest",
@@ -13,6 +13,6 @@
   },
   "devDependencies": {
     "lefthook": "^2.1.9",
-    "markdownlint-cli2": "^0.15.0"
+    "markdownlint-cli2": "^0.22.1"
   }
 }
