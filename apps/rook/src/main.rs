@@ -199,7 +199,7 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                 // Only print full token to interactive TTY; otherwise show preview only
                 if atty::is(atty::Stream::Stderr) {
                     eprintln!(
-                        "rook bootstrap mode: use setup token {token} to set the admin password"
+                        "rook bootstrap mode: use setup token {sanitized} to set the admin password"
                     );
                 } else {
                     eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
