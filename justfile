@@ -2,15 +2,48 @@ set shell := ["/bin/bash", "-c"]
 set dotenv-load := true
 
 # === Colors ===
-GREEN := "\033[0;32m"
-YELLOW := "\033[0;33m"
-RED := "\033[0;31m"
-RESET := "\033[0m"
+# Generated via printf because just 1.51.0 doesn't accept \033 (octal) or \x1b (hex)
+# escape sequences in string variables. Newer just versions handle both.
+GREEN := `printf '\033[0;32m'`
+YELLOW := `printf '\033[0;33m'`
+RED := `printf '\033[0;31m'`
+RESET := `printf '\033[0m'`
 
 # === Dev ===
 
 dev:
     @cd apps/rook && cargo watch -x check -x test -x clippy
+
+# === Dev Container (Docker) ===
+# Run rook in an isolated container to smoke-test without touching the host OS.
+# Wraps dev/run.sh + dev/docker-compose.dev.yml.
+
+dev-build:
+    @./dev/run.sh build
+
+dev-run: dev-build
+    @./dev/run.sh up
+
+dev-up:
+    @./dev/run.sh up
+
+dev-down:
+    @./dev/run.sh down
+
+dev-logs:
+    @./dev/run.sh logs
+
+dev-shell:
+    @./dev/run.sh shell
+
+dev-restart:
+    @./dev/run.sh restart
+
+dev-status:
+    @./dev/run.sh status
+
+dev-clean:
+    @./dev/run.sh clean
 
 # === Lint ===
 
@@ -98,8 +131,38 @@ build-targets:
 
 # === Run ===
 
+# Run the backend (rook) in dev mode
 run:
     cargo run -p rook
+
+# Run the Vue dashboard dev server (requires pnpm install first)
+run-dashboard:
+    cd apps/rook/dashboard && pnpm dev
+
+# Install dashboard npm dependencies (run once after cloning)
+dashboard-install:
+    cd apps/rook/dashboard && pnpm install
+
+# === DB ===
+
+# Reset the SQLite database — removes rook.db, rook.db-wal, rook.db-shm
+# Always delete all three files together; a leftover -wal against a fresh DB
+# causes SQLite error 522 ("file truncated") on the next startup.
+db-reset:
+    @rm -f ~/.local/share/cortex/rook/rook.db{,-wal,-shm}
+    @echo "$(GREEN)Database reset — rook.db, rook.db-wal, rook.db-shm removed$(RESET)"
+
+# Kill any process occupying port 8080 (stale rook instance)
+kill-backend:
+    @lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "$(GREEN)Killed process on :8080$(RESET)" || echo "$(YELLOW)Nothing running on :8080$(RESET)"
+
+# One-shot first-time setup: install dashboard deps + verify Rust toolchain
+setup:
+    @echo "$(YELLOW)Installing dashboard dependencies...$(RESET)"
+    cd apps/rook/dashboard && pnpm install
+    @echo "$(YELLOW)Verifying Rust toolchain...$(RESET)"
+    rustup show
+    @echo "$(GREEN)Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another$(RESET)"
 
 # === Quality ===
 
@@ -202,8 +265,26 @@ help:
     @echo "  just build-targets - Cross-compile for all platforms"
     @echo ""
     @echo "Dev:"
-    @echo "  just dev          - Watch mode with check+test+clippy"
-    @echo "  just run          - Run rook"
+    @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
+    @echo "  just dev             - Watch mode with check+test+clippy"
+    @echo "  just run             - Run rook backend"
+    @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:5173)"
+    @echo "  just dashboard-install - Install dashboard npm dependencies"
+    @echo ""
+    @echo "DB:"
+    @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"
+    @echo "  just kill-backend    - Kill stale process on port 8080"
+    @echo ""
+    @echo "Dev Container (Docker — no host pollution):"
+    @echo "  just dev-run      - Build image + start container (waits for /health)"
+    @echo "  just dev-up       - Start container (builds image if missing)"
+    @echo "  just dev-build    - Build the rook:dev image only"
+    @echo "  just dev-down     - Stop and remove container"
+    @echo "  just dev-logs     - Tail container logs"
+    @echo "  just dev-shell    - Shell into the running container"
+    @echo "  just dev-restart  - Restart the container"
+    @echo "  just dev-status   - Container + /health status"
+    @echo "  just dev-clean    - Remove image and container"
     @echo ""
     @echo "Doc:"
     @echo "  just doc          - Generate docs"
