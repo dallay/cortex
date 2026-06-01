@@ -139,12 +139,24 @@ Playwright tests require both the backend and frontend to be running. The global
 setup handles authentication automatically.
 
 ```bash
-# Run all E2E tests (Chromium + Firefox + WebKit)
+# Run all E2E tests against a local backend (Chromium + Firefox + WebKit)
 cd apps/rook/dashboard && pnpm test:e2e
-
-# Or via just
-just test-e2e
 ```
+
+**Isolated mode (Docker — recommended, no host DB pollution):**
+
+```bash
+# Build image + start container + run Playwright + cleanup in one shot
+just test-e2e
+
+# Start container only, then run tests manually
+just test-e2e-dev
+cd apps/rook/dashboard && pnpm playwright test e2e/api-keys.spec.ts
+just test-e2e-cleanup
+```
+
+See [`dev/README.md`](dev/README.md) for the full breakdown of all Docker testing
+paths (smoke test, Playwright E2E, multi-distro validation).
 
 ## Project Structure
 
