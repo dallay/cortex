@@ -119,7 +119,8 @@ impl RouteRequest {
         req: CompletionRequest,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
-        self.execute_stream_with_format(req, ApiFormat::OpenAI).await
+        self.execute_stream_with_format(req, ApiFormat::OpenAI)
+            .await
     }
 
     pub async fn execute_stream_with_format(

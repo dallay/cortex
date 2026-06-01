@@ -174,13 +174,22 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
         match setup_token {
             Some(token) => {
                 // Sanitize: replace control/non-printable chars to prevent log injection
-                let sanitized: String = token.chars().map(|c| {
-                    if c.is_ascii_control() || c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' {
-                        '?'
-                    } else {
-                        c
-                    }
-                }).collect();
+                let sanitized: String = token
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_control()
+                            || c == '"'
+                            || c == '\\'
+                            || c == '\n'
+                            || c == '\r'
+                            || c == '\t'
+                        {
+                            '?'
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
                 let preview = if sanitized.len() > 8 {
                     format!("{}…", &sanitized[..8])
                 } else {
@@ -189,7 +198,9 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                 tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
                 // Only print full token to interactive TTY; otherwise show preview only
                 if atty::is(atty::Stream::Stderr) {
-                    eprintln!("rook bootstrap mode: use setup token {token} to set the admin password");
+                    eprintln!(
+                        "rook bootstrap mode: use setup token {sanitized} to set the admin password"
+                    );
                 } else {
                     eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
                 }

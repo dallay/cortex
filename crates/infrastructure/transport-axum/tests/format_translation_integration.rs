@@ -202,7 +202,6 @@ fn anthropic_response_has_correct_structure() {
     assert_eq!(json["usage"]["output_tokens"], 5);
 }
 
-
 // ---------------------------------------------------------------------------
 // Registry-routed multi-format use case integration
 // ---------------------------------------------------------------------------
@@ -210,8 +209,8 @@ fn anthropic_response_has_correct_structure() {
 use async_trait::async_trait;
 use futures::stream;
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CacheKey, CachePort, CompletionRequest,
-    FormatTranslatorPort, HealthStatus, ProviderPort, RequestMetadata, RouterPort, StreamChunk,
+    ApiFormat, AuditEntry, AuditPort, CacheKey, CachePort, CompletionRequest, FormatTranslatorPort,
+    HealthStatus, ProviderPort, RequestMetadata, RouterPort, StreamChunk,
 };
 use rook_usecases::RouteRequest;
 use std::{sync::Arc, time::Duration};
@@ -248,7 +247,10 @@ impl ProviderPort for RegistryTestProvider {
         }
     }
 
-    async fn complete(&self, req: &CompletionRequest) -> shared_kernel::CortexResult<CompletionResponse> {
+    async fn complete(
+        &self,
+        req: &CompletionRequest,
+    ) -> shared_kernel::CortexResult<CompletionResponse> {
         Ok(CompletionResponse {
             id: req.id.clone(),
             provider: self.id.clone(),
@@ -267,7 +269,9 @@ impl ProviderPort for RegistryTestProvider {
     async fn stream(
         &self,
         _req: &CompletionRequest,
-    ) -> shared_kernel::CortexResult<futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>> {
+    ) -> shared_kernel::CortexResult<
+        futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>,
+    > {
         Ok(Box::pin(stream::empty()))
     }
 }
@@ -278,7 +282,10 @@ struct RegistryTestRouter {
 
 #[async_trait]
 impl RouterPort for RegistryTestRouter {
-    async fn select(&self, _req: &CompletionRequest) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
+    async fn select(
+        &self,
+        _req: &CompletionRequest,
+    ) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
         Ok(self.provider.clone())
     }
 
@@ -293,7 +300,10 @@ struct NoopCache;
 
 #[async_trait]
 impl CachePort for NoopCache {
-    async fn get(&self, _key: &CacheKey) -> shared_kernel::CortexResult<Option<CompletionResponse>> {
+    async fn get(
+        &self,
+        _key: &CacheKey,
+    ) -> shared_kernel::CortexResult<Option<CompletionResponse>> {
         Ok(None)
     }
 

@@ -120,23 +120,16 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-      - name: Create reports directory
-        run: mkdir -p reports/trivy
-
-      - name: Install Trivy CLI
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
-            sh -s -- -b /usr/local/bin v0.65.0
-          trivy --version
-
       - name: Run full Trivy filesystem, dependency, and IaC scan
-        run: |
-          # --exit-code 0: reporting-only scan; do NOT fail the step on vulnerabilities
-          trivy fs . \
-            --scanners vuln,misconfig \
-            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-            --format sarif \
-            --output reports/trivy/trivy-full.sarif
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: sarif
+          output: reports/trivy/trivy-full.sarif
+          exit-code: '0'
       - name: Verify SARIF file exists
         id: verify-sarif
         run: |

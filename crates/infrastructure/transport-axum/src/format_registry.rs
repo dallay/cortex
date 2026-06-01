@@ -167,9 +167,7 @@ impl FormatTranslatorPort for FormatRegistry {
 }
 
 fn missing_translator(kind: &str, from: ApiFormat, to: ApiFormat) -> CortexError {
-    CortexError::invalid_request(format!(
-        "missing {kind} translator for {from:?} -> {to:?}"
-    ))
+    CortexError::invalid_request(format!("missing {kind} translator for {from:?} -> {to:?}"))
 }
 
 // ---------------------------------------------------------------------------
