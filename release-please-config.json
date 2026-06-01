@@ -54,6 +54,11 @@
           "type": "json",
           "path": "apps/rook/npm/rook/package.json",
           "jsonpath": "$.optionalDependencies['@dallay/rook-windows-arm64']"
+        },
+        {
+          "type": "json",
+          "path": "apps/rook/dashboard/package.json",
+          "jsonpath": "$.version"
         }
       ]
     }
