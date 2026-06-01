@@ -173,10 +173,26 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
     if !state.is_initialized {
         match setup_token {
             Some(token) => {
-                // Log only a prefix to avoid log injection attacks
-                let token_preview = token.chars().take(8).collect::<String>();
-                tracing::warn!(setup_token_prefix = %token_preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
-                eprintln!("rook bootstrap mode: use setup token {token} to set the admin password");
+                // Sanitize: replace control/non-printable chars to prevent log injection
+                let sanitized: String = token.chars().map(|c| {
+                    if c.is_ascii_control() || c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' {
+                        '?'
+                    } else {
+                        c
+                    }
+                }).collect();
+                let preview = if sanitized.len() > 8 {
+                    format!("{}…", &sanitized[..8])
+                } else {
+                    sanitized.clone()
+                };
+                tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
+                // Only print full token to interactive TTY; otherwise show preview only
+                if atty::is(atty::Stream::Stderr) {
+                    eprintln!("rook bootstrap mode: use setup token {token} to set the admin password");
+                } else {
+                    eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
+                }
             }
             None => {
                 tracing::warn!("rook is in bootstrap mode; run `rook admin bootstrap` or set ROOK_SETUP_TOKEN and POST /api/bootstrap/setup");

@@ -1994,9 +1994,9 @@ mod tests {
                     priority: 1,
                     is_active: true,
                     auth_type: AuthType::OAuth,
-                    // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token
                     credentials: Credentials::OAuth {
                         email: EncryptedBlob("enc:v1:user@example.com".to_string()),
+                        // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token
                         access_token: EncryptedBlob("enc:v1:fake-google-token-data".to_string()),
                         refresh_token: EncryptedBlob("enc:v1:refresh".to_string()),
                         expires_at: expired_at,
