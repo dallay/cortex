@@ -26,9 +26,18 @@ fn main() {
             std::process::exit(1);
         }
     } else {
-        eprintln!(
-            "warning: dashboard/node_modules/.bin/vite not found, skipping dashboard build"
+        let profile = std::env::var("PROFILE").unwrap_or_default();
+        if profile == "release" {
+            eprintln!(
+                "error: dashboard/node_modules/.bin/vite not found in release mode"
+            );
+            eprintln!("hint: run `pnpm install` in the repo root before building release"
+            );
+            std::process::exit(1);
+        }
+        println!(
+            "cargo:warning=dashboard/node_modules/.bin/vite not found, skipping dashboard build"
         );
-        eprintln!("hint: run `pnpm install` in the repo root to enable dashboard embedding");
+        println!("cargo:warning=hint: run `pnpm install` in the repo root to enable dashboard embedding");
     }
 }

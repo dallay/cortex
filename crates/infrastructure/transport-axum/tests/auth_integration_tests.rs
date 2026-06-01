@@ -20,14 +20,14 @@
 //
 // The CodeQL rule `rust/hard-coded-cryptographic-value` flags these because
 // the static analyzer cannot distinguish between real credentials and test
-// fixtures. Adding `#[allow(unused)]` and a clarifying comment suppresses the
-// noise while keeping the test data explicit.
+// fixtures. The constants below are intentionally named and placed here as
+// explicit test data. Do not move, obfuscate, or make these dynamic.
 // =============================================================================
-#[allow(unused)]
+// codeql[rust/hard-coded-cryptographic-value] Test fixture only
 const TEST_FIXTURE_PASSWORD: &str = "correct-password";
-#[allow(unused)]
+// codeql[rust/hard-coded-cryptographic-value] Test fixture only
 const TEST_FIXTURE_PASSWORD_WRONG: &str = "wrong-password";
-#[allow(unused)]
+// codeql[rust/hard-coded-cryptographic-value] Test fixture only
 const TEST_FIXTURE_PASSWORD_ANY: &str = "any-password";
 
 use std::sync::Arc;
@@ -580,7 +580,7 @@ mod login_rate_limiter_tests {
 
 // Test fixture: secure password used in hashing roundtrip tests.
 // This is NOT a production credential — it's arbitrary test data.
-#[allow(unused)]
+// codeql[rust/hard-coded-cryptographic-value] Test fixture only
 const TEST_FIXTURE_SECURE_PASSWORD: &str = "SecurePass123!";
 
 #[cfg(test)]
