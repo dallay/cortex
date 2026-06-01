@@ -21,7 +21,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': {
+      '/api/': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
@@ -32,6 +32,16 @@ export default defineConfig({
       '/login': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        bypass(req) {
+          // Browser navigation sends Accept: text/html — serve the SPA so
+          // Vue Router handles the /login route. XHR/fetch calls (CSRF token
+          // retrieval) send Accept: */* and must reach the backend.
+          const accept = req.headers['accept'] ?? ''
+          if (req.method === 'GET' && accept.includes('text/html')) {
+            return '/index.html'
+          }
+          return null
+        },
       },
       '/logout': {
         target: 'http://localhost:8080',

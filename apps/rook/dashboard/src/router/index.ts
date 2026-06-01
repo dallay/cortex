@@ -59,15 +59,18 @@ const routes: RouteRecordRaw[] = [
 ]
 
 export function getAuthRedirect(
-  to: Pick<RouteLocationNormalized, 'name' | 'meta'>,
+  to: Pick<RouteLocationNormalized, 'name' | 'meta' | 'matched'>,
   isAuthenticated: boolean,
   bootstrapRequired: boolean,
 ): true | { name: string } {
-  if (to.meta.requiresAuth && !isAuthenticated) {
+  const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
+  const guestOnly = to.matched.some(r => r.meta.guestOnly)
+
+  if (requiresAuth && !isAuthenticated) {
     return { name: 'Login' }
   }
 
-  if (to.meta.guestOnly && isAuthenticated && !bootstrapRequired) {
+  if (guestOnly && isAuthenticated && !bootstrapRequired) {
     return { name: 'Home' }
   }
 
@@ -82,7 +85,7 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  if (!auth.bootstrapRequired) {
+  if (!auth.initialized) {
     await auth.loadBootstrapStatus().catch(() => undefined)
   }
 

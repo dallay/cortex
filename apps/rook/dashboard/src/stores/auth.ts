@@ -13,6 +13,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  const initialized = ref(false)
   const bootstrapRequired = ref(false)
   const setupToken = ref<string | null>(null)
   const initialApiKey = ref<string | null>(null)
@@ -40,6 +41,7 @@ export const useAuthStore = defineStore('auth', () => {
       const status = await api.getBootstrapStatus()
       bootstrapRequired.value = !status.isInitialized
       setupToken.value = status.setupToken
+      initialized.value = true
     } catch (value) {
       error.value = toErrorMessage(value)
       throw value
@@ -105,6 +107,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     isLoading,
     error,
+    initialized,
     bootstrapRequired,
     setupToken,
     initialApiKey,

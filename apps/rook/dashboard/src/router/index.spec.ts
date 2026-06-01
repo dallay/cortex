@@ -14,9 +14,13 @@ describe('auth router guard', () => {
     const { getAuthRedirect } = await import('./index')
 
     const result = getAuthRedirect({
-      name: 'Home',
-      meta: { requiresAuth: true },
-    } as RouteLocationNormalizedLoaded, false, false)
+      name: 'API Keys',
+      meta: {},
+      matched: [
+        { meta: { requiresAuth: true } },
+        { meta: {} },
+      ],
+    } as unknown as RouteLocationNormalizedLoaded, false, false)
 
     expect(result).toEqual({ name: 'Login' })
   })
@@ -27,7 +31,8 @@ describe('auth router guard', () => {
     const result: GuardResult = getAuthRedirect({
       name: 'Login',
       meta: { guestOnly: true },
-    } as RouteLocationNormalizedLoaded, true, false)
+      matched: [{ meta: { guestOnly: true } }],
+    } as unknown as RouteLocationNormalizedLoaded, true, false)
 
     expect(result).toEqual({ name: 'Home' })
   })
@@ -38,7 +43,8 @@ describe('auth router guard', () => {
     const result = getAuthRedirect({
       name: 'Login',
       meta: { guestOnly: true },
-    } as RouteLocationNormalizedLoaded, false, true)
+      matched: [{ meta: { guestOnly: true } }],
+    } as unknown as RouteLocationNormalizedLoaded, false, true)
 
     expect(result).toBe(true)
   })

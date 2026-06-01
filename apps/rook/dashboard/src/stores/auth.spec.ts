@@ -31,6 +31,7 @@ describe('auth store', () => {
     await store.loadBootstrapStatus()
 
     expect(store.bootstrapRequired).toBe(true)
+    expect(store.initialized).toBe(true)
     expect(store.setupToken).toBe('setup-token')
     expect(store.isAuthenticated).toBe(false)
   })
