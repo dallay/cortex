@@ -84,7 +84,7 @@ async fn complete_returns_response_on_success() {
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
             role: Role::User,
-            content: "Hi".to_string(),
+            content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
         stream: false,
         max_tokens: Some(100),
@@ -131,7 +131,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
             role: Role::User,
-            content: "Hi".to_string(),
+            content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
         stream: true,
         max_tokens: Some(100),

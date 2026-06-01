@@ -325,7 +325,7 @@ mod tests {
             model: TEST_MODEL.clone(),
             messages: vec![Message {
                 role: Role::User,
-                content: "hello".to_string(),
+                content: "hello".into(),
             }],
             stream: true,
             max_tokens: None,

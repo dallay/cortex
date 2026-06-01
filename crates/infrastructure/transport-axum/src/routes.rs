@@ -289,22 +289,7 @@ async fn anthropic_messages(
 
     match usecases.route_request.execute(req).await {
         Ok(resp) => {
-            let anthropic_resp = AnthropicMessagesResponse {
-                id: format!("rook-{}", resp.id),
-                type_: "message".to_string(),
-                role: "assistant".to_string(),
-                content: vec![AnthropicContentBlock {
-                    block_type: "text".to_string(),
-                    text: resp.content.clone(),
-                }],
-                model: resp.model.to_string(),
-                stop_reason: "end_turn".to_string(),
-                stop_sequence: None,
-                usage: AnthropicUsage {
-                    input_tokens: resp.usage.prompt_tokens,
-                    output_tokens: resp.usage.completion_tokens,
-                },
-            };
+            let anthropic_resp = AnthropicMessagesResponse::from(&resp);
             Ok(Json(anthropic_resp).into_response())
         }
         Err(e) if e.is_all_providers_exhausted() => {

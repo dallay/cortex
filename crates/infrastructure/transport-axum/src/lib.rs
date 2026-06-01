@@ -6,6 +6,7 @@
 pub mod anthropic_adapter;
 pub mod api_key_dto;
 pub mod authz;
+pub mod format_registry;
 pub mod handlers;
 pub mod middleware;
 pub mod openai_adapter;
