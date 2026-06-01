@@ -10,6 +10,15 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  test: {
+    environment: 'jsdom',
+    // transform these packages so vitest can handle their ESM exports
+    server: {
+      deps: {
+        inline: ['class-variance-authority', 'clsx', 'tailwind-merge', 'reka-ui'],
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {

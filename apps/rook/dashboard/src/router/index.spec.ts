@@ -1,0 +1,45 @@
+import { createPinia, setActivePinia } from 'pinia'
+import type { RouteLocationNormalizedLoaded } from 'vue-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+type GuardResult = boolean | string | { name: string }
+
+describe('auth router guard', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.resetModules()
+  })
+
+  it('redirects protected routes to login when the session is missing', async () => {
+    const { getAuthRedirect } = await import('./index')
+
+    const result = getAuthRedirect({
+      name: 'Home',
+      meta: { requiresAuth: true },
+    } as RouteLocationNormalizedLoaded, false, false)
+
+    expect(result).toEqual({ name: 'Login' })
+  })
+
+  it('redirects initialized login visits back home when already authenticated', async () => {
+    const { getAuthRedirect } = await import('./index')
+
+    const result: GuardResult = getAuthRedirect({
+      name: 'Login',
+      meta: { guestOnly: true },
+    } as RouteLocationNormalizedLoaded, true, false)
+
+    expect(result).toEqual({ name: 'Home' })
+  })
+
+  it('keeps unauthenticated users on login while bootstrap setup is required', async () => {
+    const { getAuthRedirect } = await import('./index')
+
+    const result = getAuthRedirect({
+      name: 'Login',
+      meta: { guestOnly: true },
+    } as RouteLocationNormalizedLoaded, false, true)
+
+    expect(result).toBe(true)
+  })
+})

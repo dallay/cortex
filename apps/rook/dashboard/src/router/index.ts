@@ -1,10 +1,18 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import type { RouteRecordRaw } from 'vue-router'
+import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/LoginView.vue'),
+    meta: { guestOnly: true },
+  },
+  {
     path: '/',
     component: () => import('../views/sidebar/index.vue'),
+    meta: { requiresAuth: true },
     children: [
       {
         path: '',
@@ -50,9 +58,35 @@ const routes: RouteRecordRaw[] = [
   },
 ]
 
+export function getAuthRedirect(
+  to: Pick<RouteLocationNormalized, 'name' | 'meta'>,
+  isAuthenticated: boolean,
+  bootstrapRequired: boolean,
+): true | { name: string } {
+  if (to.meta.requiresAuth && !isAuthenticated) {
+    return { name: 'Login' }
+  }
+
+  if (to.meta.guestOnly && isAuthenticated && !bootstrapRequired) {
+    return { name: 'Home' }
+  }
+
+  return true
+}
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+})
+
+router.beforeEach(async (to) => {
+  const auth = useAuthStore()
+
+  if (!auth.bootstrapRequired) {
+    await auth.loadBootstrapStatus().catch(() => undefined)
+  }
+
+  return getAuthRedirect(to, auth.isAuthenticated, auth.bootstrapRequired)
 })
 
 export default router

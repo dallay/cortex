@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { LogOut, Settings, User } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,13 +16,19 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
 const { isMobile } = useSidebar()
+const auth = useAuthStore()
+const router = useRouter()
 
-const user = {
-  name: 'Rook Admin',
-  email: 'admin@rook.local',
+const displayName = auth.currentUser?.displayName ?? 'Rook Admin'
+const email = auth.currentUser?.email ?? 'admin@rook.local'
+
+async function handleLogout() {
+  await auth.logout()
+  await router.push({ name: 'Login' })
 }
 </script>
 
@@ -38,8 +45,8 @@ const user = {
               <User class="size-4" />
             </div>
             <div class="grid flex-1 text-left text-sm leading-tight">
-              <span class="truncate font-medium">{{ user.name }}</span>
-              <span class="truncate text-xs text-muted-foreground">{{ user.email }}</span>
+              <span class="truncate font-medium">{{ displayName }}</span>
+              <span class="truncate text-xs text-muted-foreground">{{ email }}</span>
             </div>
           </SidebarMenuButton>
         </DropdownMenuTrigger>
@@ -56,9 +63,9 @@ const user = {
             <span>{{ t('nav.settings') }}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>
+          <DropdownMenuItem @click="handleLogout">
             <LogOut class="text-muted-foreground" />
-            <span>{{ t('common.logout') || 'Logout' }}</span>
+            <span>{{ t('auth.logout') }}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
