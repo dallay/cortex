@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
-    CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId, ProviderPort,
-    RequestId, StreamChunk, TokenUsage,
+    ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
+    ProviderPort, StreamChunk, TokenUsage,
 };
-use shared_kernel::{CortexError, CortexResult, ProviderId};
+
+use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 
 /// Truncate a string to at most `max` chars, safe across UTF-8 multi-byte boundaries.
@@ -184,6 +185,10 @@ impl ProviderPort for OpenAIProvider {
 
     fn supported_models(&self) -> &[ModelId] {
         &self.config.models
+    }
+
+    fn api_format(&self) -> ApiFormat {
+        ApiFormat::OpenAI
     }
 
     fn is_available(&self) -> bool {

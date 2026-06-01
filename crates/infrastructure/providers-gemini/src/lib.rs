@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 use reqwest::Client;
-use rook_core::{CompletionRequest, CompletionResponse, HealthStatus, ProviderPort, StreamChunk};
+use rook_core::{
+    ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ProviderPort, StreamChunk,
+};
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
@@ -36,6 +38,9 @@ impl ProviderPort for GeminiProvider {
     }
     fn supported_models(&self) -> &[KModelId] {
         &self.config.models
+    }
+    fn api_format(&self) -> ApiFormat {
+        ApiFormat::OpenAI
     }
     fn is_available(&self) -> bool {
         !self.config.api_key.is_empty()

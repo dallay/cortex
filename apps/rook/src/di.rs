@@ -152,9 +152,27 @@ impl RookContainer {
             admin_result.map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
         tracing::info!(admin_id = %admin.id, "admin user ready");
 
-        // 9. Use cases
+        // 9. Format registry and use cases
+        let mut format_registry = transport_axum::format_registry::FormatRegistry::new();
+        format_registry.register(
+            rook_core::ApiFormat::OpenAI,
+            rook_core::ApiFormat::Anthropic,
+            transport_axum::format_registry::DomainPivotTranslator,
+        );
+        format_registry.register(
+            rook_core::ApiFormat::Anthropic,
+            rook_core::ApiFormat::OpenAI,
+            transport_axum::format_registry::DomainPivotTranslator,
+        );
+        let format_registry = Arc::new(format_registry);
+
         let usecases = Arc::new(RookUsecases {
-            route_request: RouteRequest::new(router.clone(), cache.clone(), audit.clone()),
+            route_request: RouteRequest::new(
+                router.clone(),
+                cache.clone(),
+                audit.clone(),
+                format_registry.clone(),
+            ),
             manage_providers: ManageProviders::new(router.clone()),
             health_check: HealthCheck::new(registry),
             authenticate_client_api: authenticate_client_api.clone(),
@@ -180,7 +198,7 @@ impl RookContainer {
             login_rate_limiter: Arc::new(transport_axum::LoginRateLimiter::new()),
             api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::new()),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
-            format_registry: Arc::new(transport_axum::format_registry::FormatRegistry::new()),
+            format_registry,
         })
     }
 }

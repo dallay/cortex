@@ -201,3 +201,203 @@ fn anthropic_response_has_correct_structure() {
     assert_eq!(json["usage"]["input_tokens"], 10);
     assert_eq!(json["usage"]["output_tokens"], 5);
 }
+
+
+// ---------------------------------------------------------------------------
+// Registry-routed multi-format use case integration
+// ---------------------------------------------------------------------------
+
+use async_trait::async_trait;
+use futures::stream;
+use rook_core::{
+    ApiFormat, AuditEntry, AuditPort, CacheKey, CachePort, CompletionRequest,
+    FormatTranslatorPort, HealthStatus, ProviderPort, RequestMetadata, RouterPort, StreamChunk,
+};
+use rook_usecases::RouteRequest;
+use std::{sync::Arc, time::Duration};
+use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
+
+struct RegistryTestProvider {
+    id: ProviderId,
+    format: ApiFormat,
+    content: &'static str,
+}
+
+#[async_trait]
+impl ProviderPort for RegistryTestProvider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    fn supported_models(&self) -> &[ModelId] {
+        std::slice::from_ref(&REGISTRY_TEST_MODEL)
+    }
+
+    fn api_format(&self) -> ApiFormat {
+        self.format
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        HealthStatus::Healthy {
+            provider: self.id.clone(),
+            latency_ms: 1,
+        }
+    }
+
+    async fn complete(&self, req: &CompletionRequest) -> shared_kernel::CortexResult<CompletionResponse> {
+        Ok(CompletionResponse {
+            id: req.id.clone(),
+            provider: self.id.clone(),
+            model: req.model.clone(),
+            content: self.content.to_string(),
+            usage: TokenUsage {
+                prompt_tokens: 3,
+                completion_tokens: 5,
+                total_tokens: 8,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 7,
+        })
+    }
+
+    async fn stream(
+        &self,
+        _req: &CompletionRequest,
+    ) -> shared_kernel::CortexResult<futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>> {
+        Ok(Box::pin(stream::empty()))
+    }
+}
+
+struct RegistryTestRouter {
+    provider: Arc<dyn ProviderPort>,
+}
+
+#[async_trait]
+impl RouterPort for RegistryTestRouter {
+    async fn select(&self, _req: &CompletionRequest) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
+        Ok(self.provider.clone())
+    }
+
+    async fn on_failure(&self, _provider: &ProviderId, _error: &shared_kernel::CortexError) {}
+
+    fn providers(&self) -> Vec<ProviderId> {
+        vec![self.provider.id().clone()]
+    }
+}
+
+struct NoopCache;
+
+#[async_trait]
+impl CachePort for NoopCache {
+    async fn get(&self, _key: &CacheKey) -> shared_kernel::CortexResult<Option<CompletionResponse>> {
+        Ok(None)
+    }
+
+    async fn set(
+        &self,
+        _key: &CacheKey,
+        _value: &CompletionResponse,
+        _ttl: Duration,
+    ) -> shared_kernel::CortexResult<()> {
+        Ok(())
+    }
+
+    async fn delete(&self, _key: &CacheKey) -> shared_kernel::CortexResult<()> {
+        Ok(())
+    }
+
+    async fn clear(&self) -> shared_kernel::CortexResult<()> {
+        Ok(())
+    }
+}
+
+struct NoopAudit;
+
+#[async_trait]
+impl AuditPort for NoopAudit {
+    async fn record(&self, _entry: AuditEntry) -> shared_kernel::CortexResult<()> {
+        Ok(())
+    }
+}
+
+static REGISTRY_TEST_MODEL: std::sync::LazyLock<ModelId> =
+    std::sync::LazyLock::new(|| ModelId::new("registry-test-model"));
+
+fn registry_with_openai_anthropic_pairs() -> Arc<dyn FormatTranslatorPort> {
+    let mut registry = FormatRegistry::new();
+    registry.register(
+        ApiFormat::OpenAI,
+        ApiFormat::Anthropic,
+        DomainPivotTranslator,
+    );
+    registry.register(
+        ApiFormat::Anthropic,
+        ApiFormat::OpenAI,
+        DomainPivotTranslator,
+    );
+    Arc::new(registry)
+}
+
+fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> RouteRequest {
+    let provider: Arc<dyn ProviderPort> = Arc::new(RegistryTestProvider {
+        id: ProviderId::new(format!("{provider_format:?}-provider")),
+        format: provider_format,
+        content,
+    });
+
+    RouteRequest::new(
+        Arc::new(RegistryTestRouter { provider }),
+        Arc::new(NoopCache),
+        Arc::new(NoopAudit),
+        registry_with_openai_anthropic_pairs(),
+    )
+}
+
+fn registry_domain_request() -> CompletionRequest {
+    CompletionRequest {
+        id: RequestId::new(),
+        model: REGISTRY_TEST_MODEL.clone(),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: MessageContent::Text("hello through registry".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(128),
+        temperature: Some(0.2),
+        metadata: RequestMetadata {
+            origin: "registry-test".to_string(),
+            cacheable: false,
+            priority: 1,
+        },
+    }
+}
+
+#[tokio::test]
+async fn anthropic_client_routes_to_openai_provider_via_registry() {
+    let usecase = registry_route_request(ApiFormat::OpenAI, "openai provider response");
+
+    let response = usecase
+        .execute_with_format(registry_domain_request(), ApiFormat::Anthropic)
+        .await
+        .expect("registry should route Anthropic client request to OpenAI provider");
+
+    assert_eq!(response.provider.as_str(), "OpenAI-provider");
+    assert_eq!(response.content, "openai provider response");
+}
+
+#[tokio::test]
+async fn openai_client_routes_to_anthropic_provider_via_registry() {
+    let usecase = registry_route_request(ApiFormat::Anthropic, "anthropic provider response");
+
+    let response = usecase
+        .execute_with_format(registry_domain_request(), ApiFormat::OpenAI)
+        .await
+        .expect("registry should route OpenAI client request to Anthropic provider");
+
+    assert_eq!(response.provider.as_str(), "Anthropic-provider");
+    assert_eq!(response.content, "anthropic provider response");
+}

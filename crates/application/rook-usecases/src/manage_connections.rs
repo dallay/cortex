@@ -555,8 +555,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rook_core::{
-        BoxStream, CompletionRequest, CompletionResponse, CortexResult, ModelId, ProviderPort,
-        RegistryError, StreamChunk,
+        ApiFormat, BoxStream, CompletionRequest, CompletionResponse, CortexResult, ModelId,
+        ProviderPort, RegistryError, StreamChunk,
     };
 
     struct NoopRepository;
@@ -1566,6 +1566,10 @@ mod tests {
 
         fn supported_models(&self) -> &[ModelId] {
             &[]
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
         }
 
         fn is_available(&self) -> bool {
