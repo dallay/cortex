@@ -1,0 +1,12 @@
+# Semgrep ignore
+
+# Build outputs
+apps/rook/dashboard/dist/
+
+# Playwright
+.playwright-mcp/
+
+# Test files (skipped by default but being explicit)
+**/*.spec.ts
+**/*.spec.tsx
+**/tests/**

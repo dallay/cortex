@@ -41,6 +41,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libssl3 \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
@@ -53,6 +54,9 @@ COPY dev/test-configs/rook-minimal.toml /app/rook.toml
 
 # Expose default port
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Set config path via env var
 ENV ROOK_CONFIG=/app/rook.toml

@@ -906,7 +906,7 @@ mod tests {
                         is_active: true,
                         credentials: CredentialsInput::OAuth {
                             email: "user@example.com".to_string(),
-                            // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token
+                            // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token, generic_secret
                             access_token: "fake_google_access_token_data".to_string(),
                             refresh_token: "1//refresh_token".to_string(),
                             expires_at: Utc::now().timestamp() + 3600,
