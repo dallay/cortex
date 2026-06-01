@@ -82,6 +82,7 @@ mod tests {
             provider: ProviderId::new("test-provider"),
             model: ModelId::new("test-model"),
             content: content.into(),
+            content_blocks: vec![rook_core::MessageContent::Text(content.to_string())],
             usage: TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 20,

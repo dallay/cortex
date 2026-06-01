@@ -109,6 +109,10 @@ struct OpenAIRequest {
     stream: bool,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -241,6 +245,8 @@ impl ProviderPort for OpenAIProvider {
             stream: false,
             max_tokens: req.max_tokens,
             temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
         };
 
         let start = std::time::Instant::now();
@@ -272,6 +278,9 @@ impl ProviderPort for OpenAIProvider {
             provider: self.config.id.clone(),
             model: ModelId::new(openai_resp.model),
             content: choice.message.content.clone(),
+            content_blocks: vec![rook_core::MessageContent::Text(
+                choice.message.content.clone(),
+            )],
             usage: TokenUsage {
                 prompt_tokens: openai_resp.usage.prompt_tokens,
                 completion_tokens: openai_resp.usage.completion_tokens,
@@ -305,6 +314,8 @@ impl ProviderPort for OpenAIProvider {
             stream: true,
             max_tokens: req.max_tokens,
             temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
         };
 
         let resp = self

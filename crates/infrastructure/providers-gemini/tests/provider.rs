@@ -60,6 +60,8 @@ async fn complete_returns_error_not_implemented() {
         stream: false,
         max_tokens: Some(100),
         temperature: None,
+        tools: None,
+        tool_choice: None,
         metadata: rook_core::RequestMetadata {
             origin: "test".to_string(),
             cacheable: true,

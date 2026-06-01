@@ -23,7 +23,73 @@ pub struct AnthropicMessagesRequest {
 #[serde(rename_all = "snake_case")]
 pub struct AnthropicMessage {
     pub role: String,
-    pub content: String,
+    pub content: AnthropicMessageContent,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AnthropicMessageContent {
+    Text(String),
+    Blocks(Vec<AnthropicWireContentBlock>),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicWireContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        #[serde(default)]
+        content: Vec<AnthropicWireContentBlock>,
+    },
+}
+
+impl AnthropicMessage {
+    fn into_domain_message(self) -> Message {
+        Message {
+            role: match self.role.as_str() {
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                _ => Role::User,
+            },
+            content: match self.content {
+                AnthropicMessageContent::Text(text) => MessageContent::Text(text),
+                AnthropicMessageContent::Blocks(blocks) => blocks
+                    .into_iter()
+                    .filter_map(anthropic_block_to_domain)
+                    .next()
+                    .unwrap_or_else(|| MessageContent::Text(String::new())),
+            },
+        }
+    }
+}
+
+fn anthropic_block_to_domain(block: AnthropicWireContentBlock) -> Option<MessageContent> {
+    match block {
+        AnthropicWireContentBlock::Text { text } => Some(MessageContent::Text(text)),
+        AnthropicWireContentBlock::ToolUse { id, name, input } => {
+            Some(MessageContent::ToolUse { id, name, input })
+        }
+        AnthropicWireContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } => Some(MessageContent::ToolResult {
+            tool_use_id,
+            content: content
+                .into_iter()
+                .filter_map(anthropic_block_to_domain)
+                .filter(|content| !matches!(content, MessageContent::Text(text) if text.is_empty()))
+                .collect(),
+        }),
+    }
 }
 
 impl From<AnthropicMessagesRequest> for CompletionRequest {
@@ -38,15 +104,11 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
             })
             .collect();
 
-        messages.extend(req.messages.into_iter().map(|m| Message {
-            role: match m.role.as_str() {
-                "system" => Role::System,
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                _ => Role::User,
-            },
-            content: MessageContent::Text(m.content),
-        }));
+        messages.extend(
+            req.messages
+                .into_iter()
+                .map(AnthropicMessage::into_domain_message),
+        );
 
         Self {
             id: RequestId::new(),
@@ -55,6 +117,8 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
             stream: req.stream.unwrap_or(false),
             max_tokens: req.max_tokens,
             temperature: req.temperature,
+            tools: req.tools,
+            tool_choice: req.tool_choice,
             metadata: RequestMetadata {
                 origin: "anthropic".to_string(),
                 cacheable: false,
@@ -78,16 +142,53 @@ pub struct AnthropicMessagesResponse {
     pub usage: AnthropicUsage,
 }
 
+fn anthropic_content_blocks_from_domain(
+    resp: &rook_core::CompletionResponse,
+) -> Vec<AnthropicContentBlock> {
+    let blocks: Vec<AnthropicContentBlock> = resp
+        .content_blocks
+        .iter()
+        .filter_map(domain_content_to_anthropic_block)
+        .collect();
+
+    if blocks.is_empty() {
+        vec![AnthropicContentBlock::Text {
+            text: resp.content.clone(),
+        }]
+    } else {
+        blocks
+    }
+}
+
+fn domain_content_to_anthropic_block(content: &MessageContent) -> Option<AnthropicContentBlock> {
+    match content {
+        MessageContent::Text(text) if text.is_empty() => None,
+        MessageContent::Text(text) => Some(AnthropicContentBlock::Text { text: text.clone() }),
+        MessageContent::ToolUse { id, name, input } => Some(AnthropicContentBlock::ToolUse {
+            id: id.clone(),
+            name: name.clone(),
+            input: input.clone(),
+        }),
+        MessageContent::ToolResult {
+            tool_use_id,
+            content,
+        } => Some(AnthropicContentBlock::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content
+                .iter()
+                .filter_map(domain_content_to_anthropic_block)
+                .collect(),
+        }),
+    }
+}
+
 impl From<&rook_core::CompletionResponse> for AnthropicMessagesResponse {
     fn from(resp: &rook_core::CompletionResponse) -> Self {
         Self {
             id: format!("rook-{}", resp.id),
             type_: "message".to_string(),
             role: "assistant".to_string(),
-            content: vec![AnthropicContentBlock {
-                block_type: "text".to_string(),
-                text: resp.content.clone(),
-            }],
+            content: anthropic_content_blocks_from_domain(resp),
             model: resp.model.to_string(),
             stop_reason: "end_turn".to_string(),
             stop_sequence: None,
@@ -100,10 +201,20 @@ impl From<&rook_core::CompletionResponse> for AnthropicMessagesResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AnthropicContentBlock {
-    #[serde(rename = "type")]
-    pub block_type: String,
-    pub text: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: Vec<AnthropicContentBlock>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -310,6 +421,7 @@ mod tests {
             provider: ProviderId::new("anthropic-test"),
             model: ModelId::new("claude-3-5-sonnet"),
             content: "Hello there".to_string(),
+            content_blocks: vec![MessageContent::Text("Hello there".to_string())],
             usage: TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
@@ -324,8 +436,10 @@ mod tests {
         assert_eq!(anthropic_resp.role, "assistant");
         assert_eq!(anthropic_resp.stop_reason, "end_turn");
         assert_eq!(anthropic_resp.content.len(), 1);
-        assert_eq!(anthropic_resp.content[0].block_type, "text");
-        assert_eq!(anthropic_resp.content[0].text, "Hello there");
+        assert!(matches!(
+            &anthropic_resp.content[0],
+            AnthropicContentBlock::Text { text } if text == "Hello there"
+        ));
         assert_eq!(anthropic_resp.usage.input_tokens, 10);
         assert_eq!(anthropic_resp.usage.output_tokens, 5);
 
@@ -374,5 +488,88 @@ mod tests {
         let domain: rook_core::CompletionRequest = req.into();
         assert_eq!(domain.messages.len(), 1);
         assert_eq!(domain.messages[0].content.as_text(), "hello");
+    }
+
+    #[test]
+    fn anthropic_tool_use_block_converts_to_domain_tool_use() {
+        let json = r#"{
+            "model": "claude-3-5-sonnet",
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_123",
+                    "name": "get_weather",
+                    "input": {"city": "Paris"}
+                }]
+            }]
+        }"#;
+
+        let req: AnthropicMessagesRequest = serde_json::from_str(json).expect("should deserialize");
+        let domain: rook_core::CompletionRequest = req.into();
+
+        assert_eq!(domain.messages[0].role, rook_core::Role::Assistant);
+        assert_eq!(
+            domain.messages[0].content,
+            MessageContent::ToolUse {
+                id: "toolu_123".to_string(),
+                name: "get_weather".to_string(),
+                input: serde_json::json!({"city": "Paris"}),
+            }
+        );
+    }
+
+    #[test]
+    fn serializes_domain_tool_content_as_anthropic_blocks() {
+        let resp = rook_core::CompletionResponse {
+            id: RequestId::new(),
+            provider: shared_kernel::ProviderId::new("test"),
+            model: ModelId::new("claude-3-5-sonnet"),
+            content: String::new(),
+            content_blocks: vec![MessageContent::ToolUse {
+                id: "toolu_123".to_string(),
+                name: "get_weather".to_string(),
+                input: serde_json::json!({"city": "Paris"}),
+            }],
+            usage: make_token_usage(1, 2),
+            latency_ms: 1,
+        };
+
+        let anthropic_resp = AnthropicMessagesResponse::from(&resp);
+        let json = serde_json::to_value(anthropic_resp).unwrap();
+
+        assert_eq!(json["content"][0]["type"], "tool_use");
+        assert_eq!(json["content"][0]["id"], "toolu_123");
+        assert_eq!(json["content"][0]["name"], "get_weather");
+        assert_eq!(json["stop_reason"], "end_turn");
+    }
+
+    #[test]
+    fn anthropic_tool_result_block_filters_empty_nested_text() {
+        let json = r#"{
+            "model": "claude-3-5-sonnet",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_123",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "text", "text": "sunny"}
+                    ]
+                }]
+            }]
+        }"#;
+
+        let req: AnthropicMessagesRequest = serde_json::from_str(json).expect("should deserialize");
+        let domain: rook_core::CompletionRequest = req.into();
+
+        assert_eq!(
+            domain.messages[0].content,
+            MessageContent::ToolResult {
+                tool_use_id: "toolu_123".to_string(),
+                content: vec![MessageContent::Text("sunny".to_string())],
+            }
+        );
     }
 }

@@ -134,6 +134,8 @@ pub struct CompletionRequest {
     pub stream: bool,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    pub tools: Option<serde_json::Value>,
+    pub tool_choice: Option<serde_json::Value>,
     pub metadata: RequestMetadata,
 }
 
@@ -158,25 +160,36 @@ pub struct RequestMetadata {
     pub priority: u8,
 }
 
-/// The content of a message — currently text only; tool-call blocks are Phase 2.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The content of a message in the provider-agnostic domain model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MessageContent {
     Text(String),
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: Vec<MessageContent>,
+    },
 }
 
 impl MessageContent {
-    /// Borrow the inner text slice.
+    /// Borrow text content when this is a text block.
     pub fn as_text(&self) -> &str {
         match self {
             Self::Text(s) => s.as_str(),
+            Self::ToolUse { .. } | Self::ToolResult { .. } => "",
         }
     }
 
-    /// Consume and return the inner string.
+    /// Consume and return text content, or an empty string for non-text blocks.
     pub fn into_text(self) -> String {
         match self {
             Self::Text(s) => s,
+            Self::ToolUse { .. } | Self::ToolResult { .. } => String::new(),
         }
     }
 }
@@ -220,6 +233,7 @@ pub struct CompletionResponse {
     pub provider: ProviderId,
     pub model: ModelId,
     pub content: String,
+    pub content_blocks: Vec<MessageContent>,
     pub usage: TokenUsage,
     pub latency_ms: u64,
 }

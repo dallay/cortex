@@ -27,33 +27,84 @@ pub struct OpenAIChatRequest {
 #[serde(rename_all = "snake_case")]
 pub struct OpenAIMessage {
     pub role: String,
-    /// Content is a plain string for text-only messages, or an array of content
-    /// parts for multimodal messages.  We accept both without panicking by
-    /// deserializing into `serde_json::Value` and extracting text below.
+    /// Content is a plain string for text-only messages, an array of content
+    /// parts for multimodal messages, or null on assistant tool-call messages.
+    #[serde(default)]
     pub content: serde_json::Value,
+    #[serde(default)]
+    pub tool_calls: Vec<OpenAIToolCall>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAIToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: OpenAIFunctionCall,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAIFunctionCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 impl OpenAIMessage {
     /// Extract the text content from either a plain string or an array of
     /// content-part objects (`{"type":"text","text":"…"}`).
-    /// Non-text parts (image_url, etc.) are silently skipped — they will be
-    /// supported fully in Phase 2 multimodal work.
+    /// Non-text parts (image_url, etc.) are silently skipped.
     pub fn into_text(self) -> String {
-        match self.content {
-            serde_json::Value::String(s) => s,
-            serde_json::Value::Array(parts) => parts
-                .into_iter()
-                .filter_map(|p| {
-                    if p.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        p.get("text").and_then(|t| t.as_str()).map(str::to_owned)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(""),
-            _ => String::new(),
-        }
+        text_from_openai_content(self.content)
+    }
+
+    fn into_domain_message(self) -> Message {
+        let role = match self.role.as_str() {
+            "system" => Role::System,
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            "developer" => Role::Developer,
+            "tool" => Role::User,
+            _ => Role::User,
+        };
+
+        let content = if self.role == "tool" {
+            MessageContent::ToolResult {
+                tool_use_id: self.tool_call_id.unwrap_or_default(),
+                content: vec![MessageContent::Text(text_from_openai_content(self.content))],
+            }
+        } else if let Some(tool_call) = self.tool_calls.into_iter().next() {
+            let input = serde_json::from_str(&tool_call.function.arguments)
+                .unwrap_or(serde_json::Value::String(tool_call.function.arguments));
+            MessageContent::ToolUse {
+                id: tool_call.id,
+                name: tool_call.function.name,
+                input,
+            }
+        } else {
+            MessageContent::Text(text_from_openai_content(self.content))
+        };
+
+        Message { role, content }
+    }
+}
+
+fn text_from_openai_content(content: serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Array(parts) => parts
+            .into_iter()
+            .filter_map(|p| {
+                if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    p.get("text").and_then(|t| t.as_str()).map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
     }
 }
 
@@ -65,20 +116,13 @@ impl From<OpenAIChatRequest> for CompletionRequest {
             messages: req
                 .messages
                 .into_iter()
-                .map(|m| Message {
-                    role: match m.role.as_str() {
-                        "system" => Role::System,
-                        "user" => Role::User,
-                        "assistant" => Role::Assistant,
-                        "developer" => Role::Developer,
-                        _ => Role::User,
-                    },
-                    content: MessageContent::Text(m.into_text()),
-                })
+                .map(OpenAIMessage::into_domain_message)
                 .collect(),
             stream: req.stream.unwrap_or(false),
             max_tokens: req.max_tokens,
             temperature: req.temperature,
+            tools: req.tools,
+            tool_choice: req.tool_choice,
             metadata: RequestMetadata {
                 origin: "openai".to_string(),
                 cacheable: true,
@@ -111,6 +155,22 @@ pub struct OpenAIChoice {
 pub struct OpenAIMessageContent {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAIResponseToolCall>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIResponseToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: OpenAIResponseFunctionCall,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIResponseFunctionCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +182,24 @@ pub struct OpenAIUsage {
 
 impl From<&rook_core::CompletionResponse> for OpenAIChatResponse {
     fn from(resp: &rook_core::CompletionResponse) -> Self {
+        let tool_calls: Vec<OpenAIResponseToolCall> = resp
+            .content_blocks
+            .iter()
+            .filter_map(|block| match block {
+                MessageContent::ToolUse { id, name, input } => Some(OpenAIResponseToolCall {
+                    id: id.clone(),
+                    call_type: "function".to_string(),
+                    function: OpenAIResponseFunctionCall {
+                        name: name.clone(),
+                        arguments: serde_json::to_string(input)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    },
+                }),
+                _ => None,
+            })
+            .collect();
+        let has_tool_calls = !tool_calls.is_empty();
+
         Self {
             id: format!("rook-{}", resp.id),
             object: "chat.completion".to_string(),
@@ -131,9 +209,14 @@ impl From<&rook_core::CompletionResponse> for OpenAIChatResponse {
                 index: 0,
                 message: OpenAIMessageContent {
                     role: "assistant".to_string(),
-                    content: resp.content.clone(),
+                    content: if has_tool_calls {
+                        String::new()
+                    } else {
+                        resp.content.clone()
+                    },
+                    tool_calls: has_tool_calls.then_some(tool_calls),
                 },
-                finish_reason: "stop".to_string(),
+                finish_reason: if has_tool_calls { "tool_calls" } else { "stop" }.to_string(),
             }],
             usage: OpenAIUsage {
                 prompt_tokens: resp.usage.prompt_tokens,
@@ -252,5 +335,96 @@ mod openai_adapter_tests {
         assert_eq!(req.messages.len(), 1);
         assert_eq!(req.messages[0].content, "hello");
         assert!(req.tools.is_none());
+    }
+
+    #[test]
+    fn serializes_domain_tool_use_as_openai_tool_calls() {
+        let resp = rook_core::CompletionResponse {
+            id: RequestId::new(),
+            provider: shared_kernel::ProviderId::new("test"),
+            model: ModelId::new("gpt-4o"),
+            content: String::new(),
+            content_blocks: vec![MessageContent::ToolUse {
+                id: "call_123".to_string(),
+                name: "get_weather".to_string(),
+                input: serde_json::json!({"city": "Paris"}),
+            }],
+            usage: rook_core::TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 2,
+                total_tokens: 3,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 1,
+        };
+
+        let openai_resp = OpenAIChatResponse::from(&resp);
+        let json = serde_json::to_value(openai_resp).unwrap();
+
+        assert_eq!(json["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(
+            json["choices"][0]["message"]["tool_calls"][0]["id"],
+            "call_123"
+        );
+        assert_eq!(
+            json["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "get_weather"
+        );
+    }
+
+    #[test]
+    fn assistant_tool_calls_convert_to_domain_tool_use() {
+        let json = r#"{
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"city\":\"Paris\"}"
+                    }
+                }]
+            }]
+        }"#;
+
+        let req: OpenAIChatRequest = serde_json::from_str(json).expect("should deserialize");
+        let domain: CompletionRequest = req.into();
+
+        assert_eq!(domain.messages[0].role, Role::Assistant);
+        assert_eq!(
+            domain.messages[0].content,
+            MessageContent::ToolUse {
+                id: "call_123".to_string(),
+                name: "get_weather".to_string(),
+                input: serde_json::json!({"city": "Paris"}),
+            }
+        );
+    }
+
+    #[test]
+    fn tool_role_message_converts_to_domain_tool_result() {
+        let json = r#"{
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_123",
+                "content": "{\"temperature\":20}"
+            }]
+        }"#;
+
+        let req: OpenAIChatRequest = serde_json::from_str(json).expect("should deserialize");
+        let domain: CompletionRequest = req.into();
+
+        assert_eq!(domain.messages[0].role, Role::User);
+        assert_eq!(
+            domain.messages[0].content,
+            MessageContent::ToolResult {
+                tool_use_id: "call_123".to_string(),
+                content: vec![MessageContent::Text(r#"{"temperature":20}"#.to_string())],
+            }
+        );
     }
 }

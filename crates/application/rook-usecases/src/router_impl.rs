@@ -285,6 +285,7 @@ mod tests {
                 provider: self.id.clone(),
                 model: req.model.clone(),
                 content: "ok".to_string(),
+                content_blocks: vec![rook_core::MessageContent::Text("ok".to_string())],
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,
@@ -314,6 +315,8 @@ mod tests {
             stream: false,
             max_tokens: None,
             temperature: None,
+            tools: None,
+            tool_choice: None,
             metadata: rook_core::RequestMetadata {
                 origin: "test".to_string(),
                 cacheable: true,
@@ -382,6 +385,10 @@ mod tests {
                 provider: self.inner.id.clone(),
                 model: req.model.clone(),
                 content: format!("provider-{}", self.inner.id.as_str()),
+                content_blocks: vec![rook_core::MessageContent::Text(format!(
+                    "provider-{}",
+                    self.inner.id.as_str()
+                ))],
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,

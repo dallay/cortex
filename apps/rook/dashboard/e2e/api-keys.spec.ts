@@ -6,30 +6,35 @@ import { test, expect, Page } from '@playwright/test'
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
 const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://localhost:5173'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
+
+function cookieValue(setCookie: string | null, name: string): string | null {
+  if (!setCookie) return null
+  const match = setCookie.match(new RegExp(`${name}=([^;]+)`))
+  return match?.[1] ?? null
+}
 
 // =============================================================================
 // Helper: Get CSRF token via API
 // =============================================================================
 
-async function getCsrfToken(page: Page): Promise<string> {
+async function getCsrfToken(page: Page): Promise<{ token: string; cookie: string }> {
   const response = await page.request.get(`${API_BASE_URL}/login`)
   const body = await response.json()
-  return body.csrf_token as string
+  const token = body.csrf_token as string
+  return {
+    token,
+    cookie: cookieValue(response.headers()['set-cookie'] ?? null, 'csrf_token') ?? token,
+  }
 }
 
 // =============================================================================
 // Helper: Login via API and set cookies in browser
 // =============================================================================
 
-async function loginAsAdmin(page: Page, password: string = 'admin123'): Promise<void> {
-  // Get CSRF token
-  const csrfToken = await getCsrfToken(page)
+async function loginAsAdmin(page: Page, password: string = ADMIN_PASSWORD): Promise<void> {
+  const csrf = await getCsrfToken(page)
 
-  // Get the CSRF cookie from the response
-  const cookies = await page.request.getCookies(`${API_BASE_URL}`)
-  const csrfCookie = cookies.find(c => c.name === 'csrf_token')
-
-  // Login via API with CSRF token and cookie
   const loginResponse = await page.request.post(`${API_BASE_URL}/login`, {
     data: {
       username: 'admin',
@@ -37,8 +42,8 @@ async function loginAsAdmin(page: Page, password: string = 'admin123'): Promise<
     },
     headers: {
       'Content-Type': 'application/json',
-      'X-CSRF-Token': csrfToken,
-      'Cookie': `csrf_token=${csrfCookie?.value || csrfToken}`
+      'X-CSRF-Token': csrf.token,
+      'Cookie': `csrf_token=${csrf.cookie}`
     }
   })
 
@@ -46,9 +51,27 @@ async function loginAsAdmin(page: Page, password: string = 'admin123'): Promise<
     throw new Error(`Login failed: ${loginResponse.status()} ${await loginResponse.text()}`)
   }
 
-  // The auth_token cookie should now be set in the browser
-  // Give time for cookie to be set
-  await page.waitForTimeout(500)
+  const authCookie = cookieValue(loginResponse.headers()['set-cookie'] ?? null, 'auth_token')
+  if (!authCookie) {
+    throw new Error('Login response did not set auth_token cookie')
+  }
+
+  await page.context().addCookies([
+    {
+      name: 'csrf_token',
+      value: csrf.cookie,
+      url: DASHBOARD_URL,
+      httpOnly: true,
+      sameSite: 'Strict',
+    },
+    {
+      name: 'auth_token',
+      value: authCookie,
+      url: DASHBOARD_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    },
+  ])
 }
 
 // =============================================================================
@@ -61,17 +84,16 @@ async function createApiKeyViaApi(
   scopes: string[] = ['read'],
   tier: string = 'free'
 ): Promise<{ id: string; plaintextKey: string }> {
-  const csrfToken = await getCsrfToken(page)
-  const cookies = await page.request.getCookies(`${API_BASE_URL}`)
-  const csrfCookie = cookies.find(c => c.name === 'csrf_token')?.value || csrfToken
+  const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
   const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
 
   const response = await page.request.post(`${API_BASE_URL}/api/api-keys`, {
     data: { label, scopes, tier, expiresAt: null },
     headers: {
       'Content-Type': 'application/json',
-      'X-CSRF-Token': csrfToken,
-      'Cookie': `csrf_token=${csrfCookie}; auth_token=${authCookie}`
+      'X-CSRF-Token': csrf.token,
+      'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`
     }
   })
 
@@ -94,7 +116,7 @@ test.describe('Dashboard', () => {
     await page.waitForLoadState('networkidle')
 
     // Should see the home page title
-    await expect(page.getByRole('heading', { name: /AI Router/i })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: /Dashboard/i })).toBeVisible({ timeout: 10000 })
   })
 })
 

@@ -5,6 +5,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@vue/language-core@3.3.3'
   - vue-tsc@3.3.3
+  - vite@8.0.16
 
 overrides:
   'vue': 'beta'

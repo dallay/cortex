@@ -32,6 +32,10 @@ enum Commands {
     },
     /// Seed the admin user with a password (for initial setup or E2E testing)
     SeedAdmin {
+        /// Path to the config file (defaults to $ROOK_CONFIG or ~/.config/cortex/rook.toml)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
         /// The password to set for the admin user
         password: String,
     },
@@ -74,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Commands::Admin { command }) => return run_admin_command(command).await,
-        Some(Commands::SeedAdmin { password }) => return seed_admin(password).await,
+        Some(Commands::SeedAdmin { config, password }) => {
+            return seed_admin(config, password).await
+        }
         Some(Commands::Db { command }) => return run_db_command(command).await,
         None => {}
     }
@@ -86,7 +92,7 @@ async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
     match command {
         AdminCommands::Bootstrap => {
             let password = prompt_password()?;
-            seed_admin(password).await
+            seed_admin(None, password).await
         }
         AdminCommands::CreateUser { email } => {
             anyhow::bail!(
@@ -122,10 +128,10 @@ fn prompt_password() -> anyhow::Result<String> {
     Ok(password)
 }
 
-async fn seed_admin(password: String) -> anyhow::Result<()> {
+async fn seed_admin(config_path: Option<PathBuf>, password: String) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
 
-    let config = load_config()?;
+    let config = load_config_with_path(config_path)?;
     let container = di::RookContainer::build(&config)
         .await
         .context("failed to build container")?;
@@ -260,6 +266,20 @@ fn load_config() -> anyhow::Result<config::RookConfig> {
     let config_path = std::env::var("ROOK_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
+            dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("cortex")
+                .join("rook.toml")
+        });
+
+    config::RookConfig::load(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))
+}
+
+fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config::RookConfig> {
+    let config_path = config_path
+        .or_else(|| std::env::var("ROOK_CONFIG").map(PathBuf::from).ok())
+        .unwrap_or_else(|| {
             dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("cortex")

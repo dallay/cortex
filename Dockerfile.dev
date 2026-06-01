@@ -57,6 +57,10 @@ EXPOSE 8080
 # Set config path via env var
 ENV ROOK_CONFIG=/app/rook.toml
 
+# Create non-root user (required for USER directive)
+RUN useradd -r -m -s /bin/false -u 1000 non-root 2>&1 || true \
+    && chown -R non-root:non-root /app
+
 USER non-root
 
 ENTRYPOINT ["/usr/local/bin/rook"]

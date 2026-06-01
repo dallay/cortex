@@ -89,6 +89,8 @@ async fn complete_returns_response_on_success() {
         stream: false,
         max_tokens: Some(100),
         temperature: None,
+        tools: None,
+        tool_choice: None,
         metadata: rook_core::RequestMetadata {
             origin: "test".to_string(),
             cacheable: true,
@@ -136,6 +138,8 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         stream: true,
         max_tokens: Some(100),
         temperature: None,
+        tools: None,
+        tool_choice: None,
         metadata: rook_core::RequestMetadata {
             origin: "test".to_string(),
             cacheable: true,

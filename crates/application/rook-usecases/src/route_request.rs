@@ -261,6 +261,7 @@ mod tests {
                 provider: self.id.clone(),
                 model: req.model.clone(),
                 content: "cached path".to_string(),
+                content_blocks: vec![rook_core::MessageContent::Text("cached path".to_string())],
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,
@@ -395,6 +396,8 @@ mod tests {
             stream: true,
             max_tokens: None,
             temperature: None,
+            tools: None,
+            tool_choice: None,
             metadata: RequestMetadata {
                 origin: "test".to_string(),
                 cacheable: true,

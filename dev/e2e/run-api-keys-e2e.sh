@@ -17,12 +17,12 @@ set -e
 
 # Resolve repo root relative to script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 CONTAINER_NAME="rook-e2e-api-keys"
 export API_PORT=8081
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
-ADMIN_PASSWORD="admin123"
+ADMIN_PASSWORD="Admin123456-"
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
 
 # Colors
@@ -58,12 +58,13 @@ docker build -f Dockerfile.dev -t rook:e2e-api-keys . 2>&1 | tail -5
 log_info "Starting rook container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
+    --tmpfs /tmp \
     -p ${API_PORT}:8080 \
     -v "$TEST_CONFIG:/app/rook.toml:ro" \
+    -e ROOK_CONFIG=/app/rook.toml \
     -e RUST_LOG=info \
     -e API_KEY_HASH_SECRET="test-secret-for-e2e-testing-only" \
     -e RUST_BACKTRACE=1 \
-    --user root \
     rook:e2e-api-keys > /dev/null 2>&1
 
 log_info "Waiting for server to be ready..."
@@ -82,7 +83,7 @@ for i in {1..30}; do
 done
 
 log_info "Seeding admin password..."
-docker exec "$CONTAINER_NAME" /usr/local/bin/rook seed-admin "$ADMIN_PASSWORD" > /dev/null 2>&1
+docker exec "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.toml "$ADMIN_PASSWORD" > /dev/null 2>&1
 
 log_info "Container ready!"
 log_info "  API: http://localhost:$API_PORT"
@@ -109,7 +110,7 @@ if [ "$MODE" = "--test" ]; then
 
     # Run Playwright tests
     cd "$DASHBOARD_DIR"
-    if pnpm playwright test e2e/api-keys.spec.ts; then
+    if     ADMIN_PASSWORD="$ADMIN_PASSWORD" pnpm playwright test e2e/api-keys.spec.ts; then
         log_info "Tests passed!"
         TEST_RESULT=0
     else

@@ -47,6 +47,10 @@ struct AnthropicStreamRequest {
     stream: bool,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -258,6 +262,8 @@ impl ProviderPort for AnthropicProvider {
             stream: false,
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
         };
 
         let start = std::time::Instant::now();
@@ -292,7 +298,8 @@ impl ProviderPort for AnthropicProvider {
             id: req.id.clone(),
             provider: self.config.id.clone(),
             model: ModelId::new(anthropic_resp.model),
-            content: text,
+            content: text.clone(),
+            content_blocks: vec![rook_core::MessageContent::Text(text)],
             usage: TokenUsage {
                 prompt_tokens: anthropic_resp.usage.input_tokens,
                 completion_tokens: anthropic_resp.usage.output_tokens,
@@ -341,6 +348,8 @@ impl ProviderPort for AnthropicProvider {
             stream: true,
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
         };
 
         let resp = self
@@ -394,12 +403,17 @@ impl ProviderPort for AnthropicProvider {
                                 usage: None,
                             }));
                         }
-                        AnthropicStreamEvent::MessageDelta { usage, .. } => {
+                        AnthropicStreamEvent::MessageDelta { delta, usage } => {
+                            let finish_reason = if delta.stop_reason == "tool_use" {
+                                FinishReason::ToolCalls
+                            } else {
+                                FinishReason::Stop
+                            };
                             chunks.push(Ok(StreamChunk {
                                 id: request_id.clone(),
                                 model: model.clone(),
                                 delta: String::new(),
-                                finish_reason: Some(FinishReason::Stop),
+                                finish_reason: Some(finish_reason),
                                 usage: Some(TokenUsage {
                                     prompt_tokens: usage.input_tokens.unwrap_or(0),
                                     completion_tokens: usage.output_tokens,

@@ -28,6 +28,7 @@ fn mock_completion_response(content: &str) -> CompletionResponse {
         provider: ProviderId::new("test-provider"),
         model: ModelId::new("test-model"),
         content: content.to_string(),
+        content_blocks: vec![MessageContent::Text(content.to_string())],
         usage: TokenUsage {
             prompt_tokens: 10,
             completion_tokens: 5,
@@ -256,6 +257,7 @@ impl ProviderPort for RegistryTestProvider {
             provider: self.id.clone(),
             model: req.model.clone(),
             content: self.content.to_string(),
+            content_blocks: vec![MessageContent::Text(self.content.to_string())],
             usage: TokenUsage {
                 prompt_tokens: 3,
                 completion_tokens: 5,
@@ -378,6 +380,8 @@ fn registry_domain_request() -> CompletionRequest {
         stream: false,
         max_tokens: Some(128),
         temperature: Some(0.2),
+        tools: None,
+        tool_choice: None,
         metadata: RequestMetadata {
             origin: "registry-test".to_string(),
             cacheable: false,
