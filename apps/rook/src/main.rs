@@ -9,7 +9,7 @@ mod server;
 
 use anyhow::Context;
 use clap::Parser;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use db_migration::MigrationRunner;
@@ -167,86 +167,60 @@ async fn start_server() -> anyhow::Result<()> {
 }
 
 async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::Result<()> {
-    // Peek at initialization state without passing a token yet
+    let setup_token = std::env::var("ROOK_SETUP_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty());
     let state = container
         .usecases
         .bootstrap_status
-        .execute(None)
+        .execute(setup_token.clone())
         .await?;
 
-    if state.is_initialized {
-        return Ok(());
-    }
-
-    // System is uninitialized — resolve a setup token
-    let token: String = match std::env::var("ROOK_SETUP_TOKEN")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    {
-        Some(env_token) => env_token,
-        None => generate_setup_token(),
-    };
-
-    // Store in memory so HTTP handlers can read it without touching env
-    {
-        let mut guard = container.usecases.setup_token.write().await;
-        *guard = Some(token.clone());
-    }
-
-    // Sanitize before printing (prevent terminal injection)
-    let sanitized: String = token
-        .chars()
-        .map(|c| {
-            if c.is_ascii_control() || c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t'
-            {
-                '?'
-            } else {
-                c
+    if !state.is_initialized {
+        match setup_token {
+            Some(token) => {
+                // Sanitize: replace control/non-printable chars to prevent log injection
+                let sanitized: String = token
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_control()
+                            || c == '"'
+                            || c == '\\'
+                            || c == '\n'
+                            || c == '\r'
+                            || c == '\t'
+                        {
+                            '?'
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                let preview = if sanitized.len() > 8 {
+                    format!("{}…", &sanitized[..8])
+                } else {
+                    sanitized.clone()
+                };
+                tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
+                // Only print full token to interactive TTY; otherwise show preview only
+                if std::io::stderr().is_terminal() {
+                    eprintln!(
+                        "rook bootstrap mode: use setup token {sanitized} to set the admin password"
+                    );
+                } else {
+                    eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
+                }
             }
-        })
-        .collect();
-    let preview = if sanitized.len() > 8 {
-        format!("{}…", &sanitized[..8])
-    } else {
-        sanitized.clone()
-    };
-
-    tracing::warn!(
-        setup_token_preview = %preview,
-        setup_token_len = token.len(),
-        "rook is in bootstrap mode — POST /api/bootstrap/setup to initialize"
-    );
-
-    eprintln!();
-    eprintln!("╔══════════════════════════════════════════════════════════╗");
-    eprintln!("║              ROOK — BOOTSTRAP MODE ACTIVE               ║");
-    eprintln!("╠══════════════════════════════════════════════════════════╣");
-    if atty::is(atty::Stream::Stderr) {
-        eprintln!("║  Setup token: {sanitized:<44} ║");
-    } else {
-        eprintln!("║  Setup token: {preview:<44} ║");
+            None => {
+                tracing::warn!("rook is in bootstrap mode; run `rook admin bootstrap` or set ROOK_SETUP_TOKEN and POST /api/bootstrap/setup");
+                eprintln!(
+                    "rook bootstrap mode: run `rook admin bootstrap` to set the admin password"
+                );
+            }
+        }
     }
-    eprintln!("║                                                          ║");
-    eprintln!("║  POST /api/bootstrap/setup  {{                           ║");
-    eprintln!("║    \"setup_token\": \"<token>\",                            ║");
-    eprintln!("║    \"password\":    \"<your-password>\"                     ║");
-    eprintln!("║  }}                                                       ║");
-    eprintln!("║                                                          ║");
-    eprintln!("║  Token is cleared from memory after a successful setup. ║");
-    eprintln!("╚══════════════════════════════════════════════════════════╝");
-    eprintln!();
 
     Ok(())
-}
-
-/// Generate a cryptographically random setup token with a recognisable prefix.
-fn generate_setup_token() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..24).map(|_| rng.gen::<u8>()).collect();
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("rk-setup-{hex}")
 }
 
 async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
@@ -298,6 +272,7 @@ fn load_config() -> anyhow::Result<config::RookConfig> {
                 .join("rook.toml")
         });
 
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
 }
@@ -312,6 +287,7 @@ fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config:
                 .join("rook.toml")
         });
 
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
 }

@@ -32,4 +32,8 @@ paths = [
   '''reports/.*''',
   '''.*\.lock''',
   '''.*\.md''',
+  # Test files — contain fixture values that look like secrets but are not real
+  '''apps/rook/tests/.*''',
+  '''crates/infrastructure/transport-axum/tests/.*''',
+  '''dev/e2e/.*''',
 ]
