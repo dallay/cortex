@@ -26,7 +26,7 @@ ROOK_CONFIG=./rook.toml cargo run --release -p rook
 
 ## Project Structure
 
-```
+```text
 cortex/
 ├── apps/
 │   └── rook/                      # Binary — main.rs, DI bootstrap, config
@@ -62,8 +62,8 @@ cortex/
 | `just fmt`      | Format code                                      |
 | `just clippy`   | Clippy with deny warnings                        |
 | `just test`     | Run all tests (workspace)                        |
-| `just ci-local` | Full CI locally (fmt → clippy → check → test)   |
-| `just dev`      | Watch mode: check + test + clippy on file change  |
+| `just ci-local` | Full CI locally (fmt → clippy → check → test)    |
+| `just dev`      | Watch mode: check + test + clippy on file change |
 
 **CI order** (important): `fmt --check` → `clippy` → `check` → `test` → `doc` → `audit`
 
@@ -81,14 +81,14 @@ cortex/
 
 ## Cross-Compilation Targets
 
-| Target                        | Platform        |
-|-------------------------------|-----------------|
-| `x86_64-unknown-linux-gnu`    | Linux x86_64    |
-| `aarch64-unknown-linux-gnu`   | Linux ARM64     |
-| `x86_64-pc-windows-msvc`      | Windows x86_64  |
-| `aarch64-pc-windows-msvc`     | Windows ARM64   |
-| `x86_64-apple-darwin`         | macOS Intel     |
-| `aarch64-apple-darwin`        | macOS Apple Silicon |
+| Target                      | Platform            |
+|-----------------------------|---------------------|
+| `x86_64-unknown-linux-gnu`  | Linux x86_64        |
+| `aarch64-unknown-linux-gnu` | Linux ARM64         |
+| `x86_64-pc-windows-msvc`    | Windows x86_64      |
+| `aarch64-pc-windows-msvc`   | Windows ARM64       |
+| `x86_64-apple-darwin`       | macOS Intel         |
+| `aarch64-apple-darwin`      | macOS Apple Silicon |
 
 **Note**: `aarch64-unknown-linux-gnu` is **not cross-compiled in CI** due to OpenSSL/ring header complexity.
 
