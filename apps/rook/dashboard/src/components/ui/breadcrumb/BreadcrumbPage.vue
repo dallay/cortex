@@ -8,13 +8,11 @@ const props = defineProps<{
 </script>
 
 <template>
-  <span
+  <li
     data-slot="breadcrumb-page"
-    role="link"
-    aria-disabled="true"
     aria-current="page"
     :class="cn('text-foreground font-normal', props.class)"
   >
     <slot />
-  </span>
+  </li>
 </template>

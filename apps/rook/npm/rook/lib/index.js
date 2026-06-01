@@ -4,15 +4,22 @@
  * Rook launcher - finds the platform-specific binary and executes it
  */
 
-const { execSync } = require('child_process');
-const path = require('path');
-const os = require('os');
+const { execSync } = require('node:child_process');
+const path = require('node:path');
+const os = require('node:os');
 
 const PKG = '@dallay/rook';
 
 function getPlatform() {
   const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
-  const platform = os.platform() === 'win32' ? 'windows' : os.platform() === 'darwin' ? 'darwin' : 'linux';
+  let platform;
+  if (os.platform() === 'win32') {
+    platform = 'windows';
+  } else if (os.platform() === 'darwin') {
+    platform = 'darwin';
+  } else {
+    platform = 'linux';
+  }
   return `${platform}-${arch}`;
 }
 
@@ -28,7 +35,7 @@ function findBinary() {
     try {
       const globalPath = execSync(`npm root -g`, { encoding: 'utf8' }).trim();
       const globalBinary = path.join(globalPath, platformPkg, 'bin', binaryName);
-      require('fs').accessSync(globalBinary);
+      require('node:fs').accessSync(globalBinary);
       return globalBinary;
     } catch {
       // Last resort: look in PATH

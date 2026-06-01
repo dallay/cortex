@@ -27,12 +27,10 @@ ARG TARGETARCH
 RUN echo "Target architecture: ${TARGETARCH}"
 COPY rook-${TARGETARCH} /usr/local/bin/rook
 
-# Create config directory with proper permissions
+# Create config directory with proper permissions and ensure binary is executable
 RUN mkdir -p /app/config \
-    && chown -R rook:rook /app
-
-# Ensure binary is executable
-RUN chmod +x /usr/local/bin/rook
+    && chown -R rook:rook /app \
+    && chmod +x /usr/local/bin/rook
 
 USER rook
 
