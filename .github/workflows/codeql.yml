@@ -16,7 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   codeql:
@@ -41,11 +40,7 @@ jobs:
           config-file: .github/code-scanning/codeql-config.yml
 
       - name: Perform build
-        run: |
-          # CodeQL needs to see a build step on compiled languages only.
-          # Rust doesn't require a build step, but having one improves analysis quality.
-          # Use the workspace check as a proxy for a successful build environment.
-          cargo check --workspace || true
+        run: cargo check --workspace
 
       - name: Analyze
         uses: github/codeql-action/analyze@051e2f90686233507fe9283ff167d2e709304b30 # v3.36.0

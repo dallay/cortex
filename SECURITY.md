@@ -37,8 +37,8 @@ Send a report to **privately via GitHub Security Advisories**:
 | -------- | ------------ |
 | **< 48 hours** | Initial acknowledgment from the maintainers. |
 | **< 7 days** | Preliminary severity assessment (Critical / High / Medium / Low). |
-| **< 30 days** | If accepted: a fix is prepared in a private branch. Patch releasetimeline communicated. |
-| **< 60 days** | Public disclosure on a mutually agreed date.COORDinator will reach out if extended timeline is needed. |
+| **< 30 days** | If accepted: a fix is prepared in a private branch. Patch release timeline communicated. |
+| **< 60 days** | Public disclosure on a mutually agreed date. We will reach out if extended timeline is needed. |
 
 ### Scope
 
@@ -102,14 +102,14 @@ The following packages/configs receive elevated security scrutiny:
 
 The project uses multiple layers of automated vulnerability scanning:
 
-| Tool | Scope | Schedule | Fail-Gate |
-| ---- | ----- | -------- | --------- |
-| **cargo audit** | Rust dependencies | Every PR/commit | :white_check_mark: Yes |
-| **Dependabot** | `Cargo.lock`, `pnpm-lock.yaml` | On lockfile changes | :white_check_mark: Yes (auto-merge for patch/security) |
-| **Gitleaks** | Repository history + on-push | Nightly (scheduled) | :x: Reporting only |
-| **Semgrep** | Rust, Docker, GitHub Actions, secrets | Nightly (scheduled) | :x: Reporting only |
-| **Trivy** | Filesystem, dependencies, IaC | Nightly (scheduled) | :x: Reporting only |
-| **SonarCloud** | Code quality + security hotspots | On PR (if token set) | Conditional |
+| Tool | Scope | PR Gate (`ci.yml`) | Nightly (`security-deep.yml`) | SonarCloud |
+| ---- | ----- | ------------------ | ---------------------------- | --------- |
+| **cargo audit** | Rust dependencies | :white_check_mark: Blocks on vulnerable deps | N/A | — |
+| **Dependabot** | `Cargo.lock`, `pnpm-lock.yaml` | :white_check_mark: Auto-merge for patch/security | N/A | — |
+| **Gitleaks** (`gitleaks-pr`) | Secrets in commits | :white_check_mark: Blocks on any secret found | Reporting only (full history) | — |
+| **Semgrep** (`semgrep-pr`) | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings | Reporting only (all severities) | — |
+| **Trivy** (`trivy-fs`) | Filesystem, dependencies, IaC | :white_check_mark: Blocks on HIGH/CRITICAL vulns | Reporting only (all severities) | — |
+| **SonarCloud** | Code quality + security hotspots | Conditional (token required) | — | :white_check_mark: If configured |
 
 ### Keeping Dependencies Updated
 
@@ -124,7 +124,7 @@ The project uses multiple layers of automated vulnerability scanning:
 When a vulnerability is reported or discovered:
 
 1. **Triage** — The maintainer team assesses severity within 48 hours.
-2. **Private fix** — A fix is developed in an private fork/branch.
+2. **Private fix** — A fix is developed in a private fork/branch.
 3. **Coordinated disclosure** — A patch is prepared with a target disclosure date.
 4. **Patch release** — A patch version (`x.y.z`) is tagged and released.
 5. **Public disclosure** — A GitHub Security Advisory is published with the full write-up.
@@ -133,7 +133,7 @@ When a vulnerability is reported or discovered:
 
 | Level | Definition | Response Time |
 | ----- | ---------- | ------------- |
-| **Critical** | Remote code execution,彻底绕过认证 | < 24 hours for initial mitigation |
+| **Critical** | Remote code execution, complete authentication bypass | < 24 hours for initial mitigation |
 | **High** | Data exfiltration, privilege escalation | < 7 days for patch |
 | **Medium** | Information disclosure, DoS | < 30 days for patch |
 | **Low** | Minor impact, hard to exploit | Next release cycle |

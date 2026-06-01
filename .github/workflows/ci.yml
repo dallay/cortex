@@ -161,6 +161,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -179,6 +180,7 @@ jobs:
           output: reports/trivy/trivy-pr.sarif
           exit-code: '1'
       - name: Upload Trivy SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/trivy/trivy-pr.sarif
@@ -194,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          fetch-depth: 50
           persist-credentials: false
       - name: Install Gitleaks CLI
         run: |
@@ -211,6 +213,7 @@ jobs:
             --report-path reports/gitleaks/gitleaks-pr.sarif \
             --exit-code 1
       - name: Upload Gitleaks SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/gitleaks/gitleaks-pr.sarif
@@ -248,6 +251,7 @@ jobs:
             && echo "No high-severity findings" \
             || { echo "High-severity Semgrep findings detected"; exit 1; }
       - name: Upload Semgrep SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/semgrep/semgrep-pr.sarif
