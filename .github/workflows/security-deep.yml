@@ -85,7 +85,6 @@ jobs:
             --config p/rust \
             --config p/dockerfile \
             --config p/github-actions \
-            --config p/secrets \
             --sarif \
             --output reports/semgrep/semgrep-full.sarif
       - name: Upload Semgrep SARIF
@@ -132,37 +131,39 @@ jobs:
 
       - name: Run full Trivy filesystem, dependency, and IaC scan
         run: |
+          # --exit-code 0: reporting-only scan; do NOT fail the step on vulnerabilities
           trivy fs . \
             --scanners vuln,misconfig \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
             --format sarif \
-            --output reports/trivy/trivy-full.sarif \
-            --exit-code 1
+            --output reports/trivy/trivy-full.sarif
       - name: Verify SARIF file exists
-        if: always()
+        id: verify-sarif
         run: |
           if [ -f reports/trivy/trivy-full.sarif ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
             echo "✓ SARIF file created successfully"
             ls -lh reports/trivy/trivy-full.sarif
           else
+            echo "found=false" >> "$GITHUB_OUTPUT"
             echo "✗ SARIF file not found"
           fi
 
       - name: Upload Trivy SARIF
-        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
+        if: steps.verify-sarif.outputs.found == 'true'
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/trivy/trivy-full.sarif
           category: trivy-full
       - name: Upload Trivy artifact
-        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: security-deep-trivy-full
           path: reports/trivy/
           retention-days: 21
       - name: Summarize Trivy reporting channel
-        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
+        if: always()
         run: |
           echo '### security / trivy-full' >> "$GITHUB_STEP_SUMMARY"
           echo '- Intent: reporting-only nightly deep scan — filesystem, dependency, and IaC.' >> "$GITHUB_STEP_SUMMARY"

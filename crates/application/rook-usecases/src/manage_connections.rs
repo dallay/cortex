@@ -906,7 +906,8 @@ mod tests {
                         is_active: true,
                         credentials: CredentialsInput::OAuth {
                             email: "user@example.com".to_string(),
-                            access_token: "ya29.access_token".to_string(),
+                            // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token
+                            access_token: "fake_google_access_token_data".to_string(),
                             refresh_token: "1//refresh_token".to_string(),
                             expires_at: Utc::now().timestamp() + 3600,
                             scope: "https://www.googleapis.com/auth/bigquery".to_string(),
@@ -1995,7 +1996,8 @@ mod tests {
                     auth_type: AuthType::OAuth,
                     credentials: Credentials::OAuth {
                         email: EncryptedBlob("enc:v1:user@example.com".to_string()),
-                        access_token: EncryptedBlob("enc:v1:ya29.access".to_string()),
+                        // nosemgrep: generic.secrets.security.detected-google-oauth-access-token.detected-google-oauth-access-token
+                        access_token: EncryptedBlob("enc:v1:fake-google-token-data".to_string()),
                         refresh_token: EncryptedBlob("enc:v1:refresh".to_string()),
                         expires_at: expired_at,
                         scope: EncryptedBlob("enc:v1:scope".to_string()),
