@@ -183,6 +183,7 @@ impl RookContainer {
             set_admin_password,
             login,
             logout,
+            setup_token: Arc::new(tokio::sync::RwLock::new(None)),
         });
 
         let authz_config = transport_axum::authz::AuthzConfig::from_env_with_client_auth(

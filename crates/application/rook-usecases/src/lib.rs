@@ -5,6 +5,9 @@
 //   - FallbackRouter: priority/round-robin/weighted routing with circuit breaker
 //   - ManageProviders: health checks, enable/disable providers
 
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
 pub mod auth;
 pub mod route_request;
 pub mod router_impl;
@@ -47,6 +50,12 @@ pub struct RookUsecases {
     pub set_admin_password: SetAdminPassword,
     pub login: Login,
     pub logout: Logout,
+    /// One-time setup token held in memory for the duration of bootstrap mode.
+    ///
+    /// Set at startup (either from `ROOK_SETUP_TOKEN` env var or auto-generated).
+    /// Cleared after a successful `POST /api/bootstrap/setup`.
+    /// Never written to disk or logs.
+    pub setup_token: Arc<RwLock<Option<String>>>,
 }
 
 impl RookUsecases {

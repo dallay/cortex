@@ -16,11 +16,8 @@ pub struct BootstrapSetupResponse {
 }
 
 pub async fn status_handler(State(usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
-    match usecases
-        .bootstrap_status
-        .execute(setup_token_from_env())
-        .await
-    {
+    let token = usecases.setup_token.read().await.clone();
+    match usecases.bootstrap_status.execute(token).await {
         Ok(state) => Json(state).into_response(),
         Err(_) => {
             let body = serde_json::json!({
@@ -36,10 +33,10 @@ pub async fn setup_handler(
     State(usecases): State<Arc<RookUsecases>>,
     Json(body): Json<BootstrapSetupRequest>,
 ) -> impl IntoResponse {
-    let Some(expected_setup_token) = setup_token_from_env() else {
+    let Some(expected_setup_token) = usecases.setup_token.read().await.clone() else {
         let body = serde_json::json!({
             "error": "setup_token_missing",
-            "message": "ROOK_SETUP_TOKEN is required while bootstrap mode is active."
+            "message": "No setup token is active. The system may already be initialized."
         });
         return (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response();
     };
@@ -59,10 +56,14 @@ pub async fn setup_handler(
         )
         .await
     {
-        Ok(output) => Json(BootstrapSetupResponse {
-            api_key: output.api_key,
-        })
-        .into_response(),
+        Ok(output) => {
+            // One-time token — clear from memory after successful bootstrap
+            *usecases.setup_token.write().await = None;
+            Json(BootstrapSetupResponse {
+                api_key: output.api_key,
+            })
+            .into_response()
+        }
         Err(err) => {
             let (status, code) = match err {
                 rook_usecases::BootstrapSetupError::AlreadyInitialized => {
@@ -86,11 +87,4 @@ pub async fn setup_handler(
             (status, Json(body)).into_response()
         }
     }
-}
-
-fn setup_token_from_env() -> Option<String> {
-    std::env::var("ROOK_SETUP_TOKEN")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
