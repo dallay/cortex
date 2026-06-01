@@ -1,0 +1,54 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c581c57d9861fc6f2c8d3fbd94e36eddc8fdd35c # v3.0.12
+        with:
+          languages: rust
+          queries: security-and-quality
+          config-file: .github/code-scanning/codeql-config.yml
+
+      - name: Perform build
+        run: |
+          # CodeQL needs to see a build step on compiled languages only.
+          # Rust doesn't require a build step, but having one improves analysis quality.
+          # Use the workspace check as a proxy for a successful build environment.
+          cargo check --workspace || true
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@c581c57d9861fc6f2c8d3fbd94e36eddc8fdd35c # v3.0.12
+        with:
+          category: "/rlang:codeql-rust"
+          upload: true
