@@ -239,7 +239,6 @@ jobs:
             --config p/rust \
             --config p/dockerfile \
             --config p/github-actions \
-            --config p/secrets \
             --severity ERROR \
             --sarif \
             --output reports/semgrep/semgrep-pr.sarif

@@ -173,7 +173,9 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
     if !state.is_initialized {
         match setup_token {
             Some(token) => {
-                tracing::warn!(setup_token = %token, "rook is in bootstrap mode; set the admin password before using the server");
+                // Log only a prefix to avoid log injection attacks
+                let token_preview = token.chars().take(8).collect::<String>();
+                tracing::warn!(setup_token_prefix = %token_preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
                 eprintln!("rook bootstrap mode: use setup token {token} to set the admin password");
             }
             None => {

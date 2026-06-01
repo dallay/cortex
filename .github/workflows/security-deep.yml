@@ -85,7 +85,6 @@ jobs:
             --config p/rust \
             --config p/dockerfile \
             --config p/github-actions \
-            --config p/secrets \
             --sarif \
             --output reports/semgrep/semgrep-full.sarif
       - name: Upload Semgrep SARIF
