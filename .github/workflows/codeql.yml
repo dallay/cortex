@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@c581c57d9861fc6f2c8d3fbd94e36eddc8fdd35c # v3.0.12
+        uses: github/codeql-action/init@051e2f90686233507fe9283ff167d2e709304b30 # v3.36.0
         with:
           languages: rust
           queries: security-and-quality
@@ -48,7 +48,7 @@ jobs:
           cargo check --workspace || true
 
       - name: Analyze
-        uses: github/codeql-action/analyze@c581c57d9861fc6f2c8d3fbd94e36eddc8fdd35c # v3.0.12
+        uses: github/codeql-action/analyze@051e2f90686233507fe9283ff167d2e709304b30 # v3.36.0
         with:
           category: "/rlang:codeql-rust"
           upload: true
