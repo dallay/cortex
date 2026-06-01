@@ -74,7 +74,9 @@ enum AnthropicStreamEvent {
     MessageStart { message: AnthropicMessageStart },
     #[serde(rename = "content_block_start")]
     #[allow(dead_code)]
-    ContentBlockStart { content_block: AnthropicContentBlockStart },
+    ContentBlockStart {
+        content_block: AnthropicContentBlockStart,
+    },
     #[serde(rename = "content_block_stop")]
     ContentBlockStop,
     #[serde(rename = "message_stop")]
@@ -218,7 +220,10 @@ pub struct AnthropicProvider {
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
 ///
 /// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
-async fn map_anthropic_http_error(provider_id: &ProviderId, resp: reqwest::Response) -> CortexError {
+async fn map_anthropic_http_error(
+    provider_id: &ProviderId,
+    resp: reqwest::Response,
+) -> CortexError {
     let status = resp.status();
     let retry_after = resp
         .headers()
@@ -331,7 +336,8 @@ impl ProviderPort for AnthropicProvider {
             usage: TokenUsage {
                 prompt_tokens: anthropic_resp.usage.input_tokens,
                 completion_tokens: anthropic_resp.usage.output_tokens,
-                total_tokens: anthropic_resp.usage.input_tokens + anthropic_resp.usage.output_tokens,
+                total_tokens: anthropic_resp.usage.input_tokens
+                    + anthropic_resp.usage.output_tokens,
                 estimated_cost_usd: None,
             },
             latency_ms: start.elapsed().as_millis() as u64,
@@ -376,9 +382,7 @@ impl ProviderPort for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "{status}: {body}"
-            )));
+            return Err(CortexError::provider(format!("{status}: {body}")));
         }
 
         let request_id = req.id.clone();

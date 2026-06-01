@@ -53,7 +53,10 @@ fn openai_minimal_request_round_trip() {
     assert_eq!(domain_req.model.as_str(), "gpt-4o");
     assert_eq!(domain_req.messages.len(), 1);
     assert_eq!(domain_req.messages[0].role, Role::User);
-    assert_eq!(domain_req.messages[0].content, MessageContent::Text("Hello".to_string()));
+    assert_eq!(
+        domain_req.messages[0].content,
+        MessageContent::Text("Hello".to_string())
+    );
 
     // Build a mock response and convert back to OpenAI format
     let mock_resp = mock_completion_response("Hello back!");
@@ -83,8 +86,14 @@ fn openai_request_with_tools_and_stream_options_does_not_error() {
 
     assert_eq!(req.model, "gpt-4o");
     assert!(req.tools.is_some(), "tools field should be present");
-    assert!(req.stream_options.is_some(), "stream_options should be present");
-    assert!(req.response_format.is_some(), "response_format should be present");
+    assert!(
+        req.stream_options.is_some(),
+        "stream_options should be present"
+    );
+    assert!(
+        req.response_format.is_some(),
+        "response_format should be present"
+    );
 }
 
 #[test]
@@ -97,7 +106,10 @@ fn openai_response_has_correct_structure() {
     assert!(json["id"].is_string());
     assert!(json["created"].is_number());
     assert_eq!(json["choices"][0]["message"]["role"], "assistant");
-    assert_eq!(json["choices"][0]["message"]["content"], "The answer is 42.");
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "The answer is 42."
+    );
     assert_eq!(json["choices"][0]["finish_reason"], "stop");
     assert_eq!(json["usage"]["prompt_tokens"], 10);
     assert_eq!(json["usage"]["completion_tokens"], 5);

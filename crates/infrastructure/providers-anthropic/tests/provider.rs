@@ -79,7 +79,11 @@ async fn complete_returns_valid_response_from_mock_server() {
     };
 
     let result = provider.complete(&req).await;
-    assert!(result.is_ok(), "complete() should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "complete() should succeed: {:?}",
+        result.err()
+    );
 
     let resp = result.unwrap();
     assert_eq!(resp.content, "Hello, world!");

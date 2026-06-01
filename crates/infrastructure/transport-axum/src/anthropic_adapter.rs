@@ -368,7 +368,8 @@ mod tests {
 
     #[test]
     fn minimal_anthropic_request_parses_correctly() {
-        let json = r#"{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hello"}]}"#;
+        let json =
+            r#"{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hello"}]}"#;
         let req: AnthropicMessagesRequest = serde_json::from_str(json).expect("should deserialize");
         let domain: rook_core::CompletionRequest = req.into();
         assert_eq!(domain.messages.len(), 1);

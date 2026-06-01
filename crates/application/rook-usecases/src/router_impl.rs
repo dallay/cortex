@@ -236,8 +236,8 @@ mod tests {
     use super::*;
     use futures::stream::BoxStream;
     use rook_core::{
-        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId,
-        ProviderId, ProviderPort, Role, StreamChunk, TokenUsage,
+        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId, ProviderId,
+        ProviderPort, Role, StreamChunk, TokenUsage,
     };
 
     struct StubProvider {

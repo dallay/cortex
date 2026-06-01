@@ -181,8 +181,8 @@ mod tests {
     use async_trait::async_trait;
     use futures::{stream, StreamExt};
     use rook_core::{
-        HealthStatus, Message, ModelId, ProviderId, ProviderPort, RequestMetadata,
-        Role, StreamChunk, TokenUsage,
+        HealthStatus, Message, ModelId, ProviderId, ProviderPort, RequestMetadata, Role,
+        StreamChunk, TokenUsage,
     };
     use shared_kernel::{CacheKey, CortexResult, RequestId};
     use std::sync::Mutex;
