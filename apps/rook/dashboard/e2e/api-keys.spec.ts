@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page, TestInfo } from '@playwright/test'
 
 // =============================================================================
 // Test Configuration
@@ -30,48 +30,74 @@ async function getCsrfToken(page: Page): Promise<{ token: string; cookie: string
 
 // =============================================================================
 // Helper: Login via API and set cookies in browser
+//
+// NOTE: Auth is handled via `storageState` in playwright.config — the browser
+// context already has a valid auth_token cookie before each test starts.
+// This function is kept as a no-op for backwards-compatibility with existing
+// test code.  Do NOT perform a real login here: it triggers the rate-limiter
+// when multiple tests run concurrently.
 // =============================================================================
 
-async function loginAsAdmin(page: Page, password: string = ADMIN_PASSWORD): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function loginAsAdmin(_page: Page, _password: string = ADMIN_PASSWORD): Promise<void> {
+  // No-op: storageState in playwright.config provides the pre-authenticated session.
+}
+
+// =============================================================================
+// Helper: Revoke all API keys via API (test isolation — ensures empty state)
+// =============================================================================
+
+async function revokeAllApiKeysViaApi(page: Page): Promise<void> {
   const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
+  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
 
-  const loginResponse = await page.request.post(`${API_BASE_URL}/login`, {
-    data: {
-      username: 'admin',
-      password: password
-    },
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRF-Token': csrf.token,
-      'Cookie': `csrf_token=${csrf.cookie}`
-    }
+  const listRes = await page.request.get(`${API_BASE_URL}/api/api-keys?limit=100`, {
+    headers: { 'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}` },
   })
+  if (!listRes.ok()) return
 
-  if (!loginResponse.ok()) {
-    throw new Error(`Login failed: ${loginResponse.status()} ${await loginResponse.text()}`)
+  const data = await listRes.json()
+  const keys: { id: string; isActive: boolean }[] = data.keys ?? []
+
+  for (const key of keys.filter(k => k.isActive)) {
+    await page.request.delete(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+      headers: {
+        'X-CSRF-Token': csrf.token,
+        'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`,
+      },
+    })
   }
+}
 
-  const authCookie = cookieValue(loginResponse.headers()['set-cookie'] ?? null, 'auth_token')
-  if (!authCookie) {
-    throw new Error('Login response did not set auth_token cookie')
+// =============================================================================
+// Helper: Revoke API keys matching a specific label (worker-scoped isolation).
+//
+// Unlike revokeAllApiKeysViaApi, this only touches keys whose label matches
+// exactly — preventing cross-worker interference when parallel tests run.
+// =============================================================================
+
+async function revokeKeysByLabelViaApi(page: Page, label: string): Promise<void> {
+  const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
+  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+  const listRes = await page.request.get(`${API_BASE_URL}/api/api-keys?limit=100`, {
+    headers: { 'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}` },
+  })
+  if (!listRes.ok()) return
+
+  const data = await listRes.json()
+  const keys: { id: string; isActive: boolean; label: string }[] = data.keys ?? []
+
+  for (const key of keys.filter(k => k.isActive && k.label === label)) {
+    await page.request.delete(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+      headers: {
+        'X-CSRF-Token': csrf.token,
+        'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`,
+      },
+    })
   }
-
-  await page.context().addCookies([
-    {
-      name: 'csrf_token',
-      value: csrf.cookie,
-      url: DASHBOARD_URL,
-      httpOnly: true,
-      sameSite: 'Strict',
-    },
-    {
-      name: 'auth_token',
-      value: authCookie,
-      url: DASHBOARD_URL,
-      httpOnly: true,
-      sameSite: 'Lax',
-    },
-  ])
 }
 
 // =============================================================================
@@ -125,6 +151,15 @@ test.describe('Dashboard', () => {
 // =============================================================================
 
 test.describe('API Keys - List View', () => {
+  test.beforeAll(async ({ browser }) => {
+    // Ensure a clean slate so "empty state" tests are reliable.
+    const page = await browser.newPage()
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await revokeAllApiKeysViaApi(page)
+    await page.close()
+  })
+
   test.beforeEach(async ({ page }) => {
     // Login first
     await page.goto(DASHBOARD_URL)
@@ -156,12 +191,20 @@ test.describe('API Keys - List View', () => {
 // =============================================================================
 
 test.describe('API Keys - Create Flow', () => {
-  test.beforeEach(async ({ page }) => {
+  // Worker-scoped label prevents cross-worker interference in parallel runs.
+  let createLabel: string
+
+  test.beforeEach(async ({ page }, testInfo: TestInfo) => {
+    createLabel = `test-agent-key-${testInfo.workerIndex}`
+
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
     await page.goto(`${DASHBOARD_URL}/api-keys`)
     await page.waitForLoadState('networkidle')
+
+    // Revoke only OUR worker's label — avoids touching keys from concurrent workers.
+    await revokeKeysByLabelViaApi(page, createLabel)
   })
 
   test('opens create modal when clicking Create API Key button', async ({ page }) => {
@@ -181,8 +224,8 @@ test.describe('API Keys - Create Flow', () => {
     await page.getByRole('button', { name: /create api key/i }).click()
 
     // Fill in the form
-    await page.getByLabel(/label/i).fill('test-agent-key')
-    await page.getByText(/read/i).click()
+    await page.getByLabel(/label/i).fill(createLabel)
+    await page.getByRole('dialog').getByText(/read/i).click()
 
     // Submit
     await page.getByRole('button', { name: /create key/i }).click()
@@ -192,8 +235,8 @@ test.describe('API Keys - Create Flow', () => {
       page.getByText(/save this key now — it will not be shown again/i)
     ).toBeVisible()
 
-    // Should show the plaintext key
-    const keyDisplay = page.locator('code')
+    // Should show the plaintext key (inside the amber warning box)
+    const keyDisplay = page.locator('.bg-amber-500\\/10 code')
     await expect(keyDisplay).toBeVisible()
 
     // Copy button should be visible
@@ -206,7 +249,7 @@ test.describe('API Keys - Create Flow', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible()
 
     // The key should now appear in the list
-    await expect(page.getByText(/test-agent-key/i)).toBeVisible()
+    await expect(page.getByText(createLabel)).toBeVisible()
   })
 })
 
@@ -215,15 +258,22 @@ test.describe('API Keys - Create Flow', () => {
 // =============================================================================
 
 test.describe('API Keys - Edit Flow', () => {
-  test.beforeEach(async ({ page }) => {
+  // Worker-scoped label prevents concurrent workers from editing each other's keys.
+  let editLabel: string
+
+  test.beforeEach(async ({ page }, testInfo: TestInfo) => {
+    editLabel = `key-to-edit-${testInfo.workerIndex}`
+
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
     await page.goto(`${DASHBOARD_URL}/api-keys`)
     await page.waitForLoadState('networkidle')
 
-    // Create a key to edit
-    await createApiKeyViaApi(page, 'key-to-edit', ['read'], 'free')
+    // Revoke any leftover key for this worker, then create a fresh one.
+    await revokeKeysByLabelViaApi(page, editLabel)
+    await revokeKeysByLabelViaApi(page, `updated-key-label-${testInfo.workerIndex}`)
+    await createApiKeyViaApi(page, editLabel, ['read'], 'free')
   })
 
   test('opens edit modal when clicking edit button', async ({ page }) => {
@@ -232,7 +282,7 @@ test.describe('API Keys - Edit Flow', () => {
     await page.waitForLoadState('networkidle')
 
     // Find the key row
-    const row = page.locator('tbody tr').filter({ hasText: 'key-to-edit' })
+    const row = page.locator('tbody tr').filter({ hasText: editLabel })
 
     // Click edit button (pencil icon)
     await row.locator('button').first().click()
@@ -246,22 +296,24 @@ test.describe('API Keys - Edit Flow', () => {
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('tbody tr').filter({ hasText: 'key-to-edit' })
+    const row = page.locator('tbody tr').filter({ hasText: editLabel })
     await row.locator('button').first().click()
 
     // Label should be pre-filled
-    await expect(page.getByLabel(/label/i)).toHaveValue('key-to-edit')
+    await expect(page.getByLabel(/label/i)).toHaveValue(editLabel)
   })
 
-  test('updates key successfully', async ({ page }) => {
+  test('updates key successfully', async ({ page }, testInfo: TestInfo) => {
+    const updatedLabel = `updated-key-label-${testInfo.workerIndex}`
+
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('tbody tr').filter({ hasText: 'key-to-edit' })
+    const row = page.locator('tbody tr').filter({ hasText: editLabel })
     await row.locator('button').first().click()
 
     // Change the label
-    await page.getByLabel(/label/i).fill('updated-key-label')
+    await page.getByLabel(/label/i).fill(updatedLabel)
 
     // Save changes
     await page.getByRole('button', { name: /save changes/i }).click()
@@ -270,7 +322,7 @@ test.describe('API Keys - Edit Flow', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible()
 
     // Key should show updated label
-    await expect(page.getByText(/updated-key-label/i)).toBeVisible()
+    await expect(page.getByText(updatedLabel)).toBeVisible()
   })
 })
 
@@ -279,22 +331,31 @@ test.describe('API Keys - Edit Flow', () => {
 // =============================================================================
 
 test.describe('API Keys - Revoke Flow', () => {
-  test.beforeEach(async ({ page }) => {
+  // Use a worker-scoped label to prevent cross-browser-worker interference.
+  // Each browser (chromium / firefox / webkit) gets its own workerIndex so
+  // revokeKeysByLabelViaApi never touches another worker's key.
+  let revokeLabel: string
+
+  test.beforeEach(async ({ page }, testInfo: TestInfo) => {
+    revokeLabel = `key-to-revoke-${testInfo.workerIndex}`
+
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
     await page.goto(`${DASHBOARD_URL}/api-keys`)
     await page.waitForLoadState('networkidle')
 
-    // Create a key to revoke
-    await createApiKeyViaApi(page, 'key-to-revoke', ['read'], 'free')
+    // Revoke only OUR worker's label — avoids touching keys belonging to
+    // concurrent browser workers, which caused a race condition on reload.
+    await revokeKeysByLabelViaApi(page, revokeLabel)
+    await createApiKeyViaApi(page, revokeLabel, ['read'], 'free')
   })
 
   test('shows confirmation dialog when revoking', async ({ page }) => {
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('tbody tr').filter({ hasText: 'key-to-revoke' })
+    const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
     // Click revoke button (trash icon)
     await row.locator('button').nth(1).click()
@@ -304,11 +365,11 @@ test.describe('API Keys - Revoke Flow', () => {
     await expect(page.getByText(/revoke api key/i)).toBeVisible()
   })
 
-  test('revokes key successfully and shows Revoked status', async ({ page }) => {
+  test('revokes key successfully and removes it from the list', async ({ page }) => {
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('tbody tr').filter({ hasText: 'key-to-revoke' })
+    const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
     // Click revoke button
     await row.locator('button').nth(1).click()
@@ -316,15 +377,14 @@ test.describe('API Keys - Revoke Flow', () => {
     // Confirm revocation
     await page.getByRole('button', { name: /revoke key/i }).click()
 
-    // Wait for dialog to close and status to update
-    await page.waitForTimeout(500)
+    // Dialog should close
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 })
 
-    // Key should now show Revoked status
+    // Key should no longer appear in the active list after reload (active-only filter)
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    const revokedRow = page.locator('tbody tr').filter({ hasText: 'key-to-revoke' })
-    await expect(revokedRow.locator('text=Revoked')).toBeVisible()
+    await expect(page.locator('tbody tr').filter({ hasText: revokeLabel })).toHaveCount(0)
   })
 })
 
