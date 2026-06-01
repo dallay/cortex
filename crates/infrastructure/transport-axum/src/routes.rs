@@ -13,6 +13,7 @@ use axum::{
 };
 use futures::StreamExt;
 use rook_core::{CompletionRequest, HealthPort, HealthStatus};
+use shared_kernel::CortexError;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
@@ -282,6 +283,10 @@ async fn anthropic_messages(
 ) -> Result<Response, HttpError> {
     let req = CompletionRequest::from(body);
 
+    if req.stream {
+        return anthropic_messages_stream(usecases, req).await;
+    }
+
     match usecases.route_request.execute(req).await {
         Ok(resp) => {
             let anthropic_resp = AnthropicMessagesResponse {
@@ -310,6 +315,60 @@ async fn anthropic_messages(
             Ok((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
         }
     }
+}
+
+async fn anthropic_messages_stream(
+    usecases: Usecases,
+    req: CompletionRequest,
+) -> Result<Response, HttpError> {
+    let stream = match usecases.route_request.execute_stream(req).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let error_event = serde_json::to_string(&AnthropicSseEvent::from(error))
+                .map(|data| Event::default().data(data))
+                .unwrap_or_else(|_| {
+                    Event::default().data(
+                        r#"{"type":"error","error":{"type":"internal_error","message":"stream error"}}"#,
+                    )
+                });
+            let body = futures::stream::once(async move { Ok::<Event, Infallible>(error_event) });
+            let mut response = Sse::new(body).into_response();
+            apply_sse_headers(response.headers_mut());
+            return Ok(response);
+        }
+    };
+
+    let events = stream
+        .map(|chunk| match chunk {
+            Ok(chunk) => {
+                let event: AnthropicSseEvent = (&chunk).into();
+                serde_json::to_string(&event)
+                    .map(|data| Event::default().data(data))
+                    .unwrap_or_else(|e| {
+                        Event::default().data(
+                            serde_json::to_string(&AnthropicSseEvent::from(
+                                CortexError::provider(format!("serialization error: {e}")),
+                            ))
+                            .unwrap_or_else(|_| r#"{"type":"error","error":{"type":"internal_error","message":"serialization error"}}"#.to_string()),
+                        )
+                    })
+            }
+            Err(error) => {
+                serde_json::to_string(&AnthropicSseEvent::from(error))
+                    .map(|data| Event::default().data(data))
+                    .unwrap_or_else(|_| {
+                        Event::default().data(
+                            r#"{"type":"error","error":{"type":"internal_error","message":"stream error"}}"#,
+                        )
+                    })
+            }
+        })
+        .chain(futures::stream::once(async { Event::default().data("[DONE]") }))
+        .map(Ok::<Event, Infallible>);
+
+    let mut response = Sse::new(events).into_response();
+    apply_sse_headers(response.headers_mut());
+    Ok(response)
 }
 
 /// GET /health
