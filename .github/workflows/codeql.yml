@@ -39,10 +39,11 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-      - name: Install deps and build dashboard
-        run: |
-          pnpm install
-          pnpm build
+      - name: Install workspace dependencies
+        run: pnpm install
+
+      - name: Build dashboard
+        run: pnpm --filter @dallay/rook-dashboard build
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@051e2f90686233507fe9283ff167d2e709304b30 # v3.36.0
