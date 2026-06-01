@@ -8,6 +8,7 @@ use rook_core::{
     RequestId, StreamChunk, TokenUsage,
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
+use sse_stream::SseBuffer;
 
 /// Truncate a string to at most `max` chars, safe across UTF-8 multi-byte boundaries.
 fn char_safe_truncate(s: &str, max: usize) -> String {
@@ -173,80 +174,6 @@ fn parse_finish_reason(reason: &str) -> Option<FinishReason> {
         "tool_calls" => Some(FinishReason::ToolCalls),
         _ => None,
     }
-}
-
-/// SSE buffer that accumulates raw bytes until a complete SSE event ( delimited by "\n\n")
-/// is available, then yields the event text and keeps any remainder for the next chunk.
-struct SseBuffer {
-    buffer: Vec<u8>,
-}
-
-impl SseBuffer {
-    fn new() -> Self {
-        Self { buffer: Vec::new() }
-    }
-
-    /// Push incoming bytes, return an iterator of complete SSE event strings.
-    /// A complete SSE event is text followed by "\n\n". Partial data is kept in the buffer.
-    fn push(&mut self, incoming: &[u8]) -> impl Iterator<Item = String> + '_ {
-        self.buffer.extend_from_slice(incoming);
-        let mut events = Vec::new();
-        let mut start = 0;
-
-        loop {
-            // Scan for "\n\n" from current position
-            let mut search_start = start;
-            let mut found_double_nl = None;
-
-            while search_start < self.buffer.len() {
-                if let Some(pos) = byte_memchr(b'\n', &self.buffer[search_start..]) {
-                    let abs_pos = search_start + pos;
-                    if abs_pos + 1 < self.buffer.len() && self.buffer[abs_pos + 1] == b'\n' {
-                        found_double_nl = Some(abs_pos);
-                        break;
-                    }
-                    // Not a double-nl, skip past this '\n' and continue searching
-                    search_start = abs_pos + 1;
-                } else {
-                    break;
-                }
-            }
-
-            match found_double_nl {
-                Some(event_end) => {
-                    // Yield the event text (everything before the first '\n')
-                    let event_text_len = event_end - start;
-                    if let Ok(event) =
-                        String::from_utf8(self.buffer[start..start + event_text_len].to_vec())
-                    {
-                        events.push(event);
-                    }
-                    // Move past the "\n\n"
-                    start = event_end + 2;
-                }
-                None => break,
-            }
-        }
-
-        // Drain processed bytes, keeping any remainder
-        if start > 0 {
-            self.buffer.drain(0..start);
-        }
-
-        events.into_iter()
-    }
-}
-
-impl Default for SseBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Portable byte search — returns index of `needle` in `haystack` or None.
-#[inline]
-fn byte_memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
-    haystack.iter().position(|&b| b == needle)
 }
 
 #[async_trait]

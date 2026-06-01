@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 shared-kernel = { path = "../../domain/shared-kernel" }
 rook-core = { path = "../../domain/rook-core" }
+sse-stream = { path = "../sse-stream" }
 
 # Async
 async-trait = "0.1"

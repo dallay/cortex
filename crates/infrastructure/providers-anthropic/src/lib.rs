@@ -9,6 +9,7 @@ use rook_core::{
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use sse_stream::SseBuffer;
 use std::sync::Arc;
 
 /// Non-streaming response body from Anthropic API
@@ -136,72 +137,6 @@ struct AnthropicContentBlockStart {
     #[serde(rename = "type")]
     #[allow(dead_code)]
     block_type: String,
-}
-
-/// SSE buffer that accumulates raw bytes until a complete SSE event is available.
-struct SseBuffer {
-    buffer: Vec<u8>,
-}
-
-impl SseBuffer {
-    fn new() -> Self {
-        Self { buffer: Vec::new() }
-    }
-
-    /// Push incoming bytes, return an iterator of complete SSE event strings.
-    fn push(&mut self, incoming: &[u8]) -> impl Iterator<Item = String> + '_ {
-        self.buffer.extend_from_slice(incoming);
-        let mut events = Vec::new();
-        let mut start = 0;
-
-        loop {
-            let mut search_start = start;
-            let mut found_double_nl = None;
-
-            while search_start < self.buffer.len() {
-                if let Some(pos) = byte_memchr(b'\n', &self.buffer[search_start..]) {
-                    let abs_pos = search_start + pos;
-                    if abs_pos + 1 < self.buffer.len() && self.buffer[abs_pos + 1] == b'\n' {
-                        found_double_nl = Some(abs_pos);
-                        break;
-                    }
-                    search_start = abs_pos + 1;
-                } else {
-                    break;
-                }
-            }
-
-            match found_double_nl {
-                Some(event_end) => {
-                    let event_text_len = event_end - start;
-                    if let Ok(event) =
-                        String::from_utf8(self.buffer[start..start + event_text_len].to_vec())
-                    {
-                        events.push(event);
-                    }
-                    start = event_end + 2;
-                }
-                None => break,
-            }
-        }
-
-        if start > 0 {
-            self.buffer.drain(0..start);
-        }
-
-        events.into_iter()
-    }
-}
-
-impl Default for SseBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[inline]
-fn byte_memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
-    haystack.iter().position(|&b| b == needle)
 }
 
 #[derive(Debug, Clone)]
