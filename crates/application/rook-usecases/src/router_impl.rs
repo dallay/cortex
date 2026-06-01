@@ -236,8 +236,8 @@ mod tests {
     use super::*;
     use futures::stream::BoxStream;
     use rook_core::{
-        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId, ProviderId,
-        ProviderPort, Role, StreamChunk, TokenUsage,
+        ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId,
+        ProviderId, ProviderPort, Role, StreamChunk, TokenUsage,
     };
 
     struct StubProvider {
@@ -262,6 +262,10 @@ mod tests {
 
         fn supported_models(&self) -> &[ModelId] {
             &self.models
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
         }
 
         fn is_available(&self) -> bool {
@@ -358,6 +362,9 @@ mod tests {
         }
         fn supported_models(&self) -> &[ModelId] {
             &self.inner.models
+        }
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
         }
         fn is_available(&self) -> bool {
             true

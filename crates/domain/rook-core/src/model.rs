@@ -238,6 +238,13 @@ pub struct StreamChunk {
     pub usage: Option<TokenUsage>,
 }
 
+/// The set of supported API wire formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ApiFormat {
+    OpenAI,
+    Anthropic,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {

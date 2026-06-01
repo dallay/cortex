@@ -4,11 +4,12 @@ use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
-    CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId, ProviderPort,
-    RequestId, Role, StreamChunk, TokenUsage,
+    ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
+    ProviderPort, Role, StreamChunk, TokenUsage,
 };
+
 use serde::Deserialize;
-use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
@@ -206,6 +207,9 @@ impl ProviderPort for AnthropicProvider {
     }
     fn supported_models(&self) -> &[KModelId] {
         &self.config.models
+    }
+    fn api_format(&self) -> ApiFormat {
+        ApiFormat::Anthropic
     }
     fn is_available(&self) -> bool {
         !self.config.api_key.is_empty()
