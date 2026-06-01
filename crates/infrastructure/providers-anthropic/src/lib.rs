@@ -50,7 +50,9 @@ enum AnthropicStreamEvent {
     MessageStart { message: AnthropicMessageStart },
     #[serde(rename = "content_block_start")]
     #[allow(dead_code)]
-    ContentBlockStart { content_block: AnthropicContentBlockStart },
+    ContentBlockStart {
+        content_block: AnthropicContentBlockStart,
+    },
     #[serde(rename = "content_block_stop")]
     ContentBlockStop,
     #[serde(rename = "message_stop")]
@@ -263,9 +265,7 @@ impl ProviderPort for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "{status}: {body}"
-            )));
+            return Err(CortexError::provider(format!("{status}: {body}")));
         }
 
         let request_id = req.id.clone();
