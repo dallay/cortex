@@ -45,9 +45,9 @@ describe('auth store', () => {
     const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
 
-    await store.login('Admin123!234')
+    await store.login('test-fixture-password')
 
-    expect(apiMock.login).toHaveBeenCalledWith({ username: 'admin', password: 'Admin123!234' })
+    expect(apiMock.login).toHaveBeenCalledWith({ username: 'admin', password: 'test-fixture-password' })
     expect(store.isAuthenticated).toBe(true)
     expect(store.currentUser?.username).toBe('admin')
     expect(store.error).toBeNull()
@@ -64,13 +64,13 @@ describe('auth store', () => {
     const store = useAuthStore()
     store.setupToken = 'setup-token'
 
-    await store.setupAdminPassword('Admin123!234')
+    await store.setupAdminPassword('test-fixture-password')
 
     expect(apiMock.setupBootstrap).toHaveBeenCalledWith({
       setupToken: 'setup-token',
-      password: 'Admin123!234',
+      password: 'test-fixture-password',
     })
-    expect(apiMock.login).toHaveBeenCalledWith({ username: 'admin', password: 'Admin123!234' })
+    expect(apiMock.login).toHaveBeenCalledWith({ username: 'admin', password: 'test-fixture-password' })
     expect(store.bootstrapRequired).toBe(false)
     expect(store.initialApiKey).toBe('rk_admin_initial')
     expect(store.isAuthenticated).toBe(true)
@@ -80,7 +80,7 @@ describe('auth store', () => {
     const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
 
-    await expect(store.setupAdminPassword('Admin123!234')).rejects.toThrow('Setup token is missing')
+    await expect(store.setupAdminPassword('test-fixture-password')).rejects.toThrow('Setup token is missing')
 
     expect(apiMock.setupBootstrap).not.toHaveBeenCalled()
     expect(store.error).toBe('Setup token is missing')

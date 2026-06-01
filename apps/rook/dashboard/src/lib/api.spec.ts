@@ -22,7 +22,7 @@ describe('Rook auth API client', () => {
     vi.resetModules()
     const { useApi } = await import('./api')
 
-    const result = await useApi().login({ username: 'admin', password: 'Admin123!234' })
+    const result = await useApi().login({ username: 'admin', password: 'test-fixture-password' })
 
     expect(result.sessionId).toBe('session-1')
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/login', expect.objectContaining({
@@ -35,7 +35,7 @@ describe('Rook auth API client', () => {
         'Content-Type': 'application/json',
         'X-CSRF-Token': 'csrf-from-login',
       }),
-      body: JSON.stringify({ username: 'admin', password: 'Admin123!234' }),
+      body: JSON.stringify({ username: 'admin', password: 'test-fixture-password' }),
     }))
   })
 
@@ -80,7 +80,7 @@ describe('Rook auth API client', () => {
     vi.resetModules()
     const { useApi } = await import('./api')
 
-    const result = await useApi().setupBootstrap({ setupToken: 'setup-token', password: 'Admin123!234' })
+    const result = await useApi().setupBootstrap({ setupToken: 'setup-token', password: 'test-fixture-password' })
 
     expect(result.apiKey).toBe('rk_admin_initial')
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/bootstrap/setup', expect.objectContaining({
@@ -90,7 +90,7 @@ describe('Rook auth API client', () => {
         'Content-Type': 'application/json',
         'X-CSRF-Token': 'csrf-for-setup',
       }),
-      body: JSON.stringify({ setup_token: 'setup-token', password: 'Admin123!234' }),
+      body: JSON.stringify({ setup_token: 'setup-token', password: 'test-fixture-password' }),
     }))
   })
 })
