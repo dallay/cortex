@@ -142,5 +142,35 @@
     "logLevel": "Nivel de Log",
     "maxConcurrent": "Solicitudes Concurrentes Máx",
     "about": "Acerca de"
+  },
+  "auth": {
+    "title": "Inicio de sesión",
+    "description": "Ingresa con la contraseña de administrador",
+    "field": {
+      "password": "Contraseña"
+    },
+    "submit": "Iniciar sesión",
+    "submitting": "Iniciando sesión…",
+    "showPassword": "Mostrar contraseña",
+    "hidePassword": "Ocultar contraseña",
+    "logout": "Cerrar sesión",
+    "error": {
+      "unknown": "Error de autenticación. Por favor, intenta nuevamente."
+    }
+  },
+  "setup": {
+    "title": "Establecer contraseña de administrador",
+    "description": "Debes establecer la contraseña de administrador antes de usar Rook",
+    "field": {
+      "password": "Contraseña",
+      "confirm": "Confirmar contraseña"
+    },
+    "submit": "Establecer contraseña",
+    "submitting": "Estableciendo contraseña…",
+    "error": {
+      "passwordMismatch": "Las contraseñas no coinciden",
+      "passwordTooShort": "La contraseña debe tener al menos 12 caracteres",
+      "unknown": "Error en la configuración. Por favor, intenta nuevamente."
+    }
   }
 }

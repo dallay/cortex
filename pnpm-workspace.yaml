@@ -3,6 +3,9 @@ allowBuilds:
   lefthook: true
   vue-demi: false
 
+minimumReleaseAgeExclude:
+  - vite@8.0.16
+
 onlyBuiltDependencies:
   - lefthook@2.1.9
   - esbuild@*

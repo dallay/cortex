@@ -97,6 +97,50 @@ export interface TestStatusResponse {
   error: string | null
 }
 
+export interface BootstrapStatusResponse {
+  is_initialized: boolean
+  admin_user_exists: boolean
+  setup_token: string | null
+}
+
+export interface BootstrapStatus {
+  isInitialized: boolean
+  adminUserExists: boolean
+  setupToken: string | null
+}
+
+export interface BootstrapSetupRequest {
+  setupToken: string
+  password: string
+}
+
+export interface BootstrapSetupResponse {
+  api_key: string
+}
+
+export interface BootstrapSetupResult {
+  apiKey: string
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  session_id: string
+  expires_at: string
+}
+
+export interface LoginResult {
+  sessionId: string
+  expiresAt: string
+}
+
+export interface CsrfTokenResponse {
+  csrf_token: string
+}
+
 const STORAGE_KEY = 'rook-api-base-url'
 
 function getBaseUrl(): string {
@@ -135,7 +179,9 @@ function createApiClient() {
   ): Promise<T> {
     const url = `${baseUrl}${path}`
 
-    // Extract CSRF token from cookie for state-changing requests
+    // Extract CSRF token from cookie for state-changing requests.
+    // HttpOnly cookies are not visible to JavaScript, so auth flows can also
+    // pass the token returned by GET /login explicitly in options.headers.
     const method = (options.method || 'GET').toUpperCase()
     const isStateChanging = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
     const headers: Record<string, string> = {
@@ -143,7 +189,7 @@ function createApiClient() {
       ...options.headers as Record<string, string>,
     }
 
-    if (isStateChanging && typeof document !== 'undefined') {
+    if (isStateChanging && typeof document !== 'undefined' && !headers['X-CSRF-Token']) {
       const csrfMatch = document.cookie.match(/csrf_token=([^;]+)/)
       if (csrfMatch) {
         headers['X-CSRF-Token'] = csrfMatch[1]
@@ -169,12 +215,64 @@ function createApiClient() {
     return response.json()
   }
 
+  async function getCsrfToken(): Promise<string> {
+    const response = await request<CsrfTokenResponse>('/login')
+    return response.csrf_token
+  }
+
   return {
     baseUrl,
 
     // Public endpoints
     async getHealth(): Promise<HealthResponse> {
       return request<HealthResponse>('/health')
+    },
+
+    async getBootstrapStatus(): Promise<BootstrapStatus> {
+      const response = await request<BootstrapStatusResponse>('/api/bootstrap/status')
+      return {
+        isInitialized: response.is_initialized,
+        adminUserExists: response.admin_user_exists,
+        setupToken: response.setup_token,
+      }
+    },
+
+    async setupBootstrap(data: BootstrapSetupRequest): Promise<BootstrapSetupResult> {
+      const csrfToken = await getCsrfToken()
+      const response = await request<BootstrapSetupResponse>('/api/bootstrap/setup', {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+        },
+        body: JSON.stringify({
+          setup_token: data.setupToken,
+          password: data.password,
+        }),
+      })
+      return { apiKey: response.api_key }
+    },
+
+    async login(data: LoginRequest): Promise<LoginResult> {
+      const csrfToken = await getCsrfToken()
+      const response = await request<LoginResponse>('/login', {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+        },
+        body: JSON.stringify(data),
+      })
+      return {
+        sessionId: response.session_id,
+        expiresAt: response.expires_at,
+      }
+    },
+
+    async logout(): Promise<void> {
+      const csrfToken = await getCsrfToken()
+      await request<void>('/logout', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
+      })
     },
 
     // Provider management (requires session auth)

@@ -142,5 +142,35 @@
     "logLevel": "Log Level",
     "maxConcurrent": "Max Concurrent Requests",
     "about": "About"
+  },
+  "auth": {
+    "title": "Admin login",
+    "description": "Sign in with the admin password",
+    "field": {
+      "password": "Password"
+    },
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "logout": "Sign out",
+    "error": {
+      "unknown": "Authentication failed. Please try again."
+    }
+  },
+  "setup": {
+    "title": "Set admin password",
+    "description": "You must set the admin password before using Rook",
+    "field": {
+      "password": "Password",
+      "confirm": "Confirm password"
+    },
+    "submit": "Set password",
+    "submitting": "Setting password…",
+    "error": {
+      "passwordMismatch": "Passwords do not match",
+      "passwordTooShort": "Password must be at least 12 characters",
+      "unknown": "Setup failed. Please try again."
+    }
   }
 }
