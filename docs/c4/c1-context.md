@@ -37,20 +37,20 @@ graph TD
 
 ## External Actors
 
-| Actor | Type | Description |
-|-------|------|-------------|
-| Developer / API Consumer | Person | Sends LLM requests via OpenAI or Anthropic wire format |
-| LLM Client App | Software System | Application consuming Rook's API (curl, SDK, etc.) |
+| Actor                    | Type            | Description                                            |
+|--------------------------|-----------------|--------------------------------------------------------|
+| Developer / API Consumer | Person          | Sends LLM requests via OpenAI or Anthropic wire format |
+| LLM Client App           | Software System | Application consuming Rook's API (curl, SDK, etc.)     |
 
 ## External Systems (Providers)
 
-| Provider | Protocol | Auth |
-|----------|----------|------|
-| OpenAI | OpenAI `/v1/chat/completions` | API Key |
-| Anthropic | Anthropic `/v1/messages` | API Key |
-| Ollama | Ollama native | None (local) |
-| Groq | Groq native | API Key |
-| Gemini | Gemini native | API Key |
+| Provider  | Protocol                      | Auth         |
+|-----------|-------------------------------|--------------|
+| OpenAI    | OpenAI `/v1/chat/completions` | API Key      |
+| Anthropic | Anthropic `/v1/messages`      | API Key      |
+| Ollama    | Ollama native                 | None (local) |
+| Groq      | Groq native                   | API Key      |
+| Gemini    | Gemini native                 | API Key      |
 
 ## Trust Boundaries
 
@@ -107,13 +107,13 @@ sequenceDiagram
 
 ## Capabilities (C1 Scope)
 
-| Capability | Description |
-|------------|-------------|
-| Request Routing | Route LLM requests to the appropriate provider based on model |
+| Capability         | Description                                                          |
+|--------------------|----------------------------------------------------------------------|
+| Request Routing    | Route LLM requests to the appropriate provider based on model        |
 | Format Translation | Translate between OpenAI and Anthropic wire formats via domain pivot |
-| Fallback | Automatically try next provider when one fails |
-| Caching | Cache responses to avoid redundant provider calls |
-| Audit Logging | Record all requests and responses for debugging |
+| Fallback           | Automatically try next provider when one fails                       |
+| Caching            | Cache responses to avoid redundant provider calls                    |
+| Audit Logging      | Record all requests and responses for debugging                      |
 
 **Out of scope for C1**: internal crate structure, database schema, encryption details.
 
@@ -122,6 +122,7 @@ sequenceDiagram
 ## Evolution Notes
 
 This diagram will be updated as:
+
 - New providers are added (e.g., Mistral, Cohere)
 - New client formats are supported (e.g., Gemini format, LiteLLM)
 - Authentication mechanisms change (e.g., API key management, OAuth)

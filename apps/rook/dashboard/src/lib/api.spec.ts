@@ -43,7 +43,8 @@ describe('Rook auth API client', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       is_initialized: false,
       admin_user_exists: true,
-      setup_token: 'setup-token',
+      // SECURITY: setup_token must NEVER appear in the status response body.
+      // The token is out-of-band only (printed to server logs at startup).
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -55,11 +56,14 @@ describe('Rook auth API client', () => {
 
     const status = await useApi().getBootstrapStatus()
 
+    // setup_token must not be present in the response — it is an out-of-band
+    // secret only printed to server logs. Exposing it via HTTP would allow
+    // unauthenticated remote takeover of fresh installations.
     expect(status).toEqual({
       isInitialized: false,
       adminUserExists: true,
-      setupToken: 'setup-token',
     })
+    expect(status).not.toHaveProperty('setupToken')
     expect(fetchMock).toHaveBeenCalledWith('/api/bootstrap/status', expect.objectContaining({
       credentials: 'include',
     }))

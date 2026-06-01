@@ -10,12 +10,11 @@ use std::sync::Arc;
 use rook_core::{
     ApiFormat, ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionRequest,
     CompletionResponse, CortexResult, FormatTranslatorPort, NewSession, PasswordHasher, RouterPort,
-    Session, SessionId, SessionRepositoryError, SessionRepositoryPort,
-    UserRepositoryPort,
+    Session, SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
 };
 use rook_usecases::{
-    BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders,
-    RouteRequest, RoutingStrategy, SetAdminPassword,
+    BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
+    RoutingStrategy, SetAdminPassword,
 };
 use shared_kernel::CacheKey;
 use std::time::Duration;
@@ -63,11 +62,7 @@ pub fn make_test_bootstrap_usecases(
         bootstrap_status,
         rook_usecases::EnsureAdminUser::new(user_repo.clone()),
         set_admin_password,
-        rook_usecases::Login::new(
-            user_repo_for_login,
-            session_repo.clone(),
-            password_hasher,
-        ),
+        rook_usecases::Login::new(user_repo_for_login, session_repo.clone(), password_hasher),
         rook_usecases::Logout::new(session_repo.clone()),
         Arc::new(RwLock::new(setup_token)),
         session_repo,
@@ -75,11 +70,9 @@ pub fn make_test_bootstrap_usecases(
 }
 
 /// Build an axum [`Router`] with only the two bootstrap endpoints wired.
-pub fn bootstrap_test_router(
-    usecases: Arc<rook_usecases::RookUsecases>,
-) -> axum::Router {
-    use axum::routing::{get, post};
+pub fn bootstrap_test_router(usecases: Arc<rook_usecases::RookUsecases>) -> axum::Router {
     use crate::handlers::bootstrap::{setup_handler, status_handler};
+    use axum::routing::{get, post};
 
     axum::Router::new()
         .route("/api/bootstrap/status", get(status_handler))

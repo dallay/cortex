@@ -1,0 +1,67 @@
+# =============================================================================
+# dev/Dockerfile.dev — Quick dev container for smoke testing
+#
+# Build in DEBUG mode (no dashboard embedding required) for fast iteration.
+# The /health API endpoint works fully; dashboard routes will return 404
+# because the Vue SPA isn't built in debug mode.
+#
+# For FULL app testing (dashboard + Playwright), use:
+#   ./dev/e2e/run-api-keys-e2e.sh
+# which uses the production-grade Dockerfile.dev at the repo root.
+#
+# Usage:
+#   dev/run.sh build
+# =============================================================================
+
+# Stage 1: Build
+FROM rust:1.89-bookworm AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.lock* ./
+COPY Cargo.toml ./
+COPY rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+# Debug build — build.rs warns about missing dashboard but doesn't fail
+RUN cargo build --bin rook 2>&1
+
+# Stage 2: Minimal runtime
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/debug/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-dev.toml /app/rook.toml
+
+RUN groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app
+
+# Config is loaded from $ROOK_CONFIG (no --config flag in rook CLI)
+ENV ROOK_CONFIG=/app/rook.toml
+
+EXPOSE 8080
+
+USER non-root
+
+# Empty CMD — `rook` with no subcommand starts the HTTP server.
+# (Note: `CMD ["--config", ...]` would fail — rook doesn't accept --config as a top-level flag.)
+CMD []
+
+ENTRYPOINT ["/usr/local/bin/rook"]

@@ -311,6 +311,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                     revoked_at, expires_at, created_at, last_used_at
              FROM api_keys
+             WHERE is_active = 1
              ORDER BY created_at DESC
              LIMIT ?1 OFFSET ?2",
             )
@@ -325,8 +326,12 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
 
     async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
         let conn = self.lock()?;
-        conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| row.get(0))
-            .map_err(db_error)
+        conn.query_row(
+            "SELECT COUNT(*) FROM api_keys WHERE is_active = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)
     }
 }
 

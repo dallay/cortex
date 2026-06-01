@@ -104,11 +104,7 @@ async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
             let container = di::RookContainer::build(&config)
                 .await
                 .context("failed to build container")?;
-            let state = container
-                .usecases
-                .bootstrap_status
-                .execute()
-                .await?;
+            let state = container.usecases.bootstrap_status.execute().await?;
             println!("initialized: {}", state.is_initialized);
             println!("admin_user_exists: {}", state.admin_user_exists);
             Ok(())
@@ -167,11 +163,7 @@ async fn start_server() -> anyhow::Result<()> {
 }
 
 async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::Result<()> {
-    let state = container
-        .usecases
-        .bootstrap_status
-        .execute()
-        .await?;
+    let state = container.usecases.bootstrap_status.execute().await?;
 
     if !state.is_initialized {
         // Read the generated token from the in-memory RwLock (set during container build)

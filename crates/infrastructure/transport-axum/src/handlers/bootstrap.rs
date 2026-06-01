@@ -16,8 +16,7 @@ pub struct BootstrapSetupResponse {
 }
 
 pub async fn status_handler(State(usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
-    let token = usecases.setup_token.read().await.clone();
-    match usecases.bootstrap_status.execute(token).await {
+    match usecases.bootstrap_status.execute().await {
         Ok(state) => Json(state).into_response(),
         Err(_) => {
             let body = serde_json::json!({

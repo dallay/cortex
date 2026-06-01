@@ -1,0 +1,20 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 300
+
+# In-memory DB — fully ephemeral, no pollution, clean slate on every restart
+[database]
+db_path = ":memory:"
+
+[audit]
+db_path = ":memory:"
+
+[provider_crud]
+enabled = false

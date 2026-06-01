@@ -100,13 +100,14 @@ export interface TestStatusResponse {
 export interface BootstrapStatusResponse {
   is_initialized: boolean
   admin_user_exists: boolean
-  setup_token: string | null
+  // NOTE: setup_token is intentionally NOT present in the wire response.
+  // It is an out-of-band secret printed only to server logs. Exposing it
+  // via HTTP would allow unauthenticated remote takeover of fresh installations.
 }
 
 export interface BootstrapStatus {
   isInitialized: boolean
   adminUserExists: boolean
-  setupToken: string | null
 }
 
 export interface BootstrapSetupRequest {
@@ -139,6 +140,11 @@ export interface LoginResult {
 
 export interface CsrfTokenResponse {
   csrf_token: string
+}
+
+export interface MeResponse {
+  username: string
+  displayName: string
 }
 
 const STORAGE_KEY = 'rook-api-base-url'
@@ -179,9 +185,11 @@ function createApiClient() {
   ): Promise<T> {
     const url = `${baseUrl}${path}`
 
-    // Extract CSRF token from cookie for state-changing requests.
-    // HttpOnly cookies are not visible to JavaScript, so auth flows can also
-    // pass the token returned by GET /login explicitly in options.headers.
+    // Extract CSRF token for state-changing requests.
+    // The csrf_token cookie is HttpOnly (XSS protection), so it cannot be read
+    // from document.cookie. Instead, fetch a fresh token from GET /login which
+    // returns it in the response body. The backend validates the double-submit
+    // cookie pattern: X-CSRF-Token header must match csrf_token cookie.
     const method = (options.method || 'GET').toUpperCase()
     const isStateChanging = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
     const headers: Record<string, string> = {
@@ -189,10 +197,15 @@ function createApiClient() {
       ...options.headers as Record<string, string>,
     }
 
-    if (isStateChanging && typeof document !== 'undefined' && !headers['X-CSRF-Token']) {
-      const csrfMatch = document.cookie.match(/csrf_token=([^;]+)/)
-      if (csrfMatch) {
-        headers['X-CSRF-Token'] = csrfMatch[1]
+    if (isStateChanging && !headers['X-CSRF-Token']) {
+      try {
+        const csrfRes = await fetch(`${baseUrl}/login`, { credentials: 'include' })
+        if (csrfRes.ok) {
+          const csrfBody = await csrfRes.json()
+          headers['X-CSRF-Token'] = csrfBody.csrf_token
+        }
+      } catch {
+        // Proceed without CSRF token — request will fail with 403 if required
       }
     }
 
@@ -233,7 +246,6 @@ function createApiClient() {
       return {
         isInitialized: response.is_initialized,
         adminUserExists: response.admin_user_exists,
-        setupToken: response.setup_token,
       }
     },
 
@@ -273,6 +285,15 @@ function createApiClient() {
         method: 'POST',
         headers: { 'X-CSRF-Token': csrfToken },
       })
+    },
+
+    async getMe(): Promise<MeResponse | null> {
+      try {
+        return await request<MeResponse>('/api/me')
+      } catch {
+        // 401 means no active session — not an error, just unauthenticated
+        return null
+      }
     },
 
     // Provider management (requires session auth)

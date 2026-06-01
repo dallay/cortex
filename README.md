@@ -62,20 +62,34 @@ The backend starts on `http://localhost:8080`. On a **fresh database** it enters
 |             ROOK -- BOOTSTRAP MODE ACTIVE                 |
 +-----------------------------------------------------------+
 |  Setup token: rk-setup-<token>                            |
-|  POST /api/bootstrap/setup { "setup_token": "...",        |
-|                               "password":    "..." }      |
+|                                                            |
+|  To complete setup, open the dashboard at                  |
+|  http://localhost:5173 and enter the token above          |
+|  along with your desired admin password.                   |
 +-----------------------------------------------------------+
 ```
 
 ### 3. Initialize the admin account
 
-Copy the token from the log and run:
+The backend enters **bootstrap mode** on a fresh database and prints a setup
+token in the server logs:
 
-```bash
-curl -s -X POST http://localhost:8080/api/bootstrap/setup \
-  -H "Content-Type: application/json" \
-  -d '{"setup_token": "rk-setup-<paste-token>", "password": "YourPassword123!"}'
 ```
++-----------------------------------------------------------+
+|             ROOK -- BOOTSTRAP MODE ACTIVE                 |
++-----------------------------------------------------------+
+|  Setup token: rk-setup-<token>                            |
+|                                                            |
+|  To complete setup, open the dashboard at                  |
+|  http://localhost:5173 and enter the token above          |
+|  along with your desired admin password.                   |
++-----------------------------------------------------------+
+```
+
+Open the dashboard (`just run-dashboard` in a second terminal) at
+`http://localhost:5173`. The setup form appears automatically when the
+server is in bootstrap mode — paste the token from the log and choose a
+strong admin password (minimum 12 characters).
 
 This creates the admin user and clears the setup token from memory.
 The server switches to normal mode immediately — no restart needed.
@@ -117,12 +131,12 @@ just kill-backend
 
 ### Environment variables (optional)
 
-| Variable                | Default | Purpose                                              |
-|-------------------------|---------|------------------------------------------------------|
-| `ROOK_CONFIG`           | —       | Path to a custom `rook.toml` (overrides defaults)    |
-| `ENCRYPTION_PASSPHRASE` | —       | Required when `provider_crud.enabled = true`         |
-| `ENCRYPTION_SALT`       | —       | Required when `provider_crud.enabled = true`         |
-| `RUST_LOG`              | `info`  | Log level (`trace`, `debug`, `info`, `warn`, `error`)|
+| Variable                | Default | Purpose                                               |
+|-------------------------|---------|-------------------------------------------------------|
+| `ROOK_CONFIG`           | —       | Path to a custom `rook.toml` (overrides defaults)     |
+| `ENCRYPTION_PASSPHRASE` | —       | Required when `provider_crud.enabled = true`          |
+| `ENCRYPTION_SALT`       | —       | Required when `provider_crud.enabled = true`          |
+| `RUST_LOG`              | `info`  | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
 
 Create a `.env` file at the repo root — `just` loads it automatically (`dotenv-load = true`):
 

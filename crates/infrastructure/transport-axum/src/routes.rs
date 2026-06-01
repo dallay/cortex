@@ -57,6 +57,7 @@ pub fn router(
         .route("/login", post(handlers::auth::login_handler))
         .route("/login", get(handlers::auth::get_login_handler))
         .route("/logout", post(handlers::auth::logout_handler))
+        .route("/api/me", get(handlers::auth::get_me_handler))
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {

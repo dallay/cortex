@@ -15,7 +15,6 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null)
   const initialized = ref(false)
   const bootstrapRequired = ref(false)
-  const setupToken = ref<string | null>(null)
   const initialApiKey = ref<string | null>(null)
   const currentUser = ref<CurrentUser | null>(null)
 
@@ -40,11 +39,27 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const status = await api.getBootstrapStatus()
       bootstrapRequired.value = !status.isInitialized
-      setupToken.value = status.setupToken
+      // NOTE: setupToken is NOT read from status — it is an out-of-band secret
+      // printed only to server logs. User pastes it manually into the setup form.
+
+      // If the system is initialized, try to restore session from existing cookie.
+      // GET /api/me returns null (catches 401) when unauthenticated.
+      if (status.isInitialized && !currentUser.value) {
+        const me = await api.getMe()
+        if (me) {
+          currentUser.value = {
+            username: me.username,
+            displayName: me.displayName,
+            email: 'admin@rook.local',
+          }
+        }
+      }
+
       initialized.value = true
     } catch (value) {
       error.value = toErrorMessage(value)
-      throw value
+      initialized.value = true // allow navigation to proceed even if status check fails
+      throw value // re-throw so router guard can handle it
     } finally {
       isLoading.value = false
     }
@@ -66,8 +81,8 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function setupAdminPassword(password: string): Promise<void> {
-    if (!setupToken.value) {
+  async function setupAdminPassword(token: string, password: string): Promise<void> {
+    if (!token) {
       const missingToken = new Error('Setup token is missing')
       error.value = missingToken.message
       throw missingToken
@@ -77,11 +92,10 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
 
     try {
-      const result = await api.setupBootstrap({ setupToken: setupToken.value, password })
+      const result = await api.setupBootstrap({ setupToken: token, password })
       // Mark bootstrap complete and stash the API key BEFORE calling login,
       // so a login failure does not leave the UI stuck in setup mode.
       bootstrapRequired.value = false
-      setupToken.value = null
       initialApiKey.value = result.apiKey
       await api.login({ username: 'admin', password })
       setAdminSession()
@@ -112,7 +126,6 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     initialized,
     bootstrapRequired,
-    setupToken,
     initialApiKey,
     currentUser,
     isAuthenticated,

@@ -16,6 +16,7 @@ const auth = useAuthStore()
 const showPassword = ref(false)
 
 // ── setup form ────────────────────────────────────────────────────────────────
+const setupToken = ref('')
 const setupPassword = ref('')
 const setupConfirm = ref('')
 const setupError = ref<string | null>(null)
@@ -38,7 +39,7 @@ async function submitSetup() {
   }
 
   try {
-    await auth.setupAdminPassword(setupPassword.value)
+    await auth.setupAdminPassword(setupToken.value, setupPassword.value)
     await router.push({ name: 'Home' })
   } catch {
     setupError.value = auth.error ?? t('setup.error.unknown')
@@ -80,6 +81,19 @@ async function submitLogin() {
         </div>
 
         <form class="space-y-4" @submit.prevent="submitSetup">
+          <!-- Setup token — out-of-band secret printed to server logs at startup -->
+          <div class="space-y-2">
+            <Label for="setup-token">{{ t('setup.field.token') }}</Label>
+            <Input
+              id="setup-token"
+              v-model="setupToken"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            />
+          </div>
+
           <div class="space-y-2">
             <Label for="setup-password">{{ t('setup.field.password') }}</Label>
             <div class="relative">

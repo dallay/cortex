@@ -49,7 +49,7 @@ pub struct ApiKeysAuthConfig {
 impl Default for ApiKeysAuthConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allow_env_fallback: true,
         }
     }

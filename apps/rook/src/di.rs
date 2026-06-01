@@ -175,26 +175,27 @@ impl RookContainer {
         );
         let format_registry = Arc::new(format_registry);
 
-        let usecases: Arc<rook_usecases::RookUsecases> = Arc::new(rook_usecases::RookUsecases::new(
-            RouteRequest::new(
-                router.clone(),
-                cache.clone(),
-                audit.clone(),
-                format_registry.clone(),
-            ),
-            ManageProviders::new(router.clone()),
-            HealthCheck::new(registry),
-            authenticate_client_api.clone(),
-            manage_connections,
-            manage_api_keys,
-            bootstrap_status.clone(),
-            ensure_admin_user,
-            set_admin_password,
-            login,
-            logout,
-            Arc::new(tokio::sync::RwLock::new(None)),
-            session_repo.clone(),
-        ));
+        let usecases: Arc<rook_usecases::RookUsecases> =
+            Arc::new(rook_usecases::RookUsecases::new(
+                RouteRequest::new(
+                    router.clone(),
+                    cache.clone(),
+                    audit.clone(),
+                    format_registry.clone(),
+                ),
+                ManageProviders::new(router.clone()),
+                HealthCheck::new(registry),
+                authenticate_client_api.clone(),
+                manage_connections,
+                manage_api_keys,
+                bootstrap_status.clone(),
+                ensure_admin_user,
+                set_admin_password,
+                login,
+                logout,
+                Arc::new(tokio::sync::RwLock::new(None)),
+                session_repo.clone(),
+            ));
 
         // Check initialization state to decide on setup token.
         // Run AFTER usecases is built so we can write the token into it.
