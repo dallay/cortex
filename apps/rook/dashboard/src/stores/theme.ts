@@ -29,7 +29,7 @@ export const useThemeStore = defineStore('theme', () => {
     const stored = localStorage.getItem('theme') as Theme | null
     if (stored) {
       setTheme(stored)
-    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    } else if (globalThis.matchMedia('(prefers-color-scheme: dark)').matches) {
       setTheme('dark')
     }
   }
