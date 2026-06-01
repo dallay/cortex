@@ -78,11 +78,13 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       const result = await api.setupBootstrap({ setupToken: setupToken.value, password })
+      // Mark bootstrap complete and stash the API key BEFORE calling login,
+      // so a login failure does not leave the UI stuck in setup mode.
+      bootstrapRequired.value = false
+      setupToken.value = null
       initialApiKey.value = result.apiKey
       await api.login({ username: 'admin', password })
       setAdminSession()
-      bootstrapRequired.value = false
-      setupToken.value = null
     } catch (value) {
       currentUser.value = null
       error.value = toErrorMessage(value)
@@ -100,6 +102,7 @@ export const useAuthStore = defineStore('auth', () => {
       await api.logout()
     } finally {
       currentUser.value = null
+      initialApiKey.value = null
       isLoading.value = false
     }
   }

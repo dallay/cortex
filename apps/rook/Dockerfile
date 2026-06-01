@@ -4,7 +4,7 @@
 # =============================================================================
 FROM debian:bookworm-slim
 
-LABEL maintainer="Yuniel Acosta <yunielacosta738@gmail.com>"
+LABEL maintainer="Yuniel Acosta <info@yunielacosta.com>"
 LABEL org.opencontainers.image.source="https://github.com/dallay/cortex"
 LABEL org.opencontainers.image.description="AI proxy/router for LLM requests with fallback, caching, and audit logging"
 

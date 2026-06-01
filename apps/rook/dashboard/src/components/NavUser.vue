@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { LogOut, Settings, User } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -23,8 +24,8 @@ const { isMobile } = useSidebar()
 const auth = useAuthStore()
 const router = useRouter()
 
-const displayName = auth.currentUser?.displayName ?? 'Rook Admin'
-const email = auth.currentUser?.email ?? 'admin@rook.local'
+const displayName = computed(() => auth.currentUser?.displayName ?? 'Rook Admin')
+const email = computed(() => auth.currentUser?.email ?? 'admin@rook.local')
 
 async function handleLogout() {
   await auth.logout()

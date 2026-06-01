@@ -268,8 +268,10 @@ function createApiClient() {
     },
 
     async logout(): Promise<void> {
+      const csrfToken = await getCsrfToken()
       await request<void>('/logout', {
         method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
       })
     },
 

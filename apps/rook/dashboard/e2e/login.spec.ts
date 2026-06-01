@@ -11,6 +11,8 @@ import { test, expect } from '@playwright/test'
  * Tests that require a live backend are skipped when SKIP_BACKEND is set.
  */
 
+const skipBackend = !!process.env.SKIP_BACKEND
+
 test.describe('Login page — proxy bypass', () => {
   test('navigating to /login serves the Vue SPA (not raw JSON)', async ({ page }) => {
     await page.goto('/login')
@@ -51,7 +53,7 @@ test.describe('Login page — rendering', () => {
   })
 })
 
-test.describe('Login page — route guard', () => {
+;(skipBackend ? test.describe.skip : test.describe)('Login page — route guard', () => {
   test('unauthenticated visit to / redirects to /login', async ({ page }) => {
     // Clear cookies to ensure unauthenticated state
     await page.context().clearCookies()

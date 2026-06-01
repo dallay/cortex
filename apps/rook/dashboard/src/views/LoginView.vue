@@ -14,7 +14,6 @@ const auth = useAuthStore()
 
 // ── shared ────────────────────────────────────────────────────────────────────
 const showPassword = ref(false)
-const showConfirm = ref(false)
 
 // ── setup form ────────────────────────────────────────────────────────────────
 const setupPassword = ref('')
@@ -108,7 +107,7 @@ async function submitLogin() {
             <Input
               id="setup-confirm"
               v-model="setupConfirm"
-              :type="showConfirm ? 'text' : 'password'"
+              type="password"
               autocomplete="new-password"
               :class="{ 'border-destructive': !setupPasswordsMatch }"
               required

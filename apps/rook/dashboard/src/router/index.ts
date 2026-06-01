@@ -86,7 +86,10 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   if (!auth.initialized) {
-    await auth.loadBootstrapStatus().catch(() => undefined)
+    await auth.loadBootstrapStatus().catch((err) => {
+      console.error('[router] bootstrap failed, allowing navigation to proceed', err)
+      auth.initialized = true
+    })
   }
 
   return getAuthRedirect(to, auth.isAuthenticated, auth.bootstrapRequired)
