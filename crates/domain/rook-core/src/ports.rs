@@ -16,7 +16,9 @@ use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
     PasswordHash, ProviderConnection, RepositoryError, Session, SessionId, User, UserId,
 };
-use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk};
+use super::{
+    ApiFormat, AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk,
+};
 
 /// ---------------------------------------------------------------------------
 /// ProviderPort — the primary port for LLM providers
@@ -27,6 +29,9 @@ use super::{AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, Str
 pub trait ProviderPort: Send + Sync + 'static {
     fn id(&self) -> &ProviderId;
     fn supported_models(&self) -> &[ModelId];
+
+    /// Wire format expected by this provider implementation.
+    fn api_format(&self) -> ApiFormat;
 
     /// Check if this provider can handle the given model
     fn supports_model(&self, model: &ModelId) -> bool {
@@ -47,6 +52,26 @@ pub trait ProviderPort: Send + Sync + 'static {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
+}
+
+// ---------------------------------------------------------------------------
+// FormatTranslatorPort — explicit domain-pivot format routing
+// ---------------------------------------------------------------------------
+
+pub trait FormatTranslatorPort: Send + Sync {
+    fn translate_request(
+        &self,
+        from: ApiFormat,
+        to: ApiFormat,
+        req: CompletionRequest,
+    ) -> CortexResult<CompletionRequest>;
+
+    fn translate_response(
+        &self,
+        from: ApiFormat,
+        to: ApiFormat,
+        resp: CompletionResponse,
+    ) -> CortexResult<CompletionResponse>;
 }
 
 // ---------------------------------------------------------------------------

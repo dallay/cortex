@@ -12,7 +12,7 @@ use axum::{
     Router,
 };
 use futures::StreamExt;
-use rook_core::{CompletionRequest, HealthPort, HealthStatus};
+use rook_core::{ApiFormat, CompletionRequest, HealthPort, HealthStatus};
 use shared_kernel::CortexError;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
@@ -143,7 +143,11 @@ async fn chat_completions(
         return chat_completions_stream(usecases, req).await;
     }
 
-    match usecases.route_request.execute(req).await {
+    match usecases
+        .route_request
+        .execute_with_format(req, ApiFormat::OpenAI)
+        .await
+    {
         Ok(resp) => {
             let openai_resp = OpenAIChatResponse::from(&resp);
             Ok(Json(openai_resp).into_response())
@@ -195,7 +199,11 @@ async fn chat_completions_stream(
     usecases: Usecases,
     req: CompletionRequest,
 ) -> Result<Response, HttpError> {
-    let stream = match usecases.route_request.execute_stream(req).await {
+    let stream = match usecases
+        .route_request
+        .execute_stream_with_format(req, ApiFormat::OpenAI)
+        .await
+    {
         Ok(stream) => stream,
         Err(error) => {
             let error_event = openai_error_event(error);
@@ -287,7 +295,11 @@ async fn anthropic_messages(
         return anthropic_messages_stream(usecases, req).await;
     }
 
-    match usecases.route_request.execute(req).await {
+    match usecases
+        .route_request
+        .execute_with_format(req, ApiFormat::Anthropic)
+        .await
+    {
         Ok(resp) => {
             let anthropic_resp = AnthropicMessagesResponse::from(&resp);
             Ok(Json(anthropic_resp).into_response())
@@ -306,7 +318,11 @@ async fn anthropic_messages_stream(
     usecases: Usecases,
     req: CompletionRequest,
 ) -> Result<Response, HttpError> {
-    let stream = match usecases.route_request.execute_stream(req).await {
+    let stream = match usecases
+        .route_request
+        .execute_stream_with_format(req, ApiFormat::Anthropic)
+        .await
+    {
         Ok(stream) => stream,
         Err(error) => {
             let error_event = serde_json::to_string(&AnthropicSseEvent::from(error))

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use rook_core::{
-    AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse, CortexError,
-    RequestStatus, RouterPort, StreamChunk, TokenUsage,
+    ApiFormat, AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse,
+    CortexError, FormatTranslatorPort, RequestStatus, RouterPort, StreamChunk, TokenUsage,
 };
 use shared_kernel::ProviderId;
 
@@ -25,6 +25,7 @@ pub struct RouteRequest {
     router: Arc<dyn RouterPort>,
     cache: Arc<dyn CachePort>,
     audit: Arc<dyn AuditPort>,
+    format_translator: Arc<dyn FormatTranslatorPort>,
 }
 
 impl RouteRequest {
@@ -32,15 +33,25 @@ impl RouteRequest {
         router: Arc<dyn RouterPort>,
         cache: Arc<dyn CachePort>,
         audit: Arc<dyn AuditPort>,
+        format_translator: Arc<dyn FormatTranslatorPort>,
     ) -> Self {
         Self {
             router,
             cache,
             audit,
+            format_translator,
         }
     }
 
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
+        self.execute_with_format(req, ApiFormat::OpenAI).await
+    }
+
+    pub async fn execute_with_format(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
         let cache_key = req.cache_key();
         let start = Instant::now();
 
@@ -56,12 +67,24 @@ impl RouteRequest {
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
 
+        let provider_format = provider.api_format();
+        let provider_req = self.format_translator.translate_request(
+            client_format,
+            provider_format,
+            req.clone(),
+        )?;
+
         // 3. Execute
-        let result = provider.complete(&req).await;
+        let result = provider.complete(&provider_req).await;
         let latency_ms = start.elapsed().as_millis() as u64;
 
         match result {
-            Ok(resp) => {
+            Ok(provider_resp) => {
+                let resp = self.format_translator.translate_response(
+                    provider_format,
+                    client_format,
+                    provider_resp,
+                )?;
                 // 4. Cache if eligible
                 if req.metadata.cacheable {
                     if let Err(e) = self.cache.set(&cache_key, &resp, DEFAULT_CACHE_TTL).await {
@@ -96,10 +119,25 @@ impl RouteRequest {
         req: CompletionRequest,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
+        self.execute_stream_with_format(req, ApiFormat::OpenAI).await
+    }
+
+    pub async fn execute_stream_with_format(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
+    {
         let start = Instant::now();
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
-        let mut upstream = provider.stream(&req).await?;
+        let provider_format = provider.api_format();
+        let provider_req = self.format_translator.translate_request(
+            client_format,
+            provider_format,
+            req.clone(),
+        )?;
+        let mut upstream = provider.stream(&provider_req).await?;
         let audit = self.audit.clone();
         let router = self.router.clone();
         let request_id = req.id.clone();
@@ -199,6 +237,10 @@ mod tests {
 
         fn supported_models(&self) -> &[ModelId] {
             std::slice::from_ref(&TEST_MODEL)
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
         }
 
         fn is_available(&self) -> bool {
@@ -316,6 +358,28 @@ mod tests {
         }
     }
 
+    struct TestFormatTranslator;
+
+    impl FormatTranslatorPort for TestFormatTranslator {
+        fn translate_request(
+            &self,
+            _from: ApiFormat,
+            _to: ApiFormat,
+            req: CompletionRequest,
+        ) -> CortexResult<CompletionRequest> {
+            Ok(req)
+        }
+
+        fn translate_response(
+            &self,
+            _from: ApiFormat,
+            _to: ApiFormat,
+            resp: CompletionResponse,
+        ) -> CortexResult<CompletionResponse> {
+            Ok(resp)
+        }
+    }
+
     static TEST_MODEL: std::sync::LazyLock<ModelId> =
         std::sync::LazyLock::new(|| ModelId::new("gpt-test"));
 
@@ -354,6 +418,7 @@ mod tests {
             Arc::new(TestRouter { provider }),
             cache.clone(),
             audit.clone(),
+            Arc::new(TestFormatTranslator),
         );
 
         let mut stream = usecase
