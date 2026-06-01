@@ -27,7 +27,34 @@ pub struct OpenAIChatRequest {
 #[serde(rename_all = "snake_case")]
 pub struct OpenAIMessage {
     pub role: String,
-    pub content: String,
+    /// Content is a plain string for text-only messages, or an array of content
+    /// parts for multimodal messages.  We accept both without panicking by
+    /// deserializing into `serde_json::Value` and extracting text below.
+    pub content: serde_json::Value,
+}
+
+impl OpenAIMessage {
+    /// Extract the text content from either a plain string or an array of
+    /// content-part objects (`{"type":"text","text":"…"}`).
+    /// Non-text parts (image_url, etc.) are silently skipped — they will be
+    /// supported fully in Phase 2 multimodal work.
+    pub fn into_text(self) -> String {
+        match self.content {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Array(parts) => parts
+                .into_iter()
+                .filter_map(|p| {
+                    if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        p.get("text").and_then(|t| t.as_str()).map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => String::new(),
+        }
+    }
 }
 
 impl From<OpenAIChatRequest> for CompletionRequest {
@@ -46,7 +73,7 @@ impl From<OpenAIChatRequest> for CompletionRequest {
                         "developer" => Role::Developer,
                         _ => Role::User,
                     },
-                    content: MessageContent::Text(m.content),
+                    content: MessageContent::Text(m.into_text()),
                 })
                 .collect(),
             stream: req.stream.unwrap_or(false),

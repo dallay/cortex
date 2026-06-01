@@ -2,19 +2,18 @@
 
 ## Intent
 
-The Rook proxy already uses the domain model as a translation pivot between wire formats, but the current implementation is incomplete: `Message.content` is a plain `String` (no tool support), `deny_unknown_fields` silently drops `tools`/`tool_choice` from incoming requests, `AnthropicProvider.complete()` is unimplemented, and error shapes are provider-specific. This change delivers a complete, extensible bidirectional translation layer between OpenAI and Anthropic wire formats — including tool calls — normalizes errors, and establishes a `FormatRegistry` for future provider additions.
+The Rook proxy already uses the domain model as a translation pivot between wire formats, but the current implementation is incomplete: `Message.content` is a plain `String` (no tool support), `deny_unknown_fields` causes request rejection (422 Unprocessable Entity) when `tools`/`tool_choice` are present in incoming requests, `AnthropicProvider.complete()` is unimplemented, and error shapes are provider-specific. This change delivers a complete, extensible bidirectional translation layer between OpenAI and Anthropic wire formats for Phase 1 (text + error normalization + fix of `deny_unknown_fields`). Tool call translation is planned for Phase 2.
 
 ## Scope
 
 ### In Scope
-- Extend `rook-core` domain types: `MessageContent` enum (`Text`, `ToolUse`, `ToolResult`), `Tool` struct, `ToolChoice` enum
-- Remove `deny_unknown_fields` from OpenAI and Anthropic adapters; add `tools`/`tool_choice` fields
-- Implement `AnthropicProvider.complete()` (non-streaming path currently panics/unimplemented)
-- `FormatRegistry` in `transport-axum` mapping provider kind → inbound format
+- Extend `rook-core` domain types: `MessageContent` enum (`Text`); `ToolUse`/`ToolResult` deferred to Phase 2
+- Remove `deny_unknown_fields` from OpenAI and Anthropic adapters; accept `tools`/`tool_choice` without rejection
+- Implement `AnthropicProvider.complete()` (non-streaming path was unimplemented)
+- `FormatRegistry` in `transport-axum` mapping provider kind → inbound format (scaffold for Phase 3)
 - Error normalization: all provider errors → `CortexError`
-- Extract `SseBuffer` to a shared module within `transport-axum`
-- **Phase 1** (text + error normalization + fix deny_unknown_fields)
-- **Phase 2** (tool call translation: OpenAI `tools` ↔ Anthropic `tool_use`)
+- **Phase 1** (text + error normalization + fix `deny_unknown_fields` + `AnthropicProvider.complete()` + `FormatRegistry` scaffold)
+- **Phase 2** (tool call translation: OpenAI `tools`/`tool_choice` ↔ Anthropic `tool_use`; `Tool`, `ToolChoice`, `ToolResult` domain types; `SseBuffer` extraction)
 
 ### Out of Scope
 - Gemini, Ollama, Groq format adapters (Phase 3, deferred)

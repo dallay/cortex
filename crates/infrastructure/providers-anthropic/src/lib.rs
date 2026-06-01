@@ -40,6 +40,8 @@ struct AnthropicNonStreamUsage {
 struct AnthropicStreamRequest {
     model: String,
     messages: Vec<AnthropicMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
     stream: bool,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
@@ -244,10 +246,12 @@ async fn map_anthropic_http_error(
 /// Sanitize and truncate body to avoid sensitive data leakage.
 fn sanitize_body(body: &str) -> String {
     const MAX: usize = 200;
-    if body.len() > MAX {
-        format!("{}... (truncated)", &body[..MAX])
+    let mut chars = body.chars();
+    let truncated: String = chars.by_ref().take(MAX).collect();
+    if chars.next().is_some() {
+        format!("{truncated}… (truncated)")
     } else {
-        body.to_string()
+        truncated
     }
 }
 
@@ -280,21 +284,38 @@ impl ProviderPort for AnthropicProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        // Extract system/developer messages into the top-level `system` field.
+        // The Anthropic Messages API does not accept role:"system" inside the messages array.
+        let system_text: Option<String> = {
+            let parts: Vec<&str> = req
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::System | Role::Developer))
+                .map(|m| m.content.as_text())
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("\n"))
+            }
+        };
         let body = AnthropicStreamRequest {
             model: req.model.to_string(),
             messages: req
                 .messages
                 .iter()
+                .filter(|m| matches!(m.role, Role::User | Role::Assistant))
                 .map(|m| AnthropicMessage {
                     role: match m.role {
-                        Role::System => "system".to_string(),
                         Role::User => "user".to_string(),
                         Role::Assistant => "assistant".to_string(),
-                        Role::Developer => "developer".to_string(),
+                        // System/Developer already extracted above
+                        _ => unreachable!(),
                     },
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
+            system: system_text,
             stream: false,
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
@@ -348,23 +369,38 @@ impl ProviderPort for AnthropicProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        // Extract system/developer messages into the top-level `system` field.
+        let system_text: Option<String> = {
+            let parts: Vec<&str> = req
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::System | Role::Developer))
+                .map(|m| m.content.as_text())
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("\n"))
+            }
+        };
         let body = AnthropicStreamRequest {
             model: req.model.to_string(),
             messages: req
                 .messages
                 .iter()
+                .filter(|m| matches!(m.role, Role::User | Role::Assistant))
                 .map(|m| AnthropicMessage {
                     role: match m.role {
-                        Role::System => "system".to_string(),
                         Role::User => "user".to_string(),
                         Role::Assistant => "assistant".to_string(),
-                        Role::Developer => "developer".to_string(),
+                        _ => unreachable!(),
                     },
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
+            system: system_text,
             stream: true,
-            max_tokens: req.max_tokens,
+            max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
         };
 

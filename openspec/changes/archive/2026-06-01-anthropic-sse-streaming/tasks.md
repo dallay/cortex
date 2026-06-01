@@ -60,7 +60,7 @@ Chain strategy: pending
 - [ ] 5.1 Add integration test: `POST /v1/messages` with `stream: true` returns valid SSE events
 - [ ] 5.2 Verify `content_block_delta` events appear for each token
 - [ ] 5.3 Verify `message_delta` event appears with `stop_reason` and `usage.output_tokens`
-- [ ] 5.4 Verify stream ends with `[DONE]` sentinel
+- [ ] 5.4 Verify stream ends after `message_delta` event (no explicit `[DONE]` — stream terminates naturally per design.md §Contract)
 - [ ] 5.5 Add integration test: non-streaming path still returns JSON (regression)
 - [ ] 5.6 Add integration test: provider error yields error SSE event
 

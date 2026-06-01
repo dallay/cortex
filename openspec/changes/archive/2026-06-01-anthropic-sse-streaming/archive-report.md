@@ -2,7 +2,7 @@
 
 **Archived**: 2026-06-01
 **Change**: Anthropic SSE Streaming for `/v1/messages`
-**Status**: COMPLETE
+**Status**: COMPLETE (implementation shipped; 10 test tasks in tasks.md remain unchecked — unit/integration tests deferred to a follow-up)
 
 ## Summary
 

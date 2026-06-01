@@ -9,6 +9,17 @@ use rook_core::{
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
 
+/// Truncate a string to at most `max` chars, safe across UTF-8 multi-byte boundaries.
+fn char_safe_truncate(s: &str, max: usize) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{truncated}… (truncated)")
+    } else {
+        truncated
+    }
+}
+
 /// Sanitize and truncate error response body to prevent sensitive data leakage.
 fn sanitize_error_body(body: &str) -> String {
     const MAX_LENGTH: usize = 200;
@@ -37,18 +48,10 @@ fn sanitize_error_body(body: &str) -> String {
             }
         }
         let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
-        if sanitized.len() > MAX_LENGTH {
-            format!("{}... (truncated)", &sanitized[..MAX_LENGTH])
-        } else {
-            sanitized
-        }
+        char_safe_truncate(&sanitized, MAX_LENGTH)
     } else {
         // Fall back to plain text truncation
-        if body.len() > MAX_LENGTH {
-            format!("{}... (truncated)", &body[..MAX_LENGTH])
-        } else {
-            body.to_string()
-        }
+        char_safe_truncate(body, MAX_LENGTH)
     }
 }
 

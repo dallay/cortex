@@ -15,7 +15,7 @@
 | FR-9 | `AnthropicProvider::complete()` returns a valid non-streaming response |
 | FR-10 | Missing `max_tokens` handled with provider-appropriate defaults |
 | FR-11 | All provider errors surface as `CortexError` variants — no raw provider error leaks |
-| FR-12 | `SseBuffer` extracted to a single shared module within `transport-axum` |
+| FR-12 | `SseBuffer` extracted to a single shared module within `transport-axum` *(Phase 2 — deferred)* |
 | FR-13 | `FormatRegistry` maps `ProviderKind` → format adapter; extensible at DI bootstrap |
 | FR-14 | *(Phase 2 — deferred)* Tool call translation: OpenAI `tools`/`tool_choice` ↔ Anthropic `tool_use` |
 

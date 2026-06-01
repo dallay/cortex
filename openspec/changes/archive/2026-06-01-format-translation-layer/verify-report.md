@@ -103,7 +103,7 @@ Key test counts by crate:
 **SC-06** (streaming=true propagation), **SC-07** (missing max_tokens → OpenAI default), **SC-12** (OpenAI SSE chunk text delta), **SC-13** (OpenAI SSE final chunk with usage) are spec scenarios without dedicated passing tests.  
 - SC-06 and SC-07 are low-risk given the code path is straightforward; the OpenAI provider tests (`stream_returns_chunks_on_openai_sse_success`) touch the streaming path but not the `From<OpenAIChatRequest>` conversion with `stream: true`.  
 - SC-12 and SC-13: The OpenAI streaming chunk `From` impls exist but have no unit tests equivalent to the Anthropic SSE tests.  
-**Recommendation**: Add 3–4 unit tests in `openai_adapter.rs` for streaming chunks before archive.
+**Recommendation**: Add 3–4 unit tests in `openai_adapter.rs` for streaming chunks in the next Phase 2 follow-up.
 
 ### ℹ INFO — FormatRegistry not wired to routing logic (by design)
 
