@@ -39,6 +39,26 @@ impl CortexError {
         }
     }
 
+    pub fn auth_failed(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(AuthFailedError(msg.into())),
+        }
+    }
+
+    pub fn invalid_request(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(InvalidRequestError(msg.into())),
+        }
+    }
+
+    pub fn is_auth_failed(&self) -> bool {
+        self.source.is::<AuthFailedError>()
+    }
+
+    pub fn is_invalid_request(&self) -> bool {
+        self.source.is::<InvalidRequestError>()
+    }
+
     pub fn is_all_providers_exhausted(&self) -> bool {
         self.source.is::<AllProvidersExhaustedError>()
     }
@@ -104,6 +124,28 @@ impl fmt::Display for AllProvidersExhaustedError {
 }
 
 impl std::error::Error for AllProvidersExhaustedError {}
+
+#[derive(Debug)]
+pub struct AuthFailedError(pub String);
+
+impl fmt::Display for AuthFailedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "authentication failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for AuthFailedError {}
+
+#[derive(Debug)]
+pub struct InvalidRequestError(pub String);
+
+impl fmt::Display for InvalidRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid request: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidRequestError {}
 
 // ---------------------------------------------------------------------------
 // Result type alias

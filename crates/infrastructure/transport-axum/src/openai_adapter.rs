@@ -1,12 +1,14 @@
 // OpenAI adapter — translates between OpenAI wire format and domain model
 
-use rook_core::{CompletionRequest, FinishReason, Message, RequestMetadata, Role, StreamChunk};
+use rook_core::{
+    CompletionRequest, FinishReason, Message, MessageContent, RequestMetadata, Role, StreamChunk,
+};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ModelId, RequestId};
 
 /// Incoming request from OpenAI-compatible clients
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 pub struct OpenAIChatRequest {
     pub model: String,
     pub messages: Vec<OpenAIMessage>,
@@ -14,13 +16,45 @@ pub struct OpenAIChatRequest {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub n: Option<u32>, // ignored for now
+    // Forward-compat fields — accepted but not yet routed to providers
+    pub tools: Option<serde_json::Value>,
+    pub tool_choice: Option<serde_json::Value>,
+    pub stream_options: Option<serde_json::Value>,
+    pub response_format: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct OpenAIMessage {
     pub role: String,
-    pub content: String,
+    /// Content is a plain string for text-only messages, or an array of content
+    /// parts for multimodal messages.  We accept both without panicking by
+    /// deserializing into `serde_json::Value` and extracting text below.
+    pub content: serde_json::Value,
+}
+
+impl OpenAIMessage {
+    /// Extract the text content from either a plain string or an array of
+    /// content-part objects (`{"type":"text","text":"…"}`).
+    /// Non-text parts (image_url, etc.) are silently skipped — they will be
+    /// supported fully in Phase 2 multimodal work.
+    pub fn into_text(self) -> String {
+        match self.content {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Array(parts) => parts
+                .into_iter()
+                .filter_map(|p| {
+                    if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        p.get("text").and_then(|t| t.as_str()).map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => String::new(),
+        }
+    }
 }
 
 impl From<OpenAIChatRequest> for CompletionRequest {
@@ -39,7 +73,7 @@ impl From<OpenAIChatRequest> for CompletionRequest {
                         "developer" => Role::Developer,
                         _ => Role::User,
                     },
-                    content: m.content,
+                    content: MessageContent::Text(m.into_text()),
                 })
                 .collect(),
             stream: req.stream.unwrap_or(false),
@@ -185,4 +219,38 @@ pub struct OpenAIErrorBody {
     pub code: Option<String>,
     pub message: String,
     pub param: Option<String>,
+}
+
+#[cfg(test)]
+mod openai_adapter_tests {
+    use super::*;
+
+    #[test]
+    fn deserializes_request_with_tool_fields_without_error() {
+        let json = r#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{}],
+            "tool_choice": "auto",
+            "stream_options": {},
+            "response_format": {}
+        }"#;
+        let req: OpenAIChatRequest = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(req.model, "gpt-4o");
+        assert!(req.tools.is_some());
+        assert!(req.tool_choice.is_some());
+        assert!(req.stream_options.is_some());
+        assert!(req.response_format.is_some());
+    }
+
+    #[test]
+    fn minimal_request_still_parses_correctly() {
+        // SC-03 regression: minimal request without optional fields must still work
+        let json = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}"#;
+        let req: OpenAIChatRequest = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(req.model, "gpt-4o");
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.messages[0].content, "hello");
+        assert!(req.tools.is_none());
+    }
 }

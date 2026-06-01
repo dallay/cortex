@@ -305,7 +305,7 @@ mod tests {
             model: ModelId::new(model),
             messages: vec![Message {
                 role: Role::User,
-                content: "hello".to_string(),
+                content: "hello".into(),
             }],
             stream: false,
             max_tokens: None,

@@ -1,201 +1,67 @@
-# Change: api-key-crud — Full CRUD for API Keys
+change: api-key-crud
+current_phase: spec
+completed: [init, explore, propose, spec]
+next: sdd-archive
+updated: "2026-05-31"
+project: cortex
 
-  > Updated by sdd-spec — spec phase complete
+stack:
+  language: "Rust 1.81+ (toolchain 1.89)"
+  edition: "2021"
+  workspace_root: "Cargo.toml"
+  packages: 15
+  task_runner: just
+  format: "cargo fmt --all"
+  lint: "cargo clippy --workspace --all-targets -- -D warnings"
+  test: "cargo test --workspace --all-features"
+  coverage: "cargo llvm-cov --workspace --html"
+  audit: cargo audit
+  doc: "cargo doc --workspace --no-deps --document-private-items"
+  ci_order: "fmt --check → clippy → check → test → doc → audit"
+  test_pattern: separate test targets (no inline cfg(test) modules)
 
-  ## Metadata
+specs:
+  - file: specs/api-key-domain.md
+    domain: Domain
+    type: Delta
+    requirements: 8
+    scenarios: 5
+  - file: specs/api-key-repository.md
+    domain: Repository
+    type: Delta
+    requirements: 6
+    scenarios: 4
+  - file: specs/api-key-usecases.md
+    domain: Use Cases
+    type: Delta
+    requirements: 7
+    scenarios: 6
+  - file: specs/api-key-transport.md
+    domain: Transport
+    type: Delta
+    requirements: 7
+    scenarios: 5
+  - file: specs/api-key-dashboard.md
+    domain: Dashboard
+    type: New
+    requirements: 10
+    scenarios: 5
 
-    | Field         | Value                                         |
-    |---------------|-----------------------------------------------|
-    | Change name   | `api-key-crud`                                |
-    | Phase         | spec                                          |
-    | Persistence   | `openspec/`                                  |
-    | Mode          | `openspec` (full openspec artifact store)     |
-    | Created       | 2026-05-31                                   |
-    | Updated       | 2026-05-31                                   |
-    | Project       | `cortex` (Rust monorepo)                      |
+gaps:
+  - revoke() method in ApiKeyRepositoryPort
+  - revoke() implementation in SqliteApiKeyRepository
+  - ManageApiKeys::revoke() use case method
+  - ManageApiKeys::delete() to call revoke() (soft delete)
+  - Pagination on list() with limit/offset
+  - Transport revoke_api_key handler
+  - Dashboard API integration (Vue → real API)
+  - Create modal with scopes, tier, expiration
+  - Edit modal for key metadata
+  - Raw key display banner after create
+  - Pagination controls in dashboard
 
-  ## Stack Detected
-
-  ### Language & Toolchain
-
-    | Field             | Value                                       |
-    |-------------------|---------------------------------------------|
-    | Language          | Rust 1.81+ (toolchain 1.89)                |
-    | Edition           | 2021                                       |
-    | Workspace root    | `Cargo.toml` at project root               |
-    | Packages          | 15 workspace crates                        |
-
-  ### Package Map
-
-    ```
-    apps/rook (bin)
-    └─ crates/infrastructure/transport-axum (lib)
-    └─ crates/application/rook-usecases (lib)
-    └─ crates/domain/rook-core (lib)
-    └─ crates/domain/shared-kernel (lib)
-
-  Additional infra crates:
-    auth-sqlite, cache-memory, audit-sqlite, observability,
-    providers-{openai,anthropic,ollama,gemini,groq},
-    encryption-inmemory, provider-sqlite
-    ```
-
-  ### Tooling
-
-    | Tool          | Command / Value                          |
-    |---------------|------------------------------------------|
-    | Task runner   | `just`                                   |
-    | Format        | `cargo fmt --all`                        |
-    | Lint (deny)   | `cargo clippy --workspace --all-targets -- -D warnings` |
-    | Test          | `cargo test --workspace --all-features`  |
-    | Coverage      | `cargo llvm-cov --workspace --html`       |
-    | Audit         | `cargo audit`                            |
-    | Doc           | `cargo doc --workspace --no-deps --document-private-items` |
-
-  CI order: `fmt --check` → `clippy` → `check` → `test` → `doc` → `audit`
-
-    ### Test Pattern
-
-    - **Inline tests**: `#[cfg(test)]` modules inside `lib.rs` across all crates
-    - **Integration tests**: `tests/*.rs` files in `apps/rook/` and `crates/infrastructure/*`
-    - No `#[cfg(test)]` inline modules in `shared-kernel`
-    - Strict TDD: **false** (test runner exists but inline `#[cfg(test)]` modules not used per convention — tests live as separate test targets)
-
-  ## Architecture
-
-  ### Authentication Tiers (existing)
-
-    | Tier           | Auth Method                                  | Routes                          |
-    |----------------|----------------------------------------------|----------------------------------|
-    | `Public`       | None                                         | `GET /health`                   |
-    | `ClientApi`    | `X-API-Key` header or `api_key` query param | `POST /v1/chat`, `GET /v1/models` |
-    | `Management`   | Session cookie (`auth_token`) + CSRF        | Dashboard, `/api/providers`     |
-
-  ### Existing API Key Domain (rook-core)
-
-  From `crates/domain/rook-core/src/api_key.rs`:
-
-    ```
-    ApiKeyId       — SmolStr newtype
-    ApiKeyScope    — SmolStr newtype, parse from &str (e.g. "read", "write")
-    ApiKeyTier     — enum { Free, Pro, Enterprise }
-    ApiKeySubject  — { id, label, scopes, tier }  (used at auth time)
-    ApiKeyRecord   — { id, label, key_hash, key_prefix, scopes, tier, is_active, revoked_at, expires_at, created_at, last_used_at }
-    ApiKeyRepositoryError — enum { NotFound, DuplicateHash, Database }
-    ```
-
-  ### Existing API Key Repository Port
-
-  From `crates/domain/rook-core/src/ports.rs`:
-
-    ```rust
-  trait ApiKeyRepositoryPort: Send + Sync {
-    async fn find_active_by_hash(&self, hash: &str) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError>;
-    async fn record_last_used(&self, id: &ApiKeyId, used_at: DateTime<Utc>) -> Result<(), ApiKeyRepositoryError>;
-    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError>;
-    async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError>;
-    async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError>;
-    async fn update(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError>;
-    async fn delete(&self, id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError>;
-}
-    ```
-
-  ### Existing SqliteApiKeyRepository
-
-  From `crates/infrastructure/auth-sqlite/src/lib.rs`:
-
-    - Full `api_keys` table with all fields already defined
-    - Indexes on `is_active`, `revoked_at`, `expires_at`
-    - `run_migration()` creates table + indexes on first open
-    - Existing: `find_active_by_hash`, `record_last_used`
-    - **CRUD gap**: No `create`, `list`, `update`, `revoke` methods
-
-  ### Rate Limiting
-
-  From `crates/infrastructure/transport-axum/src/middleware/api_key_rate_limiter.rs`:
-
-    | Tier        | Capacity | Refill rate       |
-    |-------------|----------|-------------------|
-    | `Free`      | 100      | 10 tokens/sec     |
-    | `Pro`       | 1,000    | 100 tokens/sec    |
-    | `Enterprise`| 10,000   | 1,000 tokens/sec  |
-
-    Rate limiting is **wired but not actively enforced** (Known Gap per ARCHITECTURE.md).
-
-  ## SDD State
-
-    ```
-  change: api-key-crud
-  current_phase: verify
-  completed: [ init, propose, spec, design, tasks, verify ]
-  next: sdd-archive
-  updated: 2026-05-31
-    ```
-
-  ## Specs Written
-
-    | File | Domain | Type | Requirements | Scenarios |
-    |------|--------|------|-------------|-----------|
-    | `specs/api-key-domain.md` | Domain | Delta | 8 | 5 |
-    | `specs/api-key-repository.md` | Repository | Delta |6 | 4 |
-    | `specs/api-key-usecases.md` | Use Cases | Delta | 7 | 6 |
-    | `specs/api-key-transport.md` | Transport | Delta | 7 | 5 |
-    | `specs/api-key-dashboard.md` | Dashboard | New | 10 | 5 |
-
-  **Total** : 5 spec files, 38 requirements, 25 scenarios
-
-    ### Coverage
-
-    - Happy paths: ✅ Covered (create, list, get, update, revoke all documented)
-    - Edge cases: ✅ Covered (duplicate hash, idempotent revoke, past expiration, non-existent key)
-    - Error states: ✅ Covered (validation errors, 404, 409, 500)
-
-    ## What Exists vs. What's Needed
-
-    ### Exists (Foundation)
-
-    - ✅ `ApiKeyId`, `ApiKeyScope`, `ApiKeyTier`, `ApiKeySubject`, `ApiKeyRecord` domain types
-    - ✅ `ApiKeyRepositoryPort` trait (full CRUD already in ports.rs)
-    - ✅ `SqliteApiKeyRepository` with full schema migration
-    - ✅ `ManageApiKeys` use case with `create`, `list`, `get`, `update`, `delete` methods
-    - ✅ HMAC-SHA256 key hashing via `ring::hmac`
-    - ✅ Key generation via `rand::RngCore` + base64url encoding with `rk-` prefix
-    - ✅ Auth middleware (`Authorization: Bearer` and `X-API-Key`) using `find_active_by_hash`
-    - ✅ Per-key rate limiting wired in transport
-    - ✅ `ManageApiKeys` already instantiated in DI with repo + `API_KEY_HASH_SECRET`
-    - ✅ All SQLite migrations for `api_keys` table already defined
-    - ✅ Transport handlers for CRUD already exist (delete is hard delete, needs change to revoke)
-    - ✅ Dashboard `ApiKeysView.vue` exists (mock data, needs real API integration)
-
-    ### Gaps (Full CRUD)
-
-    - ⬜ `revoke()` method in `ApiKeyRepositoryPort` — new method needed
-    - ⬜ `revoke()` implementation in `SqliteApiKeyRepository` — soft update SQL
-    - ⬜ `ManageApiKeys::revoke()` — new method, calls repo.revoke()
-    - ⬜ `ManageApiKeys::delete()` change to call `revoke()` instead of hard delete
-    - ⬜ Pagination on `list()` — add `limit`/`offset`, return `(Vec, total)`
-    - ⬜ Transport `revoke_api_key` handler — `DELETE` calls `revoke()` not `delete()`
-    - ⬜ Dashboard API integration — connect Vue to real API endpoints
-    - ⬜ Create modal with scopes, tier, expiration fields
-    - ⬜ Edit modal for updating key metadata
-    - ⬜ Raw key display banner after create
-    - ⬜ Pagination controls in dashboard
-
-    ## Conventions Applied
-
-    - **Newtype pattern**: `ApiKeyId(SmolStr)`, no raw `String` for domain IDs
-    - **Error enum per domain**: `ApiKeyRepositoryError` already exists
-    - **Async trait**: `#[async_trait]` for all port traits
-    - **Clean Architecture**: Domain types in `rook-core`, ports in `rook-core/src/ports.rs`, impl in `auth-sqlite`
-    - **Migration on open**: `run_migration()` called from `new()`, no separate migration binary
-    - **No inline `#[cfg(test)]` modules** in this crate — tests are separate test targets
-    - **Cryptographic storage**: Key hashes stored (never raw), `key_prefix` for display
-    - **UUID v4** for `ApiKeyId` generation
-    - **Soft revocation**: `is_active = false`, `revoked_at = now()`, key_hash preserved
-
-  ## Next Steps
-
-  1. **Design**: Create `openspec/changes/api-key-crud/design.md` with architecture decisions
-  2. **Tasks**: Create `openspec/changes/api-key-crud/tasks.md` with implementation checklist
-  3. **Apply**: Implement code changes following specs and design
-  4. **Verify**: Run tests and verify implementation matches specs
+next_steps:
+  - Create openspec/changes/api-key-crud/design.md
+  - Create openspec/changes/api-key-crud/tasks.md
+  - Implement code changes following specs and design
+  - Run tests and verify implementation matches specs
