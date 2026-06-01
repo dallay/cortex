@@ -52,6 +52,27 @@ fn sanitize_error_body(body: &str) -> String {
     }
 }
 
+/// Map an OpenAI HTTP error response to a typed `CortexError`.
+///
+/// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
+async fn map_openai_http_error(provider_id: &ProviderId, resp: reqwest::Response) -> CortexError {
+    let status = resp.status();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    let raw_body = resp.text().await.unwrap_or_default();
+    let sanitized = sanitize_error_body(&raw_body);
+
+    match status.as_u16() {
+        401 => CortexError::auth_failed("OpenAI authentication failed"),
+        429 => CortexError::rate_limited(provider_id.clone(), retry_after.unwrap_or(60)),
+        400 => CortexError::invalid_request(sanitized),
+        _ => CortexError::provider(format!("OpenAI error {status}: {sanitized}")),
+    }
+}
+
 /// Configuration for the OpenAI provider
 #[derive(Debug, Clone)]
 pub struct OpenAIProviderConfig {
@@ -279,7 +300,7 @@ impl ProviderPort for OpenAIProvider {
                         rook_core::Role::Developer => "developer",
                     }
                     .to_string(),
-                    content: m.content.clone(),
+                    content: m.content.as_text().to_string(),
                 })
                 .collect(),
             stream: false,
@@ -298,10 +319,7 @@ impl ProviderPort for OpenAIProvider {
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let sanitized_body = sanitize_error_body(&body);
-            return Err(CortexError::provider(format!("{status}: {sanitized_body}")));
+            return Err(map_openai_http_error(&self.config.id, resp).await);
         }
 
         let openai_resp: OpenAIResponse = resp
@@ -346,7 +364,7 @@ impl ProviderPort for OpenAIProvider {
                         rook_core::Role::Developer => "developer",
                     }
                     .to_string(),
-                    content: m.content.clone(),
+                    content: m.content.as_text().to_string(),
                 })
                 .collect(),
             stream: true,
@@ -364,10 +382,7 @@ impl ProviderPort for OpenAIProvider {
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let sanitized_body = sanitize_error_body(&body);
-            return Err(CortexError::provider(format!("{status}: {sanitized_body}")));
+            return Err(map_openai_http_error(&self.config.id, resp).await);
         }
 
         let request_id = req.id.clone();

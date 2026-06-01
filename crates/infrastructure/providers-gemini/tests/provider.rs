@@ -55,7 +55,7 @@ async fn complete_returns_error_not_implemented() {
         model: ModelId::new("gemini-2.0-flash"),
         messages: vec![rook_core::Message {
             role: Role::User,
-            content: "Hi".to_string(),
+            content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
         stream: false,
         max_tokens: Some(100),

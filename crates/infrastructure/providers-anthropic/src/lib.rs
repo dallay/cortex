@@ -11,6 +11,30 @@ use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
+/// Non-streaming response body from Anthropic API
+#[derive(Debug, Deserialize)]
+struct AnthropicNonStreamResponse {
+    #[allow(dead_code)]
+    id: String,
+    model: String,
+    content: Vec<AnthropicNonStreamContentBlock>,
+    usage: AnthropicNonStreamUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicNonStreamContentBlock {
+    #[serde(rename = "type")]
+    #[allow(dead_code)]
+    block_type: String,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicNonStreamUsage {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
 /// Anthropic streaming request body
 #[derive(Debug, serde::Serialize)]
 struct AnthropicStreamRequest {
@@ -191,6 +215,37 @@ pub struct AnthropicProvider {
     client: Client,
 }
 
+/// Map an Anthropic HTTP error response to a typed `CortexError`.
+///
+/// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
+async fn map_anthropic_http_error(provider_id: &ProviderId, resp: reqwest::Response) -> CortexError {
+    let status = resp.status();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    let raw_body = resp.text().await.unwrap_or_default();
+    let sanitized = sanitize_body(&raw_body);
+
+    match status.as_u16() {
+        401 => CortexError::auth_failed("Anthropic authentication failed"),
+        429 => CortexError::rate_limited(provider_id.clone(), retry_after.unwrap_or(60)),
+        400 => CortexError::invalid_request(sanitized),
+        _ => CortexError::provider(format!("Anthropic error {status}: {sanitized}")),
+    }
+}
+
+/// Sanitize and truncate body to avoid sensitive data leakage.
+fn sanitize_body(body: &str) -> String {
+    const MAX: usize = 200;
+    if body.len() > MAX {
+        format!("{}... (truncated)", &body[..MAX])
+    } else {
+        body.to_string()
+    }
+}
+
 impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
@@ -219,10 +274,68 @@ impl ProviderPort for AnthropicProvider {
         }
     }
 
-    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        Err(CortexError::provider(
-            "Anthropic provider not yet implemented",
-        ))
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        let body = AnthropicStreamRequest {
+            model: req.model.to_string(),
+            messages: req
+                .messages
+                .iter()
+                .map(|m| AnthropicMessage {
+                    role: match m.role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                        Role::Developer => "developer".to_string(),
+                    },
+                    content: m.content.as_text().to_string(),
+                })
+                .collect(),
+            stream: false,
+            max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
+            temperature: req.temperature,
+        };
+
+        let start = std::time::Instant::now();
+        let resp = self
+            .client
+            .post(format!("{}/v1/messages", self.config.base_url))
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(map_anthropic_http_error(&self.config.id, resp).await);
+        }
+
+        let anthropic_resp: AnthropicNonStreamResponse = resp
+            .json()
+            .await
+            .map_err(|e| CortexError::provider(format!("json parse failed: {e}")))?;
+
+        let text = anthropic_resp
+            .content
+            .into_iter()
+            .map(|b| b.text)
+            .collect::<Vec<_>>()
+            .join("");
+
+        Ok(CompletionResponse {
+            id: req.id.clone(),
+            provider: self.config.id.clone(),
+            model: ModelId::new(anthropic_resp.model),
+            content: text,
+            usage: TokenUsage {
+                prompt_tokens: anthropic_resp.usage.input_tokens,
+                completion_tokens: anthropic_resp.usage.output_tokens,
+                total_tokens: anthropic_resp.usage.input_tokens + anthropic_resp.usage.output_tokens,
+                estimated_cost_usd: None,
+            },
+            latency_ms: start.elapsed().as_millis() as u64,
+        })
     }
 
     async fn stream(
@@ -241,7 +354,7 @@ impl ProviderPort for AnthropicProvider {
                         Role::Assistant => "assistant".to_string(),
                         Role::Developer => "developer".to_string(),
                     },
-                    content: m.content.clone(),
+                    content: m.content.as_text().to_string(),
                 })
                 .collect(),
             stream: true,

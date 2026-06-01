@@ -158,10 +158,51 @@ pub struct RequestMetadata {
     pub priority: u8,
 }
 
+/// The content of a message — currently text only; tool-call blocks are Phase 2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+}
+
+impl MessageContent {
+    /// Borrow the inner text slice.
+    pub fn as_text(&self) -> &str {
+        match self {
+            Self::Text(s) => s.as_str(),
+        }
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_text(self) -> String {
+        match self {
+            Self::Text(s) => s,
+        }
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        Self::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        Self::Text(s.to_string())
+    }
+}
+
+impl std::fmt::Display for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_text())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: String,
+    pub content: MessageContent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,5 +370,40 @@ impl AuditEntry {
             latency_ms,
             timestamp: Utc::now(),
         }
+    }
+}
+
+#[cfg(test)]
+mod message_content_tests {
+    use super::*;
+
+    #[test]
+    fn as_text_returns_inner_string() {
+        let content = MessageContent::Text("hello".to_string());
+        assert_eq!(content.as_text(), "hello");
+    }
+
+    #[test]
+    fn into_text_consumes_and_returns_string() {
+        let content = MessageContent::Text("world".to_string());
+        assert_eq!(content.into_text(), "world");
+    }
+
+    #[test]
+    fn from_string_constructs_text_variant() {
+        let content = MessageContent::from("test".to_string());
+        assert_eq!(content, MessageContent::Text("test".to_string()));
+    }
+
+    #[test]
+    fn serde_round_trips_message_as_plain_string() {
+        // {"role":"user","content":"hi"} must round-trip to MessageContent::Text("hi")
+        let json = r#"{"role":"user","content":"hi"}"#;
+        let msg: Message = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.content, MessageContent::Text("hi".to_string()));
+
+        let serialized = serde_json::to_string(&msg).expect("serialize");
+        assert!(serialized.contains(r#""content":"hi""#));
     }
 }

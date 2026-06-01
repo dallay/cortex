@@ -76,7 +76,7 @@ async fn complete_returns_error_when_not_implemented() {
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
             role: Role::User,
-            content: "Hi".to_string(),
+            content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
         stream: false,
         max_tokens: Some(100),

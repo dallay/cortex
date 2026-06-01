@@ -236,8 +236,8 @@ mod tests {
     use super::*;
     use futures::stream::BoxStream;
     use rook_core::{
-        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId, ProviderId,
-        ProviderPort, Role, StreamChunk, TokenUsage,
+        CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId,
+        ProviderId, ProviderPort, Role, StreamChunk, TokenUsage,
     };
 
     struct StubProvider {
@@ -305,7 +305,7 @@ mod tests {
             model: ModelId::new(model),
             messages: vec![Message {
                 role: Role::User,
-                content: "hello".to_string(),
+                content: "hello".into(),
             }],
             stream: false,
             max_tokens: None,
