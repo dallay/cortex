@@ -95,6 +95,7 @@
     "namePlaceholder": "Nombre de la clave",
     "name": "Nombre",
     "key": "Clave",
+    "keyPrefix": "Prefijo",
     "created": "Creada",
     "lastUsed": "Último Uso",
     "empty": "Sin claves API",
@@ -162,6 +163,7 @@
     "title": "Establecer contraseña de administrador",
     "description": "Debes establecer la contraseña de administrador antes de usar Rook",
     "field": {
+      "token": "Token de configuración",
       "password": "Contraseña",
       "confirm": "Confirmar contraseña"
     },

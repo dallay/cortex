@@ -9,7 +9,7 @@ mod server;
 
 use anyhow::Context;
 use clap::Parser;
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 use db_migration::MigrationRunner;
@@ -107,7 +107,7 @@ async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
             let state = container
                 .usecases
                 .bootstrap_status
-                .execute(std::env::var("ROOK_SETUP_TOKEN").ok())
+                .execute()
                 .await?;
             println!("initialized: {}", state.is_initialized);
             println!("admin_user_exists: {}", state.admin_user_exists);
@@ -167,17 +167,16 @@ async fn start_server() -> anyhow::Result<()> {
 }
 
 async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::Result<()> {
-    let setup_token = std::env::var("ROOK_SETUP_TOKEN")
-        .ok()
-        .filter(|token| !token.trim().is_empty());
     let state = container
         .usecases
         .bootstrap_status
-        .execute(setup_token.clone())
+        .execute()
         .await?;
 
     if !state.is_initialized {
-        match setup_token {
+        // Read the generated token from the in-memory RwLock (set during container build)
+        let setup_token_guard = container.usecases.setup_token.read().await;
+        match setup_token_guard.as_ref() {
             Some(token) => {
                 // Sanitize: replace control/non-printable chars to prevent log injection
                 let sanitized: String = token
@@ -202,14 +201,21 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                     sanitized.clone()
                 };
                 tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
-                // Only print full token to interactive TTY; otherwise show preview only
-                if std::io::stderr().is_terminal() {
-                    eprintln!(
-                        "rook bootstrap mode: use setup token {sanitized} to set the admin password"
-                    );
-                } else {
-                    eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
-                }
+                let banner = format!(
+                    concat!(
+                        "+-----------------------------------------------------------+\n",
+                        "|             ROOK -- BOOTSTRAP MODE ACTIVE                 |\n",
+                        "+-----------------------------------------------------------+\n",
+                        "|  Setup token: {}  |\n",
+                        "|                                                            |\n",
+                        "|  To complete setup, open the dashboard at                  |\n",
+                        "|  http://localhost:5173 and enter the token above          |\n",
+                        "|  along with your desired admin password.                   |\n",
+                        "+-----------------------------------------------------------+"
+                    ),
+                    sanitized
+                );
+                eprintln!("{banner}");
             }
             None => {
                 tracing::warn!("rook is in bootstrap mode; run `rook admin bootstrap` or set ROOK_SETUP_TOKEN and POST /api/bootstrap/setup");

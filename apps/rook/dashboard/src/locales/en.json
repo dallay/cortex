@@ -90,11 +90,12 @@
   },
   "apiKeys": {
     "description": "Manage your API keys for accessing Rook",
-    "create": "Create Key",
+    "create": "Create API Key",
     "createNew": "Create new API key",
     "namePlaceholder": "Enter key name",
     "name": "Name",
     "key": "Key",
+    "keyPrefix": "Prefix",
     "created": "Created",
     "lastUsed": "Last Used",
     "empty": "No API keys yet",
@@ -162,6 +163,7 @@
     "title": "Set admin password",
     "description": "You must set the admin password before using Rook",
     "field": {
+      "token": "Setup token",
       "password": "Password",
       "confirm": "Confirm password"
     },

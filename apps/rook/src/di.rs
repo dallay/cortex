@@ -26,6 +26,15 @@ use rook_usecases::{
 
 use crate::config::RookConfig;
 
+/// Generate a cryptographically random setup token with a recognisable prefix.
+pub fn generate_setup_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: Vec<u8> = (0..24).map(|_| rng.gen::<u8>()).collect();
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("rk-setup-{hex}")
+}
+
 /// Run pending database migrations at startup.
 ///
 /// Called BEFORE building the DI container to ensure the schema is up-to-date
@@ -88,7 +97,7 @@ impl RookContainer {
             Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
 
         let authenticate_client_api = if config.auth.api_keys.enabled {
-            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
+            let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
             Some(AuthenticateClientApi::new(
                 api_key_repo.clone(),
                 hash_secret,
@@ -98,7 +107,7 @@ impl RookContainer {
         };
 
         let manage_api_keys = if config.auth.api_keys.enabled {
-            let hash_secret = required_env("API_KEY_HASH_SECRET", "auth.api_keys.enabled")?;
+            let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
             Some(rook_usecases::ManageApiKeys::new(
                 api_key_repo.clone(),
                 hash_secret,
@@ -166,25 +175,46 @@ impl RookContainer {
         );
         let format_registry = Arc::new(format_registry);
 
-        let usecases = Arc::new(RookUsecases {
-            route_request: RouteRequest::new(
+        let usecases: Arc<rook_usecases::RookUsecases> = Arc::new(rook_usecases::RookUsecases::new(
+            RouteRequest::new(
                 router.clone(),
                 cache.clone(),
                 audit.clone(),
                 format_registry.clone(),
             ),
-            manage_providers: ManageProviders::new(router.clone()),
-            health_check: HealthCheck::new(registry),
-            authenticate_client_api: authenticate_client_api.clone(),
+            ManageProviders::new(router.clone()),
+            HealthCheck::new(registry),
+            authenticate_client_api.clone(),
             manage_connections,
             manage_api_keys,
-            bootstrap_status: bootstrap_status.clone(),
+            bootstrap_status.clone(),
             ensure_admin_user,
             set_admin_password,
             login,
             logout,
-            setup_token: Arc::new(tokio::sync::RwLock::new(None)),
-        });
+            Arc::new(tokio::sync::RwLock::new(None)),
+            session_repo.clone(),
+        ));
+
+        // Check initialization state to decide on setup token.
+        // Run AFTER usecases is built so we can write the token into it.
+        let bootstrap_state = bootstrap_status.execute().await?;
+        let setup_token_value = if bootstrap_state.is_initialized {
+            None
+        } else {
+            let token = std::env::var("ROOK_SETUP_TOKEN")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(generate_setup_token);
+            Some(token)
+        };
+
+        // Write token into usecases so HTTP handlers can access it
+        {
+            let mut guard = usecases.setup_token.write().await;
+            *guard = setup_token_value;
+        }
 
         let authz_config = transport_axum::authz::AuthzConfig::from_env_with_client_auth(
             authenticate_client_api,
@@ -211,6 +241,67 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
         anyhow::bail!("{name} must not be empty when {context}");
     }
     Ok(value)
+}
+
+/// Resolve the API key hash secret.
+///
+/// Priority:
+/// 1. `API_KEY_HASH_SECRET` env var (production / Docker).
+/// 2. Persisted secret file next to the database (auto-created on first run).
+///
+/// The file-based fallback gives a zero-config experience for local usage
+/// while keeping the secret stable across restarts.  Production deployments
+/// should always set the env var so the secret is not stored on disk.
+fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
+    // 1. Explicit env var wins.
+    if let Ok(s) = std::env::var("API_KEY_HASH_SECRET") {
+        let s = s.trim().to_string();
+        if !s.is_empty() {
+            return Ok(s);
+        }
+    }
+
+    // 2. Derive path from the DB location.
+    let db_p = std::path::Path::new(db_path);
+    // Expand `~` so we land next to the real DB file.
+    let expanded = if db_path.starts_with('~') {
+        let home = std::env::var("HOME").unwrap_or_default();
+        std::path::PathBuf::from(db_path.replacen('~', &home, 1))
+    } else {
+        db_p.to_path_buf()
+    };
+
+    let secret_path = expanded
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("api_key_secret.key");
+
+    if secret_path.exists() {
+        let s = std::fs::read_to_string(&secret_path)
+            .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
+        let s = s.trim().to_string();
+        if !s.is_empty() {
+            return Ok(s);
+        }
+    }
+
+    // 3. Generate, persist, and warn.
+    let secret = generate_setup_token(); // reuse the same random hex helper
+    if let Some(parent) = secret_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!("failed to create data dir for api_key_secret.key: {e}")
+        })?;
+    }
+    std::fs::write(&secret_path, &secret)
+        .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
+
+    tracing::warn!(
+        path = %secret_path.display(),
+        "API_KEY_HASH_SECRET not set — generated and stored in file. \
+         Set the env var for production deployments."
+    );
+
+    Ok(secret)
 }
 
 // ---------------------------------------------------------------------------

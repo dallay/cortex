@@ -14,61 +14,61 @@ export interface Endpoint {
 export const endpointsConfig = {
   core: [
     {
-      path: '/v1/chat/completions',
+      path: '/chat/completions',
       method: 'POST' as const,
       descriptionKey: 'endpoints.chatCompletions',
     },
     {
-      path: '/v1/responses',
+      path: '/responses',
       method: 'POST' as const,
       descriptionKey: 'endpoints.responses',
     },
     {
-      path: '/v1/completions',
+      path: '/completions',
       method: 'POST' as const,
       descriptionKey: 'endpoints.completions',
     },
     {
-      path: '/v1/messages',
+      path: '/messages',
       method: 'POST' as const,
       descriptionKey: 'endpoints.messages',
     },
   ],
   media: [
     {
-      path: '/v1/embeddings',
+      path: '/embeddings',
       method: 'POST' as const,
       descriptionKey: 'endpoints.embeddings',
     },
     {
-      path: '/v1/images/generations',
+      path: '/images/generations',
       method: 'POST' as const,
       descriptionKey: 'endpoints.imagesGenerations',
     },
     {
-      path: '/v1/audio/transcriptions',
+      path: '/audio/transcriptions',
       method: 'POST' as const,
       descriptionKey: 'endpoints.audioTranscriptions',
     },
     {
-      path: '/v1/audio/speech',
+      path: '/audio/speech',
       method: 'POST' as const,
       descriptionKey: 'endpoints.audioSpeech',
     },
   ],
   utility: [
     {
-      path: '/v1/models',
+      path: '/models',
       method: 'GET' as const,
       descriptionKey: 'endpoints.models',
     },
     {
-      path: '/v1/files',
+      path: '/files',
       method: 'POST' as const,
       descriptionKey: 'endpoints.files',
     },
     {
-      path: '/v1/batches',
+      path: '/batches',
       method: 'POST' as const,
       descriptionKey: 'endpoints.batches',
     },
