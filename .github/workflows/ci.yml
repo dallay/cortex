@@ -10,13 +10,18 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+
 jobs:
   # === Fast checks first ===
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: rustfmt
@@ -28,10 +33,12 @@ jobs:
   markdown:
     name: Markdown
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-      - uses: actions/setup-node@v6.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       - name: Install dependencies
         run: pnpm install
       - name: Lint markdown
@@ -40,10 +47,12 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -58,10 +67,12 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -77,10 +88,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -95,10 +108,12 @@ jobs:
   doc:
     name: Doc
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -116,8 +131,10 @@ jobs:
   audit:
     name: Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -129,10 +146,13 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     needs: [test]
+    permissions:
+      contents: read
+      statuses: write
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -146,7 +166,7 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: lcov.info
           fail_ci_if_error: true
@@ -158,10 +178,13 @@ jobs:
     name: Coverage (Frontend)
     runs-on: ubuntu-latest
     needs: [test]
+    permissions:
+      contents: read
+      statuses: write
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -171,7 +194,7 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --reporter=json --output-filename=coverage/coverage-final.json
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: apps/rook/dashboard/coverage/lcov.info
           fail_ci_if_error: true
@@ -184,12 +207,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     if: secrets.SONAR_TOKEN != ''
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -206,16 +231,18 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          # aarch64-unknown-linux-gnu is removed: cross-compiling OpenSSL (ring, openssl-sys)
-          # requires target-specific headers which is complex. Windows ARM64 is covered
-          # natively in build-windows job.
+    permissions:
+      contents: read
+    matrix:
+      target:
+        - x86_64-unknown-linux-gnu
+        # aarch64-unknown-linux-gnu is removed: cross-compiling OpenSSL (ring, openssl-sys)
+        # requires target-specific headers which is complex. Windows ARM64 is covered
+        # natively in build-windows job.
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -235,14 +262,16 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      matrix:
-        target:
-          - x86_64-pc-windows-msvc
-          - aarch64-pc-windows-msvc
+    permissions:
+      contents: read
+    matrix:
+      target:
+        - x86_64-pc-windows-msvc
+        - aarch64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -262,14 +291,16 @@ jobs:
     runs-on: macos-latest
     strategy:
       fail-fast: false
-      matrix:
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
+    permissions:
+      contents: read
+    matrix:
+      target:
+        - x86_64-apple-darwin
+        - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -289,12 +320,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+    permissions:
+      contents: read
+    matrix:
+      os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: pnpm/action-setup@v4.1.0
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: 22
           cache: 'pnpm'
