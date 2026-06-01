@@ -139,7 +139,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # === Security ===
+  # === Security (merge gate — blocks PRs on vulnerabilities and secrets) ===
   audit:
     name: Audit
     runs-on: ubuntu-latest
@@ -154,6 +154,108 @@ jobs:
         run: cargo install cargo-audit
       - name: Run cargo audit
         run: cargo audit
+
+  trivy-fs:
+    name: Security / Trivy (filesystem + deps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Create reports directory
+        run: mkdir -p reports/trivy
+      - name: Run Trivy filesystem + dependency scan
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: reports/trivy/trivy-pr.sarif
+          exit-code: '1'
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        with:
+          sarif_file: reports/trivy/trivy-pr.sarif
+          category: trivy-fs
+
+  gitleaks-pr:
+    name: Security / Gitleaks (PR commits only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - name: Install Gitleaks CLI
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
+            | tar -xzf - -C /usr/local/bin gitleaks
+          gitleaks --version
+      - name: Scan staged + recent commits
+        run: |
+          mkdir -p reports/gitleaks
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts="--all -n 50" \
+            --report-format sarif \
+            --report-path reports/gitleaks/gitleaks-pr.sarif \
+            --exit-code 1
+      - name: Upload Gitleaks SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        with:
+          sarif_file: reports/gitleaks/gitleaks-pr.sarif
+          category: gitleaks-pr
+
+  semgrep-pr:
+    name: Security / Semgrep (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Semgrep CLI
+        run: pip install semgrep==1.126.0
+      - name: Run Semgrep SAST scan
+        run: |
+          mkdir -p reports/semgrep
+          semgrep scan \
+            --config p/rust \
+            --config p/dockerfile \
+            --config p/github-actions \
+            --config p/secrets \
+            --severity ERROR \
+            --sarif \
+            --output reports/semgrep/semgrep-pr.sarif
+      - name: Fail on findings
+        run: |
+          # Semgrep returns non-zero when findings match severity threshold.
+          # --severity ERROR ensures only HIGH/CRITICAL-ish rules trigger a failure.
+          grep -q '"results":\[\]' reports/semgrep/semgrep-pr.sarif \
+            && echo "No high-severity findings" \
+            || { echo "High-severity Semgrep findings detected"; exit 1; }
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        with:
+          sarif_file: reports/semgrep/semgrep-pr.sarif
+          category: semgrep-pr
 
   # === Coverage & Quality ===
   coverage:

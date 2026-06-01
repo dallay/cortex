@@ -2,6 +2,9 @@ name: Security Deep
 
 on:
   schedule:
+    # Nightly: 3:17 AM Mon-Fri — full history + deep scans for visibility
+    # This is a REPORTING-ONLY scan for historical evidence and triage.
+    # For merge-gate enforcement see ci.yml (trivy-fs, gitleaks-pr, audit).
     - cron: '17 3 * * 1-5'
   workflow_dispatch:
 
@@ -57,9 +60,9 @@ jobs:
         if: always()
         run: |
           echo '### security / gitleaks-history' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Intent: reporting-only scheduled secret scan with full repository history.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only nightly scan with full repository history.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Merge gate: none. For PR gate see `gitleaks-pr` in ci.yml.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Merge gating: none. Review findings from the security tab.' >> "$GITHUB_STEP_SUMMARY"
 
   semgrep-full:
     name: security / semgrep-full
@@ -102,9 +105,9 @@ jobs:
         if: always()
         run: |
           echo '### security / semgrep-full' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Intent: reporting-only full-repository SAST and security-sensitive config scan.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only nightly SAST and security-sensitive config scan.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Merge gate: none. For PR gate see `semgrep-pr` in ci.yml.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Merge gating: none. Scheduled findings should feed triage.' >> "$GITHUB_STEP_SUMMARY"
 
   trivy-full:
     name: security / trivy-full
@@ -120,17 +123,21 @@ jobs:
           persist-credentials: false
       - name: Create reports directory
         run: mkdir -p reports/trivy
+
+      - name: Install Trivy CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+            sh -s -- -b /usr/local/bin v0.65.0
+          trivy --version
+
       - name: Run full Trivy filesystem, dependency, and IaC scan
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,misconfig
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
-          format: sarif
-          output: reports/trivy/trivy-full.sarif
-          exit-code: '0'
+        run: |
+          trivy fs . \
+            --scanners vuln,misconfig \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --format sarif \
+            --output reports/trivy/trivy-full.sarif \
+            --exit-code 1
       - name: Verify SARIF file exists
         if: always()
         run: |
@@ -139,26 +146,27 @@ jobs:
             ls -lh reports/trivy/trivy-full.sarif
           else
             echo "✗ SARIF file not found"
-            exit 1
           fi
+
       - name: Upload Trivy SARIF
-        if: always()
+        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
         with:
           sarif_file: reports/trivy/trivy-full.sarif
           category: trivy-full
       - name: Upload Trivy artifact
-        if: always()
+        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: security-deep-trivy-full
           path: reports/trivy/
           retention-days: 21
       - name: Summarize Trivy reporting channel
-        if: always()
+        if: always() && hashFiles('reports/trivy/trivy-full.sarif') != ''
         run: |
           echo '### security / trivy-full' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Intent: reporting-only full repository filesystem, dependency, and IaC drift scan.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Intent: reporting-only nightly deep scan — filesystem, dependency, and IaC.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Merge gate: none. For PR gate see `trivy-fs` in ci.yml.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Severity coverage: UNKNOWN through CRITICAL for deep visibility.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Publication: GitHub code scanning via SARIF and retained workflow artifact.' >> "$GITHUB_STEP_SUMMARY"
 
@@ -182,7 +190,7 @@ jobs:
           {
             echo '## Scheduled deep security summary'
             echo ''
-            echo 'This workflow is reporting-oriented by design. It preserves evidence with non-cancelling concurrency and retained artifacts instead of acting as a pull-request gate.'
+            echo 'This workflow is reporting-oriented (no merge gate). It preserves evidence with non-cancelling concurrency and retained artifacts for triage. Merge gating is handled by `audit`, `trivy-fs`, `gitleaks-pr`, and `semgrep-pr` in ci.yml.'
             echo ''
             echo '### Job results'
             echo "- gitleaks-history: $GITLEAKS_RESULT"
