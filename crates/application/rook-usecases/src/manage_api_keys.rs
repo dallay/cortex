@@ -147,7 +147,9 @@ impl ManageApiKeys {
             created_at: existing.created_at,
             last_used_at: existing.last_used_at,
             allowed_models: request.allowed_models.unwrap_or(existing.allowed_models),
-            allowed_providers: request.allowed_providers.unwrap_or(existing.allowed_providers),
+            allowed_providers: request
+                .allowed_providers
+                .unwrap_or(existing.allowed_providers),
         };
 
         self.repo.update(&updated).await?;
@@ -201,6 +203,9 @@ fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
             }
             ApiKeyValidationError::EmptyScope => {
                 ManageApiKeysError::Validation("scope must not be empty".into())
+            }
+            ApiKeyValidationError::InvalidTier(t) => {
+                ManageApiKeysError::Validation(format!("invalid tier: {t}"))
             }
         })?;
     }

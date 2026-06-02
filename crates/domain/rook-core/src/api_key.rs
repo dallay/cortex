@@ -132,6 +132,10 @@ pub struct ApiKeySubject {
     pub label: String,
     pub scopes: Vec<ApiKeyScope>,
     pub tier: ApiKeyTier,
+    /// Empty vec means unrestricted (all models allowed).
+    pub allowed_models: Vec<ModelId>,
+    /// Empty vec means unrestricted (all providers allowed).
+    pub allowed_providers: Vec<ProviderId>,
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]

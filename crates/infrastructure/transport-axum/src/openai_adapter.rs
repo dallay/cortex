@@ -1,7 +1,8 @@
 // OpenAI adapter — translates between OpenAI wire format and domain model
 
 use rook_core::{
-    CompletionRequest, FinishReason, Message, MessageContent, RequestMetadata, Role, StreamChunk,
+    ApiKeyRestrictions, CompletionRequest, FinishReason, Message, MessageContent, RequestMetadata,
+    Role, StreamChunk,
 };
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ModelId, RequestId};
@@ -128,6 +129,7 @@ impl From<OpenAIChatRequest> for CompletionRequest {
                 cacheable: true,
                 priority: 5,
             },
+            restrictions: ApiKeyRestrictions::default(),
         }
     }
 }

@@ -5,15 +5,15 @@ use std::{convert::Infallible, sync::Arc};
 use axum::response::sse::Event;
 use axum::{
     extract::{Json, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware,
     response::{AppendHeaders, IntoResponse, Response, Sse},
     routing::{delete, get, post, put},
     Router,
 };
 use futures::StreamExt;
-use rook_core::{ApiFormat, CompletionRequest, HealthPort, HealthStatus};
-use shared_kernel::CortexError;
+use rook_core::{ApiFormat, ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus};
+use shared_kernel::{CortexError, ModelId, ProviderId};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
@@ -133,12 +133,48 @@ fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
         .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
 }
 
+/// Extract `ApiKeyRestrictions` from the trusted authz headers stamped by the middleware.
+///
+/// Headers are comma-separated lists — empty string means no restriction (unrestricted).
+fn restrictions_from_headers(headers: &HeaderMap) -> ApiKeyRestrictions {
+    let allowed_models = headers
+        .get("x-authz-allowed-models")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ModelId::new)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let allowed_providers = headers
+        .get("x-authz-allowed-providers")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ProviderId::new)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    ApiKeyRestrictions {
+        allowed_models,
+        allowed_providers,
+    }
+}
+
 /// POST /v1/chat/completions — OpenAI-compatible
 async fn chat_completions(
     State(usecases): State<Usecases>,
+    headers: HeaderMap,
     Json(body): Json<OpenAIChatRequest>,
 ) -> Result<Response, HttpError> {
-    let req = CompletionRequest::from(body);
+    let mut req = CompletionRequest::from(body);
+    req.restrictions = restrictions_from_headers(&headers);
 
     if req.stream {
         return chat_completions_stream(usecases, req).await;
@@ -152,6 +188,17 @@ async fn chat_completions(
         Ok(resp) => {
             let openai_resp = OpenAIChatResponse::from(&resp);
             Ok(Json(openai_resp).into_response())
+        }
+        Err(e) if e.is_forbidden() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "invalid_request_error".to_string(),
+                    code: Some("model_not_allowed".to_string()),
+                    message: e.to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::FORBIDDEN, Json(body)).into_response())
         }
         Err(e) if e.is_all_providers_exhausted() => {
             let body = OpenAIErrorResponse {
@@ -288,9 +335,11 @@ async fn list_models(State(_usecases): State<Usecases>) -> impl IntoResponse {
 /// POST /v1/messages — Anthropic-compatible
 async fn anthropic_messages(
     State(usecases): State<Usecases>,
+    headers: HeaderMap,
     Json(body): Json<AnthropicMessagesRequest>,
 ) -> Result<Response, HttpError> {
-    let req = CompletionRequest::from(body);
+    let mut req = CompletionRequest::from(body);
+    req.restrictions = restrictions_from_headers(&headers);
 
     if req.stream {
         return anthropic_messages_stream(usecases, req).await;
@@ -305,6 +354,7 @@ async fn anthropic_messages(
             let anthropic_resp = AnthropicMessagesResponse::from(&resp);
             Ok(Json(anthropic_resp).into_response())
         }
+        Err(e) if e.is_forbidden() => Ok((StatusCode::FORBIDDEN, e.to_string()).into_response()),
         Err(e) if e.is_all_providers_exhausted() => {
             Ok((StatusCode::SERVICE_UNAVAILABLE, "All providers unavailable").into_response())
         }

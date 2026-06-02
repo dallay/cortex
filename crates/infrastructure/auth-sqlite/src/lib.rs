@@ -140,7 +140,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let conn = self.lock()?;
         let now = Utc::now().to_rfc3339();
         conn.query_row(
-            "SELECT id, label, scopes_json, tier
+            "SELECT id, label, scopes_json, tier, allowed_models_json, allowed_providers_json
              FROM api_keys
              WHERE key_hash = ?1
                AND is_active = 1
@@ -353,11 +353,15 @@ fn row_to_subject(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeySubject> {
     let label: String = row.get("label")?;
     let scopes_json: String = row.get("scopes_json")?;
     let tier: String = row.get("tier")?;
+    let allowed_models_json: String = row.get("allowed_models_json")?;
+    let allowed_providers_json: String = row.get("allowed_providers_json")?;
     Ok(ApiKeySubject {
         id: ApiKeyId::new(id),
         label,
         scopes: scopes_from_json(&scopes_json).map_err(invalid_data)?,
         tier: ApiKeyTier::from_str(&tier).map_err(|error| invalid_data(error.to_string()))?,
+        allowed_models: models_from_json(&allowed_models_json).map_err(invalid_data)?,
+        allowed_providers: providers_from_json(&allowed_providers_json).map_err(invalid_data)?,
     })
 }
 
@@ -419,8 +423,7 @@ fn models_from_json(value: &str) -> Result<Vec<ModelId>, String> {
 
 fn models_to_json(models: &[ModelId]) -> Result<String, ApiKeyRepositoryError> {
     let values: Vec<&str> = models.iter().map(|m| m.as_str()).collect();
-    serde_json::to_string(&values)
-        .map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
+    serde_json::to_string(&values).map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
 }
 
 fn providers_from_json(value: &str) -> Result<Vec<ProviderId>, String> {
@@ -430,8 +433,7 @@ fn providers_from_json(value: &str) -> Result<Vec<ProviderId>, String> {
 
 fn providers_to_json(providers: &[ProviderId]) -> Result<String, ApiKeyRepositoryError> {
     let values: Vec<&str> = providers.iter().map(|p| p.as_str()).collect();
-    serde_json::to_string(&values)
-        .map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
+    serde_json::to_string(&values).map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
 }
 
 fn bool_to_i64(value: bool) -> i64 {
@@ -1357,5 +1359,4 @@ mod tests {
             assert!(found.allowed_providers.is_empty(), "empty = unrestricted");
         });
     }
-
 }
