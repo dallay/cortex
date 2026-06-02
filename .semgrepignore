@@ -6,7 +6,13 @@ apps/rook/dashboard/dist/
 # Playwright
 .playwright-mcp/
 
+# SonarSource action reference — triggers secret-name pattern noise
+.github/workflows/ci.yml
+
 # Test files (skipped by default but being explicit)
 **/*.spec.ts
 **/*.spec.tsx
 **/tests/**
+
+# Skills — documentation that triggers false-positive system-prompt-extraction rule
+.agents/skills/
