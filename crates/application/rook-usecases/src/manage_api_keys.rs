@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier,
+    ApiKeyValidationError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -68,6 +69,9 @@ impl ManageApiKeys {
             }
         }
 
+        // Validate all requested scopes are canonical.
+        validate_scopes(&request.scopes)?;
+
         let raw_key = generate_api_key();
         let key_hash = hash_api_key(&raw_key, &self.hash_secret);
         let key_prefix: String = raw_key.chars().take(8).collect();
@@ -104,7 +108,14 @@ impl ManageApiKeys {
             .ok_or_else(|| ManageApiKeysError::NotFound(id.clone()))?;
 
         let label = request.label.unwrap_or(existing.label);
-        let scopes = request.scopes.unwrap_or(existing.scopes);
+        let scopes = match request.scopes {
+            Some(new_scopes) => {
+                // Validate incoming scopes before applying the update.
+                validate_scopes(&new_scopes)?;
+                new_scopes
+            }
+            None => existing.scopes,
+        };
         let tier = request.tier.unwrap_or(existing.tier);
         let is_active = request.is_active.unwrap_or(existing.is_active);
 
@@ -170,6 +181,25 @@ pub struct UpdateApiKeyRequest {
     pub tier: Option<ApiKeyTier>,
     pub is_active: Option<bool>,
     pub expires_at: Option<Option<DateTime<Utc>>>,
+}
+
+/// Validates that every scope in the slice is a known canonical value.
+/// Returns `ManageApiKeysError::Validation` on the first unknown scope found.
+fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
+    for scope in scopes {
+        ApiKeyScope::parse(scope.as_str()).map_err(|e| match e {
+            ApiKeyValidationError::UnknownScope(s) => {
+                ManageApiKeysError::Validation(format!("unknown scope: {s}"))
+            }
+            ApiKeyValidationError::EmptyScope => {
+                ManageApiKeysError::Validation("scope must not be empty".into())
+            }
+            ApiKeyValidationError::InvalidTier(t) => {
+                ManageApiKeysError::Validation(format!("invalid tier: {t}"))
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn generate_api_key() -> String {
@@ -307,7 +337,7 @@ mod tests {
         // 1. Create a key
         let create_req = CreateApiKeyRequest {
             label: "Dev Key".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").unwrap()],
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
         };
@@ -354,7 +384,7 @@ mod tests {
 
         let create_req = CreateApiKeyRequest {
             label: "Test Key".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").unwrap()],
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
         };
@@ -377,7 +407,7 @@ mod tests {
         for i in 0..5 {
             let create_req = CreateApiKeyRequest {
                 label: format!("Key {}", i),
-                scopes: vec![ApiKeyScope::parse("read").unwrap()],
+                scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
                 tier: ApiKeyTier::Free,
                 expires_at: None,
             };
@@ -402,7 +432,7 @@ mod tests {
 
         let create_req = CreateApiKeyRequest {
             label: "Expired Key".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").unwrap()],
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: Some(Utc::now() - chrono::Duration::days(1)),
         };
@@ -424,7 +454,7 @@ mod tests {
 
         let create_req = CreateApiKeyRequest {
             label: "To Delete".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").unwrap()],
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
         };
@@ -437,5 +467,62 @@ mod tests {
         let found = usecase.get(&record.id).await.unwrap().unwrap();
         assert!(!found.is_active);
         assert!(found.revoked_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_with_unknown_scope_is_rejected() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+
+        // Use a pre-built ApiKeyScope via parse_lenient to bypass the strict check
+        // and simulate a caller passing an unknown scope in the request struct directly.
+        // We can only reach this code path by constructing the scope via parse_lenient.
+        let bad_scope = ApiKeyScope::parse_lenient("legacy:scope");
+        let create_req = CreateApiKeyRequest {
+            label: "Bad Scope Key".to_string(),
+            scopes: vec![bad_scope],
+            tier: ApiKeyTier::Free,
+            expires_at: None,
+        };
+
+        let result = usecase.create(create_req).await;
+        assert!(result.is_err());
+        match result {
+            Err(ManageApiKeysError::Validation(msg)) => {
+                assert!(msg.contains("unknown scope"), "message was: {msg}");
+            }
+            other => panic!("expected Validation error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_with_unknown_scope_is_rejected() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+
+        // Create a valid key first.
+        let create_req = CreateApiKeyRequest {
+            label: "Valid Key".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+            tier: ApiKeyTier::Free,
+            expires_at: None,
+        };
+        let (record, _) = usecase.create(create_req).await.unwrap();
+
+        // Attempt update with an unknown scope.
+        let bad_scope = ApiKeyScope::parse_lenient("legacy:scope");
+        let update_req = UpdateApiKeyRequest {
+            scopes: Some(vec![bad_scope]),
+            ..Default::default()
+        };
+
+        let result = usecase.update(&record.id, update_req).await;
+        assert!(result.is_err());
+        match result {
+            Err(ManageApiKeysError::Validation(msg)) => {
+                assert!(msg.contains("unknown scope"), "message was: {msg}");
+            }
+            other => panic!("expected Validation error, got {:?}", other),
+        }
     }
 }

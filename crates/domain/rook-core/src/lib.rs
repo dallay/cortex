@@ -41,8 +41,10 @@ mod api_key_tests {
 
     #[test]
     fn api_key_scope_trims_and_rejects_empty_values() {
-        let scope = ApiKeyScope::parse(" read ").expect("scope");
-        assert_eq!(scope.as_str(), "read");
+        // Only canonical scope values are accepted by parse().
+        let scope = ApiKeyScope::parse(" chat:read ").expect("scope");
+        assert_eq!(scope.as_str(), "chat:read");
         assert!(ApiKeyScope::parse(" ").is_err());
+        assert!(ApiKeyScope::parse("read").is_err()); // non-canonical → UnknownScope
     }
 }
