@@ -25,7 +25,7 @@ pub struct RateLimitExceeded {
 }
 
 /// API key rate limiter result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct RateLimitSnapshot {
     pub limit: u64,
     pub remaining: u64,
