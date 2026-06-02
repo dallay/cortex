@@ -152,8 +152,10 @@ mod tests {
         ApiKeySubject {
             id: ApiKeyId::new("key_1"),
             label: "Production".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").expect("scope")],
+            scopes: vec![ApiKeyScope::parse("chat:read").expect("scope")],
             tier: ApiKeyTier::Pro,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         }
     }
 

@@ -239,6 +239,7 @@ mod tests {
                 cacheable: false,
                 priority: 0,
             },
+            restrictions: rook_core::ApiKeyRestrictions::default(),
         };
 
         let error = registry

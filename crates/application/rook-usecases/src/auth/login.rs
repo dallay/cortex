@@ -87,7 +87,7 @@ impl Login {
         // Step 5: SHA-256 hash the token → token_hash
         let mut hasher = Sha256::new();
         hasher.update(token_bytes);
-        let token_hash = format!("{:x}", hasher.finalize());
+        let token_hash = hex::encode(hasher.finalize());
 
         // Step 6: Create session
         let new_session = rook_core::NewSession {

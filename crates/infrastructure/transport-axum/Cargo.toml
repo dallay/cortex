@@ -39,6 +39,9 @@ tracing = "0.1"
 # SHA-256 for session token hashing
 sha2 = "0.11"
 
+# Hex encoding for digest output
+hex = "0.4"
+
 [dev-dependencies]
 axum-test = "20"
 encryption-inmemory = { path = "../encryption-inmemory" }

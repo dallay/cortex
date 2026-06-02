@@ -54,7 +54,7 @@ impl ValidateSession {
         // Step 2: SHA-256 hash the token bytes
         let mut hasher = Sha256::new();
         hasher.update(&token_bytes);
-        let token_hash = format!("{:x}", hasher.finalize());
+        let token_hash = hex::encode(hasher.finalize());
 
         // Step 3: Look up session by token hash
         let session = self

@@ -14,8 +14,8 @@ fn test_record() -> ApiKeyRecord {
         key_hash: "hash_abc123".to_string(),
         key_prefix: "rook_test".to_string(),
         scopes: vec![
-            ApiKeyScope::parse("read").unwrap(),
-            ApiKeyScope::parse("write").unwrap(),
+            ApiKeyScope::parse("chat:read").unwrap(),
+            ApiKeyScope::parse("chat:write").unwrap(),
         ],
         tier: ApiKeyTier::Pro,
         is_active: true,
@@ -23,6 +23,8 @@ fn test_record() -> ApiKeyRecord {
         expires_at: Some(Utc::now() + chrono::Duration::days(30)),
         created_at: Utc::now(),
         last_used_at: None,
+        allowed_models: vec![],
+        allowed_providers: vec![],
     }
 }
 
@@ -34,7 +36,10 @@ fn api_key_record_response_dto_converts_correctly() {
     assert_eq!(dto.id, "key_123");
     assert_eq!(dto.label, "Production Key");
     assert_eq!(dto.key_prefix, "rook_test");
-    assert_eq!(dto.scopes, vec!["read".to_string(), "write".to_string()]);
+    assert_eq!(
+        dto.scopes,
+        vec!["chat:read".to_string(), "chat:write".to_string()]
+    );
     assert_eq!(dto.tier, "pro");
     assert!(dto.is_active);
     assert!(dto.expires_at.is_some());

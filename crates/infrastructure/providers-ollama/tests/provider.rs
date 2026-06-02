@@ -88,6 +88,7 @@ async fn complete_returns_error_when_not_implemented() {
             cacheable: true,
             priority: 0,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     // Complete is not yet implemented — returns provider error

@@ -125,6 +125,14 @@ pub struct NewSession {
 /// ---------------------------------------------------------------------------
 /// Request / Response
 /// ---------------------------------------------------------------------------
+/// API key restriction filters. Empty vecs mean "unrestricted" (all allowed).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ApiKeyRestrictions {
+    /// If non-empty, only these model IDs are allowed.
+    pub allowed_models: Vec<ModelId>,
+    /// If non-empty, only these provider IDs are allowed.
+    pub allowed_providers: Vec<ProviderId>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
@@ -137,6 +145,9 @@ pub struct CompletionRequest {
     pub tools: Option<serde_json::Value>,
     pub tool_choice: Option<serde_json::Value>,
     pub metadata: RequestMetadata,
+    /// API key restrictions — empty vecs mean unrestricted.
+    #[serde(default)]
+    pub restrictions: ApiKeyRestrictions,
 }
 
 impl CompletionRequest {

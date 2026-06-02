@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope,
-    ApiKeySubject, ApiKeyTier, NewSession, NewUser, PasswordHash, Session, SessionId,
-    SessionRepositoryError, SessionRepositoryPort, User, UserId, UserRepositoryError,
+    ApiKeySubject, ApiKeyTier, ModelId, NewSession, NewUser, PasswordHash, ProviderId, Session,
+    SessionId, SessionRepositoryError, SessionRepositoryPort, User, UserId, UserRepositoryError,
     UserRepositoryPort,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
@@ -50,8 +50,9 @@ impl SqliteApiKeyRepository {
         conn.execute(
             "INSERT INTO api_keys (
                 id, label, key_hash, key_prefix, scopes_json, tier, is_active,
-                revoked_at, expires_at, created_at, last_used_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                revoked_at, expires_at, created_at, last_used_at,
+                allowed_models_json, allowed_providers_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 record.id.to_string(),
                 record.label,
@@ -64,6 +65,8 @@ impl SqliteApiKeyRepository {
                 optional_datetime(record.expires_at),
                 record.created_at.to_rfc3339(),
                 optional_datetime(record.last_used_at),
+                "[]",
+                "[]",
             ],
         )
         .map_err(db_error)?;
@@ -117,7 +120,7 @@ impl TestApiKeyRecord {
             label: "Production".to_string(),
             key_hash: key_hash.to_string(),
             key_prefix: key_hash.chars().take(8).collect(),
-            scopes: vec![ApiKeyScope::parse("read").expect("scope")],
+            scopes: vec![ApiKeyScope::parse("chat:read").expect("scope")],
             tier: ApiKeyTier::Free,
             is_active: true,
             revoked_at: None,
@@ -137,7 +140,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let conn = self.lock()?;
         let now = Utc::now().to_rfc3339();
         conn.query_row(
-            "SELECT id, label, scopes_json, tier
+            "SELECT id, label, scopes_json, tier, allowed_models_json, allowed_providers_json
              FROM api_keys
              WHERE key_hash = ?1
                AND is_active = 1
@@ -173,7 +176,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
-                        revoked_at, expires_at, created_at, last_used_at
+                        revoked_at, expires_at, created_at, last_used_at,
+                        allowed_models_json, allowed_providers_json
                  FROM api_keys
                  ORDER BY created_at DESC",
             )
@@ -190,7 +194,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let conn = self.lock()?;
         conn.query_row(
             "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
-                    revoked_at, expires_at, created_at, last_used_at
+                    revoked_at, expires_at, created_at, last_used_at,
+                    allowed_models_json, allowed_providers_json
              FROM api_keys
              WHERE id = ?1",
             params![id.to_string()],
@@ -205,8 +210,9 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         conn.execute(
             "INSERT INTO api_keys (
                 id, label, key_hash, key_prefix, scopes_json, tier, is_active,
-                revoked_at, expires_at, created_at, last_used_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                revoked_at, expires_at, created_at, last_used_at,
+                allowed_models_json, allowed_providers_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 record.id.to_string(),
                 record.label,
@@ -219,6 +225,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                 optional_datetime(record.expires_at),
                 record.created_at.to_rfc3339(),
                 optional_datetime(record.last_used_at),
+                models_to_json(&record.allowed_models)?,
+                providers_to_json(&record.allowed_providers)?,
             ],
         )
         .map_err(db_error)?;
@@ -236,8 +244,10 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                     is_active = ?4,
                     revoked_at = ?5,
                     expires_at = ?6,
-                    last_used_at = ?7
-                 WHERE id = ?8",
+                    last_used_at = ?7,
+                    allowed_models_json = ?8,
+                    allowed_providers_json = ?9
+                 WHERE id = ?10",
                 params![
                     record.label,
                     scopes_to_json(&record.scopes)?,
@@ -246,6 +256,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                     optional_datetime(record.revoked_at),
                     optional_datetime(record.expires_at),
                     optional_datetime(record.last_used_at),
+                    models_to_json(&record.allowed_models)?,
+                    providers_to_json(&record.allowed_providers)?,
                     record.id.to_string(),
                 ],
             )
@@ -309,7 +321,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
-                    revoked_at, expires_at, created_at, last_used_at
+                    revoked_at, expires_at, created_at, last_used_at,
+                    allowed_models_json, allowed_providers_json
              FROM api_keys
              WHERE is_active = 1
              ORDER BY created_at DESC
@@ -340,11 +353,15 @@ fn row_to_subject(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeySubject> {
     let label: String = row.get("label")?;
     let scopes_json: String = row.get("scopes_json")?;
     let tier: String = row.get("tier")?;
+    let allowed_models_json: String = row.get("allowed_models_json")?;
+    let allowed_providers_json: String = row.get("allowed_providers_json")?;
     Ok(ApiKeySubject {
         id: ApiKeyId::new(id),
         label,
         scopes: scopes_from_json(&scopes_json).map_err(invalid_data)?,
         tier: ApiKeyTier::from_str(&tier).map_err(|error| invalid_data(error.to_string()))?,
+        allowed_models: models_from_json(&allowed_models_json).map_err(invalid_data)?,
+        allowed_providers: providers_from_json(&allowed_providers_json).map_err(invalid_data)?,
     })
 }
 
@@ -360,6 +377,8 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
     let expires_at_str: Option<String> = row.get("expires_at")?;
     let created_at_str: String = row.get("created_at")?;
     let last_used_at_str: Option<String> = row.get("last_used_at")?;
+    let allowed_models_json: String = row.get("allowed_models_json")?;
+    let allowed_providers_json: String = row.get("allowed_providers_json")?;
 
     let revoked_at = revoked_at_str.map(|s| parse_datetime(&s)).transpose()?;
     let expires_at = expires_at_str.map(|s| parse_datetime(&s)).transpose()?;
@@ -378,21 +397,43 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
         expires_at,
         created_at,
         last_used_at,
+        allowed_models: models_from_json(&allowed_models_json).map_err(invalid_data)?,
+        allowed_providers: providers_from_json(&allowed_providers_json).map_err(invalid_data)?,
     })
 }
 
 fn scopes_from_json(value: &str) -> Result<Vec<ApiKeyScope>, String> {
     let values = serde_json::from_str::<Vec<String>>(value).map_err(|error| error.to_string())?;
-    values
+    Ok(values
         .iter()
-        .map(|scope| ApiKeyScope::parse(scope).map_err(|error| error.to_string()))
-        .collect()
+        .map(|scope| ApiKeyScope::parse_lenient(scope))
+        .collect())
 }
 
 fn scopes_to_json(scopes: &[ApiKeyScope]) -> Result<String, ApiKeyRepositoryError> {
     let values = scopes.iter().map(ApiKeyScope::as_str).collect::<Vec<_>>();
     serde_json::to_string(&values)
         .map_err(|error| ApiKeyRepositoryError::Database(error.to_string()))
+}
+
+fn models_from_json(value: &str) -> Result<Vec<ModelId>, String> {
+    let values = serde_json::from_str::<Vec<String>>(value).map_err(|e| e.to_string())?;
+    Ok(values.into_iter().map(ModelId::new).collect())
+}
+
+fn models_to_json(models: &[ModelId]) -> Result<String, ApiKeyRepositoryError> {
+    let values: Vec<&str> = models.iter().map(|m| m.as_str()).collect();
+    serde_json::to_string(&values).map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
+}
+
+fn providers_from_json(value: &str) -> Result<Vec<ProviderId>, String> {
+    let values = serde_json::from_str::<Vec<String>>(value).map_err(|e| e.to_string())?;
+    Ok(values.into_iter().map(ProviderId::new).collect())
+}
+
+fn providers_to_json(providers: &[ProviderId]) -> Result<String, ApiKeyRepositoryError> {
+    let values: Vec<&str> = providers.iter().map(|p| p.as_str()).collect();
+    serde_json::to_string(&values).map_err(|e| ApiKeyRepositoryError::Database(e.to_string()))
 }
 
 fn bool_to_i64(value: bool) -> i64 {
@@ -714,7 +755,7 @@ mod tests {
 
     use chrono::{Duration, Utc};
     use rook_core::{
-        ApiKeyId, ApiKeyRepositoryPort, ApiKeyTier, NewSession as CoreNewSession,
+        ApiKeyId, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier, NewSession as CoreNewSession,
         NewUser as CoreNewUser, PasswordHash as CorePasswordHash, SessionRepositoryPort,
         UserRepositoryPort,
     };
@@ -771,7 +812,7 @@ mod tests {
             let mut active = TestApiKeyRecord::active("active", "hash-active");
             active
                 .scopes
-                .push(rook_core::ApiKeyScope::parse("write").expect("scope"));
+                .push(rook_core::ApiKeyScope::parse("chat:write").expect("scope"));
             active.tier = ApiKeyTier::Pro;
             active.expires_at = Some(Utc::now() + Duration::days(1));
             repo.insert_test_key(active).await.expect("insert active");
@@ -787,7 +828,7 @@ mod tests {
                 .expect("active subject");
             assert_eq!(active.id, ApiKeyId::new("active"));
             assert_eq!(active.tier, ApiKeyTier::Pro);
-            assert_eq!(active.scopes[0].as_str(), "read");
+            assert_eq!(active.scopes[0].as_str(), "chat:read");
             assert!(repo
                 .find_active_by_hash("hash-revoked")
                 .await
@@ -832,13 +873,15 @@ mod tests {
                 label: "Development Key".to_string(),
                 key_hash: "hash-123".to_string(),
                 key_prefix: "rk-123".to_string(),
-                scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
                 tier: ApiKeyTier::Free,
                 is_active: true,
                 revoked_at: None,
                 expires_at: None,
                 created_at: Utc::now(),
                 last_used_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
             };
             repo.create(&record).await.expect("create");
 
@@ -933,13 +976,15 @@ mod tests {
                     label: format!("Key {}", i),
                     key_hash: format!("hash-{}", i),
                     key_prefix: format!("rk-{}", i),
-                    scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                    scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
                     tier: ApiKeyTier::Free,
                     is_active: true,
                     revoked_at: None,
                     expires_at: None,
                     created_at: Utc::now(),
                     last_used_at: None,
+                    allowed_models: vec![],
+                    allowed_providers: vec![],
                 };
                 repo.create(&record).await.expect("create");
             }
@@ -1188,5 +1233,158 @@ mod tests {
         });
 
         cleanup_test_db(db_path.as_ref());
+    }
+
+    #[test]
+    fn create_api_key_with_allowed_models_and_providers_persists_correctly() {
+        use rook_core::{ModelId, ProviderId};
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+
+            let record = rook_core::ApiKeyRecord {
+                id: ApiKeyId::new("key-restricted"),
+                label: "Restricted Key".to_string(),
+                key_hash: "hash-restricted".to_string(),
+                key_prefix: "rk-rest".to_string(),
+                scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
+                tier: ApiKeyTier::Free,
+                is_active: true,
+                revoked_at: None,
+                expires_at: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
+                allowed_providers: vec![ProviderId::new("openai")],
+            };
+            repo.create(&record).await.expect("create");
+
+            let found = repo
+                .find(&ApiKeyId::new("key-restricted"))
+                .await
+                .expect("find")
+                .expect("some");
+
+            assert_eq!(found.allowed_models.len(), 2);
+            assert_eq!(found.allowed_models[0].as_str(), "gpt-4");
+            assert_eq!(found.allowed_models[1].as_str(), "claude-3");
+            assert_eq!(found.allowed_providers.len(), 1);
+            assert_eq!(found.allowed_providers[0].as_str(), "openai");
+        });
+    }
+
+    #[test]
+    fn update_api_key_restrictions_persists_correctly() {
+        use rook_core::{ModelId, ProviderId};
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+
+            // Start with empty restrictions
+            let record = rook_core::ApiKeyRecord {
+                id: ApiKeyId::new("key-update-test"),
+                label: "Update Test".to_string(),
+                key_hash: "hash-update".to_string(),
+                key_prefix: "rk-upd".to_string(),
+                scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
+                tier: ApiKeyTier::Free,
+                is_active: true,
+                revoked_at: None,
+                expires_at: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+            };
+            repo.create(&record).await.expect("create");
+
+            // Update with restrictions
+            let mut updated = record.clone();
+            updated.allowed_models = vec![ModelId::new("gpt-4o")];
+            updated.allowed_providers = vec![ProviderId::new("anthropic")];
+            repo.update(&updated).await.expect("update");
+
+            let found = repo
+                .find(&ApiKeyId::new("key-update-test"))
+                .await
+                .expect("find")
+                .expect("some");
+            assert_eq!(found.allowed_models.len(), 1);
+            assert_eq!(found.allowed_models[0].as_str(), "gpt-4o");
+            assert_eq!(found.allowed_providers[0].as_str(), "anthropic");
+
+            // Clear restrictions
+            let mut cleared = found;
+            cleared.allowed_models = vec![];
+            cleared.allowed_providers = vec![];
+            repo.update(&cleared).await.expect("update clear");
+
+            let refound = repo
+                .find(&ApiKeyId::new("key-update-test"))
+                .await
+                .expect("find")
+                .expect("some");
+            assert!(refound.allowed_models.is_empty(), "should be cleared");
+            assert!(refound.allowed_providers.is_empty(), "should be cleared");
+        });
+    }
+
+    #[test]
+    fn empty_restrictions_means_unrestricted() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+
+            let record = rook_core::ApiKeyRecord {
+                id: ApiKeyId::new("key-empty-restrictions"),
+                label: "Unrestricted".to_string(),
+                key_hash: "hash-unrestricted".to_string(),
+                key_prefix: "rk-unr".to_string(),
+                scopes: vec![rook_core::ApiKeyScope::parse("chat:write").unwrap()],
+                tier: ApiKeyTier::Pro,
+                is_active: true,
+                revoked_at: None,
+                expires_at: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+            };
+            repo.create(&record).await.expect("create");
+
+            let found = repo
+                .find(&ApiKeyId::new("key-empty-restrictions"))
+                .await
+                .expect("find")
+                .expect("some");
+
+            assert!(found.allowed_models.is_empty(), "empty = unrestricted");
+            assert!(found.allowed_providers.is_empty(), "empty = unrestricted");
+        });
+    }
+
+    // Regression: scopes_from_json used to call ApiKeyScope::parse (strict) which
+    // rejected pre-#83 legacy scopes ('read', 'write') and broke reads of any
+    // existing key. parse_lenient accepts unknown strings and logs a warning.
+    #[test]
+    fn read_key_with_legacy_scope_string_is_preserved() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            // Use the test helper and override scopes to a legacy 'read' value.
+            let mut record = TestApiKeyRecord::active("legacy_key_id", "hash:legacy");
+            record.label = "Legacy Key".to_string();
+            record.scopes = vec![ApiKeyScope::parse_lenient("read")];
+            repo.insert_test_key(record)
+                .await
+                .expect("insert legacy key");
+
+            // Re-fetch — this exercises the scopes_from_json read path.
+            let result = repo
+                .find_active_by_hash("hash:legacy")
+                .await
+                .expect("query")
+                .expect("legacy key must be readable");
+
+            assert_eq!(result.label, "Legacy Key");
+            assert_eq!(result.scopes.len(), 1);
+            assert_eq!(result.scopes[0].as_str(), "read");
+        });
     }
 }
