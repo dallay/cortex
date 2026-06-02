@@ -117,7 +117,7 @@ impl TestApiKeyRecord {
             label: "Production".to_string(),
             key_hash: key_hash.to_string(),
             key_prefix: key_hash.chars().take(8).collect(),
-            scopes: vec![ApiKeyScope::parse("read").expect("scope")],
+            scopes: vec![ApiKeyScope::parse("chat:read").expect("scope")],
             tier: ApiKeyTier::Free,
             is_active: true,
             revoked_at: None,
@@ -771,7 +771,7 @@ mod tests {
             let mut active = TestApiKeyRecord::active("active", "hash-active");
             active
                 .scopes
-                .push(rook_core::ApiKeyScope::parse("write").expect("scope"));
+                .push(rook_core::ApiKeyScope::parse("chat:write").expect("scope"));
             active.tier = ApiKeyTier::Pro;
             active.expires_at = Some(Utc::now() + Duration::days(1));
             repo.insert_test_key(active).await.expect("insert active");
@@ -787,7 +787,7 @@ mod tests {
                 .expect("active subject");
             assert_eq!(active.id, ApiKeyId::new("active"));
             assert_eq!(active.tier, ApiKeyTier::Pro);
-            assert_eq!(active.scopes[0].as_str(), "read");
+            assert_eq!(active.scopes[0].as_str(), "chat:read");
             assert!(repo
                 .find_active_by_hash("hash-revoked")
                 .await
@@ -832,7 +832,7 @@ mod tests {
                 label: "Development Key".to_string(),
                 key_hash: "hash-123".to_string(),
                 key_prefix: "rk-123".to_string(),
-                scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
                 tier: ApiKeyTier::Free,
                 is_active: true,
                 revoked_at: None,
@@ -933,7 +933,7 @@ mod tests {
                     label: format!("Key {}", i),
                     key_hash: format!("hash-{}", i),
                     key_prefix: format!("rk-{}", i),
-                    scopes: vec![rook_core::ApiKeyScope::parse("read").unwrap()],
+                    scopes: vec![rook_core::ApiKeyScope::parse("chat:read").unwrap()],
                     tier: ApiKeyTier::Free,
                     is_active: true,
                     revoked_at: None,

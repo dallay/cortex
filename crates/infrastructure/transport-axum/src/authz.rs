@@ -68,7 +68,7 @@ impl AuthzConfig {
                     format!("key_{}", idx + 1),
                     format!("Client API Key {}", idx + 1),
                     key.to_string(),
-                    ["read", "write"],
+                    ["chat:read", "chat:write"],
                 )
             })
             .collect();
@@ -423,7 +423,14 @@ pub async fn middleware(
     }
 
     remove_trusted_headers(request.headers_mut());
-    let outcome = evaluate_policy(route_class, request.headers(), &config).await;
+    let outcome = evaluate_policy(
+        route_class,
+        request.method(),
+        request.uri().path(),
+        request.headers(),
+        &config,
+    )
+    .await;
     if !outcome.allow {
         let mut resp =
             rejection_response(request.uri().path(), route_class, outcome).into_response();
@@ -467,12 +474,14 @@ pub fn classify_route(method: &Method, path: &str) -> AuthTier {
 
 pub async fn evaluate_policy(
     route_class: AuthTier,
+    method: &Method,
+    path: &str,
     headers: &HeaderMap,
     config: &AuthzConfig,
 ) -> AuthOutcome {
     match route_class {
         AuthTier::Public => AuthOutcome::allow(Subject::anonymous()),
-        AuthTier::ClientApi => client_api_policy(headers, config).await,
+        AuthTier::ClientApi => client_api_policy(method, path, headers, config).await,
         AuthTier::Management => management_policy(headers, config).await,
     }
 }
@@ -592,7 +601,33 @@ pub fn body_size_rejection(
     })
 }
 
-async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
+fn required_scope(method: &Method, path: &str) -> Option<&'static str> {
+    if !path.starts_with("/v1/") {
+        return None;
+    }
+    if path.starts_with("/v1/providers/") || path.starts_with("/v1/providers") {
+        return if *method == Method::GET {
+            Some("providers:read")
+        } else {
+            Some("providers:write")
+        };
+    }
+    if path.starts_with("/v1/chat/") {
+        return match *method {
+            Method::GET => Some("chat:read"),
+            _ => Some("chat:write"),
+        };
+    }
+    // GET /v1/models* and all other /v1/* default to chat:read
+    Some("chat:read")
+}
+
+async fn client_api_policy(
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
+    config: &AuthzConfig,
+) -> AuthOutcome {
     let Some(api_key) = extract_api_key(headers) else {
         return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "MISSING_API_KEY");
     };
@@ -610,6 +645,9 @@ async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
                         .map(|scope| scope.as_str().to_string())
                         .collect(),
                 };
+                if let Some(rejection) = check_scope(method, path, &subject) {
+                    return rejection;
+                }
                 return match config
                     .rate_limiter
                     .check(&subject.id, RateLimitTier::from(api_key_subject.tier))
@@ -652,11 +690,25 @@ async fn client_api_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
         label: credential.label.clone(),
         scopes: credential.scopes.clone(),
     };
+    if let Some(rejection) = check_scope(method, path, &subject) {
+        return rejection;
+    }
     match config.rate_limiter.check(&credential.id, credential.tier) {
         Ok(snapshot) => AuthOutcome::allow(subject).with_rate_limit(snapshot),
         Err(snapshot) => AuthOutcome::reject(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
             .with_rate_limit(snapshot),
     }
+}
+
+fn check_scope(method: &Method, path: &str, subject: &Subject) -> Option<AuthOutcome> {
+    let required = required_scope(method, path)?;
+    if subject.scopes.iter().any(|s| s == "admin" || s == required) {
+        return None;
+    }
+    Some(AuthOutcome::reject(
+        StatusCode::FORBIDDEN,
+        "INSUFFICIENT_SCOPE",
+    ))
 }
 
 async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
@@ -811,6 +863,7 @@ fn rejection_message(code: &str) -> &'static str {
         "AUTH_MISCONFIGURED" => "Authentication is not configured",
         "AUTH_BACKEND_ERROR" => "Authentication backend error",
         "RATE_LIMIT_EXCEEDED" => "Rate limit exceeded",
+        "INSUFFICIENT_SCOPE" => "Insufficient scope for this operation",
         _ => "Unauthorized",
     }
 }
@@ -995,8 +1048,14 @@ mod tests {
             .expect("runtime")
     }
 
-    fn evaluate(route_class: AuthTier, headers: &HeaderMap, config: &AuthzConfig) -> AuthOutcome {
-        runtime().block_on(evaluate_policy(route_class, headers, config))
+    fn evaluate(
+        route_class: AuthTier,
+        method: &Method,
+        path: &str,
+        headers: &HeaderMap,
+        config: &AuthzConfig,
+    ) -> AuthOutcome {
+        runtime().block_on(evaluate_policy(route_class, method, path, headers, config))
     }
 
     #[test]
@@ -1023,26 +1082,38 @@ mod tests {
                 "key_1",
                 "Production Key",
                 "sk-live",
-                ["read", "write"],
+                ["chat:read", "chat:write"],
             )],
             "test-secret",
         );
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
-        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
 
         assert!(outcome.allow);
         let subject = outcome.subject.expect("subject");
         assert_eq!(subject.kind, AuthKind::ApiKey);
         assert_eq!(subject.id, "key_1");
-        assert_eq!(subject.scopes, vec!["read", "write"]);
+        assert_eq!(subject.scopes, vec!["chat:read", "chat:write"]);
     }
 
     #[test]
     fn client_api_rejects_missing_api_key() {
         let config = AuthzConfig::new(Vec::new(), "test-secret");
-        let outcome = evaluate(AuthTier::ClientApi, &HeaderMap::new(), &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &HeaderMap::new(),
+            &config,
+        );
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
@@ -1163,14 +1234,20 @@ mod tests {
                 "key_1",
                 "Production Key",
                 "sk-live",
-                ["read"],
+                ["chat:read"],
             )],
             "test-secret",
         );
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
-        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
 
         let snapshot = outcome.rate_limit.expect("rate limit snapshot");
         assert_eq!(snapshot.limit, 100);
@@ -1184,7 +1261,7 @@ mod tests {
                 "key_1",
                 "Production Key",
                 "sk-live",
-                ["read"],
+                ["chat:read"],
             )],
             "test-secret",
         );
@@ -1192,10 +1269,22 @@ mod tests {
         headers.insert("x-api-key", HeaderValue::from_static("sk-live"));
 
         for _ in 0..100 {
-            let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+            let outcome = evaluate(
+                AuthTier::ClientApi,
+                &Method::GET,
+                "/v1/models",
+                &headers,
+                &config,
+            );
             assert!(outcome.allow);
         }
-        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::TOO_MANY_REQUESTS));
@@ -1209,7 +1298,7 @@ mod tests {
         *repo.subject.lock().expect("subject") = Some(ApiKeySubject {
             id: ApiKeyId::new("persisted-key"),
             label: "Persisted Key".to_string(),
-            scopes: vec![ApiKeyScope::parse("read").expect("scope")],
+            scopes: vec![ApiKeyScope::parse("chat:read").expect("scope")],
             tier: ApiKeyTier::Enterprise,
         });
         let auth = AuthenticateClientApi::new(repo, "hash-secret");
@@ -1217,13 +1306,19 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-live"));
 
-        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
 
         assert!(outcome.allow);
         let subject = outcome.subject.expect("subject");
         assert_eq!(subject.id, "persisted-key");
         assert_eq!(subject.label, "Persisted Key");
-        assert_eq!(subject.scopes, vec!["read"]);
+        assert_eq!(subject.scopes, vec!["chat:read"]);
         assert_eq!(outcome.rate_limit.expect("rate limit").limit, 10_000);
     }
 
@@ -1234,10 +1329,124 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-invalid"));
 
-        let outcome = evaluate(AuthTier::ClientApi, &headers, &config);
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
 
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
         assert_eq!(outcome.code, Some("INVALID_API_KEY"));
+    }
+
+    #[test]
+    fn client_api_with_chat_read_scope_allowed_on_get_route() {
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_read",
+                "Read-only Key",
+                "sk-read",
+                ["chat:read"],
+            )],
+            "test-secret",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-read"));
+
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::GET,
+            "/v1/models",
+            &headers,
+            &config,
+        );
+
+        assert!(
+            outcome.allow,
+            "chat:read key must be allowed on GET /v1/models"
+        );
+    }
+
+    #[test]
+    fn client_api_with_chat_read_scope_rejected_on_write_route() {
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_read",
+                "Read-only Key",
+                "sk-read",
+                ["chat:read"],
+            )],
+            "test-secret",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-read"));
+
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::POST,
+            "/v1/chat/completions",
+            &headers,
+            &config,
+        );
+
+        assert!(!outcome.allow);
+        assert_eq!(outcome.status, Some(StatusCode::FORBIDDEN));
+        assert_eq!(outcome.code, Some("INSUFFICIENT_SCOPE"));
+    }
+
+    #[test]
+    fn client_api_with_admin_scope_allowed_on_any_route() {
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_admin",
+                "Admin Key",
+                "sk-admin",
+                ["admin"],
+            )],
+            "test-secret",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-admin"));
+
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::POST,
+            "/v1/chat/completions",
+            &headers,
+            &config,
+        );
+
+        assert!(outcome.allow, "admin scope must bypass scope enforcement");
+    }
+
+    #[test]
+    fn client_api_with_chat_write_scope_allowed_on_write_route() {
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_write",
+                "Write Key",
+                "sk-write",
+                ["chat:write"],
+            )],
+            "test-secret",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-write"));
+
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::POST,
+            "/v1/chat/completions",
+            &headers,
+            &config,
+        );
+
+        assert!(
+            outcome.allow,
+            "chat:write key must be allowed on POST /v1/chat/completions"
+        );
     }
 }

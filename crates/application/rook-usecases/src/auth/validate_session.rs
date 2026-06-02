@@ -54,7 +54,14 @@ impl ValidateSession {
         // Step 2: SHA-256 hash the token bytes
         let mut hasher = Sha256::new();
         hasher.update(&token_bytes);
-        let token_hash = format!("{:x}", hasher.finalize());
+        let token_hash = {
+            let bytes = hasher.finalize();
+            bytes.iter().fold(String::new(), |mut s, b| {
+                use std::fmt::Write as _;
+                let _ = write!(s, "{b:02x}");
+                s
+            })
+        };
 
         // Step 3: Look up session by token hash
         let session = self
