@@ -16,7 +16,7 @@ use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse,
     CortexError, FormatTranslatorPort, RequestStatus, RouterPort, StreamChunk, TokenUsage,
 };
-use shared_kernel::ProviderId;
+use shared_kernel::{ProviderId, RestrictionViolation};
 
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -59,10 +59,7 @@ impl RouteRequest {
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
-            return Err(CortexError::forbidden(format!(
-                "model '{}' is not permitted by this API key",
-                req.model.as_str()
-            )));
+            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
         }
 
         // 1. Cache hit?
@@ -81,10 +78,7 @@ impl RouteRequest {
         if !req.restrictions.allowed_providers.is_empty()
             && !req.restrictions.allowed_providers.contains(&provider_id)
         {
-            return Err(CortexError::forbidden(format!(
-                "provider '{}' is not permitted by this API key",
-                provider_id.as_str()
-            )));
+            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
         }
 
         let provider_format = provider.api_format();
@@ -155,10 +149,7 @@ impl RouteRequest {
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
-            return Err(CortexError::forbidden(format!(
-                "model '{}' is not permitted by this API key",
-                req.model.as_str()
-            )));
+            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
         }
 
         let provider = self.router.select(&req).await?;
@@ -168,10 +159,7 @@ impl RouteRequest {
         if !req.restrictions.allowed_providers.is_empty()
             && !req.restrictions.allowed_providers.contains(&provider_id)
         {
-            return Err(CortexError::forbidden(format!(
-                "provider '{}' is not permitted by this API key",
-                provider_id.as_str()
-            )));
+            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
         }
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(

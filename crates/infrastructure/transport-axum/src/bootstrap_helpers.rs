@@ -50,7 +50,7 @@ pub fn make_test_bootstrap_usecases(
         format_translator,
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
-    let health_check = HealthCheck::new(fallback_router);
+    let health_check = HealthCheck::new(fallback_router.clone());
 
     Arc::new(rook_usecases::RookUsecases::new(
         route_request,
@@ -58,7 +58,11 @@ pub fn make_test_bootstrap_usecases(
         health_check,
         None,
         None,
-        Some(ManageApiKeys::new(api_key_repo, "test-hmac-secret")),
+        Some(ManageApiKeys::new(
+            api_key_repo,
+            "test-hmac-secret",
+            fallback_router.clone(),
+        )),
         bootstrap_status,
         rook_usecases::EnsureAdminUser::new(user_repo.clone()),
         set_admin_password,

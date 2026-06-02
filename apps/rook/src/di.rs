@@ -106,6 +106,7 @@ impl RookContainer {
                 Some(rook_usecases::ManageApiKeys::new(
                     api_key_repo.clone(),
                     hash_secret,
+                    registry.clone(),
                 )),
             )
         } else {

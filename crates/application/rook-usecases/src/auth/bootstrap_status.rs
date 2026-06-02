@@ -134,8 +134,8 @@ mod tests {
     use chrono::{DateTime, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeySubject,
-        NewUser, PasswordHash, PasswordHashError, PasswordHasher, User, UserId,
-        UserRepositoryError,
+        NewUser, PasswordHash, PasswordHashError, PasswordHasher, ProviderId, ProviderRegistryPort,
+        User, UserId, UserRepositoryError,
     };
     use std::sync::Mutex;
 
@@ -335,6 +335,39 @@ mod tests {
         }
     }
 
+    // --- Fake ProviderRegistry ---
+
+    #[derive(Default)]
+    struct FakeProviderRegistry;
+
+    impl ProviderRegistryPort for FakeProviderRegistry {
+        fn providers(&self) -> Vec<ProviderId> {
+            vec![]
+        }
+
+        fn get(&self, _id: &ProviderId) -> Option<Arc<dyn rook_core::ProviderPort>> {
+            None
+        }
+
+        fn replace_all(
+            &self,
+            _providers: Vec<Arc<dyn rook_core::ProviderPort>>,
+        ) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+
+        fn upsert(
+            &self,
+            _provider: Arc<dyn rook_core::ProviderPort>,
+        ) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+    }
+
     // --- Helper to build SetAdminPassword + ManageApiKeys for setup() tests ---
 
     fn make_setup_deps(
@@ -343,7 +376,8 @@ mod tests {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(FakePasswordHasher);
         let set_pw = SetAdminPassword::new(user_repo, hasher);
         let api_key_repo: Arc<dyn ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
-        let manage_keys = ManageApiKeys::new(api_key_repo, "test-secret");
+        let registry: Arc<dyn ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+        let manage_keys = ManageApiKeys::new(api_key_repo, "test-secret", registry);
         (set_pw, manage_keys)
     }
 

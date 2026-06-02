@@ -51,14 +51,14 @@ fn api_key_record_response_dto_converts_correctly() {
 fn create_api_key_request_deserializes_correctly() {
     let json = serde_json::json!({
         "label": "Test Key",
-        "scopes": ["read", "write"],
+        "scopes": ["chat:read", "chat:write"],
         "tier": "enterprise",
         "expiresAt": "2026-06-30T00:00:00Z"
     });
 
     let dto: CreateApiKeyRequestDto = serde_json::from_value(json).expect("should deserialize");
     assert_eq!(dto.label, "Test Key");
-    assert_eq!(dto.scopes, vec!["read".to_string(), "write".to_string()]);
+    assert_eq!(dto.scopes, vec!["chat:read".to_string(), "chat:write".to_string()]);
     assert_eq!(dto.tier, "enterprise");
     assert!(dto.expires_at.is_some());
 }
@@ -67,7 +67,7 @@ fn create_api_key_request_deserializes_correctly() {
 fn update_api_key_request_deserializes_correctly() {
     let json = serde_json::json!({
         "label": "Updated Label",
-        "scopes": ["read"],
+        "scopes": ["chat:read"],
         "tier": "free",
         "isActive": false,
         "expiresAt": null
@@ -75,7 +75,7 @@ fn update_api_key_request_deserializes_correctly() {
 
     let dto: UpdateApiKeyRequestDto = serde_json::from_value(json).expect("should deserialize");
     assert_eq!(dto.label, Some("Updated Label".to_string()));
-    assert_eq!(dto.scopes, Some(vec!["read".to_string()]));
+    assert_eq!(dto.scopes, Some(vec!["chat:read".to_string()]));
     assert_eq!(dto.tier, Some("free".to_string()));
     assert_eq!(dto.is_active, Some(false));
     assert_eq!(dto.expires_at, Some(None));

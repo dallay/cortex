@@ -70,12 +70,20 @@ impl CortexError {
     }
 
     pub fn is_forbidden(&self) -> bool {
-        self.source.is::<ForbiddenError>()
+        self.source.is::<ForbiddenError>() || self.source.is::<RestrictionViolation>()
     }
 
     /// Error code for `MODEL_NOT_ALLOWED` and `PROVIDER_NOT_ALLOWED` so the
     /// HTTP layer can return a specific `code` to the client.
     pub fn forbidden_code(&self) -> Option<&'static str> {
+        // Check for structured RestrictionViolation first
+        if let Some(violation) = self.source.downcast_ref::<RestrictionViolation>() {
+            return Some(match violation {
+                RestrictionViolation::ModelNotAllowed(_) => "model_not_allowed",
+                RestrictionViolation::ProviderNotAllowed(_) => "provider_not_allowed",
+            });
+        }
+        // Fallback to legacy ForbiddenError message parsing for backwards compatibility
         if let Some(ForbiddenError(msg)) = self.source.downcast_ref::<ForbiddenError>() {
             if msg.starts_with("model ") {
                 Some("model_not_allowed")
@@ -183,6 +191,27 @@ impl fmt::Display for ForbiddenError {
 }
 
 impl std::error::Error for ForbiddenError {}
+
+// ---------------------------------------------------------------------------
+// Restriction Violation Errors
+// ---------------------------------------------------------------------------
+
+/// Structured error for API key restriction violations.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum RestrictionViolation {
+    #[error("model '{0}' is not permitted by this API key")]
+    ModelNotAllowed(super::ModelId),
+    #[error("provider '{0}' is not permitted by this API key")]
+    ProviderNotAllowed(super::ProviderId),
+}
+
+impl From<RestrictionViolation> for CortexError {
+    fn from(violation: RestrictionViolation) -> Self {
+        Self {
+            source: Box::new(violation),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Result type alias

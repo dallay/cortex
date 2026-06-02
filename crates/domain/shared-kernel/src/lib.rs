@@ -9,7 +9,7 @@ pub mod error;
 pub mod id;
 pub mod time_;
 
-pub use error::{CortexError, CortexResult};
+pub use error::{CortexError, CortexResult, RestrictionViolation};
 pub use id::{ConnectionId, ModelId, ProviderId, RequestId};
 pub use time_::Instant;
 

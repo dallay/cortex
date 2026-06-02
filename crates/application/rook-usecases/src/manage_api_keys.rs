@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier,
-    ApiKeyValidationError, ModelId, ProviderId,
+    ApiKeyValidationError, ModelId, ProviderId, ProviderRegistryPort,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -26,13 +26,19 @@ pub type ManageApiKeysResult<T> = Result<T, ManageApiKeysError>;
 pub struct ManageApiKeys {
     repo: Arc<dyn ApiKeyRepositoryPort>,
     hash_secret: String,
+    provider_registry: Arc<dyn ProviderRegistryPort>,
 }
 
 impl ManageApiKeys {
-    pub fn new(repo: Arc<dyn ApiKeyRepositoryPort>, hash_secret: impl Into<String>) -> Self {
+    pub fn new(
+        repo: Arc<dyn ApiKeyRepositoryPort>,
+        hash_secret: impl Into<String>,
+        provider_registry: Arc<dyn ProviderRegistryPort>,
+    ) -> Self {
         Self {
             repo,
             hash_secret: hash_secret.into(),
+            provider_registry,
         }
     }
 
@@ -73,6 +79,9 @@ impl ManageApiKeys {
 
         // Validate all requested scopes are canonical.
         validate_scopes(&request.scopes)?;
+
+        // Validate all requested providers exist in the registry.
+        self.validate_providers(&request.allowed_providers)?;
 
         let raw_key = generate_api_key();
         let key_hash = hash_api_key(&raw_key, &self.hash_secret);
@@ -120,6 +129,12 @@ impl ManageApiKeys {
             }
             None => existing.scopes,
         };
+        
+        // Validate incoming providers before applying the update.
+        if let Some(ref providers) = request.allowed_providers {
+            self.validate_providers(providers)?;
+        }
+        
         let tier = request.tier.unwrap_or(existing.tier);
         let is_active = request.is_active.unwrap_or(existing.is_active);
 
@@ -261,6 +276,33 @@ fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
         })?;
     }
     Ok(())
+}
+
+impl ManageApiKeys {
+    /// Validates that every provider ID in the requested list exists in the provider registry.
+    /// Empty list is always valid (unrestricted). Non-empty list must be a subset of the registry.
+    fn validate_providers(&self, requested: &[ProviderId]) -> ManageApiKeysResult<()> {
+        if requested.is_empty() {
+            return Ok(()); // unrestricted is always valid
+        }
+        let available = self.provider_registry.providers();
+        let unknown: Vec<_> = requested
+            .iter()
+            .filter(|id| !available.contains(id))
+            .collect();
+        if !unknown.is_empty() {
+            let ids = unknown
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ManageApiKeysError::Validation(format!(
+                "unknown provider(s): {}",
+                ids
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn generate_api_key() -> String {
@@ -406,10 +448,45 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeProviderRegistry;
+
+    impl ProviderRegistryPort for FakeProviderRegistry {
+        fn providers(&self) -> Vec<ProviderId> {
+            vec![ProviderId::new("openai"), ProviderId::new("anthropic")]
+        }
+
+        fn get(&self, _id: &ProviderId) -> Option<Arc<dyn rook_core::ProviderPort>> {
+            None
+        }
+
+        fn replace_all(
+            &self,
+            _providers: Vec<Arc<dyn rook_core::ProviderPort>>,
+        ) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+
+        fn upsert(
+            &self,
+            _provider: Arc<dyn rook_core::ProviderPort>,
+        ) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), rook_core::RegistryError> {
+            Ok(())
+        }
+    }
+
+    fn fake_registry() -> Arc<dyn ProviderRegistryPort> {
+        Arc::new(FakeProviderRegistry)
+    }
+
     #[tokio::test]
     async fn test_manage_api_keys_workflow() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         // 1. Create a key
         let create_req = CreateApiKeyRequest {
@@ -461,7 +538,7 @@ mod tests {
     #[tokio::test]
     async fn test_revoke_method() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Test Key".to_string(),
@@ -484,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_paginated() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         // Create 5 keys
         for i in 0..5 {
@@ -513,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_with_past_expires_at_rejected() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Expired Key".to_string(),
@@ -537,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_is_soft_delete() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "To Delete".to_string(),
@@ -561,7 +638,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_with_unknown_scope_is_rejected() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         // Use a pre-built ApiKeyScope via parse_lenient to bypass the strict check
         // and simulate a caller passing an unknown scope in the request struct directly.
@@ -589,7 +666,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_with_unknown_scope_is_rejected() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         // Create a valid key first.
         let create_req = CreateApiKeyRequest {
@@ -623,7 +700,7 @@ mod tests {
     async fn test_create_with_allowed_models_and_providers() {
         use rook_core::{ModelId, ProviderId};
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Restricted Key".to_string(),
@@ -645,7 +722,7 @@ mod tests {
     async fn test_update_allowed_models_and_providers() {
         use rook_core::{ModelId, ProviderId};
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Key".to_string(),
@@ -683,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_restrictions_means_all_allowed() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Unrestricted Key".to_string(),
@@ -709,7 +786,7 @@ mod tests {
     async fn test_rotate_replaces_hash_and_preserves_metadata() {
         use rook_core::{ModelId, ProviderId};
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Rotating Key".to_string(),
@@ -804,7 +881,7 @@ mod tests {
         // function the AuthenticateClientApi use case uses, against the
         // pre-rotation and post-rotation prefixes.
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Auth Key".to_string(),
@@ -842,7 +919,7 @@ mod tests {
     #[tokio::test]
     async fn test_rotate_returns_new_raw_key_with_rk_prefix() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Prefix Key".to_string(),
@@ -878,7 +955,7 @@ mod tests {
     #[tokio::test]
     async fn test_rotate_revoked_key_returns_revoked_error() {
         let repo = Arc::new(FakeApiKeyRepository::default());
-        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
 
         let create_req = CreateApiKeyRequest {
             label: "Will Be Revoked".to_string(),
