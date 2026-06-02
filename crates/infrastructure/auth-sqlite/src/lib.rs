@@ -404,10 +404,10 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
 
 fn scopes_from_json(value: &str) -> Result<Vec<ApiKeyScope>, String> {
     let values = serde_json::from_str::<Vec<String>>(value).map_err(|error| error.to_string())?;
-    values
+    Ok(values
         .iter()
-        .map(|scope| ApiKeyScope::parse(scope).map_err(|error| error.to_string()))
-        .collect()
+        .map(|scope| ApiKeyScope::parse_lenient(scope))
+        .collect())
 }
 
 fn scopes_to_json(scopes: &[ApiKeyScope]) -> Result<String, ApiKeyRepositoryError> {
@@ -755,7 +755,7 @@ mod tests {
 
     use chrono::{Duration, Utc};
     use rook_core::{
-        ApiKeyId, ApiKeyRepositoryPort, ApiKeyTier, NewSession as CoreNewSession,
+        ApiKeyId, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier, NewSession as CoreNewSession,
         NewUser as CoreNewUser, PasswordHash as CorePasswordHash, SessionRepositoryPort,
         UserRepositoryPort,
     };
@@ -1357,6 +1357,34 @@ mod tests {
 
             assert!(found.allowed_models.is_empty(), "empty = unrestricted");
             assert!(found.allowed_providers.is_empty(), "empty = unrestricted");
+        });
+    }
+
+    // Regression: scopes_from_json used to call ApiKeyScope::parse (strict) which
+    // rejected pre-#83 legacy scopes ('read', 'write') and broke reads of any
+    // existing key. parse_lenient accepts unknown strings and logs a warning.
+    #[test]
+    fn read_key_with_legacy_scope_string_is_preserved() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            // Use the test helper and override scopes to a legacy 'read' value.
+            let mut record = TestApiKeyRecord::active("legacy_key_id", "hash:legacy");
+            record.label = "Legacy Key".to_string();
+            record.scopes = vec![ApiKeyScope::parse_lenient("read")];
+            repo.insert_test_key(record)
+                .await
+                .expect("insert legacy key");
+
+            // Re-fetch — this exercises the scopes_from_json read path.
+            let result = repo
+                .find_active_by_hash("hash:legacy")
+                .await
+                .expect("query")
+                .expect("legacy key must be readable");
+
+            assert_eq!(result.label, "Legacy Key");
+            assert_eq!(result.scopes.len(), 1);
+            assert_eq!(result.scopes[0].as_str(), "read");
         });
     }
 }

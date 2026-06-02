@@ -136,35 +136,57 @@ fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
 /// Extract `ApiKeyRestrictions` from the trusted authz headers stamped by the middleware.
 ///
 /// Headers are comma-separated lists — empty string means no restriction (unrestricted).
-fn restrictions_from_headers(headers: &HeaderMap) -> ApiKeyRestrictions {
-    let allowed_models = headers
-        .get("x-authz-allowed-models")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ModelId::new)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let allowed_providers = headers
-        .get("x-authz-allowed-providers")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ProviderId::new)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    ApiKeyRestrictions {
+/// Fails closed if the headers are missing or non-UTF-8: the authz middleware must
+/// always stamp these headers, so missing/invalid values indicate a routing bug or
+/// an attempt to bypass the middleware.
+fn restrictions_from_headers(headers: &HeaderMap) -> Result<ApiKeyRestrictions, HttpError> {
+    let allowed_models = parse_csv_header(headers, "x-authz-allowed-models")?
+        .into_iter()
+        .map(ModelId::new)
+        .collect();
+    let allowed_providers = parse_csv_header(headers, "x-authz-allowed-providers")?
+        .into_iter()
+        .map(ProviderId::new)
+        .collect();
+    Ok(ApiKeyRestrictions {
         allowed_models,
         allowed_providers,
-    }
+    })
+}
+
+/// Parse a comma-separated header value into a Vec<String>.
+///
+/// Returns `Err(HttpError)` if the header is missing or not valid UTF-8.
+/// An empty value (present but empty) yields an empty Vec (unrestricted).
+fn parse_csv_header(headers: &HeaderMap, name: &'static str) -> Result<Vec<String>, HttpError> {
+    let value = headers
+        .get(name)
+        .ok_or_else(|| {
+            error!(
+                header = name,
+                "trusted authz header missing — middleware bypass?"
+            );
+            HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "AUTHZ_HEADER_MISSING",
+                message: format!("authz header {name} missing"),
+            }
+        })?
+        .to_str()
+        .map_err(|error| {
+            error!(header = name, %error, "trusted authz header is not valid UTF-8");
+            HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "AUTHZ_HEADER_INVALID",
+                message: format!("authz header {name} is not valid UTF-8: {error}"),
+            }
+        })?;
+    Ok(value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible
@@ -174,7 +196,7 @@ async fn chat_completions(
     Json(body): Json<OpenAIChatRequest>,
 ) -> Result<Response, HttpError> {
     let mut req = CompletionRequest::from(body);
-    req.restrictions = restrictions_from_headers(&headers);
+    req.restrictions = restrictions_from_headers(&headers)?;
 
     if req.stream {
         return chat_completions_stream(usecases, req).await;
@@ -253,6 +275,8 @@ async fn chat_completions_stream(
         .await
     {
         Ok(stream) => stream,
+        Err(error) if error.is_forbidden() => return Err(map_forbidden_openai(&error)),
+        Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
         Err(error) => {
             let error_event = openai_error_event(error);
             let body = futures::stream::once(async move { Ok::<Event, Infallible>(error_event) });
@@ -279,6 +303,29 @@ async fn chat_completions_stream(
     let mut response = Sse::new(events).into_response();
     apply_sse_headers(response.headers_mut());
     Ok(response)
+}
+
+/// Map a `forbidden` `CortexError` to the OpenAI-shaped 403 response used by
+/// `chat_completions` so streaming and non-streaming share identical behavior.
+fn map_forbidden_openai(error: &CortexError) -> HttpError {
+    let code = error.forbidden_code().unwrap_or("model_not_allowed");
+    HttpError {
+        status: StatusCode::FORBIDDEN,
+        code: match code {
+            "provider_not_allowed" => "PROVIDER_NOT_ALLOWED",
+            _ => "MODEL_NOT_ALLOWED",
+        },
+        message: error.to_string(),
+    }
+}
+
+/// Map a `rate_limited` `CortexError` to a 429 with the standard retry-after headers.
+fn map_rate_limited(error: &CortexError) -> HttpError {
+    HttpError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        code: "RATE_LIMITED",
+        message: error.to_string(),
+    }
 }
 
 fn openai_error_event(error: shared_kernel::CortexError) -> Event {
@@ -339,7 +386,7 @@ async fn anthropic_messages(
     Json(body): Json<AnthropicMessagesRequest>,
 ) -> Result<Response, HttpError> {
     let mut req = CompletionRequest::from(body);
-    req.restrictions = restrictions_from_headers(&headers);
+    req.restrictions = restrictions_from_headers(&headers)?;
 
     if req.stream {
         return anthropic_messages_stream(usecases, req).await;
@@ -375,6 +422,14 @@ async fn anthropic_messages_stream(
         .await
     {
         Ok(stream) => stream,
+        Err(error) if error.is_forbidden() => {
+            return Err(HttpError {
+                status: StatusCode::FORBIDDEN,
+                code: "MODEL_NOT_ALLOWED",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
         Err(error) => {
             let error_event = serde_json::to_string(&AnthropicSseEvent::from(error))
                 .map(|data| Event::default().data(data))

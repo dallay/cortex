@@ -634,8 +634,11 @@ fn required_scope(method: &Method, path: &str) -> Option<&'static str> {
             _ => Some("chat:write"),
         };
     }
-    // GET /v1/models* and all other /v1/* default to chat:read
-    Some("chat:read")
+    // Other /v1/* routes: GET defaults to chat:read, writes require chat:write
+    match *method {
+        Method::GET => Some("chat:read"),
+        _ => Some("chat:write"),
+    }
 }
 
 async fn client_api_policy(
@@ -1482,5 +1485,38 @@ mod tests {
             outcome.allow,
             "chat:write key must be allowed on POST /v1/chat/completions"
         );
+    }
+
+    // Regression: required_scope fallback used to return chat:read for ALL /v1/*
+    // methods, letting a read-only key hit POST /v1/messages. Now non-GET must
+    // require chat:write (or admin).
+    #[test]
+    fn client_api_with_chat_read_scope_rejected_on_post_to_messages() {
+        let config = AuthzConfig::new(
+            vec![ApiKeyCredential::new(
+                "key_read",
+                "Read-only Key",
+                "sk-read",
+                ["chat:read"],
+            )],
+            "test-secret",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-read"));
+
+        let outcome = evaluate(
+            AuthTier::ClientApi,
+            &Method::POST,
+            "/v1/messages",
+            &headers,
+            &config,
+        );
+
+        assert!(
+            !outcome.allow,
+            "chat:read must NOT be allowed on POST /v1/messages"
+        );
+        assert_eq!(outcome.status, Some(StatusCode::FORBIDDEN));
+        assert_eq!(outcome.code, Some("INSUFFICIENT_SCOPE"));
     }
 }
