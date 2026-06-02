@@ -53,11 +53,13 @@ pub struct ApiKeySubject {
     pub label: String,
     pub scopes: Vec<ApiKeyScope>,
     pub tier: ApiKeyTier,
+    pub allowed_models: Vec<ModelId>,       // NEW — empty = unrestricted
+    pub allowed_providers: Vec<ProviderId>,  // NEW — empty = unrestricted
 }
 ```
 
 - **Purpose**: Runtime authentication principal — returned by `find_active_by_hash`
-- **Contains**: `id`, `label`, `scopes`, `tier` — NO `key_hash`, `key_prefix`, or timestamps
+- **Contains**: `id`, `label`, `scopes`, `tier`, `allowed_models`, `allowed_providers` — NO `key_hash`, `key_prefix`, or timestamps
 - **Created by**: Repository `find_active_by_hash` query mapping over `api_keys` table
 
 ### ApiKeyRecord
@@ -75,6 +77,8 @@ pub struct ApiKeyRecord {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<ModelId>,        // NEW — empty = unrestricted
+    pub allowed_providers: Vec<ProviderId>,   // NEW — empty = unrestricted
 }
 ```
 
@@ -93,6 +97,13 @@ pub enum ApiKeyRepositoryError {
     DuplicateHash, // HMAC-SHA256 hash collision (extremely rare)
     NotFound(ApiKeyId),       // Key with given ID does not exist
     Database(String),         // SQLite or other database error
+}
+
+pub enum ManageApiKeysError {
+    Repository(#[from] ApiKeyRepositoryError),
+    NotFound(ApiKeyId),
+    Validation(String),
+    Revoked(ApiKeyId),  // NEW — key is already revoked
 }
 ```
 
@@ -167,7 +178,33 @@ The system SHALL generate unique `ApiKeyId` values using UUID v4 with `key_` pre
 
 ### REQ-DOM-2: Scope Validation
 
-The system SHALL reject API key scopes that are not in the allowlist (`read`, `write`) at parse time.
+The system SHALL support exactly five canonical scope values, defined by the `KnownScope` enum in `crates/domain/rook-core/src/api_key.rs:29`:
+
+| Variant             | Wire string       | Purpose                                                    |
+|---------------------|-------------------|------------------------------------------------------------|
+| `ChatRead`          | `chat:read`       | Read-only access to chat operations (e.g. listing models)  |
+| `ChatWrite`         | `chat:write`      | Write access to chat operations (e.g. POST chat completions) |
+| `ProvidersRead`     | `providers:read`  | Read-only access to provider configuration                 |
+| `ProvidersWrite`    | `providers:write` | Write access to provider configuration                     |
+| `Admin`             | `admin`           | Full administrative access (including API key management)   |
+
+The `KnownScope::as_str` method SHALL return the wire string for each variant,
+and `FromStr for KnownScope` SHALL accept the wire string and reject any other
+input (case-sensitive, lowercase only).
+
+The `ApiKeyScope::parse(&str)` function SHALL:
+
+- Reject empty or whitespace-only input with `ApiKeyValidationError::EmptyScope`.
+- Reject any string not in the canonical set with
+  `ApiKeyValidationError::UnknownScope(String)`.
+- Return `Ok(ApiKeyScope)` for any of the five canonical values.
+
+The `ApiKeyScope::parse_lenient(&str)` function SHALL accept any non-empty
+string (after trimming) and return an `ApiKeyScope` without erroring. Unknown
+scope strings SHALL be logged at `WARN` level with the field `scope=<value>`
+via the `tracing` crate. This is the **only** path that does not error, and
+it is used exclusively when hydrating rows from the `scopes_json` column so
+that legacy pre-#46 records remain readable.
 
 ### REQ-DOM-3: Tier Representation
 
@@ -195,6 +232,18 @@ The system SHALL allow clearing `expires_at` (setting to `null`) during update t
 ### REQ-DOM-8: Last-Used Tracking
 
 The system SHALL update `last_used_at` on every successful API key authentication via `record_last_used`.
+
+### REQ-DOM-9: Model Allowlist
+
+The system SHALL represent an API key's model allowlist as `allowed_models: Vec<ModelId>` on both `ApiKeyRecord` and `ApiKeySubject`. Empty vec = unrestricted, non-empty vec = strict allowlist enforced at request time by `route_request.rs`.
+
+### REQ-DOM-10: Provider Allowlist
+
+The system SHALL represent an API key's provider allowlist as `allowed_providers: Vec<ProviderId>` on both `ApiKeyRecord` and `ApiKeySubject`. Empty vec = unrestricted, non-empty vec = strict allowlist enforced by `route_request.rs:81` after `FallbackRouter::select()`.
+
+### REQ-DOM-11: Restriction Semantics in Auth Subject
+
+The runtime auth principal `ApiKeySubject` SHALL expose the same `allowed_models: Vec<ModelId>` and `allowed_providers: Vec<ProviderId>` fields as the persisted `ApiKeyRecord`. The transport-layer `Subject` struct in `authz.rs` carries these as `Vec<String>` for header propagation.
 
 ---
 

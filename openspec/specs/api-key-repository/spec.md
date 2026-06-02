@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS api_keys (
     revoked_at   TEXT,
     expires_at   TEXT,
     created_at   TEXT NOT NULL,
-    last_used_at TEXT
+    last_used_at TEXT,
+    allowed_models_json    TEXT NOT NULL DEFAULT '[]',  -- NEW
+    allowed_providers_json TEXT NOT NULL DEFAULT '[]',  -- NEW
+    FOREIGN KEY (tier) REFERENCES api_key_tiers(name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys (is_active);
@@ -206,7 +209,27 @@ The system SHALL allow calling `revoke()` on an already-revoked key without retu
 
 ### REQ-REP-6: Scopes JSON Serialization
 
-The system SHALL serialize scopes as a JSON array of strings (`["read","write"]`) in the `scopes_json` column.
+The system SHALL serialize scopes as a JSON array of strings (`["chat:read","chat:write"]`) in the `scopes_json` column. The hydration path MUST use `parse_lenient` for backwards compatibility with legacy `read`/`write` strings.
+
+### REQ-REP-7: Restriction JSON Columns
+
+The repository SHALL persist `allowed_models` and `allowed_providers` as two JSON columns (`allowed_models_json`, `allowed_providers_json`), both `TEXT NOT NULL DEFAULT '[]'`. Serialization/deserialization via `models_to_json`/`models_from_json` and `providers_to_json`/`providers_from_json`.
+
+### REQ-REP-8: Restriction Hydration in find_active_by_hash
+
+`find_active_by_hash` MUST select `allowed_models_json` and `allowed_providers_json` and populate `ApiKeySubject.allowed_models` and `ApiKeySubject.allowed_providers` from those columns.
+
+### REQ-REP-9: Update Preserves Restriction Fields
+
+`update(record: &ApiKeyRecord)` MUST persist changes to `allowed_models` and `allowed_providers` using `models_to_json` and `providers_to_json`. An empty `Vec` is stored as the literal JSON string `"[]"`.
+
+### REQ-REP-10: rotate_hash Replaces Credentials Only
+
+`rotate_hash(id, new_hash, new_prefix)` SHALL update only the `key_hash` and `key_prefix` columns. All other fields (label, scopes, tier, restrictions, timestamps) SHALL be preserved.
+
+### REQ-REP-11: Idempotent Revoke
+
+`revoke(id, revoked_at)` SHALL use `COALESCE(revoked_at, ?1)` so that revoking an already-revoked key preserves the original `revoked_at` timestamp.
 
 ---
 

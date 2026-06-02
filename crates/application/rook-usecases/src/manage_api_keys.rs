@@ -129,12 +129,12 @@ impl ManageApiKeys {
             }
             None => existing.scopes,
         };
-        
+
         // Validate incoming providers before applying the update.
         if let Some(ref providers) = request.allowed_providers {
             self.validate_providers(providers)?;
         }
-        
+
         let tier = request.tier.unwrap_or(existing.tier);
         let is_active = request.is_active.unwrap_or(existing.is_active);
 
