@@ -312,6 +312,25 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         Ok(())
     }
 
+    async fn rotate_hash(
+        &self,
+        id: &ApiKeyId,
+        new_hash: &str,
+        new_prefix: &str,
+    ) -> Result<(), ApiKeyRepositoryError> {
+        let conn = self.lock()?;
+        let rows = conn
+            .execute(
+                "UPDATE api_keys SET key_hash = ?1, key_prefix = ?2 WHERE id = ?3",
+                params![new_hash, new_prefix, id.to_string()],
+            )
+            .map_err(db_error)?;
+        if rows == 0 {
+            return Err(ApiKeyRepositoryError::NotFound(id.clone()));
+        }
+        Ok(())
+    }
+
     async fn list_paginated(
         &self,
         limit: i64,
@@ -1385,6 +1404,109 @@ mod tests {
             assert_eq!(result.label, "Legacy Key");
             assert_eq!(result.scopes.len(), 1);
             assert_eq!(result.scopes[0].as_str(), "read");
+        });
+    }
+
+    // =============================================================================
+    // rotate_hash tests — TDD: pin the storage-layer rotation contract.
+    //
+    // The whole point of rotation is that the OLD hash no longer matches a
+    // row in api_keys, and the NEW hash now does. We assert both directions.
+    // =============================================================================
+
+    #[test]
+    fn rotate_hash_replaces_hash_and_prefix() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let id = ApiKeyId::new("rotate-1");
+            repo.insert_test_key(TestApiKeyRecord::active(id.as_str(), "hash-original"))
+                .await
+                .expect("insert");
+
+            repo.rotate_hash(&id, "hash-rotated", "rk-rotat")
+                .await
+                .expect("rotate_hash");
+
+            // 1. The OLD hash no longer authenticates.
+            let old_lookup = repo
+                .find_active_by_hash("hash-original")
+                .await
+                .expect("find old");
+            assert!(
+                old_lookup.is_none(),
+                "old hash must NOT resolve to any active row after rotation"
+            );
+
+            // 2. The NEW hash authenticates and returns the same id.
+            let new_lookup = repo
+                .find_active_by_hash("hash-rotated")
+                .await
+                .expect("find new")
+                .expect("new hash must resolve");
+            assert_eq!(new_lookup.id, id, "rotated row must keep its id");
+
+            // 3. The stored prefix was updated.
+            let stored = repo.find(&id).await.expect("find").expect("some");
+            assert_eq!(stored.key_hash, "hash-rotated");
+            assert_eq!(stored.key_prefix, "rk-rotat");
+        });
+    }
+
+    #[test]
+    fn rotate_hash_returns_not_found_for_unknown_id() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let result = repo
+                .rotate_hash(&ApiKeyId::new("does-not-exist"), "h", "p")
+                .await;
+            match result {
+                Err(rook_core::ApiKeyRepositoryError::NotFound(id)) => {
+                    assert_eq!(id, ApiKeyId::new("does-not-exist"));
+                }
+                other => panic!("expected NotFound, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn rotate_hash_preserves_all_other_fields() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let id = ApiKeyId::new("rotate-preserve");
+            let mut record = TestApiKeyRecord::active(id.as_str(), "hash-orig");
+            record.label = "Preserved Label".to_string();
+            record.tier = ApiKeyTier::Enterprise;
+            record.expires_at = Some(Utc::now() + Duration::days(30));
+            let original_created_at = record.created_at;
+            repo.insert_test_key(record).await.expect("insert");
+
+            // Manually set a last_used_at via the standard update path to
+            // ensure it survives rotation. (No public last_used setter on
+            // TestApiKeyRecord, so we update it through the public repo API.)
+            repo.record_last_used(&id, Utc::now())
+                .await
+                .expect("record last used");
+
+            repo.rotate_hash(&id, "hash-new", "rk-newpr")
+                .await
+                .expect("rotate");
+
+            let stored = repo.find(&id).await.expect("find").expect("some");
+            assert_eq!(stored.key_hash, "hash-new");
+            assert_eq!(stored.key_prefix, "rk-newpr");
+            assert_eq!(stored.label, "Preserved Label", "label preserved");
+            assert_eq!(stored.tier, ApiKeyTier::Enterprise, "tier preserved");
+            assert!(stored.expires_at.is_some(), "expires_at preserved (some)");
+            assert_eq!(
+                stored.created_at, original_created_at,
+                "created_at MUST NOT change on rotation"
+            );
+            assert!(
+                stored.last_used_at.is_some(),
+                "last_used_at preserved through rotation"
+            );
+            assert!(stored.is_active, "key remains active");
+            assert!(stored.revoked_at.is_none(), "key remains unrevoked");
         });
     }
 }

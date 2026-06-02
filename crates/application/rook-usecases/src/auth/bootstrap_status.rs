@@ -300,6 +300,22 @@ mod tests {
             }
         }
 
+        async fn rotate_hash(
+            &self,
+            id: &ApiKeyId,
+            new_hash: &str,
+            new_prefix: &str,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            let mut records = self.records.lock().unwrap();
+            if let Some(pos) = records.iter().position(|r| &r.id == id) {
+                records[pos].key_hash = new_hash.to_string();
+                records[pos].key_prefix = new_prefix.to_string();
+                Ok(())
+            } else {
+                Err(ApiKeyRepositoryError::NotFound(id.clone()))
+            }
+        }
+
         async fn list_paginated(
             &self,
             limit: i64,

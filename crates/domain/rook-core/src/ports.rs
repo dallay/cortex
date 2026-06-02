@@ -202,6 +202,18 @@ pub trait ApiKeyRepositoryPort: Send + Sync {
         revoked_at: DateTime<Utc>,
     ) -> Result<(), ApiKeyRepositoryError>;
 
+    /// Atomically replace the `key_hash` and `key_prefix` for the given id.
+    /// Used by key rotation: the new hash invalidates the old one because
+    /// `find_active_by_hash` looks up rows by `key_hash`. The new prefix
+    /// keeps the displayed `rk-XXXXXXX…` snippet in sync with the secret.
+    /// Returns `NotFound` if the row does not exist.
+    async fn rotate_hash(
+        &self,
+        id: &ApiKeyId,
+        new_hash: &str,
+        new_prefix: &str,
+    ) -> Result<(), ApiKeyRepositoryError>;
+
     async fn list_paginated(
         &self,
         limit: i64,

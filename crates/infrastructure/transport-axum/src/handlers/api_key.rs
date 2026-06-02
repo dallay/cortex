@@ -269,6 +269,29 @@ pub async fn revoke_api_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Rotate an API key: generate a new `rk-*` secret, atomically replace the
+/// stored hash and prefix, and return the new raw key exactly once. The old
+/// key is invalidated by the hash replacement and can no longer authenticate.
+/// All other fields (label, scopes, tier, restrictions, created_at,
+/// last_used_at, expires_at) are preserved.
+///
+/// Returns:
+/// - `200 OK` with `{ key, plaintextKey }` (plaintextKey is shown only this once)
+/// - `404 NOT_FOUND` if the id does not exist
+/// - `409 CONFLICT` (`KEY_REVOKED`) if the key is revoked
+pub async fn rotate_api_key(
+    State(usecases): State<Usecases>,
+    Path(id): Path<String>,
+) -> Result<Json<CreateApiKeyResponseDto>, HttpError> {
+    let mak = manage_api_keys(&usecases)?;
+    let key_id = ApiKeyId::new(id);
+    let (record, plaintext_key) = mak.rotate(&key_id).await.map_err(map_error)?;
+    Ok(Json(CreateApiKeyResponseDto {
+        key: ApiKeyRecordResponseDto::from(&record),
+        plaintext_key,
+    }))
+}
+
 fn manage_api_keys(
     usecases: &rook_usecases::RookUsecases,
 ) -> Result<&rook_usecases::ManageApiKeys, HttpError> {
@@ -282,6 +305,11 @@ fn manage_api_keys(
 fn map_error(error: rook_usecases::ManageApiKeysError) -> HttpError {
     match error {
         rook_usecases::ManageApiKeysError::NotFound(_) => not_found("API key not found"),
+        rook_usecases::ManageApiKeysError::Revoked(_) => HttpError {
+            status: StatusCode::CONFLICT,
+            code: "KEY_REVOKED",
+            message: "API key has been revoked".to_string(),
+        },
         rook_usecases::ManageApiKeysError::Repository(
             rook_core::ApiKeyRepositoryError::NotFound(_),
         ) => not_found("API key not found"),
