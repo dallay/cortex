@@ -82,7 +82,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function setupAdminPassword(token: string, password: string): Promise<void> {
-    if (!token) {
+    const trimmed = token.trim()
+    if (!trimmed) {
       const missingToken = new Error('Setup token is missing')
       error.value = missingToken.message
       throw missingToken
@@ -92,7 +93,7 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
 
     try {
-      const result = await api.setupBootstrap({ setupToken: token, password })
+      const result = await api.setupBootstrap({ setupToken: trimmed, password })
       // Mark bootstrap complete and stash the API key BEFORE calling login,
       // so a login failure does not leave the UI stuck in setup mode.
       bootstrapRequired.value = false

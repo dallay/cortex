@@ -107,8 +107,6 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 {
   "name": "ollama-local",
   "provider_kind": "ollama",
-  "auth_type": "api_key",
-  "credentials": {},
   "base_url": "http://localhost:11434",
   "is_active": true,
   "priority": 1

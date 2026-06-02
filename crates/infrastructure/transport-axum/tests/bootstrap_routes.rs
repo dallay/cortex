@@ -307,15 +307,24 @@ async fn status_returns_initialized_on_ready_system() {
 /// Security: the status endpoint must NEVER include setup_token in the response.
 #[tokio::test]
 async fn status_never_exposes_setup_token_in_response_body() {
-    for (label, setup_token) in [
+    for (label, user_repo, _setup_token) in [
         (
             "fresh system with active token",
+            Arc::new(UninitializedUserRepo::new()) as Arc<dyn UserRepositoryPort>,
             Some(TEST_SETUP_TOKEN.to_string()),
         ),
-        ("initialized system", None),
-        ("fresh system with no token in memory", None),
+        (
+            "initialized system",
+            Arc::new(InitializedUserRepo) as Arc<dyn UserRepositoryPort>,
+            None::<String>,
+        ),
+        (
+            "fresh system with no token in memory",
+            Arc::new(UninitializedUserRepo::new()),
+            None,
+        ),
     ] {
-        let usecases = make_bootstrap_usecases(Arc::new(UninitializedUserRepo::new()), setup_token);
+        let usecases = make_bootstrap_usecases(user_repo, _setup_token);
         let router = bootstrap_test_router(usecases);
 
         let req = Request::builder()

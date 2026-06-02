@@ -290,9 +290,14 @@ function createApiClient() {
     async getMe(): Promise<MeResponse | null> {
       try {
         return await request<MeResponse>('/api/me')
-      } catch {
-        // 401 means no active session — not an error, just unauthenticated
-        return null
+      } catch (err) {
+        // Only treat HTTP 401 as "not signed in" — rethrow all other errors
+        // so callers can handle them appropriately.
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg.startsWith('API Error 401:')) {
+          return null
+        }
+        throw err
       }
     },
 

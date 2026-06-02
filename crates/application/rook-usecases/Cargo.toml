@@ -41,5 +41,8 @@ rand = "0.8"
 # SHA-256 for session token hashing
 sha2 = "0.10"
 
+# Constant-time comparison for secrets
+subtle = "2"
+
 # Base64 for token encoding
 base64 = "0.22"

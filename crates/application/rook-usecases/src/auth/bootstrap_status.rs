@@ -53,7 +53,11 @@ impl BootstrapStatus {
             return Err(BootstrapSetupError::AlreadyInitialized);
         }
 
-        if input.setup_token != input.expected_setup_token {
+        // Constant-time comparison to prevent timing side-channel.
+        // Both tokens are valid UTF-8 strings; compare as byte slices.
+        let a = input.setup_token.as_bytes();
+        let b = input.expected_setup_token.as_bytes();
+        if a.len() != b.len() || subtle::ConstantTimeEq::ct_eq(a, b).unwrap_u8() != 1 {
             return Err(BootstrapSetupError::InvalidSetupToken);
         }
 

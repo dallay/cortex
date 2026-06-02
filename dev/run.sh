@@ -3,7 +3,7 @@
 # run.sh — Quick dev container for rook
 #
 # Build a single rook image and run it locally to smoke-test the app.
-# Nothing touches your host OS beyond the image itself and the 8080 port.
+# Nothing touches your host OS beyond the image itself and the ${DEFAULT_PORT} port.
 #
 # Usage:
 #   dev/run.sh build         # Build the rook:dev image
@@ -170,11 +170,11 @@ Commands:
   dev/run.sh clean         Remove image and container
 
 The container uses dev/test-configs/rook-dev.toml and is fully ephemeral
-(in-memory DB). It exposes port 8080 on the host.
+(in-memory DB). It exposes port ${DEFAULT_PORT} on the host (127.0.0.1).
 
 Examples:
   dev/run.sh up            # Start and wait until healthy
-  curl http://localhost:8080/health
+  curl http://127.0.0.1:${DEFAULT_PORT}/health
   dev/run.sh logs          # Watch logs in real time
   dev/run.sh down          # Stop and remove
 EOF

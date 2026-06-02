@@ -2,6 +2,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMock = vi.hoisted(() => ({
+  getMe: vi.fn(),
   getBootstrapStatus: vi.fn(),
   setupBootstrap: vi.fn(),
   login: vi.fn(),

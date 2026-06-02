@@ -2550,6 +2550,7 @@ dependencies = [
  "serde",
  "sha2",
  "shared-kernel",
+ "subtle",
  "thiserror 2.0.18",
  "time",
  "tokio",

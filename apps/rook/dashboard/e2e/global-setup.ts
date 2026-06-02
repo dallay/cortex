@@ -63,6 +63,7 @@ async function saveAuthState(): Promise<void> {
       url: DASHBOARD_URL,
       httpOnly: true,
       sameSite: 'Lax',
+      secure: false,
     },
     // csrf_token is intentionally NOT stored in storageState.
     // The backend sets it as HttpOnly (XSS protection) and delivers it via
@@ -97,9 +98,19 @@ async function globalSetup(): Promise<void> {
       // System is fresh — bootstrap with the test password
       const csrf = await getCsrfToken(api)
 
+      // The bootstrap API no longer returns setup_token in the status response.
+      // Obtain it from the environment variable printed at server startup.
+      const setupToken = process.env.SETUP_TOKEN
+      if (!setupToken) {
+        throw new Error(
+          'SETUP_TOKEN env var is required to bootstrap an uninitialized system.\n' +
+            'Start rook once to print the token to logs, or set it via the ROOK_SETUP_TOKEN env var.',
+        )
+      }
+
       const setupRes = await api.post(`${API_BASE_URL}/api/bootstrap/setup`, {
         data: {
-          setup_token: status.setup_token,
+          setup_token: setupToken,
           password: ADMIN_PASSWORD,
         },
         headers: {

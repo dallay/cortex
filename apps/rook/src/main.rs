@@ -187,8 +187,8 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                         }
                     })
                     .collect();
-                let preview = if sanitized.len() > 8 {
-                    format!("{}…", &sanitized[..8])
+                let preview = if sanitized.chars().count() > 8 {
+                    format!("{}…", sanitized.chars().take(8).collect::<String>())
                 } else {
                     sanitized.clone()
                 };
@@ -279,7 +279,12 @@ fn build_bootstrap_banner(sanitized_token: &str) -> String {
 
     let left_pad = |text: &str| {
         let pad = width.saturating_sub(text.len());
-        format!("| {}{}{}|", text, " ".repeat(pad.saturating_sub(1)), " ".repeat(pad.saturating_sub(1)))
+        format!(
+            "| {}{}{}|",
+            text,
+            " ".repeat(pad.saturating_sub(1)),
+            " ".repeat(pad.saturating_sub(1))
+        )
     };
 
     let banner = format!(

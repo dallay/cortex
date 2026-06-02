@@ -84,12 +84,18 @@ enabled = true
 allow_env_fallback = true
 ```
 
-| Field                | Type | Default | Description                              |
-|----------------------|------|---------|------------------------------------------|
-| `enabled`            | bool | `false` | Use SQLite-backed client API key auth    |
-| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback |
+| Field                | Type | Default | Description                                                 |
+|----------------------|------|---------|-------------------------------------------------------------|
+| `enabled`            | bool | `false` | Use SQLite-backed client API key auth                      |
+| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback                     |
 
-When `enabled = true`, `API_KEY_HASH_SECRET` is required and must be non-empty. Legacy `CLIENT_API_KEYS` may still be used for local compatibility only when `allow_env_fallback = true`.
+When `enabled = true`, Rook resolves the hash secret in the following priority order:
+
+1. **`API_KEY_HASH_SECRET`** environment variable (production / Docker — always use this).
+2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run.
+3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files.
+
+Production deployments **must** set `API_KEY_HASH_SECRET` via environment variable so the secret is not stored on disk and survives restarts. The `allow_env_fallback` option also permits the legacy `CLIENT_API_KEYS` fallback for local compatibility only.
 
 ### CLI: seed-admin
 

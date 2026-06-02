@@ -117,21 +117,22 @@ pub async fn logout_handler(
     hasher.update(&token_bytes);
     let token_hash = format!("{:x}", hasher.finalize());
 
-    // Revoke the session
+    // Revoke the session.
+    // "Session not found" and "already revoked" are both fine — the client's intent
+    // (logout) is achieved either way. Always clear the cookie and return success.
     match usecases.revoke_session_by_token_hash(&token_hash).await {
         Ok(()) => {
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie = HeaderValue::from_static(
-                "auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
-            );
+            let clear_cookie =
+                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
             (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
         Err(_) => {
-            let body = serde_json::json!({
-                "error": "session_not_found",
-                "message": "Session not found or already revoked."
-            });
-            (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+            // Session already gone — treat as successful logout and clear the cookie.
+            let body = serde_json::json!({ "message": "Logged out successfully." });
+            let clear_cookie =
+                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
     }
 }

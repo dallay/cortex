@@ -56,6 +56,11 @@ RUN groupadd --system non-root \
 # Config is loaded from $ROOK_CONFIG (no --config flag in rook CLI)
 ENV ROOK_CONFIG=/app/rook.toml
 
+# Health check — wait for the server's HTTP port to be ready before marking container healthy.
+# The /health endpoint returns 200 once the router and providers are initialised.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
+    CMD curl -sf http://localhost:8080/health || exit 1
+
 EXPOSE 8080
 
 USER non-root

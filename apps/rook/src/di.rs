@@ -260,6 +260,13 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
 // False positive — `db_path` is internal config, not HTTP request data.
 // This rule targets Actix route handlers; this function is called at startup
 // from DI code with values sourced from config files and environment variables.
+fn is_in_memory_sqlite_target(path: &str) -> bool {
+    path == ":memory:"
+        || path.starts_with("file::memory:")
+        || path.contains("mode=memory")
+        || path.starts_with("mem:")
+}
+
 fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     // 1. Explicit env var wins.
     if let Ok(s) = std::env::var("API_KEY_HASH_SECRET") {
@@ -269,7 +276,17 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
         }
     }
 
-    // 2. Derive path from the DB location.
+    // 2. In-memory SQLite targets cannot persist a secret file.
+    // Generate a transient secret and return it — no file I/O.
+    if is_in_memory_sqlite_target(db_path) {
+        tracing::warn!(
+            "API_KEY_HASH_SECRET not set and db_path is in-memory — \
+             generating transient secret. Set API_KEY_HASH_SECRET env var for persistence."
+        );
+        return Ok(generate_setup_token());
+    }
+
+    // 3. Filesystem path — resolve and validate, then check/create the secret file.
     // Expand `~` so we land next to the real DB file.
     let expanded = if db_path.starts_with('~') {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -279,9 +296,7 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     };
 
     // Resolve symlinks and normalize to an absolute path.
-    let abs_db = expanded
-        .canonicalize()
-        .unwrap_or_else(|_| expanded.clone());
+    let abs_db = expanded.canonicalize().unwrap_or_else(|_| expanded.clone());
 
     // Validate that the resolved path is a file (not a directory), preventing
     // traversal beyond the intended database file path.
@@ -295,9 +310,13 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
         .join("api_key_secret.key");
 
     // Defensive: ensure the secret path is actually a sibling, not a symlink escape.
-    let secret_abs = secret_path.canonicalize().unwrap_or_else(|_| secret_path.clone());
+    let secret_abs = secret_path
+        .canonicalize()
+        .unwrap_or_else(|_| secret_path.clone());
     let db_parent = abs_db.parent().unwrap_or(std::path::Path::new("."));
-    let db_parent_abs = db_parent.canonicalize().unwrap_or_else(|_| db_parent.to_path_buf());
+    let db_parent_abs = db_parent
+        .canonicalize()
+        .unwrap_or_else(|_| db_parent.to_path_buf());
     let secret_parent_abs = secret_abs.parent().unwrap_or(std::path::Path::new("."));
     if secret_parent_abs != db_parent_abs {
         anyhow::bail!(
