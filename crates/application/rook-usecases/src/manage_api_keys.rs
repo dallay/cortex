@@ -194,9 +194,6 @@ fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
             ApiKeyValidationError::EmptyScope => {
                 ManageApiKeysError::Validation("scope must not be empty".into())
             }
-            ApiKeyValidationError::InvalidTier(t) => {
-                ManageApiKeysError::Validation(format!("invalid tier: {t}"))
-            }
         })?;
     }
     Ok(())

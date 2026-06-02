@@ -46,3 +46,6 @@ subtle = "2"
 
 # Base64 for token encoding
 base64 = "0.22"
+
+# Hex encoding for digest output
+hex = "0.4"

@@ -115,14 +115,7 @@ pub async fn logout_handler(
     // SHA-256 hash to find session
     let mut hasher = Sha256::new();
     hasher.update(&token_bytes);
-    let token_hash = {
-        let bytes = hasher.finalize();
-        bytes.iter().fold(String::new(), |mut s, b| {
-            use std::fmt::Write as _;
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-    };
+    let token_hash = hex::encode(hasher.finalize());
 
     // Revoke the session.
     // "Session not found" and "already revoked" are both fine — the client's intent
