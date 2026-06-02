@@ -76,6 +76,21 @@ export function useApiKeys() {
     }
   }
 
+  async function rotate(id: string): Promise<{ key: ApiKeyRecordResponse; plaintextKey: string } | null> {
+    try {
+      const result = await api.rotateApiKey(id)
+      const index = apiKeys.value.findIndex(k => k.id === id)
+      if (index !== -1) {
+        // Update keyPrefix in place so the list stays consistent
+        apiKeys.value[index].keyPrefix = result.key.keyPrefix
+      }
+      return result
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to rotate API key'
+      return null
+    }
+  }
+
   async function remove(id: string): Promise<boolean> {
     return revoke(id) // Soft delete is a revoke
   }
@@ -107,6 +122,7 @@ export function useApiKeys() {
     create,
     update,
     revoke,
+    rotate,
     remove,
     nextPage,
     prevPage,

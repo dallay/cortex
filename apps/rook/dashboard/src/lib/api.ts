@@ -13,6 +13,8 @@ export interface ApiKeyRecordResponse {
   expiresAt: string | null
   createdAt: string
   lastUsedAt: string | null
+  allowedModels: string[]
+  allowedProviders: string[]
 }
 
 export interface CreateApiKeyResponse {
@@ -36,6 +38,8 @@ export interface CreateApiKeyRequest {
   scopes: string[]
   tier: string
   expiresAt: string | null
+  allowedModels?: string[]
+  allowedProviders?: string[]
 }
 
 export interface UpdateApiKeyRequest {
@@ -44,6 +48,8 @@ export interface UpdateApiKeyRequest {
   tier?: string
   isActive?: boolean
   expiresAt?: string | null
+  allowedModels?: string[]
+  allowedProviders?: string[]
 }
 
 // =============================================================================
@@ -362,6 +368,12 @@ function createApiClient() {
     async revokeApiKey(id: string): Promise<void> {
       return request<void>(`/api/api-keys/${id}`, {
         method: 'DELETE',
+      })
+    },
+
+    async rotateApiKey(id: string): Promise<CreateApiKeyResponse> {
+      return request<CreateApiKeyResponse>(`/api/api-keys/${id}/rotate`, {
+        method: 'POST',
       })
     },
   }

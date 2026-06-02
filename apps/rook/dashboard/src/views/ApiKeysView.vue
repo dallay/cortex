@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useApiKeys } from '@/composables/useApiKeys'
+import { useProviders } from '@/composables/useProviders'
 import type { CreateApiKeyRequest, UpdateApiKeyRequest } from '@/lib/api'
 
 const { t } = useI18n()
@@ -37,17 +38,21 @@ const {
   create,
   update,
   revoke,
+  rotate,
   nextPage,
   prevPage,
 } = useApiKeys()
 
 // Create modal state
 const showCreateModal = ref(false)
-const createForm = ref<CreateApiKeyRequest>({
+const createForm = ref<CreateApiKeyRequest & { allowedModelsInput: string }>({
   label: '',
   scopes: [],
   tier: 'free',
   expiresAt: null,
+  allowedModels: [],
+  allowedProviders: [],
+  allowedModelsInput: '',
 })
 const createError = ref<string | null>(null)
 const newlyCreatedKey = ref<string | null>(null)
@@ -55,7 +60,7 @@ const newlyCreatedKey = ref<string | null>(null)
 // Edit modal state
 const showEditModal = ref(false)
 const editingKey = ref<string | null>(null)
-const editForm = ref<UpdateApiKeyRequest>({})
+const editForm = ref<UpdateApiKeyRequest & { allowedModelsInput: string }>({} as any)
 const editError = ref<string | null>(null)
 
 // Revoke confirmation
@@ -63,11 +68,22 @@ const showRevokeConfirm = ref(false)
 const revokingKeyId = ref<string | null>(null)
 const revokeError = ref<string | null>(null)
 
+// Rotate confirmation
+const showRotateConfirm = ref(false)
+const rotatingKeyId = ref<string | null>(null)
+const rotateError = ref<string | null>(null)
+const newlyRotatedKey = ref<string | null>(null)
+const showRotatedKey = ref(false)
+
+// Providers for multi-select
+const { providers, fetch: fetchProviders } = useProviders()
+
 // Visibility toggle for newly created key
 const showNewKey = ref(false)
 
 onMounted(() => {
   fetch()
+  fetchProviders()
 })
 
 function formatDate(dateStr: string | null): string {
@@ -97,12 +113,21 @@ async function handleCreate() {
     return
   }
 
-  const result = await create(createForm.value)
+  const submissionData: CreateApiKeyRequest = {
+    label: createForm.value.label,
+    scopes: createForm.value.scopes,
+    tier: createForm.value.tier,
+    expiresAt: createForm.value.expiresAt,
+    allowedModels: parseAllowedModels(createForm.value.allowedModelsInput || ''),
+    allowedProviders: createForm.value.allowedProviders,
+  }
+
+  const result = await create(submissionData)
   if (result) {
     newlyCreatedKey.value = result.plaintextKey
     showNewKey.value = true
     // Reset form
-    createForm.value = { label: '', scopes: [], tier: 'free', expiresAt: null }
+    createForm.value = { label: '', scopes: [], tier: 'free', expiresAt: null, allowedModels: [], allowedProviders: [], allowedModelsInput: '' }
   } else {
     createError.value = error.value || 'Failed to create API key'
   }
@@ -122,6 +147,9 @@ function openEditModal(key: typeof apiKeys.value[0]) {
     tier: key.tier,
     isActive: key.isActive,
     expiresAt: key.expiresAt,
+    allowedModels: [...(key.allowedModels || [])],
+    allowedProviders: [...(key.allowedProviders || [])],
+    allowedModelsInput: (key.allowedModels || []).join(', '),
   }
   showEditModal.value = true
 }
@@ -130,11 +158,21 @@ async function handleUpdate() {
   if (!editingKey.value) return
   editError.value = null
 
-  const result = await update(editingKey.value, editForm.value)
+  const submissionData: UpdateApiKeyRequest = {
+    label: editForm.value.label,
+    scopes: editForm.value.scopes,
+    tier: editForm.value.tier,
+    isActive: editForm.value.isActive,
+    expiresAt: editForm.value.expiresAt,
+    allowedModels: parseAllowedModels(editForm.value.allowedModelsInput || ''),
+    allowedProviders: editForm.value.allowedProviders,
+  }
+
+  const result = await update(editingKey.value, submissionData)
   if (result) {
     showEditModal.value = false
     editingKey.value = null
-    editForm.value = {}
+    editForm.value = {} as any
   } else {
     editError.value = error.value || 'Failed to update API key'
   }
@@ -158,6 +196,32 @@ async function handleRevoke() {
   }
 }
 
+function confirmRotate(keyId: string) {
+  rotatingKeyId.value = keyId
+  showRotateConfirm.value = true
+  rotateError.value = null
+}
+
+async function handleRotate() {
+  if (!rotatingKeyId.value) return
+
+  const result = await rotate(rotatingKeyId.value)
+  if (result) {
+    newlyRotatedKey.value = result.plaintextKey
+    showRotatedKey.value = true
+    showRotateConfirm.value = false
+    rotatingKeyId.value = null
+  } else {
+    rotateError.value = error.value || 'Failed to rotate API key'
+  }
+}
+
+function closeRotateWithKey() {
+  showRotateConfirm.value = false
+  newlyRotatedKey.value = null
+  showRotatedKey.value = false
+}
+
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -166,12 +230,20 @@ async function copyToClipboard(text: string) {
   }
 }
 
+function parseAllowedModels(input: string): string[] {
+  if (!input.trim()) return []
+  return input.split(',').map(s => s.trim()).filter(s => s.length > 0)
+}
+
 const hasNextPage = computed(() => offset.value + limit.value < total.value)
 const hasPrevPage = computed(() => offset.value > 0)
 
 const scopesOptions = [
   { value: 'chat:read', label: 'Chat Read' },
   { value: 'chat:write', label: 'Chat Write' },
+  { value: 'providers:read', label: 'Providers Read' },
+  { value: 'providers:write', label: 'Providers Write' },
+  { value: 'admin', label: 'Admin' },
 ]
 
 const tierOptions = [
@@ -226,6 +298,7 @@ const tierOptions = [
             <th class="px-4 py-3 text-left text-sm font-medium">Status</th>
             <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</th>
             <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</th>
+            <th class="px-4 py-3 text-left text-sm font-medium">Restrictions</th>
             <th class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</th>
           </tr>
         </thead>
@@ -272,6 +345,22 @@ const tierOptions = [
             </td>
             <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</td>
             <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</td>
+            <td class="px-4 py-3">
+              <span
+                v-if="!item.allowedModels?.length && !item.allowedProviders?.length"
+                class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+              >
+                Unrestricted
+              </span>
+              <span
+                v-else
+                class="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600"
+              >
+                Restricted
+                <span v-if="item.allowedModels?.length"> ({{ item.allowedModels.length }} model{{ item.allowedModels.length !== 1 ? 's' : '' }})</span>
+                <span v-if="item.allowedProviders?.length"> ({{ item.allowedProviders.length }} provider{{ item.allowedProviders.length !== 1 ? 's' : '' }})</span>
+              </span>
+            </td>
             <td class="px-4 py-3 text-right">
               <div class="flex items-center justify-end gap-2">
                 <Button
@@ -281,6 +370,14 @@ const tierOptions = [
                   @click="openEditModal(item)"
                 >
                   <Pencil class="h-4 w-4" />
+                </Button>
+                <Button
+                  v-if="item.isActive"
+                  variant="ghost"
+                  size="sm"
+                  @click="confirmRotate(item.id)"
+                >
+                  <RefreshCw class="h-4 w-4" />
                 </Button>
                 <Button
                   v-if="item.isActive"
@@ -397,6 +494,35 @@ const tierOptions = [
             </Select>
           </div>
 
+          <div class="space-y-2">
+            <label for="create-allowed-models" class="text-sm font-medium">Allowed Models</label>
+            <Input
+              id="create-allowed-models"
+              v-model="createForm.allowedModelsInput"
+              placeholder="e.g., gpt-4, gpt-4o (comma-separated, empty = unrestricted)"
+            />
+          </div>
+
+          <div class="space-y-2">
+            <label class="text-sm font-medium">Allowed Providers</label>
+            <div class="flex flex-wrap gap-2">
+              <label
+                v-for="provider in providers"
+                :key="provider.id"
+                class="flex items-center gap-2"
+              >
+                <input
+                  type="checkbox"
+                  :value="provider.id"
+                  v-model="createForm.allowedProviders"
+                  class="rounded border-input"
+                />
+                <span class="text-sm">{{ provider.name }}</span>
+              </label>
+              <span v-if="providers.length === 0" class="text-sm text-muted-foreground">No providers configured</span>
+            </div>
+          </div>
+
           <div v-if="createError" class="text-sm text-destructive">{{ createError }}</div>
 
           <DialogFooter>
@@ -459,6 +585,35 @@ const tierOptions = [
             </Select>
           </div>
 
+          <div class="space-y-2">
+            <label for="edit-allowed-models" class="text-sm font-medium">Allowed Models</label>
+            <Input
+              id="edit-allowed-models"
+              v-model="editForm.allowedModelsInput"
+              placeholder="e.g., gpt-4, gpt-4o (comma-separated, empty = unrestricted)"
+            />
+          </div>
+
+          <div class="space-y-2">
+            <label class="text-sm font-medium">Allowed Providers</label>
+            <div class="flex flex-wrap gap-2">
+              <label
+                v-for="provider in providers"
+                :key="provider.id"
+                class="flex items-center gap-2"
+              >
+                <input
+                  type="checkbox"
+                  :value="provider.id"
+                  v-model="editForm.allowedProviders!"
+                  class="rounded border-input"
+                />
+                <span class="text-sm">{{ provider.name }}</span>
+              </label>
+              <span v-if="providers.length === 0" class="text-sm text-muted-foreground">No providers configured</span>
+            </div>
+          </div>
+
           <div v-if="editError" class="text-sm text-destructive">{{ editError }}</div>
 
           <DialogFooter>
@@ -486,6 +641,46 @@ const tierOptions = [
           <Button variant="outline" @click="showRevokeConfirm = false">Cancel</Button>
           <Button variant="destructive" @click="handleRevoke">Revoke Key</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- Rotate Confirmation -->
+    <Dialog v-model:open="showRotateConfirm">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rotate API Key</DialogTitle>
+          <DialogDescription>
+            Rotate this key? The old key will stop working immediately and a new key will be generated.
+            Make sure to copy the new key — it will only be shown once.
+          </DialogDescription>
+        </DialogHeader>
+
+        <!-- Newly rotated key display -->
+        <div v-if="newlyRotatedKey" class="space-y-4">
+          <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 p-4">
+            <div class="flex items-center gap-2 text-amber-600 mb-2">
+              <AlertTriangle class="h-4 w-4" />
+              <span class="text-sm font-medium">Save this key now — it will not be shown again</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
+                {{ newlyRotatedKey }}
+              </code>
+              <Button size="sm" variant="outline" aria-label="Copy" @click="copyToClipboard(newlyRotatedKey)">
+                <Copy class="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <Button class="w-full" @click="closeRotateWithKey">Done</Button>
+        </div>
+
+        <div v-else>
+          <div v-if="rotateError" class="text-sm text-destructive mb-4">{{ rotateError }}</div>
+          <DialogFooter>
+            <Button variant="outline" @click="showRotateConfirm = false">Cancel</Button>
+            <Button @click="handleRotate">Rotate Key</Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   </div>
