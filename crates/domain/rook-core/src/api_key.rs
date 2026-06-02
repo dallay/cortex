@@ -83,7 +83,9 @@ impl ApiKeyScope {
     /// so existing DB rows are never rejected.
     pub fn parse_lenient(value: &str) -> Self {
         let value = value.trim();
-        if value.parse::<KnownScope>().is_err() && !value.is_empty() {
+        if value.is_empty() {
+            tracing::warn!(scope = "<empty>", "parse_lenient received empty scope");
+        } else if value.parse::<KnownScope>().is_err() {
             tracing::warn!(scope = value, "unknown API key scope loaded from database");
         }
         Self(value.into())
