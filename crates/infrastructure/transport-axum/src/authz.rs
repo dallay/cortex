@@ -1,7 +1,6 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -22,6 +21,8 @@ use rook_usecases::{
 };
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::middleware::{ApiKeyRateLimiter, RateLimitSnapshot};
 
 const DEFAULT_MAX_BODY_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 const LARGE_BODY_SIZE_BYTES: u64 = 100 * 1024 * 1024;
@@ -44,7 +45,7 @@ pub struct AuthzConfig {
     allow_env_api_key_fallback: bool,
     max_body_size_bytes: u64,
     cors: CorsConfig,
-    rate_limiter: RateLimiter,
+    rate_limiter: ApiKeyRateLimiter,
     /// Session validator for MANAGEMENT routes (replaces JWT-based auth)
     session_validator: Option<Arc<ValidateSession>>,
     bootstrap_status: Option<BootstrapStatus>,
@@ -85,7 +86,7 @@ impl AuthzConfig {
             allow_env_api_key_fallback,
             max_body_size_bytes,
             cors: CorsConfig::from_env(),
-            rate_limiter: RateLimiter::default(),
+            rate_limiter: ApiKeyRateLimiter::new(),
             session_validator: None,
             bootstrap_status: None,
         }
@@ -116,7 +117,7 @@ impl AuthzConfig {
             allow_env_api_key_fallback: true,
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
-            rate_limiter: RateLimiter::default(),
+            rate_limiter: ApiKeyRateLimiter::new(),
             session_validator: None,
             bootstrap_status: None,
         }
@@ -134,7 +135,7 @@ impl AuthzConfig {
             allow_env_api_key_fallback,
             max_body_size_bytes: DEFAULT_MAX_BODY_SIZE_BYTES,
             cors: CorsConfig::default(),
-            rate_limiter: RateLimiter::default(),
+            rate_limiter: ApiKeyRateLimiter::new(),
             session_validator: None,
             bootstrap_status: None,
         }
@@ -160,7 +161,7 @@ pub struct ApiKeyCredential {
     secret: String,
     scopes: Vec<String>,
     is_active: bool,
-    tier: RateLimitTier,
+    tier: ApiKeyTier,
 }
 
 impl ApiKeyCredential {
@@ -178,7 +179,7 @@ impl ApiKeyCredential {
             secret: secret.into(),
             scopes: scopes.into_iter().map(Into::into).collect(),
             is_active: true,
-            tier: RateLimitTier::Free,
+            tier: ApiKeyTier::Free,
         }
     }
 }
@@ -315,85 +316,6 @@ impl AuthOutcome {
     fn with_rate_limit(mut self, snapshot: RateLimitSnapshot) -> Self {
         self.rate_limit = Some(snapshot);
         self
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct RateLimitSnapshot {
-    pub limit: u64,
-    pub remaining: u64,
-    pub reset_unix: u64,
-    pub retry_after_secs: u64,
-}
-
-#[derive(Clone, Default)]
-struct RateLimiter {
-    buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
-}
-
-#[derive(Clone, Debug)]
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl RateLimiter {
-    fn check(
-        &self,
-        key_id: &str,
-        tier: RateLimitTier,
-    ) -> Result<RateLimitSnapshot, RateLimitSnapshot> {
-        let mut buckets = self.buckets.lock().expect("rate limiter lock");
-        let bucket = buckets
-            .entry(key_id.to_string())
-            .or_insert_with(|| TokenBucket {
-                tokens: tier.capacity() as f64,
-                last_refill: Instant::now(),
-            });
-        refill(bucket, tier);
-
-        if bucket.tokens >= 1.0 {
-            bucket.tokens -= 1.0;
-            Ok(snapshot(bucket, tier, 0))
-        } else {
-            let retry_after_secs = (1.0 / tier.refill_per_second()).ceil() as u64;
-            Err(snapshot(bucket, tier, retry_after_secs.max(1)))
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum RateLimitTier {
-    Free,
-    Pro,
-    Enterprise,
-}
-
-impl RateLimitTier {
-    fn capacity(self) -> u64 {
-        match self {
-            Self::Free => 100,
-            Self::Pro => 1_000,
-            Self::Enterprise => 10_000,
-        }
-    }
-
-    fn refill_per_second(self) -> f64 {
-        match self {
-            Self::Free => 10.0,
-            Self::Pro => 100.0,
-            Self::Enterprise => 1_000.0,
-        }
-    }
-}
-
-impl From<ApiKeyTier> for RateLimitTier {
-    fn from(value: ApiKeyTier) -> Self {
-        match value {
-            ApiKeyTier::Free => Self::Free,
-            ApiKeyTier::Pro => Self::Pro,
-            ApiKeyTier::Enterprise => Self::Enterprise,
-        }
     }
 }
 
@@ -679,12 +601,18 @@ async fn client_api_policy(
                 }
                 return match config
                     .rate_limiter
-                    .check(&subject.id, RateLimitTier::from(api_key_subject.tier))
+                    .check(&subject.id, api_key_subject.tier, None)
+                    .await
                 {
                     Ok(snapshot) => AuthOutcome::allow(subject).with_rate_limit(snapshot),
-                    Err(snapshot) => {
+                    Err(exceeded) => {
                         AuthOutcome::reject(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
-                            .with_rate_limit(snapshot)
+                            .with_rate_limit(RateLimitSnapshot {
+                                limit: exceeded.limit,
+                                remaining: exceeded.remaining,
+                                reset_unix: exceeded.reset_unix,
+                                retry_after_secs: exceeded.retry_after_secs,
+                            })
                     }
                 };
             }
@@ -724,10 +652,19 @@ async fn client_api_policy(
     if let Some(rejection) = check_scope(method, path, &subject) {
         return rejection;
     }
-    match config.rate_limiter.check(&credential.id, credential.tier) {
+    match config
+        .rate_limiter
+        .check(&credential.id, credential.tier, None)
+        .await
+    {
         Ok(snapshot) => AuthOutcome::allow(subject).with_rate_limit(snapshot),
-        Err(snapshot) => AuthOutcome::reject(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
-            .with_rate_limit(snapshot),
+        Err(exceeded) => AuthOutcome::reject(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
+            .with_rate_limit(RateLimitSnapshot {
+                limit: exceeded.limit,
+                remaining: exceeded.remaining,
+                reset_unix: exceeded.reset_unix,
+                retry_after_secs: exceeded.retry_after_secs,
+            }),
     }
 }
 
@@ -952,29 +889,6 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: Option<&HeaderValue>, cor
         HeaderValue::from_static("Content-Type, Authorization, X-API-Key"),
     );
     headers.insert("access-control-max-age", HeaderValue::from_static("86400"));
-}
-
-fn refill(bucket: &mut TokenBucket, tier: RateLimitTier) {
-    let elapsed = bucket.last_refill.elapsed().as_secs_f64();
-    bucket.tokens =
-        (bucket.tokens + elapsed * tier.refill_per_second()).min(tier.capacity() as f64);
-    bucket.last_refill = Instant::now();
-}
-
-fn snapshot(bucket: &TokenBucket, tier: RateLimitTier, retry_after_secs: u64) -> RateLimitSnapshot {
-    RateLimitSnapshot {
-        limit: tier.capacity(),
-        remaining: bucket.tokens.floor() as u64,
-        reset_unix: unix_now() + retry_after_secs,
-        retry_after_secs,
-    }
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
 }
 
 fn apply_rate_limit_headers(headers: &mut HeaderMap, snapshot: RateLimitSnapshot) {
