@@ -107,7 +107,7 @@ async function revokeKeysByLabelViaApi(page: Page, label: string): Promise<void>
 async function createApiKeyViaApi(
   page: Page,
   label: string,
-  scopes: string[] = ['read'],
+  scopes: string[] = ['chat:read'],
   tier: string = 'free'
 ): Promise<{ id: string; plaintextKey: string }> {
   const csrf = await getCsrfToken(page)
@@ -235,7 +235,7 @@ test.describe('API Keys - Create Flow', () => {
 
     // Fill in the form
     await page.getByLabel(/label/i).fill(createLabel)
-    await page.getByRole('dialog').getByText(/read/i).click()
+    await page.getByRole('dialog').getByText(/^chat read$/i).click()
 
     // Submit
     await page.getByRole('button', { name: /create key/i }).click()
@@ -283,7 +283,7 @@ test.describe('API Keys - Edit Flow', () => {
     // Revoke any leftover key for this worker, then create a fresh one.
     await revokeKeysByLabelViaApi(page, editLabel)
     await revokeKeysByLabelViaApi(page, `updated-key-label-${testInfo.workerIndex}`)
-    await createApiKeyViaApi(page, editLabel, ['read'], 'free')
+    await createApiKeyViaApi(page, editLabel, ['chat:read'], 'free')
   })
 
   test('opens edit modal when clicking edit button', async ({ page }) => {
@@ -366,7 +366,7 @@ test.describe('API Keys - Revoke Flow', () => {
     // Revoke only OUR worker's label — avoids touching keys belonging to
     // concurrent browser workers, which caused a race condition on reload.
     await revokeKeysByLabelViaApi(page, revokeLabel)
-    await createApiKeyViaApi(page, revokeLabel, ['read'], 'free')
+    await createApiKeyViaApi(page, revokeLabel, ['chat:read'], 'free')
   })
 
   test('shows confirmation dialog when revoking', async ({ page }) => {

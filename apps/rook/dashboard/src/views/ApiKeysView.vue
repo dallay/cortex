@@ -170,8 +170,8 @@ const hasNextPage = computed(() => offset.value + limit.value < total.value)
 const hasPrevPage = computed(() => offset.value > 0)
 
 const scopesOptions = [
-  { value: 'read', label: 'Read' },
-  { value: 'write', label: 'Write' },
+  { value: 'chat:read', label: 'Chat Read' },
+  { value: 'chat:write', label: 'Chat Write' },
 ]
 
 const tierOptions = [
