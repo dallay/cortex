@@ -225,7 +225,7 @@ test.describe("timezone display", () => {
 
 ```typescript
 // fixtures/timezone.fixture.ts
-import { test as base } from "@playwright/test";
+import { test as base, Page } from "@playwright/test";
 
 type TimezoneFixtures = {
   pageInTimezone: (timezone: string) => Promise<Page>;

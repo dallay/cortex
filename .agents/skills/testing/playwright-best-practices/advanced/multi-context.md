@@ -50,8 +50,8 @@ test("popup login flow", async ({ page }) => {
   await popup.waitForLoadState();
 
   // Complete login in popup
-  await popup.getByLabel("Email").fill("user@example.com");
-  await popup.getByLabel("Password").fill("password123");
+  await popup.getByLabel("Email").fill(process.env.TEST_EMAIL);
+  await popup.getByLabel("Password").fill(process.env.TEST_PASSWORD);
   await popup.getByRole("button", { name: "Log In" }).click();
 
   // Popup should close automatically after auth
@@ -147,10 +147,10 @@ test("Google OAuth login", async ({ page }) => {
   await popup.waitForLoadState();
 
   // Handle Google's OAuth flow
-  await popup.getByLabel("Email or phone").fill("test@gmail.com");
+  await popup.getByLabel("Email or phone").fill(process.env.TEST_EMAIL);
   await popup.getByRole("button", { name: "Next" }).click();
 
-  await popup.getByLabel("Enter your password").fill("password");
+  await popup.getByLabel("Enter your password").fill(process.env.TEST_PASSWORD);
   await popup.getByRole("button", { name: "Next" }).click();
 
   // Wait for redirect back and popup close

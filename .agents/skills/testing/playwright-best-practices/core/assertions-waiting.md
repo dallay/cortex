@@ -134,11 +134,11 @@ test("check multiple elements", async ({ page }) => {
 ### Soft Assertions with Early Exit
 
 ```typescript
-test("check form", async ({ page }) => {
+test("check form", async ({ page }, testInfo) => {
   await expect.soft(page.getByRole("form")).toBeVisible();
 
   // Exit early if form not visible (pointless to check fields)
-  if (expect.soft.hasFailures()) {
+  if (testInfo.errors.length > 0) {
     return;
   }
 

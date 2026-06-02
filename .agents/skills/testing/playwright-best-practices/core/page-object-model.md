@@ -149,7 +149,7 @@ export class ModalComponent {
 
 ```typescript
 // pages/dashboard.page.ts
-import { Page, Locator } from "@playwright/test";
+import { Page, Locator, expect } from "@playwright/test";
 import { NavbarComponent } from "../components/navbar.component";
 import { ModalComponent } from "../components/modal.component";
 
@@ -171,6 +171,10 @@ export class DashboardPage {
   async createProject() {
     await this.newProjectButton.click();
     return new ModalComponent(this.page.getByRole("dialog"));
+  }
+
+  async expectWelcomeMessage() {
+    await expect(this.page.getByRole("heading", { name: /welcome/i })).toBeVisible();
   }
 }
 ```

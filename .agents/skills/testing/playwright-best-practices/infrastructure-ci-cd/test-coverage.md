@@ -48,11 +48,15 @@ import { randomUUID } from "crypto";
 
 export const test = base.extend<{}, { collectCoverage: void }>({
   collectCoverage: [
-    async ({ browser }, use) => {
-      // Start coverage for all pages
-      const context = await browser.newContext();
-      const page = await context.newPage();
+    async ({ page }, use) => {
+      // Note: Coverage is Chromium-only. For other browsers, skip coverage collection.
+      const browserName = page.context().browser()?.browserType().name();
+      if (browserName !== 'chromium') {
+        await use();
+        return;
+      }
 
+      // Start coverage for the test's page
       await page.coverage.startJSCoverage();
       await page.coverage.startCSSCoverage();
 
@@ -74,10 +78,8 @@ export const test = base.extend<{}, { collectCoverage: void }>({
         path.join(coverageDir, `coverage-${randomUUID()}.json`),
         JSON.stringify([...jsCoverage, ...cssCoverage])
       );
-
-      await context.close();
     },
-    { scope: "worker", auto: true },
+    { scope: "test", auto: true },
   ],
 });
 ```

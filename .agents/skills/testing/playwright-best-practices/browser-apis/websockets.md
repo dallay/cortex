@@ -373,9 +373,9 @@ test("reconnects after connection loss", async ({ page }) => {
 
   // Simulate reconnection
   await page.evaluate(() => {
-    const event = new Event("open");
-    (window as any).chatSocket = { readyState: 1 };
-    (window as any).chatSocket.dispatchEvent?.(event);
+    const mockSocket = Object.assign(new EventTarget(), { readyState: 1 });
+    (window as any).chatSocket = mockSocket;
+    mockSocket.dispatchEvent(new Event('open'));
   });
 
   // Force component to re-check connection

@@ -375,6 +375,7 @@ export const test = base.extend<ConsoleFixtures>({
 test("page loads without errors", async ({ page, assertNoErrors }) => {
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Load" }).click();
+  await page.waitForLoadState('networkidle');
 
   assertNoErrors([/favicon/]); // Allow favicon errors
 });

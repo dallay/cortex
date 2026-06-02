@@ -459,9 +459,22 @@ test("sync event fires when online", async ({ context, page }) => {
   await context.setOffline(true);
 
   await page.evaluate(async () => {
-    // Store data in IndexedDB for sync
-    const db = await openDB();
-    await db.put("sync-queue", { id: 1, data: "test" });
+    // Open/create IndexedDB database
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('sync-store', 1);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore('sync-queue', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    // Store data for sync
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('sync-queue', 'readwrite');
+      tx.objectStore('sync-queue').put({ id: 1, data: 'test' });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
 
     // Register sync
     const reg = await navigator.serviceWorker.ready;
@@ -501,4 +514,3 @@ test("sync event fires when online", async ({ context, page }) => {
 - **Network Failures**: See [error-testing.md](error-testing.md#offline-testing) for unexpected network failure patterns
 - **Browser APIs**: See [browser-apis.md](browser-apis.md) for permissions
 - **Network Mocking**: See [network-advanced.md](../advanced/network-advanced.md) for network interception
-- **Browser Extensions**: See [browser-extensions.md](../testing-patterns/browser-extensions.md) for extension service worker patterns

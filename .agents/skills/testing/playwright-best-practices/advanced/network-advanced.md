@@ -139,6 +139,23 @@ type GraphQLFixtures = {
   mockGraphQL: (mocks: GraphQLMock[]) => Promise<void>;
 };
 
+// Helper for deep equality comparison (JSON.stringify has key-order issues)
+function deepEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+
+  for (const key of keysA) {
+    if (!keysB.includes(key)) return false;
+    if (!deepEqual(a[key], b[key])) return false;
+  }
+  return true;
+}
+
 export const test = base.extend<GraphQLFixtures>({
   mockGraphQL: async ({ page }, use) => {
     await use(async (mocks) => {
@@ -148,11 +165,9 @@ export const test = base.extend<GraphQLFixtures>({
         const mock = mocks.find((m) => {
           if (m.operation !== postData.operationName) return false;
 
-          // Optionally match variables
+          // Optionally match variables using deep equality
           if (m.variables) {
-            return (
-              JSON.stringify(m.variables) === JSON.stringify(postData.variables)
-            );
+            return deepEqual(m.variables, postData.variables);
           }
           return true;
         });
@@ -375,6 +390,7 @@ test("slow network simulation", async ({ page }) => {
 
 ```typescript
 test("slow network experience", async ({ page, context }) => {
+  // Note: CDP throttling is Chromium-only
   // Create CDP session for network throttling
   const client = await context.newCDPSession(page);
 

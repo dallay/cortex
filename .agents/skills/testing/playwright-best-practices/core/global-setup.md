@@ -43,6 +43,8 @@ export default defineConfig({
 
 ```typescript
 // global-setup.ts
+import { FullConfig } from "@playwright/test";
+
 async function globalSetup(config: FullConfig): Promise<() => Promise<void>> {
   const server = await startTestServer();
 

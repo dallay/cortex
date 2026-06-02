@@ -13,7 +13,7 @@
 ### Use Built-in Devices
 
 ```typescript
-import { test, devices } from "@playwright/test";
+import { test, devices, defineConfig } from "@playwright/test";
 
 // Configure in playwright.config.ts
 export default defineConfig({
@@ -109,7 +109,7 @@ test("swipe carousel", async ({ page }) => {
 
 ```typescript
 // fixtures/touch.fixture.ts
-import { test as base, Page } from "@playwright/test";
+import { test as base, Page, Locator } from "@playwright/test";
 
 type TouchFixtures = {
   swipe: (

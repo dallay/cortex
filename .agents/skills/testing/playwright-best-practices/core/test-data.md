@@ -407,7 +407,15 @@ type SeedFixtures = {
 };
 
 export const test = base.extend<SeedFixtures>({
-  cleanupUsers: [],
+  cleanupUsers: async ({ request }, use) => {
+    const userIds: string[] = [];
+    await use(userIds);
+
+    // Delete all created users
+    for (const id of userIds) {
+      await request.delete(`/api/test/users/${id}`);
+    }
+  },
 
   seedUser: async ({ request, cleanupUsers }, use) => {
     await use(async (overrides = {}) => {
@@ -421,17 +429,6 @@ export const test = base.extend<SeedFixtures>({
       cleanupUsers.push(user.id);
       return user;
     });
-  },
-
-  // Cleanup after test
-  cleanupUsers: async ({ request }, use) => {
-    const userIds: string[] = [];
-    await use(userIds);
-
-    // Delete all created users
-    for (const id of userIds) {
-      await request.delete(`/api/test/users/${id}`);
-    }
   },
 });
 

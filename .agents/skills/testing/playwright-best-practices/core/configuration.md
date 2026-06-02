@@ -15,7 +15,7 @@
 ## CLI Quick Reference
 
 ```bash
-npx playwright init                           # scaffold config + first test
+npm init playwright@latest                    # scaffold config + first test
 npx playwright test --config=custom.config.ts # use alternate config
 npx playwright test --project=chromium        # run single project
 npx playwright test --reporter=html           # override reporter

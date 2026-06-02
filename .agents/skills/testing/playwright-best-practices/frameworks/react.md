@@ -525,7 +525,5 @@ test('no unmounted state warnings', async ({ page }) => {
 
 - [locators.md](../core/locators.md) — locator strategies for any React component library
 - [assertions-waiting.md](../core/assertions-waiting.md) — auto-waiting for React state changes
-- [forms-validation.md](../testing-patterns/forms-validation.md) — form testing patterns
-- [component-testing.md](../testing-patterns/component-testing.md) — in-depth component testing
 - [test-architecture.md](../architecture/test-architecture.md) — E2E vs component vs unit decisions
 - [nextjs.md](nextjs.md) — Next.js-specific patterns for SSR

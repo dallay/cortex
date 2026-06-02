@@ -214,7 +214,7 @@ npx playwright install --with-deps
 
 # Run in Docker (same as CI)
 docker run --rm -v $(pwd):/work -w /work \
-  mcr.microsoft.com/playwright:v1.40.0-jammy \
+  mcr.microsoft.com/playwright:v1.48.0-noble \
   npx playwright test
 ```
 

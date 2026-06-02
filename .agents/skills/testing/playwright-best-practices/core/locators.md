@@ -182,19 +182,19 @@ Playwright pierces shadow DOM by default:
 // Automatically finds elements inside shadow roots
 page.getByRole("button", { name: "Shadow Button" });
 
-// Explicit shadow DOM traversal (if needed)
-page.locator("my-component").locator("internal:shadow=button");
+// Explicit shadow DOM traversal (using standard piercing)
+page.locator("my-component >> button");
 ```
 
 ## Iframes
 
 ```typescript
 // By frame name or URL
-const frame = page.frameLocator('iframe[name="content"]');
-await frame.getByRole("button").click();
+const contentFrame = page.frameLocator('iframe[name="content"]');
+await contentFrame.getByRole("button").click();
 
 // By index
-const frame = page.frameLocator("iframe").first();
+const firstFrame = page.frameLocator("iframe").first();
 
 // Nested iframes
 const nestedFrame = page.frameLocator("#outer").frameLocator("#inner");

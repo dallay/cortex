@@ -254,9 +254,9 @@ e2e:integration:
   stage: test
   image: mcr.microsoft.com/playwright:v1.48.0-noble
   services:
-    - name: postgres:latest
+    - name: postgres:15
       alias: db
-    - name: redis:latest
+    - name: redis:7
       alias: cache
   variables:
     CI: "true"

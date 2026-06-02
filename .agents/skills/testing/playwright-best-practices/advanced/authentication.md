@@ -149,14 +149,14 @@ type AuthFixtures = {
 
 export const test = base.extend<{}, AuthFixtures>({
   authenticatedContext: [
-    async ({ browser }, use) => {
+    async ({ browser }, use, workerInfo) => {
       const context = await browser.newContext();
       const page = await context.newPage();
 
       await page.goto("/login");
       await page
         .getByLabel("Username")
-        .fill(`worker-${test.info().parallelIndex}@example.com`);
+        .fill(`worker-${workerInfo.workerIndex}@example.com`);
       await page.getByLabel("Password").fill("secretPass123");
       await page.getByRole("button", { name: "Log in" }).click();
       await page.waitForURL("/home");
@@ -652,12 +652,18 @@ export const test = base.extend({
       baseURL: "http://localhost:4000",
     });
 
-    await apiContext.post("/api/auth/login", {
+    const response = await apiContext.post("/api/auth/login", {
       data: {
         email: "testuser@example.com",
         password: "secretPass123",
       },
     });
+
+    if (!response.ok()) {
+      throw new Error(
+        `API login failed: ${response.status()} ${await response.text()}`
+      );
+    }
 
     const state = await apiContext.storageState();
     const context = await browser.newContext({ storageState: state });

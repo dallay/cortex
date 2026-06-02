@@ -57,7 +57,7 @@ CMD ["npx", "playwright", "test"]
 Chromium-only slim image:
 
 ```dockerfile
-FROM node:latest-slim
+FROM node:20-slim
 
 RUN npx playwright install --with-deps chromium
 

@@ -340,7 +340,7 @@ cpulimit -l 50 -- npx playwright test
 docker run -it --rm \
   -v $(pwd):/work \
   -w /work \
-  mcr.microsoft.com/playwright:v1.40.0-jammy \
+  mcr.microsoft.com/playwright:v1.48.0-noble \
   npx playwright test
 ```
 

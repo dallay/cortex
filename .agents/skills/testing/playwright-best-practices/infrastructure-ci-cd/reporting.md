@@ -164,7 +164,11 @@ class NotificationReporter implements Reporter {
         });
       } catch (error) {
         // Intentionally swallow notifier failures to avoid blocking test completion
-        console.warn('Webhook notification failed:', error.message);
+        if (error instanceof Error) {
+          console.warn('Webhook notification failed:', error.message);
+        } else {
+          console.warn('Webhook notification failed:', String(error));
+        }
       } finally {
         clearTimeout(timeout);
       }

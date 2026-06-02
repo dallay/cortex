@@ -242,7 +242,11 @@ test("verify order", async ({ page }) => {
 
 ```typescript
 // pages/checkout.page.ts
+import { Page, test } from "@playwright/test";
+
 export class CheckoutPage {
+  constructor(private readonly page: Page) {}
+
   async fillShippingInfo(address: string, city: string) {
     await test.step("Fill shipping information", async () => {
       await this.page.getByLabel("Address").fill(address);

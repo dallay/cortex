@@ -274,7 +274,7 @@ test("handles declined card", async ({ page, mockStripe }) => {
 
 ```typescript
 test("email verification flow", async ({ page, request }) => {
-  let verificationToken: string;
+  let verificationToken = '';
 
   // Capture the verification email
   await page.route("**/api/send-verification", async (route) => {
@@ -364,7 +364,7 @@ export const test = base.extend<EmailFixtures>({
 
 ```typescript
 test("SMS verification", async ({ page }) => {
-  let smsCode: string;
+  let smsCode = '';
 
   // Capture SMS send
   await page.route("**/api/send-sms", (route) => {

@@ -292,11 +292,30 @@ test("handles concurrent edits", async ({ browser }) => {
   ]);
 
   // One should succeed, one should get conflict error
-  const page1HasConflict = await page1.getByText("Conflict").isVisible();
-  const page2HasConflict = await page2.getByText("Conflict").isVisible();
+  // Wait for both pages to settle
+  await expect
+    .poll(async () => {
+      const page1HasConflict = await page1
+        .getByText("Conflict")
+        .isVisible()
+        .catch(() => false);
+      const page2HasConflict = await page2
+        .getByText("Conflict")
+        .isVisible()
+        .catch(() => false);
+      return page1HasConflict || page2HasConflict;
+    })
+    .toBe(true);
 
   // Exactly one should have conflict
-  expect(page1HasConflict || page2HasConflict).toBe(true);
+  const page1HasConflict = await page1
+    .getByText("Conflict")
+    .isVisible()
+    .catch(() => false);
+  const page2HasConflict = await page2
+    .getByText("Conflict")
+    .isVisible()
+    .catch(() => false);
   expect(page1HasConflict && page2HasConflict).toBe(false);
 
   await ctx1.close();
