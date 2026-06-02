@@ -123,7 +123,7 @@ jobs:
       - name: Create Trivy report directory
         run: mkdir -p reports/trivy
       - name: Run full Trivy filesystem, dependency, and IaC scan
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           version: v0.70.0
           scan-type: fs

@@ -112,7 +112,7 @@ jobs:
           g++ --version
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -449,7 +449,7 @@ jobs:
           ref: ${{ needs.release-please.outputs.release_git_tag }}
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           toolchain: stable
 
@@ -475,7 +475,7 @@ jobs:
           ref: ${{ needs.release-please.outputs.release_git_tag }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
