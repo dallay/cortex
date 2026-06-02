@@ -96,24 +96,20 @@ impl RookContainer {
         let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
             Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
 
-        let authenticate_client_api = if config.auth.api_keys.enabled {
+        let (authenticate_client_api, manage_api_keys) = if config.auth.api_keys.enabled {
             let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
-            Some(AuthenticateClientApi::new(
-                api_key_repo.clone(),
-                hash_secret,
-            ))
+            (
+                Some(AuthenticateClientApi::new(
+                    api_key_repo.clone(),
+                    hash_secret.clone(),
+                )),
+                Some(rook_usecases::ManageApiKeys::new(
+                    api_key_repo.clone(),
+                    hash_secret,
+                )),
+            )
         } else {
-            None
-        };
-
-        let manage_api_keys = if config.auth.api_keys.enabled {
-            let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
-            Some(rook_usecases::ManageApiKeys::new(
-                api_key_repo.clone(),
-                hash_secret,
-            ))
-        } else {
-            None
+            (None, None)
         };
 
         // 7. ManageConnections (provider CRUD) — built here so it can be used in join!

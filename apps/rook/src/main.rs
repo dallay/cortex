@@ -193,20 +193,7 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                     sanitized.clone()
                 };
                 tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
-                let banner = format!(
-                    concat!(
-                        "+-----------------------------------------------------------+\n",
-                        "|             ROOK -- BOOTSTRAP MODE ACTIVE                 |\n",
-                        "+-----------------------------------------------------------+\n",
-                        "|  Setup token: {}  |\n",
-                        "|                                                            |\n",
-                        "|  To complete setup, open the dashboard at                  |\n",
-                        "|  http://localhost:5173 and enter the token above          |\n",
-                        "|  along with your desired admin password.                   |\n",
-                        "+-----------------------------------------------------------+"
-                    ),
-                    sanitized
-                );
+                let banner = build_bootstrap_banner(&sanitized);
                 eprintln!("{banner}");
             }
             None => {
@@ -258,6 +245,54 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Build a dynamically-sized ASCII box for the bootstrap banner.
+///
+/// Computes the box width from the longest content line so the border aligns
+/// regardless of token length.
+fn build_bootstrap_banner(sanitized_token: &str) -> String {
+    let header = "ROOK -- BOOTSTRAP MODE ACTIVE";
+    let dash_url = "http://localhost:5173";
+    let instruction = "To complete setup, open the dashboard at";
+    let token_label = "Setup token:";
+
+    // Lines to measure — compute max visible width
+    let lines: &[&str] = &[
+        header,
+        instruction,
+        dash_url,
+        &format!("{} {}", token_label, sanitized_token),
+        "along with your desired admin password.",
+    ];
+
+    let max_len = lines.iter().map(|l| l.len()).max().unwrap_or(40);
+    let width = max_len.max(62); // minimum 62 chars wide
+
+    let border = format!("+{}+", "-".repeat(width));
+
+    let center_pad = |text: &str| {
+        let pad = width.saturating_sub(text.len());
+        let left = pad / 2;
+        format!("|{}{}{}|", " ".repeat(left), text, " ".repeat(pad - left))
+    };
+
+    let left_pad = |text: &str| {
+        let pad = width.saturating_sub(text.len());
+        format!("| {}{}{}|", text, " ".repeat(pad.saturating_sub(1)), " ".repeat(pad.saturating_sub(1)))
+    };
+
+    let banner = format!(
+        "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{0}",
+        border,
+        center_pad(header),
+        left_pad(&format!("{} {}", token_label, sanitized_token)),
+        left_pad(""),
+        left_pad(instruction),
+        left_pad(dash_url),
+        left_pad("along with your desired admin password."),
+    );
+    banner
 }
 
 fn load_config() -> anyhow::Result<config::RookConfig> {

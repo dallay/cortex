@@ -121,7 +121,10 @@ pub async fn logout_handler(
     match usecases.revoke_session_by_token_hash(&token_hash).await {
         Ok(()) => {
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            (StatusCode::OK, Json(body)).into_response()
+            let clear_cookie = HeaderValue::from_static(
+                "auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+            );
+            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
         Err(_) => {
             let body = serde_json::json!({
