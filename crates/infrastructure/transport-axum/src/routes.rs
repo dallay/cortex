@@ -514,5 +514,9 @@ fn api_key_routes(usecases: Usecases) -> Router {
             "/api/api-keys/{id}",
             delete(handlers::api_key::revoke_api_key),
         )
+        .route(
+            "/api/api-keys/{id}/rotate",
+            post(handlers::api_key::rotate_api_key),
+        )
         .with_state(usecases)
 }

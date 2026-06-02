@@ -135,6 +135,15 @@ mod tests {
             Ok(())
         }
 
+        async fn rotate_hash(
+            &self,
+            _id: &ApiKeyId,
+            _new_hash: &str,
+            _new_prefix: &str,
+        ) -> Result<(), ApiKeyRepositoryError> {
+            Ok(())
+        }
+
         async fn list_paginated(
             &self,
             _limit: i64,

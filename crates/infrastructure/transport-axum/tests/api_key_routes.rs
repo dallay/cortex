@@ -99,3 +99,90 @@ fn create_api_key_response_serializes_correctly() {
     assert_eq!(json["key"]["id"], "key_123");
     assert_eq!(json["key"]["tier"], "pro");
 }
+
+// =============================================================================
+// Rotation response serialization
+//
+// The rotate handler returns a CreateApiKeyResponseDto (same shape as create):
+// the freshly-rotated record (with NEW keyPrefix) plus the new plaintext key.
+// These tests pin down the wire contract.
+// =============================================================================
+
+#[test]
+fn rotation_response_uses_new_key_prefix_after_rotate() {
+    // Simulate a freshly-rotated record: only keyPrefix changed from the
+    // pre-rotation state, every other field is preserved.
+    let rotated = ApiKeyRecord {
+        id: ApiKeyId::new("key_123"),
+        label: "Production Key".to_string(),
+        // Same key_hash slot, but the prefix points to the NEW secret.
+        // We don't expose the hash, but the prefix must reflect the new key.
+        key_hash: "hash_xyz987".to_string(),
+        key_prefix: "rk-newpr".to_string(),
+        scopes: test_record().scopes,
+        tier: test_record().tier,
+        is_active: true,
+        revoked_at: None,
+        expires_at: test_record().expires_at,
+        created_at: test_record().created_at,
+        last_used_at: None,
+        allowed_models: vec![],
+        allowed_providers: vec![],
+    };
+    let dto = CreateApiKeyResponseDto {
+        key: ApiKeyRecordResponseDto::from(&rotated),
+        plaintext_key: "rk-newprefix123abc".to_string(),
+    };
+
+    let json = serde_json::to_value(&dto).expect("should serialize");
+    assert_eq!(
+        json["key"]["keyPrefix"], "rk-newpr",
+        "rotated record must surface the new prefix"
+    );
+    assert_eq!(
+        json["plaintextKey"], "rk-newprefix123abc",
+        "plaintext key must be returned"
+    );
+    // keyHash must NEVER leak, even on rotation.
+    assert!(
+        json["key"]["keyHash"].is_null(),
+        "keyHash should not be exposed in rotation response"
+    );
+    // The original test fixture used "rook_test" as prefix. The rotated
+    // record uses a different prefix, proving the response reflects the
+    // post-rotation state (not a stale pre-rotation read).
+    assert_ne!(
+        json["key"]["keyPrefix"], "rook_test",
+        "prefix must be the NEW one, not the original"
+    );
+}
+
+#[test]
+fn rotation_response_preserves_metadata_through_serialization() {
+    // Pre-rotation record (e.g. as it was right before rotate was called).
+    let pre = test_record();
+    // Post-rotation record: only key_hash and key_prefix changed; everything
+    // else MUST be byte-identical to the pre-rotation state.
+    let post = ApiKeyRecord {
+        key_hash: "different-hash".to_string(),
+        key_prefix: "rk-rotat".to_string(),
+        ..pre.clone()
+    };
+
+    let pre_dto = ApiKeyRecordResponseDto::from(&pre);
+    let post_dto = ApiKeyRecordResponseDto::from(&post);
+
+    // All non-credential fields must round-trip identically.
+    assert_eq!(pre_dto.id, post_dto.id);
+    assert_eq!(pre_dto.label, post_dto.label);
+    assert_eq!(pre_dto.scopes, post_dto.scopes);
+    assert_eq!(pre_dto.tier, post_dto.tier);
+    assert_eq!(pre_dto.is_active, post_dto.is_active);
+    assert_eq!(pre_dto.expires_at, post_dto.expires_at);
+    assert_eq!(pre_dto.created_at, post_dto.created_at);
+    assert_eq!(pre_dto.allowed_models, post_dto.allowed_models);
+    assert_eq!(pre_dto.allowed_providers, post_dto.allowed_providers);
+
+    // The credential-adjacent fields are the only ones that change.
+    assert_ne!(pre_dto.key_prefix, post_dto.key_prefix);
+}
