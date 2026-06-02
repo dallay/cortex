@@ -33,6 +33,8 @@ const TRUSTED_HEADERS: &[&str] = &[
     "x-authz-auth-id",
     "x-authz-auth-label",
     "x-authz-auth-scopes",
+    "x-authz-allowed-models",
+    "x-authz-allowed-providers",
 ];
 
 #[derive(Clone)]
@@ -263,6 +265,8 @@ pub struct Subject {
     pub id: String,
     pub label: String,
     pub scopes: Vec<String>,
+    pub allowed_models: Vec<String>,
+    pub allowed_providers: Vec<String>,
 }
 
 impl Subject {
@@ -272,6 +276,8 @@ impl Subject {
             id: "public".to_string(),
             label: "Public".to_string(),
             scopes: Vec::new(),
+            allowed_models: Vec::new(),
+            allowed_providers: Vec::new(),
         }
     }
 }
@@ -534,6 +540,16 @@ pub fn stamp_trusted_headers(
     insert_header(headers, "x-authz-auth-id", &subject.id);
     insert_header(headers, "x-authz-auth-label", &subject.label);
     insert_header(headers, "x-authz-auth-scopes", &subject.scopes.join(","));
+    insert_header(
+        headers,
+        "x-authz-allowed-models",
+        &subject.allowed_models.join(","),
+    );
+    insert_header(
+        headers,
+        "x-authz-allowed-providers",
+        &subject.allowed_providers.join(","),
+    );
 }
 
 pub struct PreflightResponse {
@@ -644,6 +660,16 @@ async fn client_api_policy(
                         .iter()
                         .map(|scope| scope.as_str().to_string())
                         .collect(),
+                    allowed_models: api_key_subject
+                        .allowed_models
+                        .iter()
+                        .map(|m| m.as_str().to_string())
+                        .collect(),
+                    allowed_providers: api_key_subject
+                        .allowed_providers
+                        .iter()
+                        .map(|p| p.as_str().to_string())
+                        .collect(),
                 };
                 if let Some(rejection) = check_scope(method, path, &subject) {
                     return rejection;
@@ -689,6 +715,8 @@ async fn client_api_policy(
         id: credential.id.clone(),
         label: credential.label.clone(),
         scopes: credential.scopes.clone(),
+        allowed_models: Vec::new(),
+        allowed_providers: Vec::new(),
     };
     if let Some(rejection) = check_scope(method, path, &subject) {
         return rejection;
@@ -731,6 +759,8 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
                 id: validated.session.user_id.to_string(),
                 label: validated.username,
                 scopes: vec!["admin".to_string()],
+                allowed_models: Vec::new(),
+                allowed_providers: Vec::new(),
             };
             AuthOutcome::allow(subject)
         }
@@ -793,6 +823,8 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
         id: id.clone(),
         label: id,
         scopes: vec!["admin".to_string()],
+        allowed_models: Vec::new(),
+        allowed_providers: Vec::new(),
     })
 }
 
@@ -1300,6 +1332,8 @@ mod tests {
             label: "Persisted Key".to_string(),
             scopes: vec![ApiKeyScope::parse("chat:read").expect("scope")],
             tier: ApiKeyTier::Enterprise,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         });
         let auth = AuthenticateClientApi::new(repo, "hash-secret");
         let config = AuthzConfig::with_client_auth(auth, false, "test-secret");

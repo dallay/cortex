@@ -43,6 +43,6 @@ sha2 = "0.11"
 hex = "0.4"
 
 [dev-dependencies]
-axum-test = "15"
+axum-test = "20"
 encryption-inmemory = { path = "../encryption-inmemory" }
 

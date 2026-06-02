@@ -78,6 +78,7 @@ async fn complete_returns_valid_response_from_mock_server() {
             cacheable: true,
             priority: 0,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     let result = provider.complete(&req).await;

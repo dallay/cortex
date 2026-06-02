@@ -322,6 +322,7 @@ mod tests {
                 cacheable: true,
                 priority: 1,
             },
+            restrictions: rook_core::ApiKeyRestrictions::default(),
         }
     }
 

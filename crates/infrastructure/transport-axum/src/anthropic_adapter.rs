@@ -1,6 +1,9 @@
 // Anthropic adapter — translates between Anthropic wire format and domain model
 
-use rook_core::{CompletionRequest, Message, MessageContent, RequestMetadata, Role, StreamChunk};
+use rook_core::{
+    ApiKeyRestrictions, CompletionRequest, Message, MessageContent, RequestMetadata, Role,
+    StreamChunk,
+};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{CortexError, ModelId, RequestId};
 
@@ -124,6 +127,7 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
                 cacheable: false,
                 priority: 5,
             },
+            restrictions: ApiKeyRestrictions::default(),
         }
     }
 }

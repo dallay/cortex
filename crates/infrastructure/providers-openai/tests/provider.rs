@@ -96,6 +96,7 @@ async fn complete_returns_response_on_success() {
             cacheable: true,
             priority: 0,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     let result = provider.complete(&req).await;
@@ -145,6 +146,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
             cacheable: true,
             priority: 0,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     let chunks = provider

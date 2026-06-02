@@ -22,7 +22,7 @@ where
     Deserialize::deserialize(d).map(Some)
 }
 
-use rook_core::{ApiKeyId, ApiKeyScope, ApiKeyTier};
+use rook_core::{ApiKeyId, ApiKeyScope, ApiKeyTier, ModelId, ProviderId};
 use rook_usecases::{CreateApiKeyRequest, UpdateApiKeyRequest};
 
 use crate::api_key_dto::ListApiKeysResponseDto;
@@ -37,6 +37,10 @@ pub struct CreateApiKeyRequestDto {
     pub scopes: Vec<String>,
     pub tier: String,
     pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub allowed_models: Vec<String>,
+    #[serde(default)]
+    pub allowed_providers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +52,8 @@ pub struct UpdateApiKeyRequestDto {
     pub is_active: Option<bool>,
     #[serde(default, deserialize_with = "double_option")]
     pub expires_at: Option<Option<DateTime<Utc>>>,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_providers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +69,8 @@ pub struct ApiKeyRecordResponseDto {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<String>,
+    pub allowed_providers: Vec<String>,
 }
 
 impl From<&rook_core::ApiKeyRecord> for ApiKeyRecordResponseDto {
@@ -82,6 +90,16 @@ impl From<&rook_core::ApiKeyRecord> for ApiKeyRecordResponseDto {
             expires_at: record.expires_at,
             created_at: record.created_at,
             last_used_at: record.last_used_at,
+            allowed_models: record
+                .allowed_models
+                .iter()
+                .map(|m| m.as_str().to_string())
+                .collect(),
+            allowed_providers: record
+                .allowed_providers
+                .iter()
+                .map(|p| p.as_str().to_string())
+                .collect(),
         }
     }
 }
@@ -152,6 +170,12 @@ pub async fn create_api_key(
         scopes,
         tier,
         expires_at: req.expires_at,
+        allowed_models: req.allowed_models.into_iter().map(ModelId::new).collect(),
+        allowed_providers: req
+            .allowed_providers
+            .into_iter()
+            .map(ProviderId::new)
+            .collect(),
     };
 
     let (record, plaintext_key) = mak.create(domain_req).await.map_err(map_error)?;
@@ -221,6 +245,12 @@ pub async fn update_api_key(
         tier,
         is_active: req.is_active,
         expires_at: req.expires_at,
+        allowed_models: req
+            .allowed_models
+            .map(|v| v.into_iter().map(ModelId::new).collect()),
+        allowed_providers: req
+            .allowed_providers
+            .map(|v| v.into_iter().map(ProviderId::new).collect()),
     };
 
     let record = mak.update(&key_id, domain_req).await.map_err(map_error)?;

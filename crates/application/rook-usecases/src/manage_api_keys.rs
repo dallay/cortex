@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier,
-    ApiKeyValidationError,
+    ApiKeyValidationError, ModelId, ProviderId,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +90,8 @@ impl ManageApiKeys {
             expires_at: request.expires_at,
             created_at: now,
             last_used_at: None,
+            allowed_models: request.allowed_models,
+            allowed_providers: request.allowed_providers,
         };
 
         self.repo.create(&record).await?;
@@ -144,6 +146,10 @@ impl ManageApiKeys {
             expires_at,
             created_at: existing.created_at,
             last_used_at: existing.last_used_at,
+            allowed_models: request.allowed_models.unwrap_or(existing.allowed_models),
+            allowed_providers: request
+                .allowed_providers
+                .unwrap_or(existing.allowed_providers),
         };
 
         self.repo.update(&updated).await?;
@@ -172,6 +178,8 @@ pub struct CreateApiKeyRequest {
     pub scopes: Vec<ApiKeyScope>,
     pub tier: ApiKeyTier,
     pub expires_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<ModelId>,
+    pub allowed_providers: Vec<ProviderId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -181,6 +189,8 @@ pub struct UpdateApiKeyRequest {
     pub tier: Option<ApiKeyTier>,
     pub is_active: Option<bool>,
     pub expires_at: Option<Option<DateTime<Utc>>>,
+    pub allowed_models: Option<Vec<ModelId>>,
+    pub allowed_providers: Option<Vec<ProviderId>>,
 }
 
 /// Validates that every scope in the slice is a known canonical value.
@@ -193,6 +203,9 @@ fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
             }
             ApiKeyValidationError::EmptyScope => {
                 ManageApiKeysError::Validation("scope must not be empty".into())
+            }
+            ApiKeyValidationError::InvalidTier(t) => {
+                ManageApiKeysError::Validation(format!("invalid tier: {t}"))
             }
         })?;
     }
@@ -337,6 +350,8 @@ mod tests {
             scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
         let (record, raw_key) = usecase.create(create_req).await.unwrap();
         assert_eq!(record.label, "Dev Key");
@@ -360,6 +375,8 @@ mod tests {
             tier: Some(ApiKeyTier::Enterprise),
             is_active: Some(false),
             expires_at: None,
+            allowed_models: None,
+            allowed_providers: None,
         };
         let updated = usecase.update(&record.id, update_req).await.unwrap();
         assert_eq!(updated.label, "Prod Key");
@@ -384,6 +401,8 @@ mod tests {
             scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
         assert!(record.is_active);
@@ -407,6 +426,8 @@ mod tests {
                 scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
                 tier: ApiKeyTier::Free,
                 expires_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
             };
             usecase.create(create_req).await.unwrap();
         }
@@ -432,6 +453,8 @@ mod tests {
             scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: Some(Utc::now() - chrono::Duration::days(1)),
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
 
         let result = usecase.create(create_req).await;
@@ -454,6 +477,8 @@ mod tests {
             scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -480,6 +505,8 @@ mod tests {
             scopes: vec![bad_scope],
             tier: ApiKeyTier::Free,
             expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
 
         let result = usecase.create(create_req).await;
@@ -503,6 +530,8 @@ mod tests {
             scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
             tier: ApiKeyTier::Free,
             expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -521,5 +550,86 @@ mod tests {
             }
             other => panic!("expected Validation error, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_create_with_allowed_models_and_providers() {
+        use rook_core::{ModelId, ProviderId};
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+
+        let create_req = CreateApiKeyRequest {
+            label: "Restricted Key".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+            tier: ApiKeyTier::Free,
+            expires_at: None,
+            allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
+            allowed_providers: vec![ProviderId::new("openai")],
+        };
+        let (record, _) = usecase.create(create_req).await.unwrap();
+
+        assert_eq!(record.allowed_models.len(), 2);
+        assert_eq!(record.allowed_models[0].as_str(), "gpt-4");
+        assert_eq!(record.allowed_providers.len(), 1);
+        assert_eq!(record.allowed_providers[0].as_str(), "openai");
+    }
+
+    #[tokio::test]
+    async fn test_update_allowed_models_and_providers() {
+        use rook_core::{ModelId, ProviderId};
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+
+        let create_req = CreateApiKeyRequest {
+            label: "Key".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+            tier: ApiKeyTier::Free,
+            expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+        };
+        let (record, _) = usecase.create(create_req).await.unwrap();
+        assert!(record.allowed_models.is_empty());
+
+        // Update to add restrictions
+        let update_req = UpdateApiKeyRequest {
+            allowed_models: Some(vec![ModelId::new("gpt-4o")]),
+            allowed_providers: Some(vec![ProviderId::new("anthropic")]),
+            ..Default::default()
+        };
+        let updated = usecase.update(&record.id, update_req).await.unwrap();
+        assert_eq!(updated.allowed_models.len(), 1);
+        assert_eq!(updated.allowed_models[0].as_str(), "gpt-4o");
+        assert_eq!(updated.allowed_providers[0].as_str(), "anthropic");
+
+        // Update to clear restrictions (set to empty = all allowed)
+        let clear_req = UpdateApiKeyRequest {
+            allowed_models: Some(vec![]),
+            allowed_providers: Some(vec![]),
+            ..Default::default()
+        };
+        let cleared = usecase.update(&record.id, clear_req).await.unwrap();
+        assert!(cleared.allowed_models.is_empty());
+        assert!(cleared.allowed_providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_empty_restrictions_means_all_allowed() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret");
+
+        let create_req = CreateApiKeyRequest {
+            label: "Unrestricted Key".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:write").unwrap()],
+            tier: ApiKeyTier::Pro,
+            expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+        };
+        let (record, _) = usecase.create(create_req).await.unwrap();
+
+        // Empty = unrestricted: no allowed_models means all models OK
+        assert!(record.allowed_models.is_empty(), "empty = unrestricted");
+        assert!(record.allowed_providers.is_empty(), "empty = unrestricted");
     }
 }

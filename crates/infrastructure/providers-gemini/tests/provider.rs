@@ -67,6 +67,7 @@ async fn complete_returns_error_not_implemented() {
             cacheable: true,
             priority: 0,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     let result = provider.complete(&req).await;

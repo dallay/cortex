@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared_kernel::{ModelId, ProviderId};
 use smol_str::SmolStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,6 +132,10 @@ pub struct ApiKeySubject {
     pub label: String,
     pub scopes: Vec<ApiKeyScope>,
     pub tier: ApiKeyTier,
+    /// Empty vec means unrestricted (all models allowed).
+    pub allowed_models: Vec<ModelId>,
+    /// Empty vec means unrestricted (all providers allowed).
+    pub allowed_providers: Vec<ProviderId>,
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -166,6 +171,10 @@ pub struct ApiKeyRecord {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    /// Empty vec means unrestricted (all models allowed).
+    pub allowed_models: Vec<ModelId>,
+    /// Empty vec means unrestricted (all providers allowed).
+    pub allowed_providers: Vec<ProviderId>,
 }
 
 #[cfg(test)]
@@ -221,5 +230,49 @@ mod tests {
     fn parse_lenient_accepts_known_scope() {
         let scope = ApiKeyScope::parse_lenient("chat:read");
         assert_eq!(scope.as_str(), "chat:read");
+    }
+
+    #[test]
+    fn api_key_record_has_allowed_models_and_providers_fields() {
+        use shared_kernel::{ModelId, ProviderId};
+        let record = ApiKeyRecord {
+            id: ApiKeyId::new("test-key"),
+            label: "Test".to_string(),
+            key_hash: "hash".to_string(),
+            key_prefix: "prefix".to_string(),
+            scopes: vec![],
+            tier: ApiKeyTier::Free,
+            is_active: true,
+            revoked_at: None,
+            expires_at: None,
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
+            allowed_providers: vec![ProviderId::new("openai")],
+        };
+        assert_eq!(record.allowed_models.len(), 2);
+        assert_eq!(record.allowed_providers.len(), 1);
+    }
+
+    #[test]
+    fn api_key_record_empty_restrictions_means_unrestricted() {
+        let record = ApiKeyRecord {
+            id: ApiKeyId::new("test-key"),
+            label: "Test".to_string(),
+            key_hash: "hash".to_string(),
+            key_prefix: "prefix".to_string(),
+            scopes: vec![],
+            tier: ApiKeyTier::Free,
+            is_active: true,
+            revoked_at: None,
+            expires_at: None,
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+        };
+        // Empty means unrestricted — both fields are present and empty
+        assert!(record.allowed_models.is_empty());
+        assert!(record.allowed_providers.is_empty());
     }
 }

@@ -23,6 +23,8 @@ fn test_record() -> ApiKeyRecord {
         expires_at: Some(Utc::now() + chrono::Duration::days(30)),
         created_at: Utc::now(),
         last_used_at: None,
+        allowed_models: vec![],
+        allowed_providers: vec![],
     }
 }
 

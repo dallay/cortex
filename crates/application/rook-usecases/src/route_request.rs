@@ -55,6 +55,16 @@ impl RouteRequest {
         let cache_key = req.cache_key();
         let start = Instant::now();
 
+        // 0. Model restriction check (before any provider interaction)
+        if !req.restrictions.allowed_models.is_empty()
+            && !req.restrictions.allowed_models.contains(&req.model)
+        {
+            return Err(CortexError::forbidden(format!(
+                "model '{}' is not permitted by this API key",
+                req.model.as_str()
+            )));
+        }
+
         // 1. Cache hit?
         if req.metadata.cacheable {
             if let Some(cached) = self.cache.get(&cache_key).await? {
@@ -66,6 +76,16 @@ impl RouteRequest {
         // 2. Select provider
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
+
+        // 2a. Provider restriction check (after selection, before execution)
+        if !req.restrictions.allowed_providers.is_empty()
+            && !req.restrictions.allowed_providers.contains(&provider_id)
+        {
+            return Err(CortexError::forbidden(format!(
+                "provider '{}' is not permitted by this API key",
+                provider_id.as_str()
+            )));
+        }
 
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(
@@ -130,8 +150,29 @@ impl RouteRequest {
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
         let start = Instant::now();
+
+        // 0. Model restriction check
+        if !req.restrictions.allowed_models.is_empty()
+            && !req.restrictions.allowed_models.contains(&req.model)
+        {
+            return Err(CortexError::forbidden(format!(
+                "model '{}' is not permitted by this API key",
+                req.model.as_str()
+            )));
+        }
+
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
+
+        // 0a. Provider restriction check
+        if !req.restrictions.allowed_providers.is_empty()
+            && !req.restrictions.allowed_providers.contains(&provider_id)
+        {
+            return Err(CortexError::forbidden(format!(
+                "provider '{}' is not permitted by this API key",
+                provider_id.as_str()
+            )));
+        }
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(
             client_format,
@@ -403,6 +444,7 @@ mod tests {
                 cacheable: true,
                 priority: 1,
             },
+            restrictions: rook_core::ApiKeyRestrictions::default(),
         }
     }
 
@@ -451,5 +493,99 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, RequestStatus::Success);
         assert_eq!(entries[0].usage.as_ref().unwrap().total_tokens, 5);
+    }
+
+    fn make_usecase() -> RouteRequest {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+        });
+        RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Arc::new(TestFormatTranslator),
+        )
+    }
+
+    #[tokio::test]
+    async fn execute_is_forbidden_when_model_not_in_allowed_list() {
+        let usecase = make_usecase();
+        let mut req = request();
+        req.restrictions.allowed_models =
+            vec![ModelId::new("gpt-4"), ModelId::new("claude-3-opus")];
+        // TEST_MODEL is "gpt-test" — not in the allowed list
+
+        let result = usecase.execute(req).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_forbidden(), "expected forbidden, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn execute_succeeds_when_model_is_in_allowed_list() {
+        let usecase = make_usecase();
+        let mut req = request();
+        req.restrictions.allowed_models = vec![TEST_MODEL.clone()];
+
+        let result = usecase.execute(req).await;
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn execute_succeeds_when_allowed_models_is_empty() {
+        let usecase = make_usecase();
+        // default restrictions — empty = unrestricted
+        let result = usecase.execute(request()).await;
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
+        let usecase = make_usecase();
+        let mut req = request();
+        // test-provider is the provider selected; restrict to a different one
+        req.restrictions.allowed_providers = vec![ProviderId::new("anthropic")];
+
+        let result = usecase.execute(req).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_forbidden(), "expected forbidden, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn execute_succeeds_when_provider_is_in_allowed_list() {
+        let usecase = make_usecase();
+        let mut req = request();
+        req.restrictions.allowed_providers = vec![ProviderId::new("test-provider")];
+
+        let result = usecase.execute(req).await;
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn execute_stream_is_forbidden_when_model_not_allowed() {
+        let usecase = make_usecase();
+        let mut req = request();
+        req.restrictions.allowed_models = vec![ModelId::new("gpt-4")];
+
+        let result = usecase.execute_stream(req).await;
+        assert!(result.is_err());
+        assert!(result.err().unwrap().is_forbidden());
+    }
+
+    #[tokio::test]
+    async fn execute_stream_is_forbidden_when_provider_not_allowed() {
+        let usecase = make_usecase();
+        let mut req = request();
+        req.restrictions.allowed_providers = vec![ProviderId::new("openai")];
+
+        let result = usecase.execute_stream(req).await;
+        assert!(result.is_err());
+        assert!(result.err().unwrap().is_forbidden());
     }
 }

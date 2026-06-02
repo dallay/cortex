@@ -387,6 +387,7 @@ fn registry_domain_request() -> CompletionRequest {
             cacheable: false,
             priority: 1,
         },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
     }
 }
 

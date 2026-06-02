@@ -63,6 +63,32 @@ impl CortexError {
         self.source.is::<AllProvidersExhaustedError>()
     }
 
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(ForbiddenError(msg.into())),
+        }
+    }
+
+    pub fn is_forbidden(&self) -> bool {
+        self.source.is::<ForbiddenError>()
+    }
+
+    /// Error code for `MODEL_NOT_ALLOWED` and `PROVIDER_NOT_ALLOWED` so the
+    /// HTTP layer can return a specific `code` to the client.
+    pub fn forbidden_code(&self) -> Option<&'static str> {
+        if let Some(ForbiddenError(msg)) = self.source.downcast_ref::<ForbiddenError>() {
+            if msg.starts_with("model ") {
+                Some("model_not_allowed")
+            } else if msg.starts_with("provider ") {
+                Some("provider_not_allowed")
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn is_rate_limited(&self) -> bool {
         self.source.is::<RateLimitedError>()
     }
@@ -146,6 +172,17 @@ impl fmt::Display for InvalidRequestError {
 }
 
 impl std::error::Error for InvalidRequestError {}
+
+#[derive(Debug)]
+pub struct ForbiddenError(pub String);
+
+impl fmt::Display for ForbiddenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "forbidden: {}", self.0)
+    }
+}
+
+impl std::error::Error for ForbiddenError {}
 
 // ---------------------------------------------------------------------------
 // Result type alias

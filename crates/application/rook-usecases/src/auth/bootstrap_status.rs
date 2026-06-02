@@ -74,6 +74,8 @@ impl BootstrapStatus {
                 scopes: vec![ApiKeyScope::parse("admin").expect("static admin scope")],
                 tier: ApiKeyTier::Enterprise,
                 expires_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
             })
             .await?;
 
