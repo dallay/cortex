@@ -2,7 +2,7 @@
 
 ## Layer Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                      apps/rook                              │  ← main.rs, config.rs, di.rs
 │                  (binary, DI bootstrap)                    │
@@ -40,25 +40,31 @@
 ## Crate Responsibilities
 
 ### `shared-kernel`
+
 Common types with zero external dependencies.
+
 - `ProviderId`, `ModelId`, `RequestId` — newtype wrappers (prevents mixing at type level)
 - `CortexError` — error types: ProviderError, NotFoundError, RateLimitedError, AllProvidersExhaustedError
 - `CacheKey` — derived from request ID for caching
 
 ### `rook-core`
+
 Domain model and port traits. Completely provider-agnostic.
+
 - **Model** — `CompletionRequest`, `CompletionResponse`, `Message`, `Role`, `TokenUsage`, `StreamChunk`, `HealthStatus`, `AuditEntry`
 - **Ports** — capability traits the domain requires but cannot implement:
-  - `ProviderPort` — LLM provider capability (complete, stream, health_check)
-  - `RouterPort` — provider selection with failure notification
-  - `CachePort` — get/set/delete/clear with TTL
-  - `AuditPort` — record audit entries
-  - `ProviderRepositoryPort` — persisted provider connection storage
-  - `ProviderRegistryPort` — runtime provider lookup for health probes
-  - `KeyManager` — credential encryption boundary
+    - `ProviderPort` — LLM provider capability (complete, stream, health_check)
+    - `RouterPort` — provider selection with failure notification
+    - `CachePort` — get/set/delete/clear with TTL
+    - `AuditPort` — record audit entries
+    - `ProviderRepositoryPort` — persisted provider connection storage
+    - `ProviderRegistryPort` — runtime provider lookup for health probes
+    - `KeyManager` — credential encryption boundary
 
 ### `rook-usecases`
+
 Application orchestration.
+
 - **`RouteRequest`** — the main orchestrator: cache → select provider → execute → cache response → audit → handle failure
 - **`FallbackRouter`** — implements RouterPort with three strategies: Priority, RoundRobin, ModelBased. Includes circuit breaker (3 failures → 30s cooldown).
 - **`ManageProviders`** — enable/disable providers (interface only for now)
@@ -66,7 +72,9 @@ Application orchestration.
 - **`ManageConnections`** — runtime-managed provider connection CRUD/test workflow
 
 ### `transport-axum`
+
 HTTP transport layer. All wire-format logic lives here.
+
 - **`routes.rs`** — axum router with four endpoints
 - **`openai_adapter.rs`** — OpenAI wire format ↔ domain model translation
 - **`anthropic_adapter.rs`** — Anthropic `/v1/messages` wire format ↔ domain model
@@ -74,7 +82,9 @@ HTTP transport layer. All wire-format logic lives here.
 - **`provider_dto.rs`** — provider connection JSON DTOs; responses always include `credentials: {}`
 
 ### Provider crates (`providers-openai`, `providers-anthropic`, `providers-ollama`, `providers-gemini`, `providers-groq`)
+
 Each implements `ProviderPort` for a specific API. All share the same structure:
+
 - Config struct (id, api_key, base_url, models list, timeout_secs)
 - `new()` → `Arc<Self>`
 - `is_available()` — synchronous check (e.g., non-empty API key)
@@ -83,19 +93,25 @@ Each implements `ProviderPort` for a specific API. All share the same structure:
 - `stream()` — stub in all providers except OpenAI (not yet implemented)
 
 ### `cache-memory`
+
 `DashMap`-based in-memory cache with TTL support. Implements `CachePort`.
 
 ### `audit-sqlite`
+
 SQLite-backed audit log. Implements `AuditPort`. Auto-creates schema on init with indexes on `request_id`, `provider`, `timestamp`.
 
 ### `encryption-inmemory`
+
 AES-256-GCM credential encryption with Argon2id key derivation. Implements `KeyManager`.
 
 ### `provider-sqlite`
+
 SQLite-backed provider connection repository. Implements `ProviderRepositoryPort`.
 
 ### `apps/rook`
+
 Binary crate. Assembles all infrastructure.
+
 - **`config.rs`** — loads `RookConfig` from TOML, expands `~` in paths, expands `${ENV_VAR}` in api_key
 - **`di.rs`** — `RookContainer::build()` — builds all providers, cache, audit, router, usecases. Single place where all crates are assembled.
 - **`server.rs`** — axum server bootstrap with graceful shutdown
@@ -104,6 +120,7 @@ Binary crate. Assembles all infrastructure.
 ## Key Abstractions
 
 ### ProviderPort
+
 ```rust
 #[async_trait]
 pub trait ProviderPort: Send + Sync + 'static {
@@ -117,6 +134,7 @@ pub trait ProviderPort: Send + Sync + 'static {
 ```
 
 ### RouterPort
+
 ```rust
 #[async_trait]
 pub trait RouterPort: Send + Sync {
@@ -127,6 +145,7 @@ pub trait RouterPort: Send + Sync {
 ```
 
 ### CachePort
+
 ```rust
 #[async_trait]
 pub trait CachePort: Send + Sync {
@@ -138,6 +157,7 @@ pub trait CachePort: Send + Sync {
 ```
 
 ### AuditPort
+
 ```rust
 #[async_trait]
 pub trait AuditPort: Send + Sync {

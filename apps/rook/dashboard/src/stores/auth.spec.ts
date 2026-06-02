@@ -2,6 +2,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMock = vi.hoisted(() => ({
+  getMe: vi.fn(),
   getBootstrapStatus: vi.fn(),
   setupBootstrap: vi.fn(),
   login: vi.fn(),
@@ -22,7 +23,8 @@ describe('auth store', () => {
     apiMock.getBootstrapStatus.mockResolvedValueOnce({
       isInitialized: false,
       adminUserExists: true,
-      setupToken: 'setup-token',
+      // setup_token is no longer returned by the status endpoint — it is
+      // printed to server logs at startup as an out-of-band secret.
     })
 
     const { useAuthStore } = await import('./auth')
@@ -32,7 +34,7 @@ describe('auth store', () => {
 
     expect(store.bootstrapRequired).toBe(true)
     expect(store.initialized).toBe(true)
-    expect(store.setupToken).toBe('setup-token')
+    // setupToken is NOT populated from status — user must paste it from server logs
     expect(store.isAuthenticated).toBe(false)
   })
 
@@ -53,7 +55,7 @@ describe('auth store', () => {
     expect(store.error).toBeNull()
   })
 
-  it('sets up the first admin password and authenticates the UI session', async () => {
+  it('sets up the first admin password using the provided setup token', async () => {
     apiMock.setupBootstrap.mockResolvedValueOnce({ apiKey: 'rk_admin_initial' })
     apiMock.login.mockResolvedValueOnce({
       sessionId: 'session-1',
@@ -62,12 +64,12 @@ describe('auth store', () => {
 
     const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
-    store.setupToken = 'setup-token'
 
-    await store.setupAdminPassword('test-fixture-password')
+    // User pastes the token from server logs into the setup form
+    await store.setupAdminPassword('rk-setup-token-from-logs', 'test-fixture-password')
 
     expect(apiMock.setupBootstrap).toHaveBeenCalledWith({
-      setupToken: 'setup-token',
+      setupToken: 'rk-setup-token-from-logs',
       password: 'test-fixture-password',
     })
     expect(apiMock.login).toHaveBeenCalledWith({ username: 'admin', password: 'test-fixture-password' })
@@ -76,11 +78,11 @@ describe('auth store', () => {
     expect(store.isAuthenticated).toBe(true)
   })
 
-  it('requires a setup token before submitting first-time password setup', async () => {
+  it('rejects setup when no setup token is provided', async () => {
     const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
 
-    await expect(store.setupAdminPassword('test-fixture-password')).rejects.toThrow('Setup token is missing')
+    await expect(store.setupAdminPassword('', 'test-fixture-password')).rejects.toThrow('Setup token is missing')
 
     expect(apiMock.setupBootstrap).not.toHaveBeenCalled()
     expect(store.error).toBe('Setup token is missing')

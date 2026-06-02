@@ -1,0 +1,37 @@
+# =============================================================================
+# dev/docker-compose.dev.yml — Single-container dev mode for rook
+#
+# Smoke test: build the rook:dev image from dev/Dockerfile.runtime and run it
+# in isolation. Nothing on the host is touched beyond the image itself and
+# the 8080 port mapping.
+#
+# Usage:
+#   docker compose -f dev/docker-compose.dev.yml up -d
+#   docker compose -f dev/docker-compose.dev.yml down
+#
+# Or via the wrapper:
+#   dev/run.sh up
+#   dev/run.sh down
+# =============================================================================
+
+services:
+  rook-dev:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.dev
+    image: rook:dev
+    container_name: rook-dev
+    ports:
+      - "8090:8080"
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    volumes:
+      - ./test-configs/rook-dev.toml:/app/rook.toml:ro
+    restart: unless-stopped
+    networks:
+      - rook-dev-net
+
+networks:
+  rook-dev-net:
+    driver: bridge

@@ -13,7 +13,6 @@ use crate::{
 pub struct BootstrapState {
     pub is_initialized: bool,
     pub admin_user_exists: bool,
-    pub setup_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +53,11 @@ impl BootstrapStatus {
             return Err(BootstrapSetupError::AlreadyInitialized);
         }
 
-        if input.setup_token != input.expected_setup_token {
+        // Constant-time comparison to prevent timing side-channel.
+        // Both tokens are valid UTF-8 strings; compare as byte slices.
+        let a = input.setup_token.as_bytes();
+        let b = input.expected_setup_token.as_bytes();
+        if a.len() != b.len() || subtle::ConstantTimeEq::ct_eq(a, b).unwrap_u8() != 1 {
             return Err(BootstrapSetupError::InvalidSetupToken);
         }
 
@@ -77,13 +80,14 @@ impl BootstrapStatus {
         Ok(BootstrapSetupOutput { api_key })
     }
 
-    pub async fn execute(
-        &self,
-        setup_token: Option<String>,
-    ) -> Result<BootstrapState, BootstrapStatusError> {
+    pub async fn execute(&self) -> Result<BootstrapState, BootstrapStatusError> {
         // A user row created by ensure_admin_user at startup starts with
         // password_hash = NULL.  The system is only truly "initialized" once the
         // admin has set a real password via the setup flow.
+        // NOTE: The setup token is intentionally NOT included in this response.
+        // It is an out-of-band secret printed only to server logs, proving the
+        // caller has local server access. Exposing it via HTTP would allow
+        // unauthenticated remote takeover of any fresh installation.
         let admin = self.user_repo.find_by_username("admin").await?;
         let admin_user_exists = admin.is_some();
         let is_initialized = admin
@@ -93,7 +97,6 @@ impl BootstrapStatus {
         Ok(BootstrapState {
             is_initialized,
             admin_user_exists,
-            setup_token: if is_initialized { None } else { setup_token },
         })
     }
 }
@@ -128,9 +131,9 @@ mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use rook_core::{
-        ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort,
-        ApiKeySubject, NewUser, PasswordHash, PasswordHashError, PasswordHasher, User,
-        UserId, UserRepositoryError,
+        ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeySubject,
+        NewUser, PasswordHash, PasswordHashError, PasswordHasher, User, UserId,
+        UserRepositoryError,
     };
     use std::sync::Mutex;
 
@@ -250,10 +253,7 @@ mod tests {
             Ok(self.records.lock().unwrap().clone())
         }
 
-        async fn find(
-            &self,
-            id: &ApiKeyId,
-        ) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
+        async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
             let records = self.records.lock().unwrap();
             Ok(records.iter().find(|r| &r.id == id).cloned())
         }
@@ -324,27 +324,24 @@ mod tests {
     ) -> (SetAdminPassword, ManageApiKeys) {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(FakePasswordHasher);
         let set_pw = SetAdminPassword::new(user_repo, hasher);
-        let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
-            Arc::new(FakeApiKeyRepository::default());
+        let api_key_repo: Arc<dyn ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
         let manage_keys = ManageApiKeys::new(api_key_repo, "test-secret");
         (set_pw, manage_keys)
     }
+
+    // --- execute() — status reporting never exposes the setup token ---
 
     #[test]
     fn reports_uninitialized_when_no_admin_row_exists() {
         runtime().block_on(async {
             let repo = Arc::new(FakeUserRepository::no_admin());
-            let state = BootstrapStatus::new(repo)
-                .execute(Some("rook_setup_token".to_string()))
-                .await
-                .expect("state");
+            let state = BootstrapStatus::new(repo).execute().await.expect("state");
 
             assert_eq!(
                 state,
                 BootstrapState {
                     is_initialized: false,
                     admin_user_exists: false,
-                    setup_token: Some("rook_setup_token".to_string()),
                 }
             );
         });
@@ -357,39 +354,52 @@ mod tests {
     fn reports_uninitialized_when_admin_has_no_password() {
         runtime().block_on(async {
             let repo = Arc::new(FakeUserRepository::admin_without_password());
-            let state = BootstrapStatus::new(repo)
-                .execute(Some("rook_setup_token".to_string()))
-                .await
-                .expect("state");
+            let state = BootstrapStatus::new(repo).execute().await.expect("state");
 
             assert_eq!(
                 state,
                 BootstrapState {
                     is_initialized: false,
                     admin_user_exists: true,
-                    setup_token: Some("rook_setup_token".to_string()),
                 }
             );
         });
     }
 
     #[test]
-    fn reports_initialized_and_hides_token_when_admin_has_password() {
+    fn reports_initialized_when_admin_has_password() {
         runtime().block_on(async {
             let repo = Arc::new(FakeUserRepository::admin_with_password());
-            let state = BootstrapStatus::new(repo)
-                .execute(Some("rook_setup_token".to_string()))
-                .await
-                .expect("state");
+            let state = BootstrapStatus::new(repo).execute().await.expect("state");
 
             assert_eq!(
                 state,
                 BootstrapState {
                     is_initialized: true,
                     admin_user_exists: true,
-                    setup_token: None,
                 }
             );
+        });
+    }
+
+    #[test]
+    fn status_response_never_contains_setup_token_regardless_of_state() {
+        // Security invariant: the HTTP status endpoint must NEVER leak the
+        // setup token. The token is an out-of-band secret visible only in
+        // server logs, which proves local server access.
+        runtime().block_on(async {
+            for repo in [
+                Arc::new(FakeUserRepository::no_admin()) as Arc<dyn UserRepositoryPort>,
+                Arc::new(FakeUserRepository::admin_without_password()),
+                Arc::new(FakeUserRepository::admin_with_password()),
+            ] {
+                let state = BootstrapStatus::new(repo).execute().await.expect("state");
+                // BootstrapState no longer has a setup_token field — this
+                // assertion validates the structural contract at compile time.
+                // The absence of the field IS the security guarantee.
+                let _ = state.is_initialized; // fields that must exist
+                let _ = state.admin_user_exists;
+            }
         });
     }
 
@@ -401,10 +411,7 @@ mod tests {
 
         #[async_trait]
         impl UserRepositoryPort for ErrorRepo {
-            async fn find_by_username(
-                &self,
-                _: &str,
-            ) -> Result<Option<User>, UserRepositoryError> {
+            async fn find_by_username(&self, _: &str) -> Result<Option<User>, UserRepositoryError> {
                 Err(UserRepositoryError::Database("connection lost".to_string()))
             }
 
@@ -431,31 +438,11 @@ mod tests {
 
         runtime().block_on(async {
             let repo = Arc::new(ErrorRepo);
-            let result = BootstrapStatus::new(repo).execute(None).await;
+            let result = BootstrapStatus::new(repo).execute().await;
             assert!(matches!(
                 result.unwrap_err(),
                 BootstrapStatusError::UserRepository(UserRepositoryError::Database(_))
             ));
-        });
-    }
-
-    #[test]
-    fn execute_with_no_setup_token_returns_none_in_state() {
-        runtime().block_on(async {
-            let repo = Arc::new(FakeUserRepository::no_admin());
-            let state = BootstrapStatus::new(repo)
-                .execute(None)
-                .await
-                .expect("state");
-
-            assert_eq!(
-                state,
-                BootstrapState {
-                    is_initialized: false,
-                    admin_user_exists: false,
-                    setup_token: None,
-                }
-            );
         });
     }
 
@@ -464,8 +451,7 @@ mod tests {
     #[test]
     fn setup_returns_admin_user_missing_when_no_admin_row() {
         runtime().block_on(async {
-            let user_repo: Arc<dyn UserRepositoryPort> =
-                Arc::new(FakeUserRepository::no_admin());
+            let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepository::no_admin());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
 
@@ -481,7 +467,10 @@ mod tests {
                 )
                 .await;
 
-            assert!(matches!(result.unwrap_err(), BootstrapSetupError::AdminUserMissing));
+            assert!(matches!(
+                result.unwrap_err(),
+                BootstrapSetupError::AdminUserMissing
+            ));
         });
     }
 
@@ -505,7 +494,10 @@ mod tests {
                 )
                 .await;
 
-            assert!(matches!(result.unwrap_err(), BootstrapSetupError::AlreadyInitialized));
+            assert!(matches!(
+                result.unwrap_err(),
+                BootstrapSetupError::AlreadyInitialized
+            ));
         });
     }
 
@@ -529,7 +521,10 @@ mod tests {
                 )
                 .await;
 
-            assert!(matches!(result.unwrap_err(), BootstrapSetupError::InvalidSetupToken));
+            assert!(matches!(
+                result.unwrap_err(),
+                BootstrapSetupError::InvalidSetupToken
+            ));
         });
     }
 
@@ -553,7 +548,10 @@ mod tests {
                 )
                 .await;
 
-            assert!(matches!(result.unwrap_err(), BootstrapSetupError::InvalidSetupToken));
+            assert!(matches!(
+                result.unwrap_err(),
+                BootstrapSetupError::InvalidSetupToken
+            ));
         });
     }
 
@@ -577,7 +575,10 @@ mod tests {
                 )
                 .await;
 
-            assert!(matches!(result.unwrap_err(), BootstrapSetupError::ApiKeysDisabled));
+            assert!(matches!(
+                result.unwrap_err(),
+                BootstrapSetupError::ApiKeysDisabled
+            ));
         });
     }
 

@@ -89,14 +89,14 @@ Handles the `/v1/chat/completions` endpoint.
 
 **Inbound (OpenAI wire → domain):**
 
-| OpenAI field | Domain field | Notes |
-|---|---|---|
-| `model` | `ModelId` | Wrapped newtype |
-| `messages[].role` | `Role` | `"developer"` → `Role::Developer` |
-| `messages[].content` | `MessageContent::Text` | `serde_json::Value` — handles both `"string"` and `[{type:"text"}]` array forms via `into_text()`. Non-text parts silently skipped (Phase 2). |
-| `stream` | `stream: bool` | Defaults to `false` |
-| `max_tokens`, `temperature` | Direct | Optional passthrough |
-| `tools`, `tool_choice`, `response_format`, `stream_options` | Accepted, not routed | Forward-compat; no `deny_unknown_fields` to avoid silent 422 |
+| OpenAI field                                                | Domain field           | Notes                                                                                                                                         |
+|-------------------------------------------------------------|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| `model`                                                     | `ModelId`              | Wrapped newtype                                                                                                                               |
+| `messages[].role`                                           | `Role`                 | `"developer"` → `Role::Developer`                                                                                                             |
+| `messages[].content`                                        | `MessageContent::Text` | `serde_json::Value` — handles both `"string"` and `[{type:"text"}]` array forms via `into_text()`. Non-text parts silently skipped (Phase 2). |
+| `stream`                                                    | `stream: bool`         | Defaults to `false`                                                                                                                           |
+| `max_tokens`, `temperature`                                 | Direct                 | Optional passthrough                                                                                                                          |
+| `tools`, `tool_choice`, `response_format`, `stream_options` | Accepted, not routed   | Forward-compat; no `deny_unknown_fields` to avoid silent 422                                                                                  |
 
 **Outbound (domain → OpenAI wire):**
 
@@ -104,8 +104,20 @@ Handles the `/v1/chat/completions` endpoint.
 {
   "id": "rook-{uuid}",
   "object": "chat.completion",
-  "choices": [{"message": {"role": "assistant", "content": "…"}, "finish_reason": "stop"}],
-  "usage": {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "…"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1232414,
+    "completion_tokens": 12441241,
+    "total_tokens": 98787
+  }
 }
 ```
 
@@ -119,14 +131,14 @@ Handles the `/v1/messages` endpoint.
 
 **Inbound (Anthropic wire → domain):**
 
-| Anthropic field | Domain field | Notes |
-|---|---|---|
-| `model` | `ModelId` | Wrapped newtype |
-| `messages[].role` | `Role` | `"user"` / `"assistant"` only (system is a top-level field) |
-| `messages[].content` | `MessageContent::Text` | Accepts string or content block array; extracts text blocks |
-| `system` | `Role::System` message prepended | Inserted as first message in domain `messages` vec |
-| `max_tokens` | Direct | Required by Anthropic spec |
-| `stream` | `stream: bool` | Defaults to `false` |
+| Anthropic field      | Domain field                     | Notes                                                       |
+|----------------------|----------------------------------|-------------------------------------------------------------|
+| `model`              | `ModelId`                        | Wrapped newtype                                             |
+| `messages[].role`    | `Role`                           | `"user"` / `"assistant"` only (system is a top-level field) |
+| `messages[].content` | `MessageContent::Text`           | Accepts string or content block array; extracts text blocks |
+| `system`             | `Role::System` message prepended | Inserted as first message in domain `messages` vec          |
+| `max_tokens`         | Direct                           | Required by Anthropic spec                                  |
+| `stream`             | `stream: bool`                   | Defaults to `false`                                         |
 
 **Outbound (domain → Anthropic wire):**
 
@@ -135,10 +147,18 @@ Handles the `/v1/messages` endpoint.
   "id": "rook-{uuid}",
   "type": "message",
   "role": "assistant",
-  "content": [{"type": "text", "text": "…"}],
+  "content": [
+    {
+      "type": "text",
+      "text": "…"
+    }
+  ],
   "model": "claude-opus-4-5",
   "stop_reason": "end_turn",
-  "usage": {"input_tokens": N, "output_tokens": N}
+  "usage": {
+    "input_tokens": 1232414,
+    "output_tokens": 12441241
+  }
 }
 ```
 
@@ -153,15 +173,16 @@ When the selected provider is Anthropic, the domain `CompletionRequest` is conve
 ```rust
 // providers-anthropic/src/lib.rs
 AnthropicStreamRequest {
-    model: req.model.as_str().to_string(),
-    max_tokens: req.max_tokens.or(Some(4096)),   // default if not set
-    stream: true,
-    messages: /* domain messages → Anthropic blocks */,
-    system: /* extracted Role::System / Role::Developer */,
+model: req.model.as_str().to_string(),
+max_tokens: req.max_tokens.or(Some(4096)),   // default if not set
+stream: true,
+messages: /* domain messages → Anthropic blocks */,
+system: /* extracted Role::System / Role::Developer */,
 }
 ```
 
 **Key behaviors:**
+
 - `max_tokens` defaults to `4096` if not provided (mirrors `complete()` path)
 - System/Developer roles are extracted into the top-level `system` field — Anthropic does not accept them inline in `messages`
 - Truncation uses `chars().take(N)` (not byte slices) to avoid panicking on multibyte UTF-8
@@ -172,10 +193,10 @@ AnthropicStreamRequest {
 
 Route-based detection in `transport-axum/src/routes.rs`:
 
-| Path | Detected format | Adapter used |
-|------|----------------|--------------|
-| `/v1/chat/completions` | OpenAI | `openai_adapter` |
-| `/v1/messages` | Anthropic | `anthropic_adapter` |
+| Path                   | Detected format | Adapter used        |
+|------------------------|-----------------|---------------------|
+| `/v1/chat/completions` | OpenAI          | `openai_adapter`    |
+| `/v1/messages`         | Anthropic       | `anthropic_adapter` |
 
 The `ApiFormat` enum and `FormatRegistry` scaffold exist in `format_registry.rs` but are not yet wired into runtime routing (Phase 2).
 
@@ -196,11 +217,12 @@ The translation happens implicitly through the domain pivot. No explicit "transl
 
 ## Known Gaps (Phase 2)
 
-### #61 — Tool calls (`tool_use` / `tool_result`)
+### Issue #61 — Tool calls (`tool_use` / `tool_result`)
 
 `MessageContent` only has a `Text` variant. Tool call flows are accepted at the HTTP layer (`tools` / `tool_choice` fields on `OpenAIChatRequest`) but not propagated to providers or translated in responses.
 
 **What's missing:**
+
 - `MessageContent::ToolUse { id, name, input }` and `MessageContent::ToolResult { tool_use_id, content }` variants
 - Serialization of `tool_use` blocks into Anthropic Messages API format
 - Deserialization of `tool_use` stop reason and content blocks back to domain
@@ -208,20 +230,22 @@ The translation happens implicitly through the domain pivot. No explicit "transl
 
 See [issue #61](https://github.com/dallay/cortex/issues/61).
 
-### #62 — `SseBuffer` for stateful streaming
+### Issue #62 — `SseBuffer` for stateful streaming
 
 SSE streaming currently parses each `data:` chunk independently. Multi-block responses (text + tool_use, thinking + text), correct `content_block_start`/`content_block_stop` sequencing, and tool argument accumulation across partial chunks all require a stateful buffer.
 
 **What's missing:**
+
 - `SseBuffer` struct tracking `message_id`, `next_block_index`, per-block state, tool call buffers
 - Anthropic SSE event sequencing (`message_start` → `content_block_start` → `content_block_delta` → `content_block_stop` → `message_delta` → `message_stop`)
 - Proper `[DONE]` / `message_stop` termination with accumulated usage
 
 See [issue #62](https://github.com/dallay/cortex/issues/62).
 
-### #63 — `FormatRegistry::register()`
+### Issue #63 — `FormatRegistry::register()`
 
 The `FormatRegistry` is a scaffold with no registered translators. Cross-format routing is implicit and works only because the domain model is the pivot. Making it explicit allows:
+
 - Runtime validation that a translator exists for a given (client_format, provider_format) pair
 - Pluggable translator registration at boot in `di.rs`
 - Future support for additional formats (Gemini, Ollama, Groq) without modifying route handlers
@@ -234,15 +258,15 @@ See [issue #63](https://github.com/dallay/cortex/issues/63).
 
 For reference, `tmp/OmniRoute/open-sse/translator/` uses a **wire-to-wire** approach:
 
-| Aspect | Rook (domain pivot) | OmniRoute (wire-to-wire) |
-|---|---|---|
-| Translation path | `wire → domain → wire` | `wire → wire` |
-| N formats cost | `2×N` adapters | `N×(N-1)` translator pairs |
-| Format isolation | Each adapter knows only its own format | Each translator knows two formats |
-| Edge case handling | Phase 1: minimal; Phase 2: in-domain | All edge cases in per-pair files (~500 LOC/pair) |
-| Type safety | Rust types enforced at compile time | TypeScript, runtime validation |
-| Registry key | `(ApiFormat, ApiFormat)` → `Box<dyn Translator>` | `"from:to"` → `Fn` in a `Map` |
-| Tool prefix strategy | N/A yet (Phase 2) | `proxy_` prefix for Claude OAuth |
-| Streaming state | `SseBuffer` (Phase 2) | `state` object passed per chunk |
+| Aspect               | Rook (domain pivot)                              | OmniRoute (wire-to-wire)                         |
+|----------------------|--------------------------------------------------|--------------------------------------------------|
+| Translation path     | `wire → domain → wire`                           | `wire → wire`                                    |
+| N formats cost       | `2×N` adapters                                   | `N×(N-1)` translator pairs                       |
+| Format isolation     | Each adapter knows only its own format           | Each translator knows two formats                |
+| Edge case handling   | Phase 1: minimal; Phase 2: in-domain             | All edge cases in per-pair files (~500 LOC/pair) |
+| Type safety          | Rust types enforced at compile time              | TypeScript, runtime validation                   |
+| Registry key         | `(ApiFormat, ApiFormat)` → `Box<dyn Translator>` | `"from:to"` → `Fn` in a `Map`                    |
+| Tool prefix strategy | N/A yet (Phase 2)                                | `proxy_` prefix for Claude OAuth                 |
+| Streaming state      | `SseBuffer` (Phase 2)                            | `state` object passed per chunk                  |
 
 The domain-pivot approach reduces translator count and enforces a clean boundary: wire-format knowledge never leaks into the domain. The tradeoff is that Phase 2 work is required to reach feature parity on tool calls and streaming state.

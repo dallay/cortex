@@ -85,7 +85,7 @@ pub async fn login_handler(
 /// Extracts auth_token cookie, computes token_hash, looks up session, and revokes it.
 /// Clears the cookie on success.
 pub async fn logout_handler(
-    State(_usecases): State<Arc<RookUsecases>>,
+    State(usecases): State<Arc<RookUsecases>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Extract auth_token cookie
@@ -115,13 +115,26 @@ pub async fn logout_handler(
     // SHA-256 hash to find session
     let mut hasher = Sha256::new();
     hasher.update(&token_bytes);
-    let _token_hash = format!("{:x}", hasher.finalize());
+    let token_hash = format!("{:x}", hasher.finalize());
 
-    // TODO: Once session_repo is accessible from RookUsecases, implement full logout
-    let body = serde_json::json!({
-        "message": "Logout requires session lookup by token_hash."
-    });
-    (StatusCode::NOT_IMPLEMENTED, Json(body)).into_response()
+    // Revoke the session.
+    // "Session not found" and "already revoked" are both fine — the client's intent
+    // (logout) is achieved either way. Always clear the cookie and return success.
+    match usecases.revoke_session_by_token_hash(&token_hash).await {
+        Ok(()) => {
+            let body = serde_json::json!({ "message": "Logged out successfully." });
+            let clear_cookie =
+                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
+        }
+        Err(_) => {
+            // Session already gone — treat as successful logout and clear the cookie.
+            let body = serde_json::json!({ "message": "Logged out successfully." });
+            let clear_cookie =
+                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
+        }
+    }
 }
 
 /// Build the auth_token cookie string
@@ -168,6 +181,21 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     pub session_id: String,
     pub expires_at: String,
+}
+
+/// GET /api/me — return current authenticated user info
+///
+/// Requires a valid session cookie (auth_token). The authz middleware validates
+/// the session before this handler runs; if the cookie is missing or invalid,
+/// the middleware returns 401 before reaching here.
+///
+/// Response: 200 OK with `{ "username": "admin", "displayName": "Rook Admin" }`
+pub async fn get_me_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
+    let body = serde_json::json!({
+        "username": "admin",
+        "displayName": "Rook Admin",
+    });
+    (StatusCode::OK, Json(body)).into_response()
 }
 
 /// GET /login — generate CSRF token for browser clients

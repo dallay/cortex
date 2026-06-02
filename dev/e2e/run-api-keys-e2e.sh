@@ -21,6 +21,16 @@ REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 CONTAINER_NAME="rook-e2e-api-keys"
 export API_PORT=8081
+# Expose the host-side port to the dashboard (Vite proxy) and Playwright
+# (global-setup). The rook container listens on 8080 internally and we map
+# it to API_PORT on the host, so everything running OUTSIDE the container
+# must use API_PORT, not 8080.
+#
+# Use 127.0.0.1 (not localhost) on purpose: on macOS, Docker's userland proxy
+# only forwards IPv4, but `localhost` resolves to ::1 first, which causes
+# ECONNRESET for every request. Forcing IPv4 via 127.0.0.1 sidesteps that.
+export API_TARGET="http://127.0.0.1:${API_PORT}"
+export API_BASE_URL="${API_TARGET}"
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
 ADMIN_PASSWORD="Admin123456-"
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"

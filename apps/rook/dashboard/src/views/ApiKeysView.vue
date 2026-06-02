@@ -85,12 +85,15 @@ function maskKey(keyPrefix: string): string {
 
 async function handleCreate() {
   createError.value = null
+  const errors: string[] = []
   if (!createForm.value.label.trim()) {
-    createError.value = 'Label is required'
-    return
+    errors.push('Label is required')
   }
   if (createForm.value.scopes.length === 0) {
-    createError.value = 'At least one scope is required'
+    errors.push('At least one scope is required')
+  }
+  if (errors.length > 0) {
+    createError.value = errors.join('. ')
     return
   }
 
@@ -339,7 +342,7 @@ const tierOptions = [
               <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
                 {{ newlyCreatedKey }}
               </code>
-              <Button size="sm" variant="outline" @click="copyToClipboard(newlyCreatedKey)">
+              <Button size="sm" variant="outline" aria-label="Copy" @click="copyToClipboard(newlyCreatedKey)">
                 <Copy class="h-4 w-4" />
               </Button>
             </div>
@@ -350,8 +353,9 @@ const tierOptions = [
         <!-- Create form -->
         <form v-else @submit.prevent="handleCreate" class="space-y-4">
           <div class="space-y-2">
-            <label class="text-sm font-medium">Label</label>
+            <label for="create-key-label" class="text-sm font-medium">Label</label>
             <Input
+              id="create-key-label"
               v-model="createForm.label"
               placeholder="e.g., opencode-agent, hermes-agent"
             />
@@ -415,8 +419,8 @@ const tierOptions = [
 
         <form @submit.prevent="handleUpdate" class="space-y-4">
           <div class="space-y-2">
-            <label class="text-sm font-medium">Label</label>
-            <Input v-model="editForm.label!" />
+            <label for="edit-key-label" class="text-sm font-medium">Label</label>
+            <Input id="edit-key-label" v-model="editForm.label!" />
           </div>
 
           <div class="space-y-2">

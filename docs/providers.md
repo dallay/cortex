@@ -6,16 +6,16 @@ Each provider implements `ProviderPort` for a specific LLM API. All providers sh
 
 Every provider accepts these fields when created via the CRUD API:
 
-| Field         | Type     | Required | Default                    | Description                        |
-|---------------|----------|----------|----------------------------|------------------------------------|
-| `name`        | string   | Yes      | —                          | Human-readable connection name      |
-| `provider_kind` | string | Yes      | —                          | Provider type (see below)          |
-| `auth_type`   | string   | Yes      | —                          | `api_key` or `oauth`              |
-| `credentials` | object   | Yes      | —                          | Key-value pairs (see per provider) |
-| `base_url`    | string   | No       | Provider-specific           | API base URL                      |
-| `is_active`   | bool     | No       | `false`                    | Whether connection is in rotation  |
-| `priority`    | u8       | No       | 0                          | Priority for routing (higher = preferred) |
-| `default_model` | string | No       | —                          | Default model ID if provider has multiple |
+| Field           | Type   | Required | Default           | Description                               |
+|-----------------|--------|----------|-------------------|-------------------------------------------|
+| `name`          | string | Yes      | —                 | Human-readable connection name            |
+| `provider_kind` | string | Yes      | —                 | Provider type (see below)                 |
+| `auth_type`     | string | Yes      | —                 | `api_key` or `oauth`                      |
+| `credentials`   | object | Yes      | —                 | Key-value pairs (see per provider)        |
+| `base_url`      | string | No       | Provider-specific | API base URL                              |
+| `is_active`     | bool   | No       | `false`           | Whether connection is in rotation         |
+| `priority`      | u8     | No       | 0                 | Priority for routing (higher = preferred) |
+| `default_model` | string | No       | —                 | Default model ID if provider has multiple |
 
 ## OpenAI
 
@@ -28,6 +28,7 @@ Every provider accepts these fields when created via the CRUD API:
 **Default timeout:** 60s
 
 **API example:**
+
 ```json
 {
   "name": "openai-primary",
@@ -40,6 +41,7 @@ Every provider accepts these fields when created via the CRUD API:
 ```
 
 **Health check behavior:**
+
 - Makes a `GET /models` request to `base_url`
 - Returns `HealthStatus::Healthy` if response is 2xx
 - Returns `HealthStatus::Unhealthy` with error message on non-2xx or connection failure
@@ -48,6 +50,7 @@ Every provider accepts these fields when created via the CRUD API:
 Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provider, latency_ms, error }`, or `Unknown { provider, reason }`. The `/health` endpoint renders backwards-compatible JSON with `healthy` (bool), `latency_ms`, and `last_error` derived from the enum.
 
 **Implementation status:**
+
 - `complete()` — ✅ Implemented
 - `stream()` — ❌ Not yet implemented
 
@@ -64,6 +67,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Default timeout:** 60s
 
 **API example:**
+
 ```json
 {
   "name": "anthropic-primary",
@@ -76,10 +80,12 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 ```
 
 **Health check behavior:**
+
 - Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
 - TODO: real health check against Anthropic API
 
 **Implementation status:**
+
 - `complete()` — ❌ Not yet implemented
 - `stream()` — ❌ Not yet implemented
 
@@ -96,12 +102,11 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Default timeout:** 300s (higher than cloud providers — local models are slower)
 
 **API example:**
+
 ```json
 {
   "name": "ollama-local",
   "provider_kind": "ollama",
-  "auth_type": "api_key",
-  "credentials": {},
   "base_url": "http://localhost:11434",
   "is_active": true,
   "priority": 1
@@ -111,11 +116,13 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 > **Note:** `base_url` is required for Ollama since there is no sensible default for non-local deployments.
 
 **Health check behavior:**
+
 - Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
 - Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check (e.g., `GET /api/tags`)
 
 **Implementation status:**
+
 - `complete()` — ❌ Not yet implemented
 - `stream()` — ❌ Not yet implemented
 
@@ -132,6 +139,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Default timeout:** 60s
 
 **API example:**
+
 ```json
 {
   "name": "gemini-primary",
@@ -144,11 +152,13 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 ```
 
 **Health check behavior:**
+
 - Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
 - Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**
+
 - `complete()` — ❌ Not yet implemented
 - `stream()` — ❌ Not yet implemented
 
@@ -163,6 +173,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Default timeout:** 60s
 
 **API example:**
+
 ```json
 {
   "name": "groq-fast",
@@ -175,11 +186,13 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 ```
 
 **Health check behavior:**
+
 - Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
 - Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
 - TODO: real health check
 
 **Implementation status:**
+
 - `complete()` — ❌ Not yet implemented
 - `stream()` — ❌ Not yet implemented
 
@@ -187,17 +200,18 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 ## Provider Capability Matrix
 
-| Provider   | complete() | stream() | Real health check | Default timeout |
-|------------|------------|----------|-------------------|-----------------|
-| OpenAI     | ✅         | ❌       | ✅                | 60s             |
-| Anthropic  | ❌         | ❌       | ❌ (placeholder)  | 60s             |
-| Ollama     | ❌         | ❌       | ❌ (placeholder)  | 300s            |
-| Gemini     | ❌         | ❌       | ❌ (placeholder)  | 60s             |
-| Groq       | ❌         | ❌       | ❌ (placeholder)  | 60s             |
+| Provider  | complete() | stream() | Real health check | Default timeout |
+|-----------|------------|----------|-------------------|-----------------|
+| OpenAI    | ✅          | ❌        | ✅                 | 60s             |
+| Anthropic | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Ollama    | ❌          | ❌        | ❌ (placeholder)   | 300s            |
+| Gemini    | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Groq      | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 
 ## Circuit Breaker
 
 All providers share the same circuit breaker behavior in `FallbackRouter`:
+
 - **Threshold:** 3 consecutive failures
 - **Cooldown:** 30 seconds before retry
 - **Behavior:** Provider is skipped in selection until cooldown expires

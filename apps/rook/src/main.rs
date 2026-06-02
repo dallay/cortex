@@ -9,7 +9,7 @@ mod server;
 
 use anyhow::Context;
 use clap::Parser;
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 use db_migration::MigrationRunner;
@@ -104,11 +104,7 @@ async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
             let container = di::RookContainer::build(&config)
                 .await
                 .context("failed to build container")?;
-            let state = container
-                .usecases
-                .bootstrap_status
-                .execute(std::env::var("ROOK_SETUP_TOKEN").ok())
-                .await?;
+            let state = container.usecases.bootstrap_status.execute().await?;
             println!("initialized: {}", state.is_initialized);
             println!("admin_user_exists: {}", state.admin_user_exists);
             Ok(())
@@ -167,17 +163,12 @@ async fn start_server() -> anyhow::Result<()> {
 }
 
 async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::Result<()> {
-    let setup_token = std::env::var("ROOK_SETUP_TOKEN")
-        .ok()
-        .filter(|token| !token.trim().is_empty());
-    let state = container
-        .usecases
-        .bootstrap_status
-        .execute(setup_token.clone())
-        .await?;
+    let state = container.usecases.bootstrap_status.execute().await?;
 
     if !state.is_initialized {
-        match setup_token {
+        // Read the generated token from the in-memory RwLock (set during container build)
+        let setup_token_guard = container.usecases.setup_token.read().await;
+        match setup_token_guard.as_ref() {
             Some(token) => {
                 // Sanitize: replace control/non-printable chars to prevent log injection
                 let sanitized: String = token
@@ -196,20 +187,14 @@ async fn announce_bootstrap_if_needed(container: &di::RookContainer) -> anyhow::
                         }
                     })
                     .collect();
-                let preview = if sanitized.len() > 8 {
-                    format!("{}…", &sanitized[..8])
+                let preview = if sanitized.chars().count() > 8 {
+                    format!("{}…", sanitized.chars().take(8).collect::<String>())
                 } else {
                     sanitized.clone()
                 };
                 tracing::warn!(setup_token_preview = %preview, setup_token_len = token.len(), "rook is in bootstrap mode; set the admin password before using the server");
-                // Only print full token to interactive TTY; otherwise show preview only
-                if std::io::stderr().is_terminal() {
-                    eprintln!(
-                        "rook bootstrap mode: use setup token {sanitized} to set the admin password"
-                    );
-                } else {
-                    eprintln!("rook bootstrap mode: use setup token {preview}… (len={}) to set the admin password", token.len());
-                }
+                let banner = build_bootstrap_banner(&sanitized);
+                eprintln!("{banner}");
             }
             None => {
                 tracing::warn!("rook is in bootstrap mode; run `rook admin bootstrap` or set ROOK_SETUP_TOKEN and POST /api/bootstrap/setup");
@@ -260,6 +245,59 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Build a dynamically-sized ASCII box for the bootstrap banner.
+///
+/// Computes the box width from the longest content line so the border aligns
+/// regardless of token length.
+fn build_bootstrap_banner(sanitized_token: &str) -> String {
+    let header = "ROOK -- BOOTSTRAP MODE ACTIVE";
+    let dash_url = "http://localhost:5173";
+    let instruction = "To complete setup, open the dashboard at";
+    let token_label = "Setup token:";
+
+    // Lines to measure — compute max visible width
+    let lines: &[&str] = &[
+        header,
+        instruction,
+        dash_url,
+        &format!("{} {}", token_label, sanitized_token),
+        "along with your desired admin password.",
+    ];
+
+    let max_len = lines.iter().map(|l| l.len()).max().unwrap_or(40);
+    let width = max_len.max(62); // minimum 62 chars wide
+
+    let border = format!("+{}+", "-".repeat(width));
+
+    let center_pad = |text: &str| {
+        let pad = width.saturating_sub(text.len());
+        let left = pad / 2;
+        format!("|{}{}{}|", " ".repeat(left), text, " ".repeat(pad - left))
+    };
+
+    let left_pad = |text: &str| {
+        let pad = width.saturating_sub(text.len());
+        format!(
+            "| {}{}{}|",
+            text,
+            " ".repeat(pad.saturating_sub(1)),
+            " ".repeat(pad.saturating_sub(1))
+        )
+    };
+
+    let banner = format!(
+        "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{0}",
+        border,
+        center_pad(header),
+        left_pad(&format!("{} {}", token_label, sanitized_token)),
+        left_pad(""),
+        left_pad(instruction),
+        left_pad(dash_url),
+        left_pad("along with your desired admin password."),
+    );
+    banner
 }
 
 fn load_config() -> anyhow::Result<config::RookConfig> {

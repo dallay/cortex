@@ -24,6 +24,154 @@ ROOK_CONFIG=./rook.toml cargo run --release -p rook
 ./target/release/rook
 ```
 
+## Development Setup
+
+Complete guide to running backend + dashboard locally from scratch.
+
+### Prerequisites
+
+- Rust toolchain — `rustup` (the correct version is pinned in `rust-toolchain.toml`)
+- [just](https://github.com/casey/just) — `cargo install just`
+- [pnpm](https://pnpm.io) — `npm install -g pnpm`
+- Node.js 18+
+
+### 1. First-time setup
+
+```bash
+# Clone and enter the repo
+git clone <repo-url> && cd cortex
+
+# Install git hooks (pre-commit: fmt + check; pre-push: clippy + test)
+npx lefthook@latest install
+
+# Install dashboard npm dependencies + verify Rust toolchain
+just setup
+```
+
+### 2. Start the backend
+
+```bash
+just run
+```
+
+The backend starts on `http://localhost:8080`. On a **fresh database** it enters
+**bootstrap mode** and prints a one-time setup token in the logs:
+
+```
++-----------------------------------------------------------+
+|             ROOK -- BOOTSTRAP MODE ACTIVE                 |
++-----------------------------------------------------------+
+|  Setup token: rk-setup-<token>                            |
+|                                                            |
+|  To complete setup, open the dashboard at                  |
+|  http://localhost:5173 and enter the token above          |
+|  along with your desired admin password.                   |
++-----------------------------------------------------------+
+```
+
+### 3. Initialize the admin account
+
+The backend enters **bootstrap mode** on a fresh database and prints a setup
+token in the server logs:
+
+```
++-----------------------------------------------------------+
+|             ROOK -- BOOTSTRAP MODE ACTIVE                 |
++-----------------------------------------------------------+
+|  Setup token: rk-setup-<token>                            |
+|                                                            |
+|  To complete setup, open the dashboard at                  |
+|  http://localhost:5173 and enter the token above          |
+|  along with your desired admin password.                   |
++-----------------------------------------------------------+
+```
+
+Open the dashboard (`just run-dashboard` in a second terminal) at
+`http://localhost:5173`. The setup form appears automatically when the
+server is in bootstrap mode — paste the token from the log and choose a
+strong admin password (minimum 12 characters).
+
+This creates the admin user and clears the setup token from memory.
+The server switches to normal mode immediately — no restart needed.
+
+> **Default admin email**: `admin@rook.local`
+
+### 4. Start the dashboard
+
+Open a second terminal:
+
+```bash
+just run-dashboard
+```
+
+Dashboard is served at `http://localhost:5173`. It proxies API calls to `localhost:8080`
+via Vite's dev proxy — no CORS configuration required.
+
+Log in with the admin credentials you set in step 3.
+
+### Resetting the database
+
+SQLite uses three files (`rook.db`, `rook.db-wal`, `rook.db-shm`). **Always delete
+all three together** — a leftover WAL file against a fresh DB causes SQLite error 522
+("file truncated") on the next startup.
+
+```bash
+just db-reset
+```
+
+Then restart the backend — it will re-run migrations and enter bootstrap mode again.
+
+### Killing a stale backend
+
+If the backend crashes without releasing the port:
+
+```bash
+just kill-backend
+```
+
+### Environment variables (optional)
+
+| Variable                | Default | Purpose                                               |
+|-------------------------|---------|-------------------------------------------------------|
+| `ROOK_CONFIG`           | —       | Path to a custom `rook.toml` (overrides defaults)     |
+| `ENCRYPTION_PASSPHRASE` | —       | Required when `provider_crud.enabled = true`          |
+| `ENCRYPTION_SALT`       | —       | Required when `provider_crud.enabled = true`          |
+| `RUST_LOG`              | `info`  | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+
+Create a `.env` file at the repo root — `just` loads it automatically (`dotenv-load = true`):
+
+```bash
+# .env (never commit this file)
+RUST_LOG=debug
+ENCRYPTION_PASSPHRASE=dev-passphrase-change-me
+ENCRYPTION_SALT=dev-salt-change-me
+```
+
+### Running E2E tests
+
+Playwright tests require both the backend and frontend to be running. The global
+setup handles authentication automatically.
+
+```bash
+# Run all E2E tests against a local backend (Chromium + Firefox + WebKit)
+cd apps/rook/dashboard && pnpm test:e2e
+```
+
+**Isolated mode (Docker — recommended, no host DB pollution):**
+
+```bash
+# Build image + start container + run Playwright + cleanup in one shot
+just test-e2e
+
+# Start container only, then run tests manually
+just test-e2e-dev
+cd apps/rook/dashboard && pnpm playwright test e2e/api-keys.spec.ts
+just test-e2e-cleanup
+```
+
+See [`dev/README.md`](dev/README.md) for the full breakdown of all Docker testing
+paths (smoke test, Playwright E2E, multi-distro validation).
+
 ## Project Structure
 
 ```text

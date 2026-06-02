@@ -311,6 +311,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                     revoked_at, expires_at, created_at, last_used_at
              FROM api_keys
+             WHERE is_active = 1
              ORDER BY created_at DESC
              LIMIT ?1 OFFSET ?2",
             )
@@ -325,8 +326,12 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
 
     async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
         let conn = self.lock()?;
-        conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| row.get(0))
-            .map_err(db_error)
+        conn.query_row(
+            "SELECT COUNT(*) FROM api_keys WHERE is_active = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)
     }
 }
 
@@ -705,6 +710,8 @@ fn db_error(error: rusqlite::Error) -> ApiKeyRepositoryError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use chrono::{Duration, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryPort, ApiKeyTier, NewSession as CoreNewSession,
@@ -725,15 +732,32 @@ mod tests {
             .expect("runtime")
     }
 
-    // Shared temp file path for tests that need both repos
+    // Monotonic counter for unique test DB paths. Two tests that both call
+    // shared_test_db() in the same nanosecond (which happens in parallel runs)
+    // used to collide on the same file and race the migration runner, causing
+    // "table provider_connections already exists" failures.
+    static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Shared temp file path for tests that need both repos.
+    //
+    // Uniqueness is guaranteed by combining:
+    //   * PID        — distinct test binaries
+    //   * nanos      — wall-clock time, so paths sort roughly by creation
+    //   * atomic seq — monotonic fallback if two calls land in the same nanosecond
+    //
+    // We intentionally do NOT share a path between tests. Even with idempotent
+    // migrations, two Connection::open() on the same file running migrations in
+    // parallel is a TOCTOU race that Refinery does not handle.
     fn shared_test_db() -> impl AsRef<Path> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
+        let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let seq = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
         let dir = std::env::temp_dir();
-        dir.join(format!("rook_test_auth_{}.db", timestamp))
+        dir.join(format!("rook_test_auth_{pid}_{nanos}_{seq}.db"))
     }
 
     fn cleanup_test_db(path: &Path) {

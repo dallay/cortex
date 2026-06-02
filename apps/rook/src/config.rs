@@ -49,7 +49,7 @@ pub struct ApiKeysAuthConfig {
 impl Default for ApiKeysAuthConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allow_env_fallback: true,
         }
     }
@@ -109,7 +109,7 @@ impl CacheConfig {
 impl RookConfig {
     /// Load config from a TOML file, expanding ~ in paths.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path)?; // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let mut config: RookConfig = toml::from_str(&content)?;
 
         if config.database.db_path.starts_with('~') {

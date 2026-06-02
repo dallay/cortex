@@ -487,7 +487,7 @@ async fn bootstrap_rejection(
     }
 
     let bootstrap_status = config.bootstrap_status.as_ref()?;
-    match bootstrap_status.execute(None).await {
+    match bootstrap_status.execute().await {
         Ok(state) if state.is_initialized => None,
         Ok(_) => Some(
             (

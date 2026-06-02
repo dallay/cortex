@@ -102,3 +102,60 @@ Note: `aarch64-unknown-linux-gnu` is **not cross-compiled in CI** due to OpenSSL
 - [Providers](docs/providers.md) — per-provider config, timeouts, health checks
 - [API Reference](docs/api.md) — endpoints, wire formats
 - `openspec/` — SDD change artifacts
+
+## Definition of Done — Pre-Completion Verification
+
+**No feature, fix, or refactor is "done" until every check below passes locally
+and the green output is captured.** "I think it works" is not evidence;
+command output is. **Load the `verification-before-completion` skill before
+running this list** — it enforces evidence-before-assertion.
+
+### Mandatory gate (canonical local CI)
+
+```bash
+just ci-local
+```
+
+Runs in order: `cargo fmt --all -- --check` → `cargo clippy --workspace
+--all-targets -- -D warnings` → `cargo check --workspace` →
+`cargo test --workspace` → `cargo doc --workspace --no-deps` → `cargo audit`
+(warnings only) → Playwright e2e (`./dev/e2e/run-api-keys-e2e.sh --test`).
+
+If any step is red, the work is not done. Fix and re-run until fully green.
+
+### Focused runs during iteration
+
+- `just fmt` / `just fmt-check` — keep rustfmt clean (also runs in pre-commit hook)
+- `just clippy` — deny-warnings policy (also runs in pre-push hook)
+- `just test` — full workspace unit + integration + doc tests
+- `just test-unit` — fast unit-only feedback (`cargo test --workspace --lib`)
+- `just test-integration` — integration tests only (`--test '*'`)
+- `just test-e2e` — Playwright suite (requires `just test-e2e-build` first + Docker)
+- Dashboard unit tests: `cd apps/rook/dashboard && pnpm exec vitest run`
+- Dashboard typecheck: `cd apps/rook/dashboard && pnpm run typecheck`
+- Markdown lint: `pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"`
+
+### Cross-platform (only when release-bound or platform-specific)
+
+- `just build-targets` — cross-compile Linux, Windows, macOS (Intel + ARM)
+- If the change touches platform code (path handling, OS calls, FFI), run
+  `cargo test --workspace --all-features` on the target OS — CI's `test-multi`
+  matrix covers macOS and Windows
+
+### Rules of thumb
+
+- **"If you didn't run it, you didn't finish it."**
+- **"Green output, not green vibes."** Attach command output, traces, or
+  screenshots to PR descriptions or `openspec/` change artifacts.
+- Do not skip the e2e step on UI changes — unit tests do not catch
+  Vue/Playwright regressions.
+- Do not claim a fix is working based on the first run; flake-prone tests
+  (e.g. SQLite temp-file races) may need an isolated re-run before reporting.
+- A failing `ci-local` is a release blocker, not a follow-up issue.
+
+### Skill auto-load
+
+When the task matches "finishing an implementation and validating completion",
+the `verification-before-completion` skill is loaded automatically. Trust its
+workflow: it requires running verification commands and confirming output
+**before** any success claim.

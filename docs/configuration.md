@@ -3,6 +3,7 @@
 ## Config File Location
 
 Rook looks for config in this order:
+
 1. `ROOK_CONFIG` environment variable (path to TOML file)
 2. `$XDG_CONFIG_HOME/cortex/rook.toml`
 3. `~/.config/cortex/rook.toml`
@@ -41,31 +42,31 @@ enabled = false
 
 ### `[server]`
 
-| Field   | Type   | Default         | Description                        |
-|---------|--------|-----------------|------------------------------------|
-| `host`  | string | `"127.0.0.1"`   | Bind address                       |
-| `port`  | u16    | `8080`          | Listen port                        |
+| Field  | Type   | Default       | Description  |
+|--------|--------|---------------|--------------|
+| `host` | string | `"127.0.0.1"` | Bind address |
+| `port` | u16    | `8080`        | Listen port  |
 
 ### `[routing]`
 
-| Field      | Type   | Default     | Description                               |
-|------------|--------|-------------|-------------------------------------------|
-| `strategy` | enum   | `"priority"` | Routing strategy. See Routing Strategies  |
+| Field      | Type | Default      | Description                              |
+|------------|------|--------------|------------------------------------------|
+| `strategy` | enum | `"priority"` | Routing strategy. See Routing Strategies |
 
 Supported values for `strategy`: `priority`, `round-robin`, `model-based`
 
 ### `[cache]`
 
-| Field       | Type   | Default | Description                      |
-|-------------|--------|---------|----------------------------------|
-| `enabled`   | bool   | `true`  | Enable/disable response caching   |
-| `ttl_secs`  | u64    | `300`   | Cache TTL in seconds             |
+| Field      | Type | Default | Description                     |
+|------------|------|---------|---------------------------------|
+| `enabled`  | bool | `true`  | Enable/disable response caching |
+| `ttl_secs` | u64  | `300`   | Cache TTL in seconds            |
 
 ### `[database]`
 
-| Field     | Type   | Default                                  | Description                                      |
-|-----------|--------|------------------------------------------|--------------------------------------------------|
-| `db_path` | string | `~/.local/share/cortex/rook/rook.db`     | Single SQLite database path. `~` expands to `$HOME` |
+| Field     | Type   | Default                              | Description                                         |
+|-----------|--------|--------------------------------------|-----------------------------------------------------|
+| `db_path` | string | `~/.local/share/cortex/rook/rook.db` | Single SQLite database path. `~` expands to `$HOME` |
 
 Rook stores all local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a different adapter later requires a new adapter rather than changes to use cases or domain types.
 
@@ -83,12 +84,18 @@ enabled = true
 allow_env_fallback = true
 ```
 
-| Field                | Type   | Default | Description                              |
-|----------------------|--------|---------|------------------------------------------|
-| `enabled`            | bool   | `false` | Use SQLite-backed client API key auth    |
-| `allow_env_fallback` | bool   | `true`  | Permit legacy `CLIENT_API_KEYS` fallback |
+| Field                | Type | Default | Description                                                 |
+|----------------------|------|---------|-------------------------------------------------------------|
+| `enabled`            | bool | `false` | Use SQLite-backed client API key auth                      |
+| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback                     |
 
-When `enabled = true`, `API_KEY_HASH_SECRET` is required and must be non-empty. Legacy `CLIENT_API_KEYS` may still be used for local compatibility only when `allow_env_fallback = true`.
+When `enabled = true`, Rook resolves the hash secret in the following priority order:
+
+1. **`API_KEY_HASH_SECRET`** environment variable (production / Docker — always use this).
+2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run.
+3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files.
+
+Production deployments **must** set `API_KEY_HASH_SECRET` via environment variable so the secret is not stored on disk and survives restarts. The `allow_env_fallback` option also permits the legacy `CLIENT_API_KEYS` fallback for local compatibility only.
 
 ### CLI: seed-admin
 
@@ -99,6 +106,7 @@ rook seed-admin <password>
 ```
 
 Requires `ROOK_CONFIG` and `API_KEY_HASH_SECRET` environment variables to be set. Use this for:
+
 - Initial setup when no admin password exists
 - E2E testing to bootstrap a known admin user
 
@@ -117,9 +125,9 @@ Provider connection management is disabled by default. When enabled, Rook mounts
 enabled = true
 ```
 
-| Field     | Type   | Default | Description                       |
-|-----------|--------|---------|-----------------------------------|
-| `enabled` | bool   | `false` | Enable provider connection routes |
+| Field     | Type | Default | Description                       |
+|-----------|------|---------|-----------------------------------|
+| `enabled` | bool | `false` | Enable provider connection routes |
 
 When `enabled = true`, both environment variables are required and must be non-empty:
 
@@ -138,23 +146,26 @@ If the initial refresh fails (e.g., encrypted connections with an incorrect key)
 
 ### Supported Provider Kinds
 
-| Kind       | Auth required           | base_url default                |
-|------------|-------------------------|----------------------------------|
-| `openai`   | API key or OAuth token  | `https://api.openai.com`        |
-| `anthropic`| API key or OAuth token  | `https://api.anthropic.com`     |
-| `ollama`   | None (local)            | `http://localhost:11434`         |
-| `gemini`   | API key or OAuth token  | (uses Google's API)             |
-| `groq`     | API key or OAuth token  | (uses Groq's API)               |
+| Kind        | Auth required          | base_url default            |
+|-------------|------------------------|-----------------------------|
+| `openai`    | API key or OAuth token | `https://api.openai.com`    |
+| `anthropic` | API key or OAuth token | `https://api.anthropic.com` |
+| `ollama`    | None (local)           | `http://localhost:11434`    |
+| `gemini`    | API key or OAuth token | (uses Google's API)         |
+| `groq`      | API key or OAuth token | (uses Groq's API)           |
 
 ## Routing Strategies
 
 ### `priority` (default)
+
 Providers are tried in priority order. First available provider that supports the model is used.
 
 ### `round-robin`
+
 Providers are rotated in round-robin order (among available providers that support the model).
 
 ### `model-based`
+
 Selects provider by model ID prefix. Not yet fully implemented (falls back to priority).
 
 ## Full Example
@@ -197,6 +208,7 @@ enabled = true
 ## Validation
 
 Rook validates config on startup:
+
 - `db_path` must be writable (directory must exist; file is created on first write)
 - If `provider_crud.enabled = true`, `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` must be set
 - If `auth.api_keys.enabled = true`, `API_KEY_HASH_SECRET` must be set

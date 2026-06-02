@@ -27,7 +27,7 @@ pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
 pub use manage_providers::ManageProviders;
-pub use rook_core::RegistryError;
+pub use rook_core::{RegistryError, SessionRepositoryPort};
 pub use route_request::RouteRequest;
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 
@@ -50,27 +50,62 @@ pub struct RookUsecases {
     pub set_admin_password: SetAdminPassword,
     pub login: Login,
     pub logout: Logout,
-    /// One-time setup token held in memory for the duration of bootstrap mode.
-    ///
-    /// Set at startup (either from `ROOK_SETUP_TOKEN` env var or auto-generated).
-    /// Cleared after a successful `POST /api/bootstrap/setup`.
-    /// Never written to disk or logs.
     pub setup_token: Arc<RwLock<Option<String>>>,
+    pub(crate) session_repo: Arc<dyn SessionRepositoryPort>,
 }
 
 impl RookUsecases {
+    /// Builder-style constructor that accepts all required fields.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        route_request: RouteRequest,
+        manage_providers: ManageProviders,
+        health_check: HealthCheck,
+        authenticate_client_api: Option<AuthenticateClientApi>,
+        manage_connections: Option<ManageConnections>,
+        manage_api_keys: Option<ManageApiKeys>,
+        bootstrap_status: BootstrapStatus,
+        ensure_admin_user: EnsureAdminUser,
+        set_admin_password: SetAdminPassword,
+        login: Login,
+        logout: Logout,
+        setup_token: Arc<RwLock<Option<String>>>,
+        session_repo: Arc<dyn SessionRepositoryPort>,
+    ) -> Self {
+        Self {
+            route_request,
+            manage_providers,
+            health_check,
+            authenticate_client_api,
+            manage_connections,
+            manage_api_keys,
+            bootstrap_status,
+            ensure_admin_user,
+            set_admin_password,
+            login,
+            logout,
+            setup_token,
+            session_repo,
+        }
+    }
+
     /// Revoke a session given its token_hash (from the raw cookie value).
-    /// This is used by the logout handler which receives the raw cookie value.
-    #[allow(dead_code)]
+    /// Used by the logout HTTP handler.
     pub async fn revoke_session_by_token_hash(
         &self,
-        _token_hash: &str,
+        token_hash: &str,
     ) -> Result<(), auth::LogoutError> {
-        // The logout use case expects a session_id, but we have token_hash.
-        // We need to look up the session first... but session_repo is private.
-        // For now, this is a placeholder - actual implementation requires
-        // exposing session lookup or a different approach.
-        // TODO: Add session_repo to RookUsecases or add a find_by_token_hash method
-        Err(auth::LogoutError::SessionNotFound)
+        // Find the session by token_hash, then revoke it.
+        let session = self
+            .session_repo
+            .find_by_token_hash(token_hash)
+            .await
+            .map_err(|_| auth::LogoutError::SessionNotFound)?
+            .ok_or(auth::LogoutError::SessionNotFound)?;
+
+        self.session_repo
+            .revoke(&session.id)
+            .await
+            .map_err(|_| auth::LogoutError::SessionNotFound)
     }
 }

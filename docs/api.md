@@ -4,20 +4,20 @@ Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default:
 
 ## Endpoints
 
-| Method | Path               | Description                      | Auth     |
-|--------|--------------------|----------------------------------|----------|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible completions | None     |
-| `GET`  | `/v1/models`       | List available models (static)   | None     |
-| `POST` | `/v1/messages`    | Anthropic-compatible messages    | None     |
-| `GET`  | `/health`          | Health check with provider status| None     |
-| `GET`  | `/api/api-keys`    | List API keys (paginated)        | Session  |
-| `POST` | `/api/api-keys`    | Create API key                   | Session  |
-| `GET`  | `/api/api-keys/{id}` | Get API key details           | Session  |
-| `PUT`  | `/api/api-keys/{id}` | Update API key                | Session  |
-| `DELETE`| `/api/api-keys/{id}`| Revoke API key (soft delete)  | Session  |
-| `GET`  | `/login`           | Get CSRF token for login        | None     |
-| `POST` | `/login`           | Login (create session)           | None     |
-| `POST` | `/logout`          | Logout (revoke session)         | Session  |
+| Method   | Path                   | Description                       | Auth    |
+|----------|------------------------|-----------------------------------|---------|
+| `POST`   | `/v1/chat/completions` | OpenAI-compatible completions     | None    |
+| `GET`    | `/v1/models`           | List available models (static)    | None    |
+| `POST`   | `/v1/messages`         | Anthropic-compatible messages     | None    |
+| `GET`    | `/health`              | Health check with provider status | None    |
+| `GET`    | `/api/api-keys`        | List API keys (paginated)         | Session |
+| `POST`   | `/api/api-keys`        | Create API key                    | Session |
+| `GET`    | `/api/api-keys/{id}`   | Get API key details               | Session |
+| `PUT`    | `/api/api-keys/{id}`   | Update API key                    | Session |
+| `DELETE` | `/api/api-keys/{id}`   | Revoke API key (soft delete)      | Session |
+| `GET`    | `/login`               | Get CSRF token for login          | None    |
+| `POST`   | `/login`               | Login (create session)            | None    |
+| `POST`   | `/logout`              | Logout (revoke session)           | Session |
 
 ## POST /v1/chat/completions
 
@@ -38,14 +38,14 @@ OpenAI-compatible chat completions endpoint.
 }
 ```
 
-| Field        | Type      | Required | Default | Description                              |
-|--------------|-----------|----------|---------|------------------------------------------|
-| `model`      | string    | Yes      | —       | Model ID (e.g., `gpt-4o`)                |
-| `messages`   | array     | Yes      | —       | Array of message objects                 |
-| `stream`     | bool      | No       | `false` | Enable streaming (not yet implemented)   |
-| `max_tokens` | integer   | No       | —       | Maximum tokens to generate               |
-| `temperature`| float     | No       | —       | Sampling temperature (0.0–2.0)           |
-| `n`          | integer   | No       | `1`     | Ignored for now                          |
+| Field         | Type    | Required | Default | Description                            |
+|---------------|---------|----------|---------|----------------------------------------|
+| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`)              |
+| `messages`    | array   | Yes      | —       | Array of message objects               |
+| `stream`      | bool    | No       | `false` | Enable streaming (not yet implemented) |
+| `max_tokens`  | integer | No       | —       | Maximum tokens to generate             |
+| `temperature` | float   | No       | —       | Sampling temperature (0.0–2.0)         |
+| `n`           | integer | No       | `1`     | Ignored for now                        |
 
 ### Message Object
 
@@ -159,13 +159,13 @@ Anthropic-compatible messages endpoint.
 }
 ```
 
-| Field        | Type      | Required | Default | Description                     |
-|--------------|-----------|----------|---------|---------------------------------|
-| `model`      | string    | Yes      | —       | Model ID                        |
-| `messages`   | array     | Yes      | —       | Array of message objects        |
-| `stream`     | bool      | No       | `false` | Enable streaming (not implemented) |
-| `max_tokens` | integer   | Yes      | —       | Must be >= 1                    |
-| `temperature`| float     | No       | —       | Sampling temperature            |
+| Field         | Type    | Required | Default | Description                        |
+|---------------|---------|----------|---------|------------------------------------|
+| `model`       | string  | Yes      | —       | Model ID                           |
+| `messages`    | array   | Yes      | —       | Array of message objects           |
+| `stream`      | bool    | No       | `false` | Enable streaming (not implemented) |
+| `max_tokens`  | integer | Yes      | —       | Must be >= 1                       |
+| `temperature` | float   | No       | —       | Sampling temperature               |
 
 ### Response (success)
 
@@ -231,6 +231,7 @@ Aggregated health status of all configured providers.
 ```
 
 **Status values:**
+
 - `"healthy"` — all providers are healthy
 - `"degraded"` — some providers are unhealthy
 - `"no_providers_configured"` — no providers are configured
@@ -282,10 +283,10 @@ List all API keys with pagination. Requires authenticated session.
 
 ### Query Parameters
 
-| Parameter | Type    | Default | Description                    |
-|-----------|---------|---------|--------------------------------|
-| `limit`  | integer | `20`    | Max keys to return (1-100)     |
-| `offset` | integer | `0`      | Number of keys to skip         |
+| Parameter | Type    | Default | Description                |
+|-----------|---------|---------|----------------------------|
+| `limit`   | integer | `20`    | Max keys to return (1-100) |
+| `offset`  | integer | `0`     | Number of keys to skip     |
 
 ### Response
 
@@ -330,11 +331,11 @@ Create a new API key. The plaintext key is returned **only once** — save it se
 }
 ```
 
-| Field       | Type     | Required | Description                          |
-|-------------|----------|----------|--------------------------------------|
-| `label`     | string   | Yes      | Human-readable name                  |
-| `scopes`    | string[] | Yes      | Permissions: `"read"`, `"write"`     |
-| `tier`      | string   | Yes      | `"free"`, `"pro"`, `"enterprise"`   |
+| Field       | Type     | Required | Description                            |
+|-------------|----------|----------|----------------------------------------|
+| `label`     | string   | Yes      | Human-readable name                    |
+| `scopes`    | string[] | Yes      | Permissions: `"read"`, `"write"`       |
+| `tier`      | string   | Yes      | `"free"`, `"pro"`, `"enterprise"`      |
 | `expiresAt` | string   | No       | ISO 8601 timestamp, null for no expiry |
 
 ### Response (201 Created)

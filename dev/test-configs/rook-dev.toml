@@ -1,0 +1,22 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 300
+
+# Shared in-memory DB via SQLite URI — all connections point to the same
+# in-memory instance, so auth/session/provider/audit state stays coherent.
+# The ?cache=shared parameter is required to share across connections.
+[database]
+db_path = "file::memory:?cache=shared"
+
+[audit]
+db_path = "file::memory:?cache=shared"
+
+[provider_crud]
+enabled = false

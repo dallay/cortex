@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = { workspace = true }
 shared-kernel = { path = "../../domain/shared-kernel" }
 rook-core = { path = "../../domain/rook-core" }
 rook-usecases = { path = "../../application/rook-usecases" }
@@ -39,7 +40,6 @@ tracing = "0.1"
 sha2 = "0.10"
 
 [dev-dependencies]
-async-trait = { workspace = true }
 axum-test = "15"
 encryption-inmemory = { path = "../encryption-inmemory" }
 

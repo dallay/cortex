@@ -66,6 +66,21 @@ describe('LoginView', () => {
     expect(wrapper.get('button[type="submit"]').text()).toContain('Set password')
   })
 
+  it('renders a token input field in bootstrap mode so user can paste the setup token from server logs', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.bootstrapRequired = true
+
+    const wrapper = mount(LoginView, {
+      global: { plugins: [pinia, router, i18n] },
+    })
+
+    // The setup token is out-of-band — printed to server logs at startup.
+    // User must paste it into the form manually.
+    expect(wrapper.get('input#setup-token')).toBeTruthy()
+  })
+
   it('renders normal admin login when bootstrap is complete', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
