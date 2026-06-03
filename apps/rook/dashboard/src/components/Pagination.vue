@@ -1,20 +1,33 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from '@lucide/vue'
 
-const props = defineProps<{
-  currentPage: number
-  totalPages: number
-}>()
+const props = withDefaults(defineProps<{
+  offset?: number
+  limit?: number
+  total?: number
+  hasPrev?: boolean
+  hasNext?: boolean
+  onPrev?: () => void
+  onNext?: () => void
+}>(), {
+  offset: 0,
+  limit: 20,
+  total: 0,
+  hasPrev: false,
+  hasNext: false,
+})
 
-const emit = defineEmits<{
-  'update:currentPage': [page: number]
-}>()
+const currentPage = computed(() => Math.floor(props.offset / props.limit) + 1)
+const totalPages = computed(() => Math.ceil(props.total / props.limit) || 1)
 
-const goToPage = (page: number) => {
-  if (page >= 1 && page <= props.totalPages) {
-    emit('update:currentPage', page)
-  }
+const goToPrev = () => {
+  if (props.onPrev) props.onPrev()
+}
+
+const goToNext = () => {
+  if (props.onNext) props.onNext()
 }
 </script>
 
@@ -27,8 +40,8 @@ const goToPage = (page: number) => {
       <Button
         variant="outline"
         size="sm"
-        :disabled="currentPage === 1"
-        @click="goToPage(currentPage - 1)"
+        :disabled="!hasPrev"
+        @click="goToPrev"
       >
         <ChevronLeft class="h-4 w-4" />
         Previous
@@ -36,8 +49,8 @@ const goToPage = (page: number) => {
       <Button
         variant="outline"
         size="sm"
-        :disabled="currentPage === totalPages"
-        @click="goToPage(currentPage + 1)"
+        :disabled="!hasNext"
+        @click="goToNext"
       >
         Next
         <ChevronRight class="h-4 w-4" />

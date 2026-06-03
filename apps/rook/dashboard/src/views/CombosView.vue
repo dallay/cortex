@@ -93,15 +93,13 @@ function openCreateForm() {
     </div>
 
     <!-- Empty State -->
-    <EmptyState v-if="combos.length === 0">
-      <template #icon>
-        <CircleDot class="h-12 w-12 mx-auto text-muted-foreground" />
-      </template>
-      <template #title><h3 class="font-medium mb-2">{{ t('combos.empty') }}</h3></template>
-      <template #description><p class="text-sm text-muted-foreground mb-4">{{ t('combos.emptyDescription') }}</p></template>
-      <template #default>
-        <Button @click="openCreateForm">{{ t('combos.createFirst') }}</Button>
-      </template>
+    <EmptyState
+      v-if="combos.length === 0"
+      :title="t('combos.empty')"
+      :description="t('combos.emptyDescription')"
+      :icon="CircleDot"
+    >
+      <Button @click="openCreateForm">{{ t('combos.createFirst') }}</Button>
     </EmptyState>
   </div>
 </template>

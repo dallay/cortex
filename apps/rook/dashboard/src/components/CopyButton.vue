@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Copy, Check } from '@lucide/vue'
 
-const props = defineProps<{
-  value: string
+const props = withDefaults(defineProps<{
+  value?: string
+  text?: string
   variant?: 'default' | 'ghost' | 'outline'
   size?: 'default' | 'sm' | 'lg' | 'icon'
-}>()
+}>(), {
+  value: '',
+  text: '',
+})
 
 const copied = ref(false)
 
+const copyValue = computed(() => props.value || props.text)
+
 const copyToClipboard = async () => {
   try {
-    await navigator.clipboard.writeText(props.value)
+    await navigator.clipboard.writeText(copyValue.value)
     copied.value = true
     setTimeout(() => {
       copied.value = false

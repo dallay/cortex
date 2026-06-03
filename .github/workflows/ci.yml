@@ -312,7 +312,7 @@ jobs:
         run: pnpm install --filter @dallay/rook-dashboard
       - name: Run Vitest with coverage
         working-directory: apps/rook/dashboard
-        run: pnpm exec vitest run --coverage --reporter=json --output-filename=coverage/coverage-final.json
+        run: pnpm exec vitest run --coverage --coverage.reporter=json --coverage.output=coverage/coverage-final.json
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:

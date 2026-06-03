@@ -328,7 +328,7 @@ fn restrictions_from_headers(headers: &HeaderMap) -> Result<ApiKeyRestrictions, 
     })
 }
 
-/// Parse a comma-separated header value into a Vec<String>.
+/// Parse a comma-separated header value into a `Vec<String>`.
 ///
 /// Returns `Err(HttpError)` if the header is missing or not valid UTF-8.
 /// An empty value (present but empty) yields an empty Vec (unrestricted).

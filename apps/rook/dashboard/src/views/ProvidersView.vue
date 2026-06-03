@@ -8,7 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorBanner from '@/components/ErrorBanner.vue'
 import LoadingState from '@/components/LoadingState.vue'
-import DataTable from '@/components/DataTable.vue'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const { t } = useI18n()
 
@@ -39,7 +39,7 @@ async function handleTest(id: string) {
     />
 
     <!-- Error State -->
-    <ErrorBanner v-if="error" :error="error" @retry="fetch">
+    <ErrorBanner v-if="error" :message="error" @retry="fetch">
       <template #default>
         <Button variant="ghost" size="sm" @click="fetch">
           <RefreshCw class="h-4 w-4 mr-1" />
@@ -80,96 +80,98 @@ async function handleTest(id: string) {
     <!-- List Tab -->
     <div v-if="activeTab === 'list'" class="space-y-4">
       <!-- Empty State -->
-      <EmptyState v-if="!loading && providers.length === 0">
-        <template #icon>
-          <Globe class="h-12 w-12 mx-auto text-muted-foreground" />
-        </template>
-        <template #title><h3 class="font-medium mb-2">{{ t('providers.empty') }}</h3></template>
-        <template #description><p class="text-sm text-muted-foreground mb-4">{{ t('providers.emptyDescription') }}</p></template>
-        <template #default>
-          <Button>{{ t('providers.add') }}</Button>
-        </template>
+      <EmptyState
+        v-if="!loading && providers.length === 0"
+        :title="t('providers.empty')"
+        :description="t('providers.emptyDescription')"
+        :icon="Globe"
+      >
+        <Button>{{ t('providers.add') }}</Button>
       </EmptyState>
 
       <!-- Provider List -->
-      <DataTable v-if="providers.length > 0">
-        <template #header>
-          <tr class="border-b bg-muted/50">
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.name') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.kind') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.status') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.latency') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.priority') }}</th>
-            <th class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') }}</th>
-          </tr>
-        </template>
-        <template #body>
-          <tr v-for="provider in providers" :key="provider.id" class="hover:bg-muted/30">
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
-                <Globe class="h-4 w-4 text-muted-foreground" />
-                <span class="font-medium">{{ provider.name }}</span>
-              </div>
-            </td>
-            <td class="px-4 py-3">
-              <span class="text-sm font-mono text-muted-foreground">{{ provider.providerKind }}</span>
-            </td>
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
-                <AlertCircle :class="['h-4 w-4', provider.testStatus.status === 'active' ? 'text-green-500' : provider.testStatus.status === 'unhealthy' ? 'text-destructive' : 'text-yellow-500']" />
-                <span class="text-sm capitalize">{{ provider.testStatus.status }}</span>
-              </div>
-              <p v-if="provider.testStatus.error" class="text-xs text-destructive mt-0.5 max-w-[200px] truncate">
-                {{ provider.testStatus.error }}
-              </p>
-            </td>
-            <td class="px-4 py-3">
-              <div v-if="provider.testStatus.latencyMs != null" class="flex items-center gap-1 text-sm text-muted-foreground">
-                <Activity class="h-3 w-3" />
-                {{ provider.testStatus.latencyMs }}ms
-              </div>
-              <span v-else class="text-sm text-muted-foreground">—</span>
-            </td>
-            <td class="px-4 py-3">
-              <span class="text-sm text-muted-foreground">{{ provider.priority }}</span>
-            </td>
-            <td class="px-4 py-3 text-right">
-              <div class="flex items-center justify-end gap-2">
-                <Button variant="ghost" size="sm" @click="handleTest(provider.id)">
-                  <RefreshCw class="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive">
-                  <XCircle class="h-4 w-4" />
-                </Button>
-              </div>
-            </td>
-          </tr>
-        </template>
-      </DataTable>
+      <div v-if="providers.length > 0" class="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow class="bg-muted/50">
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.name') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.kind') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.status') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.latency') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.priority') }}</TableHead>
+              <TableHead class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') }}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="provider in providers" :key="provider.id" class="hover:bg-muted/30">
+              <TableCell class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  <Globe class="h-4 w-4 text-muted-foreground" />
+                  <span class="font-medium">{{ provider.name }}</span>
+                </div>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <span class="text-sm font-mono text-muted-foreground">{{ provider.providerKind }}</span>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  <AlertCircle :class="['h-4 w-4', provider.testStatus.status === 'active' ? 'text-green-500' : provider.testStatus.status === 'unhealthy' ? 'text-destructive' : 'text-yellow-500']" />
+                  <span class="text-sm capitalize">{{ provider.testStatus.status }}</span>
+                </div>
+                <p v-if="provider.testStatus.error" class="text-xs text-destructive mt-0.5 max-w-[200px] truncate">
+                  {{ provider.testStatus.error }}
+                </p>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <div v-if="provider.testStatus.latencyMs != null" class="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Activity class="h-3 w-3" />
+                  {{ provider.testStatus.latencyMs }}ms
+                </div>
+                <span v-else class="text-sm text-muted-foreground">—</span>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <span class="text-sm text-muted-foreground">{{ provider.priority }}</span>
+              </TableCell>
+              <TableCell class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end gap-2">
+                  <Button variant="ghost" size="sm" @click="handleTest(provider.id)">
+                    <RefreshCw class="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive">
+                    <XCircle class="h-4 w-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
     </div>
 
     <!-- Quotes Tab -->
     <div v-if="activeTab === 'quotes'" class="space-y-4">
-      <DataTable>
-        <template #header>
-          <tr class="border-b bg-muted/50">
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.provider') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.model') }}</th>
-            <th class="px-4 py-3 text-right text-sm font-medium">{{ t('providers.quotes.inputCost') }}</th>
-            <th class="px-4 py-3 text-right text-sm font-medium">{{ t('providers.quotes.outputCost') }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.updated') }}</th>
-          </tr>
-        </template>
-        <template #body>
-          <tr v-for="quote in quotes" :key="quote.id" class="hover:bg-muted/30">
-            <td class="px-4 py-3 text-sm font-medium">{{ quote.provider }}</td>
-            <td class="px-4 py-3 text-sm text-muted-foreground font-mono">{{ quote.model }}</td>
-            <td class="px-4 py-3 text-sm text-right">${{ quote.inputCost }}/1M</td>
-            <td class="px-4 py-3 text-sm text-right">${{ quote.outputCost }}/1M</td>
-            <td class="px-4 py-3 text-sm text-muted-foreground">{{ quote.updated }}</td>
-          </tr>
-        </template>
-      </DataTable>
+      <div class="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow class="bg-muted/50">
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.provider') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.model') }}</TableHead>
+              <TableHead class="px-4 py-3 text-right text-sm font-medium">{{ t('providers.quotes.inputCost') }}</TableHead>
+              <TableHead class="px-4 py-3 text-right text-sm font-medium">{{ t('providers.quotes.outputCost') }}</TableHead>
+              <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('providers.quotes.updated') }}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="quote in quotes" :key="quote.id" class="hover:bg-muted/30">
+              <TableCell class="px-4 py-3 text-sm font-medium">{{ quote.provider }}</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground font-mono">{{ quote.model }}</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-right">${{ quote.inputCost }}/1M</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-right">${{ quote.outputCost }}/1M</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground">{{ quote.updated }}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
     </div>
   </div>
 </template>

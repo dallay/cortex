@@ -60,14 +60,20 @@ impl TokenBucket {
         self.tokens
     }
 
-    /// Time until next token is available
+    /// Time until next token is available (capped at 1 hour to prevent u64::MAX overflow)
     fn retry_after(&self, _capacity: u64, refill_per_second: f64) -> Duration {
         if self.tokens >= 1.0 {
             Duration::ZERO
         } else {
             let tokens_needed = 1.0 - self.tokens;
-            let secs = (tokens_needed / refill_per_second).ceil() as u64;
-            Duration::from_secs(secs.max(1))
+            let secs = if refill_per_second > 0.0 {
+                (tokens_needed / refill_per_second).ceil() as u64
+            } else {
+                // Avoid division by zero; cap at 1 hour
+                3600
+            };
+            // Cap at 1 hour to prevent u64::MAX overflow on very low refill rates
+            Duration::from_secs(secs.clamp(1, 3600))
         }
     }
 }
@@ -76,11 +82,19 @@ impl TokenBucket {
 ///
 /// Configurable capacity and refill rate via IpRateLimitConfig.
 /// Default: 30 requests per minute per IP.
+///
+/// Uses TTL-based eviction to prevent unbounded memory growth:
+/// - Buckets not accessed for `idle_ttl` are evicted on next access.
+/// - At most `max_entries` buckets are kept (LRU eviction when limit is reached).
 #[derive(Debug, Clone)]
 pub struct IpRateLimiter {
     buckets: Arc<Mutex<HashMap<IpAddr, TokenBucket>>>,
     capacity: u64,
     refill_per_second: f64,
+    /// TTL: evict buckets idle for longer than this
+    idle_ttl: Duration,
+    /// Max entries: evict oldest when exceeding this size
+    max_entries: usize,
 }
 
 impl IpRateLimiter {
@@ -89,14 +103,51 @@ impl IpRateLimiter {
         Self::with_capacity(30)
     }
 
-    /// Create a new IP rate limiter with custom capacity (requests per minute)
+    /// Create a new IP rate limiter with custom capacity (requests per minute).
+    ///
+    /// Uses default TTL of 10 minutes and max 10,000 entries.
     pub fn with_capacity(requests_per_minute: u32) -> Self {
+        Self::with_capacity_and_limits(requests_per_minute, Duration::from_secs(600), 10_000)
+    }
+
+    /// Create a new IP rate limiter with custom capacity, idle TTL, and max entries.
+    pub fn with_capacity_and_limits(
+        requests_per_minute: u32,
+        idle_ttl: Duration,
+        max_entries: usize,
+    ) -> Self {
         let capacity = requests_per_minute as u64;
         let refill_per_second = requests_per_minute as f64 / 60.0;
         Self {
             buckets: Arc::new(Mutex::new(HashMap::new())),
             capacity,
             refill_per_second,
+            idle_ttl,
+            max_entries,
+        }
+    }
+
+    /// Evict buckets that have not received a refill (i.e., no requests) for longer
+    /// than `idle_ttl`. Also enforces `max_entries` by evicting oldest entries.
+    async fn evict_stale_locked(&self, buckets: &mut HashMap<IpAddr, TokenBucket>) {
+        let now = Instant::now();
+
+        // TTL eviction: remove buckets idle for longer than idle_ttl
+        // A bucket is "idle" when last_refill is old — meaning no requests came in
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < self.idle_ttl);
+
+        // Size cap: if still over max_entries, evict oldest by last_refill time
+        if buckets.len() >= self.max_entries {
+            let mut entries: Vec<_> = buckets.iter().collect();
+            entries.sort_by_key(|(_, b)| b.last_refill);
+            let ips_to_remove: Vec<_> = entries
+                .into_iter()
+                .take(buckets.len() - self.max_entries)
+                .map(|(ip, _)| *ip)
+                .collect();
+            for ip in ips_to_remove {
+                buckets.remove(&ip);
+            }
         }
     }
 
@@ -106,6 +157,27 @@ impl IpRateLimiter {
     /// Returns `Err(RateLimitExceeded)` if rate limited.
     pub async fn check(&self, ip: IpAddr) -> Result<(), RateLimitExceeded> {
         let mut buckets = self.buckets.lock().await;
+
+        // Probabilistic eviction: run eviction ~1% of calls to keep latency low
+        if rand_simple() < 0.01 {
+            self.evict_stale_locked(&mut buckets).await;
+        }
+
+        // Enforce max entries: evict oldest entries if at capacity
+        if buckets.len() >= self.max_entries {
+            // Sort by last_refill (oldest first) and remove ~10% of oldest
+            let mut entries: Vec<_> = buckets.iter().collect();
+            entries.sort_by_key(|(_, b)| b.last_refill);
+            let ips_to_remove: Vec<_> = entries
+                .into_iter()
+                .take(self.max_entries / 10)
+                .map(|(ip, _)| *ip)
+                .collect();
+            for ip in ips_to_remove {
+                buckets.remove(&ip);
+            }
+        }
+
         let bucket = buckets
             .entry(ip)
             .or_insert_with(|| TokenBucket::new(self.capacity));
@@ -157,6 +229,17 @@ fn unix_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs()
+}
+
+/// Simple probabilistic random for eviction sampling (avoids adding a Rand dependency)
+pub(crate) fn rand_simple() -> f64 {
+    // SAFETY: SystemTime::now() is not FnOnce, so this is safe for concurrent use
+    // We use the low bits of the system time as a pseudo-random value
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_nanos();
+    ((nanos & 0xFFF) as f64) / 4096.0
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::middleware::ip_rate_limiter::rand_simple;
 use rook_core::ApiKeyTier;
 use tokio::sync::Mutex;
 
@@ -122,14 +123,20 @@ impl TokenBucket {
         self.tokens
     }
 
-    /// Time until next token is available
+    /// Time until next token is available (capped at 1 hour to prevent u64::MAX overflow)
     fn retry_after(&self, _capacity: u64, refill_per_second: f64) -> Duration {
         if self.tokens >= 1.0 {
             Duration::ZERO
         } else {
             let tokens_needed = 1.0 - self.tokens;
-            let secs = (tokens_needed / refill_per_second).ceil() as u64;
-            Duration::from_secs(secs.max(1))
+            let secs = if refill_per_second > 0.0 {
+                (tokens_needed / refill_per_second).ceil() as u64
+            } else {
+                // Avoid division by zero; cap at 1 hour
+                3600
+            };
+            // Cap at 1 hour to prevent u64::MAX overflow on very low refill rates
+            Duration::from_secs(secs.clamp(1, 3600))
         }
     }
 }
@@ -138,26 +145,70 @@ impl TokenBucket {
 ///
 /// Uses the `X-Authz-Auth-ID` header (set by authz middleware after API key validation)
 /// as the rate limit key. Falls back to IP-based limiting if no API key context.
+///
+/// Uses TTL-based eviction to prevent unbounded memory growth:
+/// - Buckets not accessed for `idle_ttl` are evicted on next access.
+/// - At most `max_entries` buckets are kept (LRU eviction when limit is reached).
 #[derive(Debug, Clone)]
 pub struct ApiKeyRateLimiter {
     buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
     config: Arc<RateLimiterConfig>,
+    /// TTL: evict buckets idle for longer than this
+    idle_ttl: Duration,
+    /// Max entries: evict oldest when exceeding this size
+    max_entries: usize,
 }
 
 impl ApiKeyRateLimiter {
-    /// Create a new API key rate limiter with empty bucket map and default config
+    /// Create a new API key rate limiter with empty bucket map and default config.
+    /// Uses default TTL of 10 minutes and max 100,000 entries.
     pub fn new() -> Self {
-        Self {
-            buckets: Arc::new(Mutex::new(HashMap::new())),
-            config: Arc::new(RateLimiterConfig::default()),
-        }
+        Self::with_config_and_limits(
+            Arc::new(RateLimiterConfig::default()),
+            Duration::from_secs(600),
+            100_000,
+        )
     }
 
-    /// Create a new API key rate limiter with custom config
+    /// Create a new API key rate limiter with custom config.
+    /// Uses default TTL of 10 minutes and max 100,000 entries.
     pub fn with_config(config: Arc<RateLimiterConfig>) -> Self {
+        Self::with_config_and_limits(config, Duration::from_secs(600), 100_000)
+    }
+
+    /// Create a new API key rate limiter with custom config, idle TTL, and max entries.
+    pub fn with_config_and_limits(
+        config: Arc<RateLimiterConfig>,
+        idle_ttl: Duration,
+        max_entries: usize,
+    ) -> Self {
         Self {
             buckets: Arc::new(Mutex::new(HashMap::new())),
             config,
+            idle_ttl,
+            max_entries,
+        }
+    }
+
+    /// Evict buckets idle for longer than `idle_ttl` and enforce `max_entries`.
+    async fn evict_stale_locked(&self, buckets: &mut HashMap<String, TokenBucket>) {
+        let now = Instant::now();
+
+        // TTL eviction: remove buckets idle for longer than idle_ttl
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < self.idle_ttl);
+
+        // Size cap: if still over max_entries, evict oldest by last_refill time
+        if buckets.len() >= self.max_entries {
+            let mut entries: Vec<_> = buckets.iter().collect();
+            entries.sort_by_key(|(_, b)| b.last_refill);
+            let keys_to_remove: Vec<_> = entries
+                .into_iter()
+                .take(buckets.len() - self.max_entries)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in keys_to_remove {
+                buckets.remove(&key);
+            }
         }
     }
 
@@ -217,6 +268,26 @@ impl ApiKeyRateLimiter {
         };
 
         let mut buckets = self.buckets.lock().await;
+
+        // Probabilistic eviction: run eviction ~1% of calls to keep latency low
+        if rand_simple() < 0.01 {
+            self.evict_stale_locked(&mut buckets).await;
+        }
+
+        // Enforce max entries: evict oldest entries if at capacity
+        if buckets.len() >= self.max_entries {
+            let mut entries: Vec<_> = buckets.iter().collect();
+            entries.sort_by_key(|(_, b)| b.last_refill);
+            let keys_to_remove: Vec<_> = entries
+                .into_iter()
+                .take(buckets.len() - self.max_entries)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in keys_to_remove {
+                buckets.remove(&key);
+            }
+        }
+
         let bucket = buckets
             .entry(lookup_key.clone())
             .or_insert_with(|| TokenBucket::new(capacity));
