@@ -31,7 +31,7 @@ pub fn router(
     usecases: Usecases,
     authz_config: authz::AuthzConfig,
     login_rate_limiter: Arc<LoginRateLimiter>,
-    _api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
+    api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
     csrf_guard: Arc<CsrfGuard>,
 ) -> Router {
     let max_body_size_bytes = authz_config.max_body_size_bytes();
@@ -79,6 +79,12 @@ pub fn router(
         .layer(middleware::from_fn_with_state(
             login_rate_limiter.clone(),
             login_rate_limiter_middleware,
+        ))
+        // API key rate limiter — applied to authenticated CLIENT_API routes
+        // Runs after CSRF guard but before authz to read headers stamped by authz
+        .layer(middleware::from_fn_with_state(
+            api_key_rate_limiter.clone(),
+            api_key_rate_limiter_middleware,
         ))
         .layer(middleware::from_fn_with_state(
             authz_config,
@@ -135,6 +141,92 @@ fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|ci| ci.0.ip())
         .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
+}
+
+/// API key rate limiter middleware — applies to authenticated CLIENT_API routes
+pub async fn api_key_rate_limiter_middleware(
+    State(limiter): State<Arc<ApiKeyRateLimiter>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    // Skip rate limiting for public routes (health, bootstrap, auth)
+    let path = request.uri().path();
+    if path == "/health"
+        || path.starts_with("/api/bootstrap")
+        || path == "/login"
+        || path == "/logout"
+    {
+        return next.run(request).await;
+    }
+
+    // Extract rate limit context from authz headers (set by authz middleware)
+    // x-authz-tier: free | pro | enterprise
+    // x-authz-auth-id: api_key_xyz or "_anonymous"
+    let headers = request.headers();
+    let tier_str = headers
+        .get("x-authz-tier")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("free");
+    let key_id = headers
+        .get("x-authz-auth-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("_anonymous");
+
+    let tier = match tier_str {
+        "pro" => rook_core::ApiKeyTier::Pro,
+        "enterprise" => rook_core::ApiKeyTier::Enterprise,
+        _ => rook_core::ApiKeyTier::Free,
+    };
+
+    let client_ip = Some(extract_client_ip(&request));
+
+    match limiter.check(key_id, tier, client_ip).await {
+        Ok(snapshot) => {
+            let mut response = next.run(request).await;
+            // Stamp rate limit headers on successful responses
+            let headers = response.headers_mut();
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(snapshot.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(snapshot.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(snapshot.reset_unix),
+            );
+            response
+        }
+        Err(rate_limit) => {
+            let body = serde_json::json!({
+                "error": "rate_limit_exceeded",
+                "message": "API key rate limit exceeded. Please try again later.",
+                "code": "RATE_LIMITED",
+                "retry_after": rate_limit.retry_after_secs,
+            });
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+            let headers = response.headers_mut();
+            headers.insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(rate_limit.retry_after_secs),
+            );
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(rate_limit.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(rate_limit.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(rate_limit.reset_unix),
+            );
+            response
+        }
+    }
 }
 
 /// Extract `ApiKeyRestrictions` from the trusted authz headers stamped by the middleware.
