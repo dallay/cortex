@@ -21,6 +21,7 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         container.ip_rate_limiter.clone(),
         container.api_key_rate_limiter.clone(),
         container.csrf_guard.clone(),
+        container.rate_limit_store.clone(),
     )
     .merge(crate::dashboard::dashboard_routes());
 

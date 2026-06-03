@@ -51,6 +51,7 @@ pub struct RookContainer {
     pub ip_rate_limiter: Arc<transport_axum::IpRateLimiter>,
     pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
+    pub rate_limit_store: Option<transport_axum::handlers::rate_limits::RateLimitRuleStore>,
     /// Format registry for provider wire-format lookup — used in Phase 2 routing.
     #[allow(dead_code)]
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
@@ -227,6 +228,13 @@ impl RookContainer {
         // Build rate limiter config from TOML
         let rate_limiter_config = Arc::new(build_rate_limiter_config(&config.rate_limiting));
 
+        // Build rate limit rule store if rate limiting is enabled
+        let rate_limit_store = if config.rate_limiting.enabled {
+            Some(Arc::new(dashmap::DashMap::new()))
+        } else {
+            None
+        };
+
         Ok(Self {
             usecases,
             authz_config,
@@ -238,6 +246,7 @@ impl RookContainer {
                 rate_limiter_config,
             )),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
+            rate_limit_store,
             format_registry,
         })
     }

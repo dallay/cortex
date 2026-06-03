@@ -7,10 +7,12 @@
 
 pub mod error;
 pub mod id;
+pub mod rate_limit;
 pub mod time_;
 
 pub use error::{CortexError, CortexResult, RestrictionViolation};
 pub use id::{ConnectionId, ModelId, ProviderId, RequestId};
+pub use rate_limit::{ProviderRateLimit, RateLimitRule, RateLimitScope, RateLimitStatus};
 pub use time_::Instant;
 
 // Re-export chrono for convenience in downstream crates

@@ -54,14 +54,14 @@ Chain strategy: size-exception
 
 ## Phase 4: FallbackRouter records upstream 429s
 
-- [ ] 4.1 Add `rate_limit_reset` field to `CircuitState` in `rook-usecases/src/router_impl.rs`
-- [ ] 4.2 Implement `record_rate_limit(provider, retry_after, reset_at)` method
-- [ ] 4.3 Extract `Retry-After` header from provider 429 responses
-- [ ] 4.4 Extract `X-RateLimit-Reset` header and parse as epoch timestamp
-- [ ] 4.5 Emit `RateLimitedError` carrying `provider` and `retry_after` when upstream returns 429
-- [ ] 4.6 Modify error handler to map `RateLimitedError` to 429 with client-facing `Retry-After`
-- [ ] 4.7 Add integration test: mock provider 429 with `Retry-After: 30` → client receives same
-- [ ] 4.8 Add integration test: provider 429 with `X-RateLimit-Reset` → circuit records backoff
+- [x] 4.1 Add `rate_limit_reset` field to `CircuitState` in `rook-usecases/src/router_impl.rs`
+- [x] 4.2 Implement `record_rate_limit(provider, retry_after, reset_at)` method
+- [x] 4.3 Extract `Retry-After` header from provider 429 responses
+- [x] 4.4 Extract `X-RateLimit-Reset` header and parse as epoch timestamp
+- [x] 4.5 Emit `RateLimitedError` carrying `provider` and `retry_after` when upstream returns 429
+- [x] 4.6 Modify error handler to map `RateLimitedError` to 429 with client-facing `Retry-After`
+- [x] 4.7 Add integration test: mock provider 429 with `Retry-After: 30` → client receives same
+- [x] 4.8 Add integration test: provider 429 with `X-RateLimit-Reset` → circuit records backoff
 
 ## Phase 5: Admin CRUD mounted
 

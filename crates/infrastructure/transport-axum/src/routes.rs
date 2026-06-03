@@ -34,6 +34,7 @@ pub fn router(
     ip_rate_limiter: Arc<IpRateLimiter>,
     api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
     csrf_guard: Arc<CsrfGuard>,
+    rate_limit_store: Option<handlers::rate_limits::RateLimitRuleStore>,
 ) -> Router {
     let max_body_size_bytes = authz_config.max_body_size_bytes();
 
@@ -72,6 +73,11 @@ pub fn router(
     // Model catalog is always available (the catalog port is mandatory on
     // RookUsecases), so the route is always mounted.
     router = router.merge(crate::models_routes::router(usecases.clone()));
+
+    // Rate limit admin API (if enabled)
+    if let Some(store) = rate_limit_store {
+        router = router.merge(rate_limits_routes(store));
+    }
 
     router
         .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
@@ -681,4 +687,26 @@ fn api_key_routes(usecases: Usecases) -> Router {
             post(handlers::api_key::rotate_api_key),
         )
         .with_state(usecases)
+}
+
+fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Router {
+    Router::new()
+        .route("/api/rate-limits", get(handlers::rate_limits::list_rules))
+        .route(
+            "/api/rate-limits",
+            post(handlers::rate_limits::create_rule),
+        )
+        .route(
+            "/api/rate-limits/:id",
+            put(handlers::rate_limits::update_rule),
+        )
+        .route(
+            "/api/rate-limits/:id",
+            delete(handlers::rate_limits::delete_rule),
+        )
+        .route(
+            "/api/rate-limits/:scope/:target/status",
+            get(handlers::rate_limits::get_status),
+        )
+        .with_state(store)
 }

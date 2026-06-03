@@ -3670,6 +3670,7 @@ dependencies = [
  "axum-test",
  "base64",
  "chrono",
+ "dashmap",
  "encryption-inmemory",
  "futures",
  "hex",
