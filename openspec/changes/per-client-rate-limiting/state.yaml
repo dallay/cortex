@@ -1,5 +1,5 @@
 change: per-client-rate-limiting
-current_phase: tasks
+current_phase: apply
 completed:
   - init
   - explore
@@ -7,5 +7,6 @@ completed:
   - spec
   - design
   - tasks
-next: apply
-updated: "2026-06-03T12:28:56Z"
+  - apply
+next: verify
+updated: "2026-06-03T13:25:25Z"
