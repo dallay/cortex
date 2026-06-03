@@ -58,7 +58,10 @@ fn create_api_key_request_deserializes_correctly() {
 
     let dto: CreateApiKeyRequestDto = serde_json::from_value(json).expect("should deserialize");
     assert_eq!(dto.label, "Test Key");
-    assert_eq!(dto.scopes, vec!["chat:read".to_string(), "chat:write".to_string()]);
+    assert_eq!(
+        dto.scopes,
+        vec!["chat:read".to_string(), "chat:write".to_string()]
+    );
     assert_eq!(dto.tier, "enterprise");
     assert!(dto.expires_at.is_some());
 }

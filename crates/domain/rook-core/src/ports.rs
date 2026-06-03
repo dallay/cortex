@@ -17,7 +17,8 @@ use super::{
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
-    PasswordHash, ProviderConnection, RepositoryError, Session, SessionId, User, UserId,
+    PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session, SessionId, User,
+    UserId,
 };
 
 /// ---------------------------------------------------------------------------
@@ -337,3 +338,27 @@ pub trait PasswordHasher: Send + Sync {
 // ---------------------------------------------------------------------------
 
 pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
+
+// ---------------------------------------------------------------------------
+// ModelCatalogPort — source of truth for "which models can an API key be
+// restricted to?"
+// ---------------------------------------------------------------------------
+//
+// Implementations live in `infrastructure/` crates. Today the catalog is
+// static (hardcoded by provider kind); it may become dynamic in the future
+// (per-provider fetch, real `/v1/models` aggregation, etc.). The wire format
+// and the consuming UI must NOT depend on the implementation details.
+
+/// One entry in the model catalog: a model id known to be supported by a
+/// given provider kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCatalogEntry {
+    pub model_id: String,
+    pub provider_kind: ProviderKind,
+}
+
+#[async_trait]
+pub trait ModelCatalogPort: Send + Sync {
+    /// Returns the full list of model catalog entries known to the proxy.
+    async fn list(&self) -> Vec<ModelCatalogEntry>;
+}

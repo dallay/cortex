@@ -216,8 +216,9 @@ test.describe('API Keys - Create Flow', () => {
   test('shows validation errors when submitting empty form', async ({ page }) => {
     await page.getByRole('button', { name: /create api key/i }).click()
     await page.getByRole('button', { name: /create key/i }).click()
+    // Label is required; scopes validation never fires because DEFAULT_SCOPES
+    // pre-populates all non-admin scopes (the form always has at least one scope).
     await expect(page.getByText(/label is required/i)).toBeVisible()
-    await expect(page.getByText(/at least one scope is required/i)).toBeVisible()
   })
 
   test('creates API key with valid form data', async ({ page, browserName }) => {
@@ -233,9 +234,11 @@ test.describe('API Keys - Create Flow', () => {
 
     await page.getByRole('button', { name: /create api key/i }).click()
 
-    // Fill in the form
+    // Fill in the form — click Admin (unchecked by default) to exercise
+    // scope selection logic rather than toggling off the pre-checked
+    // Chat Read which DEFAULT_SCOPES pre-populates.
     await page.getByLabel(/label/i).fill(createLabel)
-    await page.getByRole('dialog').getByText(/^chat read$/i).click()
+    await page.getByRole('dialog').getByText(/^admin$/i).click()
 
     // Submit
     await page.getByRole('button', { name: /create key/i }).click()
@@ -375,8 +378,8 @@ test.describe('API Keys - Revoke Flow', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
-    // Click revoke button (trash icon)
-    await row.locator('button').nth(1).click()
+    // Click revoke button (trash icon) — nth(2) because Rotate was added between Edit and Revoke
+    await row.locator('button').nth(2).click()
 
     // Confirmation dialog should appear
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -397,8 +400,8 @@ test.describe('API Keys - Revoke Flow', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
-    // Click revoke button
-    await row.locator('button').nth(1).click()
+    // Click revoke button — nth(2) because Rotate was added between Edit and Revoke
+    await row.locator('button').nth(2).click()
 
     // Confirm revocation
     await page.getByRole('button', { name: /revoke key/i }).click()

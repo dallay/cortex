@@ -62,11 +62,37 @@ vi.mock('@/components/ui/select', () => ({
   SelectTrigger: defineComponent({ setup(_, { slots }) { return () => h('button', slots.default?.()) } }),
   SelectValue: defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } }),
 }))
+
+vi.mock('@/components/ui/checkbox', () => ({
+  Checkbox: defineComponent({
+    props: { modelValue: Boolean, dataTestid: String },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          type: 'checkbox',
+          checked: props.modelValue === true,
+          'data-testid': props.dataTestid ?? 'checkbox',
+          onChange: (e: Event) =>
+            emit('update:modelValue', (e.target as HTMLInputElement).checked),
+        })
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/badge', () => ({
+  Badge: defineComponent({
+    props: { variant: String, dataTestid: String },
+    setup(props, { slots }) {
+      return () => h('span', { 'data-testid': props.dataTestid ?? 'badge' }, slots.default?.())
+    },
+  }),
+}))
 vi.mock('@lucide/vue', () => {
   const icon = defineComponent({ setup: () => () => h('span') })
   return {
     Plus: icon, Copy: icon, Key: icon, AlertTriangle: icon, RefreshCw: icon,
-    Pencil: icon, Trash2: icon,
+    Pencil: icon, Trash2: icon, ShieldAlert: icon,
   }
 })
 
@@ -75,6 +101,18 @@ vi.mock('@/composables/useProviders', () => ({
   useProviders: () => ({
     providers: ref([]),
     fetch: vi.fn(),
+  }),
+}))
+
+vi.mock('@/composables/useAvailableModels', () => ({
+  useAvailableModels: () => ({
+    modelsByProvider: ref([]),
+    groups: ref([]),
+    loading: ref(false),
+    error: ref(null),
+    fetched: ref(false),
+    fetch: vi.fn(),
+    fetchProviders: vi.fn(),
   }),
 }))
 
@@ -146,51 +184,82 @@ beforeEach(() => {
 })
 
 describe('ApiKeysView', () => {
-  describe('scopesOptions', () => {
-    it('contains 5 scope options', () => {
+  describe('Create modal — default state', () => {
+    it('opens the modal with scopes pre-checked (all except admin)', async () => {
       const wrapper = makeWrapper()
-      const scopeCheckboxes = wrapper.findAll('input[type="checkbox"]')
-      expect(scopeCheckboxes.length).toBeGreaterThanOrEqual(5)
-    })
-  })
+      // Click the "Create API Key" button (first button in the page)
+      const createButton = wrapper.findAll('button').find((b) => b.text().includes('Create API Key'))
+      expect(createButton, 'create button should exist').toBeDefined()
+      await createButton!.trigger('click')
+      await wrapper.vm.$nextTick()
 
-  describe('Create modal', () => {
-    it('shows 5 scope checkboxes in create modal (10 total across both modals)', async () => {
-      const wrapper = makeWrapper()
-      await wrapper.find('button').trigger('click')
-      const checkboxes = wrapper.findAll('input[type="checkbox"]')
-      // Both create and edit modals render simultaneously (v-if not used), so 10 total
-      expect(checkboxes.length).toBeGreaterThanOrEqual(5)
+      // chat:read, chat:write, providers:read, providers:write → 4 checkboxes checked
+      const chatRead = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-chat-read"]')
+      const chatWrite = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-chat-write"]')
+      const providersRead = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-providers-read"]')
+      const providersWrite = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-providers-write"]')
+      const admin = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-admin"]')
+
+      expect(chatRead.exists()).toBe(true)
+      expect(chatRead.element.checked).toBe(true)
+      expect(chatWrite.element.checked).toBe(true)
+      expect(providersRead.element.checked).toBe(true)
+      expect(providersWrite.element.checked).toBe(true)
+      expect(admin.exists()).toBe(true)
+      expect(admin.element.checked).toBe(false)
     })
 
-    it('shows allowedModels text input in create modal', async () => {
+    it('does not render the legacy free-text input for allowed models', async () => {
       const wrapper = makeWrapper()
-      await wrapper.find('button').trigger('click')
-      const allowedModelsInput = wrapper.find('input#create-allowed-models')
-      expect(allowedModelsInput.exists()).toBe(true)
+      const createButton = wrapper.findAll('button').find((b) => b.text().includes('Create API Key'))
+      await createButton!.trigger('click')
+      await wrapper.vm.$nextTick()
+
+      // The legacy form had inputs with id="create-allowed-models" or "edit-allowed-models".
+      // The new form has no such input.
+      expect(wrapper.find('input#create-allowed-models').exists()).toBe(false)
+      expect(wrapper.find('input#edit-allowed-models').exists()).toBe(false)
     })
 
-    it('shows allowedProviders section in create modal', async () => {
+    it('renders helper text "Leave empty to allow all models" in the create form', async () => {
       const wrapper = makeWrapper()
-      await wrapper.find('button').trigger('click')
-      expect(wrapper.text()).toContain('Allowed Providers')
+      const createButton = wrapper.findAll('button').find((b) => b.text().includes('Create API Key'))
+      await createButton!.trigger('click')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('Leave empty to allow all models')
+      expect(wrapper.text()).toContain('Leave empty to allow all providers')
     })
   })
 
   describe('Edit modal', () => {
-    it('pre-populates restriction fields when editing', async () => {
-      mockApiKeys.value = [createApiKey({ allowedModels: ['gpt-4', 'gpt-4o'], allowedProviders: [] })]
+    it('pre-populates the form state with the existing key scopes and tier', async () => {
+      mockApiKeys.value = [
+        createApiKey({
+          scopes: ['chat:read', 'providers:read'],
+          tier: 'pro',
+        }),
+      ]
       mockTotal.value = 1
 
       const wrapper = makeWrapper()
       await wrapper.vm.$nextTick()
 
-      const editButton = wrapper.find('button')
-      await editButton.trigger('click')
+      // Open the edit modal by calling openEditModal directly.
+      const vm = wrapper.vm as unknown as {
+        openEditModal: (key: unknown) => void
+        editForm: { label: string; scopes: string[]; tier: string }
+      }
+      vm.openEditModal(mockApiKeys.value[0])
       await wrapper.vm.$nextTick()
 
-      const allowedModelsInput = wrapper.find('input#edit-allowed-models')
-      expect(allowedModelsInput.exists()).toBe(true)
+      // Verify the editForm state directly — this is what the shared
+      // form receives via v-model. (We don't query the rendered DOM
+      // because both the create and edit modals render simultaneously,
+      // and the form-component tests already cover the rendering.)
+      expect(vm.editForm.scopes).toEqual(['chat:read', 'providers:read'])
+      expect(vm.editForm.tier).toBe('pro')
+      expect(vm.editForm.label).toBe('test-key')
     })
   })
 
@@ -256,15 +325,41 @@ describe('ApiKeysView', () => {
   })
 
   describe('Validation', () => {
-    it('requires at least one scope', async () => {
+    it('requires at least one scope when all are unchecked', async () => {
       const wrapper = makeWrapper()
-      await wrapper.find('button').trigger('click')
+      const createButton = wrapper.findAll('button').find((b) => b.text().includes('Create API Key'))
+      await createButton!.trigger('click')
       await wrapper.vm.$nextTick()
 
+      // Set a valid label so we get past the first validation gate.
+      const vm = wrapper.vm as unknown as { createForm: { label: string } }
+      vm.createForm.label = 'valid-label'
+      await wrapper.vm.$nextTick()
+
+      // Uncheck the default-checked scopes so we end up with no scopes selected
+      const chatRead = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-chat-read"]')
+      const chatWrite = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-chat-write"]')
+      const providersRead = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-providers-read"]')
+      const providersWrite = wrapper.find<HTMLInputElement>('[data-testid="scope-checkbox-providers-write"]')
+
+      await chatRead.setValue(false)
+      await wrapper.vm.$nextTick()
+      await chatWrite.setValue(false)
+      await wrapper.vm.$nextTick()
+      await providersRead.setValue(false)
+      await wrapper.vm.$nextTick()
+      await providersWrite.setValue(false)
+      await wrapper.vm.$nextTick()
+
+      // Submit the form (form submit, not button click — the stub button
+      // doesn't fire native form submit on click).
       const form = wrapper.find('form')
       await form.trigger('submit')
       await wrapper.vm.$nextTick()
 
+      // The error block should appear with the validation message
+      const errorBlock = wrapper.find('[data-testid="api-key-form-error"]')
+      expect(errorBlock.exists()).toBe(true)
       expect(wrapper.text()).toContain('At least one scope is required')
     })
   })

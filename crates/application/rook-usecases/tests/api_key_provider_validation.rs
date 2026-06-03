@@ -268,7 +268,10 @@ async fn create_when_registry_is_empty_and_allowed_providers_non_empty_fails() {
 #[tokio::test]
 async fn update_with_empty_allowed_providers_clears_restriction() {
     let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai", "anthropic"]));
+    let registry = Arc::new(FakeProviderRegistry::with_providers(vec![
+        "openai",
+        "anthropic",
+    ]));
     let usecase = ManageApiKeys::new(repo.clone(), "test-secret", registry);
 
     // Create a key with restrictions
@@ -301,8 +304,11 @@ async fn update_with_empty_allowed_providers_clears_restriction() {
 #[tokio::test]
 async fn registry_subset_match_passes() {
     let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry =
-        Arc::new(FakeProviderRegistry::with_providers(vec!["openai", "anthropic", "gemini"]));
+    let registry = Arc::new(FakeProviderRegistry::with_providers(vec![
+        "openai",
+        "anthropic",
+        "gemini",
+    ]));
     let usecase = ManageApiKeys::new(repo, "test-secret", registry);
 
     let request = CreateApiKeyRequest {

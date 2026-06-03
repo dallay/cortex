@@ -1,0 +1,100 @@
+change: api-key-scopes-and-restrictions
+current_phase: archive
+completed: [init, explore, propose, spec, design, tasks, apply, verify, archive]
+next: none
+updated: "2026-06-02"
+project: cortex
+github_issue: "46"
+archived_to: openspec/changes/archive/2026-06-02-api-key-scopes-and-restrictions/
+verification_status: PASS WITH WARNINGS
+
+stack:
+  language: "Rust 1.81+ (toolchain 1.89)"
+  edition: "2021"
+  workspace_root: "Cargo.toml"
+  packages: 15
+  task_runner: just
+  format: "cargo fmt --all"
+  lint: "cargo clippy --workspace --all-targets -- -D warnings"
+  test: "cargo test --workspace --all-features"
+  coverage: "cargo llvm-cov --workspace --html"
+  audit: cargo audit
+  doc: "cargo doc --workspace --no-deps --document-private-items"
+  ci_order: "fmt --check → clippy → check → test → doc → audit"
+  test_pattern: separate test targets (no inline cfg(test) modules)
+
+proposal:
+  file: proposal.md
+  word_count: 2185
+  decisions_captured:
+    - no_backward_compat: "Cortex not released, clean cutover"
+    - allowed_providers_validation: "Validate against ProviderRegistryPort::providers()"
+    - dashboard_in_scope: "Full Vue UI work"
+
+specs:
+  - file: specs/api-key-domain.md
+    lines: 153
+  - file: specs/api-key-repository.md
+    lines: 191
+  - file: specs/api-key-usecases.md
+    lines: 313
+  - file: specs/api-key-transport.md
+    lines: 334
+  - file: specs/api-key-dashboard.md
+    lines: 332
+
+design:
+  file: design.md
+  lines: 556
+  word_count: ~3200
+
+tasks:
+  file: tasks.md
+  lines: 394
+  total_tasks: 24
+  estimated_total_hours: 10
+
+pr_strategy:
+  chosen: stacked_to_main
+  pr_count: 2
+  pr1:
+    goal: "Backend validation + structured errors + tests"
+    tasks: [1.1, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 6.1]
+    estimated_lines: 250-300
+    base_branch: main
+    merge_to: main
+  pr2:
+    goal: "Dashboard UI + rotate + restrictions + tests"
+    tasks: [5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9]
+    estimated_lines: 200-250
+    base_branch: main (after PR1 merges)
+    merge_to: main
+
+verification:
+  status: PASS WITH WARNINGS
+  test_results:
+    cargo_build: PASS
+    cargo_fmt: PASS
+    cargo_clippy: PASS (zero warnings)
+    cargo_test: "364/364 PASS"
+    dashboard_vitest: "25/25 PASS"
+  behavioral_compliance: "30/31 spec scenarios"
+  feature_commits:
+    - "2516cea feat(api-key): key rotation endpoint"
+    - "b16a839 feat(api-keys): provider validation and structured restriction errors"
+    - "fcc40a5 feat(dashboard): add API key scopes, restrictions, and rotate UI"
+
+archive:
+  date: "2026-06-02"
+  location: openspec/changes/archive/2026-06-02-api-key-scopes-and-restrictions/
+  specs_synced:
+    - api-key-domain
+    - api-key-repository
+    - api-key-usecases
+    - api-key-transport
+    - api-key-dashboard
+
+warnings:
+  - "tasks.md checkboxes not updated to [x] (implementation complete via commits)"
+  - "tests/scope_routing.rs not created as separate file"
+  - "Dedicated IntoResponse for RestrictionViolation not created (functionally equivalent path reused)"

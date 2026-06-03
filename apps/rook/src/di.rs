@@ -9,6 +9,7 @@ use audit_sqlite::SqliteAudit;
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
+use models_catalog::StaticModelCatalog;
 use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
@@ -192,6 +193,7 @@ impl RookContainer {
                 logout,
                 Arc::new(tokio::sync::RwLock::new(None)),
                 session_repo.clone(),
+                Arc::new(StaticModelCatalog::new()),
             ));
 
         // Check initialization state to decide on setup token.

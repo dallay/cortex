@@ -13,10 +13,11 @@ Defines the contracts and behaviors of `ManageApiKeys` — the use case layer fo
 pub struct ManageApiKeys {
     repo: Arc<dyn ApiKeyRepositoryPort>,
     hash_secret: String,
+    provider_registry: Arc<dyn ProviderRegistryPort>,  // NEW
 }
 ```
 
-- **Dependencies**: `ApiKeyRepositoryPort` (persistence), `hash_secret` (HMAC-SHA256 key)
+- **Dependencies**: `ApiKeyRepositoryPort` (persistence), `hash_secret` (HMAC-SHA256 key), `ProviderRegistryPort` (for provider validation)
 - **DI**: Constructed in `RookUsecases::new()` and stored as `Option<ManageApiKeys>`
 
 ---
@@ -31,6 +32,8 @@ pub struct CreateApiKeyRequest {
     pub scopes: Vec<ApiKeyScope>,
     pub tier: ApiKeyTier,
     pub expires_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<ModelId>,        // NEW
+    pub allowed_providers: Vec<ProviderId>,   // NEW
 }
 ```
 
@@ -43,6 +46,8 @@ pub struct UpdateApiKeyRequest {
     pub tier: Option<ApiKeyTier>,
     pub is_active: Option<bool>,
     pub expires_at: Option<Option<DateTime<Utc>>>, // Some(None) = clear
+    pub allowed_models: Option<Vec<ModelId>>,           // NEW — None=preserve, Some([])=clear
+    pub allowed_providers: Option<Vec<ProviderId>>,     // NEW — None=preserve, Some([])=clear
 }
 ```
 
@@ -52,6 +57,8 @@ pub struct UpdateApiKeyRequest {
 pub enum ManageApiKeysError {
     Repository(#[from] ApiKeyRepositoryError),
     NotFound(ApiKeyId),
+    Validation(String),   // NEW
+    Revoked(ApiKeyId),     // NEW
 }
 ```
 
@@ -146,6 +153,8 @@ pub async fn update(
     - `tier`: `request.tier.unwrap_or(existing.tier)`
     - `is_active`: `request.is_active.unwrap_or(existing.is_active)`
     - `expires_at`: `request.expires_at` (can be `Some(None)` to clear)
+    - `allowed_models`: `request.allowed_models.unwrap_or(existing.allowed_models)`
+    - `allowed_providers`: `request.allowed_providers.unwrap_or(existing.allowed_providers)`
 3. If `is_active` transitions `true → false`: set `revoked_at = Utc::now()`
 4. If `is_active` transitions `false → true`: set `revoked_at = None`
 5. Call `repo.update(&updated_record)`
@@ -226,7 +235,29 @@ The system SHALL call `revoke()` (soft delete) when `delete()` is invoked, prese
 
 The system SHALL reject key creation when `expires_at` is not in the future.
 
-### REQ-UC-7: Idempotent Revocation
+### REQ-UC-8: Restriction Fields on Create and Update
+
+`CreateApiKeyRequest` and `UpdateApiKeyRequest` SHALL include `allowed_models` and `allowed_providers` fields. On update, `None` preserves existing values and `Some(vec![])` clears to unrestricted.
+
+### REQ-UC-9: Strict Scope Validation
+
+`create` and `update` SHALL validate that every scope is canonical via `ApiKeyScope::parse`, rejecting legacy strings like `read`/`write`.
+
+### REQ-UC-10: ManageApiKeys::rotate
+
+`rotate(&self, id: &ApiKeyId)` SHALL atomically: (1) load existing record, (2) reject if revoked, (3) generate new raw key and hash, (4) call `repo.rotate_hash` preserving all metadata, (5) re-fetch and return `(record, raw_key)`. No grace period — old key is invalid immediately.
+
+### REQ-UC-11: Revoked Error Variant
+
+`ManageApiKeysError::Revoked(ApiKeyId)` is returned when rotating a revoked key. Transport maps this to `409 CONFLICT` with code `KEY_REVOKED`.
+
+### REQ-UC-12: validate_providers Against Registry
+
+`create` and `update` SHALL validate `allowed_providers` against `ProviderRegistryPort::providers()` before any DB write. Empty `allowed_providers` passes unconditionally. Non-empty values not in the registry cause `Validation` error.
+
+### REQ-UC-13: ProviderRegistryPort Injection
+
+`ManageApiKeys::new` SHALL accept `Arc<dyn ProviderRegistryPort>` as a third parameter for provider validation.
 
 The system SHALL return `Ok(())` when revoking an already-revoked key.
 

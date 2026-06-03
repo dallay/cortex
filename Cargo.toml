@@ -18,6 +18,7 @@ members = [
     "crates/infrastructure/encryption-inmemory",
     "crates/infrastructure/provider-sqlite",
     "crates/infrastructure/db-migration",
+    "crates/infrastructure/models-catalog",
     "apps/rook",
 ]
 

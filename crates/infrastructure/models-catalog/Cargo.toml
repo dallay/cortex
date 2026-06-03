@@ -1,0 +1,12 @@
+[package]
+name = "models-catalog"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rook-core = { path = "../../domain/rook-core" }
+
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

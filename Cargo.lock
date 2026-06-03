@@ -1728,6 +1728,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "models-catalog"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "rook-core",
+ "tokio",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2631,6 +2640,7 @@ dependencies = [
  "is-terminal",
  "mime",
  "mime_guess",
+ "models-catalog",
  "observability",
  "provider-sqlite",
  "providers-anthropic",
@@ -3506,6 +3516,7 @@ dependencies = [
  "encryption-inmemory",
  "futures",
  "hex",
+ "models-catalog",
  "reqwest 0.12.28",
  "ring",
  "rook-core",

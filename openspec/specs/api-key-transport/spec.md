@@ -10,13 +10,14 @@ Defines the REST API surface, DTOs, error responses, and routing for API key man
 
 All routes require session auth (same middleware as `/api/providers`).
 
-| Method   | Path                | Handler          | Auth    |
-|----------|---------------------|------------------|---------|
-| `POST`   | `/api/api-keys`     | `create_api_key` | Session |
-| `GET`    | `/api/api-keys`     | `list_api_keys`  | Session |
-| `GET`    | `/api/api-keys/:id` | `get_api_key`    | Session |
-| `PUT`    | `/api/api-keys/:id` | `update_api_key` | Session |
-| `DELETE` | `/api/api-keys/:id` | `revoke_api_key` | Session |
+| Method   | Path                              | Handler          | Auth     |
+|----------|-----------------------------------|------------------|----------|
+| `POST`   | `/api/api-keys`                   | `create_api_key` | Session  |
+| `GET`    | `/api/api-keys`                   | `list_api_keys`  | Session  |
+| `GET`    | `/api/api-keys/:id`              | `get_api_key`    | Session  |
+| `PUT`    | `/api/api-keys/:id`              | `update_api_key` | Session  |
+| `DELETE` | `/api/api-keys/:id`              | `revoke_api_key` | Session  |
+| `POST`   | `/api/api-keys/:id/rotate`       | `rotate_api_key` | Session  |
 
 ---
 
@@ -31,6 +32,8 @@ pub struct CreateApiKeyRequestDto {
     pub scopes: Vec<String>,
     pub tier: String,
     pub expires_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<String>,     // NEW — empty = unrestricted
+    pub allowed_providers: Vec<String>,  // NEW — empty = unrestricted
 }
 ```
 
@@ -44,6 +47,8 @@ pub struct UpdateApiKeyRequestDto {
     pub tier: Option<String>,
     pub is_active: Option<bool>,
     pub expires_at: Option<Option<DateTime<Utc>>>, // Some(None) = clear
+    pub allowed_models: Option<Vec<String>>,     // NEW — None=preserve, Some([])=clear
+    pub allowed_providers: Option<Vec<String>>,   // NEW — None=preserve, Some([])=clear
 }
 ```
 
@@ -62,6 +67,8 @@ pub struct ApiKeyRecordResponseDto {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    pub allowed_models: Vec<String>,      // NEW
+    pub allowed_providers: Vec<String>,    // NEW
 }
 ```
 
@@ -287,6 +294,14 @@ The system SHALL return `400 VALIDATION_ERROR` for invalid request fields, inclu
 ### REQ-TRANS-7: Key Prefix in Response
 
 The system SHALL include `key_prefix` (first 8 chars of raw key) in all API key responses for human identification.
+
+### REQ-TRANS-8: POST /api/api-keys/{id}/rotate
+
+`POST /api/api-keys/{id}/rotate` SHALL require session auth, call `ManageApiKeys::rotate(id)`, and return the new raw key in `plaintextKey`. Returns `404` if not found, `409` if revoked.
+
+### REQ-TRANS-9: Request/Response DTOs Expose Restriction Fields
+
+`CreateApiKeyRequestDto`, `UpdateApiKeyRequestDto`, and `ApiKeyRecordResponseDto` SHALL include `allowedModels` and `allowedProviders` as `Vec<String>` (camelCase wire format).
 
 ---
 
