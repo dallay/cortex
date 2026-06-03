@@ -33,6 +33,28 @@ allow_env_fallback = true
 
 [provider_crud]
 enabled = false
+
+[rate_limiting]
+enabled = false
+default_tier = "free"
+
+[rate_limiting.tiers.free]
+requests_per_minute = 100
+requests_per_day = 1000
+tokens_per_minute = 10000
+
+[rate_limiting.tiers.pro]
+requests_per_minute = 1000
+requests_per_day = 100000
+tokens_per_minute = 100000
+
+[rate_limiting.tiers.enterprise]
+requests_per_minute = 10000
+requests_per_day = 10000000
+tokens_per_minute = 1000000
+
+[rate_limiting.ip_limits]
+requests_per_minute = 30
 ```
 
 > **Note:** Provider configuration is no longer in TOML. Providers are managed dynamically
@@ -115,6 +137,77 @@ ROOK_CONFIG=dev/test-configs/rook.toml \
 API_KEY_HASH_SECRET="your-secret" \
 rook seed-admin admin123
 ```
+
+### `[rate_limiting]`
+
+Per-client rate limiting is disabled by default. When enabled, Rook enforces configurable rate limits for API keys and unauthenticated IP addresses.
+
+```toml
+[rate_limiting]
+enabled = true
+default_tier = "free"
+
+[rate_limiting.tiers.free]
+requests_per_minute = 100
+requests_per_day = 1000
+tokens_per_minute = 10000
+
+[rate_limiting.tiers.pro]
+requests_per_minute = 1000
+requests_per_day = 100000
+tokens_per_minute = 100000
+
+[rate_limiting.tiers.enterprise]
+requests_per_minute = 10000
+requests_per_day = 10000000
+tokens_per_minute = 1000000
+
+[rate_limiting.ip_limits]
+requests_per_minute = 30
+```
+
+| Field          | Type         | Default  | Description                                        |
+|----------------|--------------|----------|----------------------------------------------------|
+| `enabled`      | bool         | `false`  | Enable rate limiting middleware                    |
+| `default_tier` | enum         | `"free"` | Fallback tier when API key has no explicit tier    |
+
+**Tier configuration:**
+
+Each tier (`free`, `pro`, `enterprise`) supports:
+
+| Field                  | Type      | Description                               |
+|------------------------|-----------|-------------------------------------------|
+| `requests_per_minute`  | u32       | Maximum requests per minute (required)    |
+| `requests_per_day`     | u32       | Maximum requests per day (optional)       |
+| `tokens_per_minute`    | u32       | Maximum tokens per minute (optional)      |
+
+**IP rate limits:**
+
+Unauthenticated requests are rate limited by source IP address:
+
+| Field                 | Type | Default | Description                            |
+|-----------------------|------|---------|----------------------------------------|
+| `requests_per_minute` | u32  | `30`    | Maximum requests per minute per IP     |
+
+Authenticated requests bypass IP rate limiting and use API key tier limits instead.
+
+**Rate limit headers:**
+
+All responses include rate limit metadata:
+
+- `X-RateLimit-Limit` — maximum requests allowed in the current window
+- `X-RateLimit-Remaining` — remaining requests in the current window
+- `X-RateLimit-Reset` — Unix timestamp when the limit resets
+
+When rate limited, the response includes:
+
+- HTTP 429 status
+- `Retry-After` header (seconds until reset)
+- Error body with `code: "RATE_LIMITED"`
+
+**Admin API:**
+
+When rate limiting is enabled, admin users can manage custom rate limit rules via `/api/rate-limits` endpoints. See [API Reference](api.md#rate-limit-admin-api) for details.
 
 ## Provider CRUD API
 

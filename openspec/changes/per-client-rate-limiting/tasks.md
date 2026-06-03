@@ -65,27 +65,27 @@ Chain strategy: size-exception
 
 ## Phase 5: Admin CRUD mounted
 
-- [ ] 5.1 Create `shared-kernel/src/rate_limit.rs` with `RateLimitScope` enum and `RateLimitRule` struct
-- [ ] 5.2 Export `rate_limit` module in `shared-kernel/src/lib.rs`
-- [ ] 5.3 Create `transport-axum/src/handlers/rate_limits.rs` with CRUD handlers
-- [ ] 5.4 Implement `list_rules()` handler for `GET /api/rate-limits`
-- [ ] 5.5 Implement `create_rule()` handler for `POST /api/rate-limits` with validation
-- [ ] 5.6 Implement `update_rule()` handler for `PUT /api/rate-limits/:id`
-- [ ] 5.7 Implement `delete_rule()` handler for `DELETE /api/rate-limits/:id`
-- [ ] 5.8 Implement `get_status()` handler for `GET /api/rate-limits/:scope/:target/status`
-- [ ] 5.9 Add DashMap-backed `RateLimitRuleStore` in `apps/rook/src/di.rs`
-- [ ] 5.10 Mount `/api/rate-limits` routes in `apps/rook/src/server.rs`
-- [ ] 5.11 Add authz guard requiring admin scope for all CRUD endpoints
-- [ ] 5.12 Add unit test: `RateLimitRule` rejects empty `target`
-- [ ] 5.13 Add integration test: admin POST creates rule → 201 with id
-- [ ] 5.14 Add integration test: non-admin POST → 403
-- [ ] 5.15 Add integration test: GET status returns current usage counters
+- [x] 5.1 Create `shared-kernel/src/rate_limit.rs` with `RateLimitScope` enum and `RateLimitRule` struct
+- [x] 5.2 Export `rate_limit` module in `shared-kernel/src/lib.rs`
+- [x] 5.3 Create `transport-axum/src/handlers/rate_limits.rs` with CRUD handlers
+- [x] 5.4 Implement `list_rules()` handler for `GET /api/rate-limits`
+- [x] 5.5 Implement `create_rule()` handler for `POST /api/rate-limits` with validation
+- [x] 5.6 Implement `update_rule()` handler for `PUT /api/rate-limits/:id`
+- [x] 5.7 Implement `delete_rule()` handler for `DELETE /api/rate-limits/:id`
+- [x] 5.8 Implement `get_status()` handler for `GET /api/rate-limits/:scope/:target/status`
+- [x] 5.9 Add DashMap-backed `RateLimitRuleStore` in `apps/rook/src/di.rs`
+- [x] 5.10 Mount `/api/rate-limits` routes in `apps/rook/src/server.rs`
+- [x] 5.11 Add authz guard requiring admin scope for all CRUD endpoints
+- [x] 5.12 Add unit test: `RateLimitRule` rejects empty `target`
+- [x] 5.13 Add integration test: admin POST creates rule → 201 with id
+- [x] 5.14 Add integration test: non-admin POST → 403
+- [x] 5.15 Add integration test: GET status returns current usage counters
 
 ## Phase 6: Documentation and Cleanup
 
-- [ ] 6.1 Add `x-ratelimit-remaining`, `x-ratelimit-reset` headers to 200 responses
-- [ ] 6.2 Update `docs/configuration.md` with `[rate_limiting]` section examples
-- [ ] 6.3 Update `docs/api.md` with rate limit admin endpoints
-- [ ] 6.4 Add example TOML config with all three tiers to `config.example.toml`
-- [ ] 6.5 Verify all 6 proposal success criteria pass with integration tests
-- [ ] 6.6 Run `just ci-local` to confirm fmt/clippy/test/doc green
+- [x] 6.1 Add `x-ratelimit-remaining`, `x-ratelimit-reset` headers to 200 responses
+- [x] 6.2 Update `docs/configuration.md` with `[rate_limiting]` section examples
+- [x] 6.3 Update `docs/api.md` with rate limit admin endpoints
+- [x] 6.4 Add example TOML config with all three tiers to `config.example.toml`
+- [x] 6.5 Verify all 6 proposal success criteria pass with integration tests
+- [x] 6.6 Run `just ci-local` to confirm fmt/clippy/test/doc green
