@@ -191,6 +191,12 @@ pub async fn api_key_rate_limiter_middleware(
         _ => rook_core::ApiKeyTier::Free,
     };
 
+    // Skip API-key rate limiter for anonymous requests (unauthenticated traffic)
+    // IP rate limiter will handle these requests instead
+    if key_id == "_anonymous" {
+        return next.run(request).await;
+    }
+
     let client_ip = Some(extract_client_ip(&request));
 
     match limiter.check(key_id, tier, client_ip).await {
