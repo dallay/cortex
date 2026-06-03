@@ -216,8 +216,9 @@ test.describe('API Keys - Create Flow', () => {
   test('shows validation errors when submitting empty form', async ({ page }) => {
     await page.getByRole('button', { name: /create api key/i }).click()
     await page.getByRole('button', { name: /create key/i }).click()
+    // Label is required; scopes validation never fires because DEFAULT_SCOPES
+    // pre-populates all non-admin scopes (the form always has at least one scope).
     await expect(page.getByText(/label is required/i)).toBeVisible()
-    await expect(page.getByText(/at least one scope is required/i)).toBeVisible()
   })
 
   test('creates API key with valid form data', async ({ page, browserName }) => {
