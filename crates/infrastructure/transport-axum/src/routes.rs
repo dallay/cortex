@@ -191,6 +191,12 @@ pub async fn api_key_rate_limiter_middleware(
         _ => rook_core::ApiKeyTier::Free,
     };
 
+    // Skip API-key rate limiter for anonymous requests (unauthenticated traffic)
+    // IP rate limiter will handle these requests instead
+    if key_id == "_anonymous" {
+        return next.run(request).await;
+    }
+
     let client_ip = Some(extract_client_ip(&request));
 
     match limiter.check(key_id, tier, client_ip).await {
@@ -694,15 +700,15 @@ fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Route
         .route("/api/rate-limits", get(handlers::rate_limits::list_rules))
         .route("/api/rate-limits", post(handlers::rate_limits::create_rule))
         .route(
-            "/api/rate-limits/:id",
+            "/api/rate-limits/{id}",
             put(handlers::rate_limits::update_rule),
         )
         .route(
-            "/api/rate-limits/:id",
+            "/api/rate-limits/{id}",
             delete(handlers::rate_limits::delete_rule),
         )
         .route(
-            "/api/rate-limits/:scope/:target/status",
+            "/api/rate-limits/{scope}/{target}/status",
             get(handlers::rate_limits::get_status),
         )
         .with_state(store)
