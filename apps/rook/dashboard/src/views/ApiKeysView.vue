@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Copy, Key, AlertTriangle, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
+import { Plus, Key, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -17,6 +17,14 @@ import { useAvailableModels } from '@/composables/useAvailableModels'
 import ApiKeyForm, { type ApiKeyFormState } from '@/components/ApiKeyForm.vue'
 import { SCOPES, DEFAULT_SCOPES } from '@/config/scopes'
 import type { CreateApiKeyRequest, UpdateApiKeyRequest } from '@/lib/api'
+import PageHeader from '@/components/PageHeader.vue'
+import ErrorBanner from '@/components/ErrorBanner.vue'
+import LoadingState from '@/components/LoadingState.vue'
+import DataTable from '@/components/DataTable.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
+import CopyButton from '@/components/CopyButton.vue'
+import KeyDisplayCard from '@/components/KeyDisplayCard.vue'
+import Pagination from '@/components/Pagination.vue'
 
 const { t } = useI18n()
 
@@ -37,16 +45,10 @@ const {
 } = useApiKeys()
 
 // Tier options are static (driven by the rate limiter in the backend).
-// The description field makes the contract visible to the user, which
-// is the main reason this view was redesigned.
 const TIER_OPTIONS = [
   { value: 'free', label: 'Free', description: '100 req burst / ~10 req/min' },
   { value: 'pro', label: 'Pro', description: '1,000 req burst / ~100 req/min' },
-  {
-    value: 'enterprise',
-    label: 'Enterprise',
-    description: '10,000 req burst / ~1,000 req/min',
-  },
+  { value: 'enterprise', label: 'Enterprise', description: '10,000 req burst / ~1,000 req/min' },
 ]
 
 function buildDefaultFormState(): ApiKeyFormState {
@@ -93,6 +95,22 @@ const showNewKey = ref(false)
 
 onMounted(async () => {
   await Promise.all([fetch(), fetchProviders(), fetchAvailableModels()])
+})
+
+// Clear ephemeral key state whenever the create modal closes via any path.
+watch(showCreateModal, (isOpen) => {
+  if (!isOpen) {
+    newlyCreatedKey.value = null
+    showNewKey.value = false
+  }
+})
+
+// Clear ephemeral key state whenever the rotate modal closes via any path.
+watch(showRotateConfirm, (isOpen) => {
+  if (!isOpen) {
+    newlyRotatedKey.value = null
+    showRotatedKey.value = false
+  }
 })
 
 function formatDate(dateStr: string | null): string {
@@ -226,186 +244,144 @@ function closeRotateWithKey() {
   showRotatedKey.value = false
 }
 
-async function copyToClipboard(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch (err) {
-    console.error('Failed to copy:', err)
-  }
-}
-
 const hasNextPage = computed(() => offset.value + limit.value < total.value)
 const hasPrevPage = computed(() => offset.value > 0)
+
+function getKeyStatus(status: 'active' | 'revoked', allowedModels?: string[], allowedProviders?: string[]) {
+  if (status === 'revoked') return 'revoked'
+  if (!allowedModels?.length && !allowedProviders?.length) return 'unrestricted'
+  return 'restricted'
+}
 </script>
 
 <template>
   <div class="space-y-6">
-    <!-- Page Header -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-semibold tracking-tight">{{ t('nav.apiKeys') }}</h1>
-        <p class="text-muted-foreground">
-          {{ t('apiKeys.description') || 'Manage API keys for external agents' }}
-        </p>
-      </div>
-      <Button @click="showCreateModal = true">
-        <Plus class="h-4 w-4 mr-2" />
-        {{ t('apiKeys.create') || 'Create API Key' }}
-      </Button>
-    </div>
+    <PageHeader
+      :title="t('nav.apiKeys')"
+      :description="t('apiKeys.description') || 'Manage API keys for external agents'"
+    >
+      <template #default>
+        <Button @click="showCreateModal = true">
+          <Plus class="h-4 w-4 mr-2" />
+          {{ t('apiKeys.create') || 'Create API Key' }}
+        </Button>
+      </template>
+    </PageHeader>
 
     <!-- Error State -->
-    <div
-      v-if="error"
-      class="rounded-lg border border-destructive/50 bg-destructive/10 p-4"
-    >
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2 text-destructive">
-          <AlertTriangle class="h-4 w-4" />
-          <span class="text-sm font-medium">{{ error }}</span>
-        </div>
-        <Button variant="ghost" size="sm" @click="fetch()">
+    <ErrorBanner v-if="error" :error="error" @retry="fetch">
+      <template #default>
+        <Button variant="ghost" size="sm" @click="fetch">
           <RefreshCw class="h-4 w-4 mr-1" />
           Retry
         </Button>
-      </div>
-    </div>
+      </template>
+    </ErrorBanner>
 
     <!-- Loading State -->
-    <div v-if="loading && apiKeys.length === 0" class="flex items-center justify-center py-12">
-      <RefreshCw class="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>
+    <LoadingState v-if="loading && apiKeys.length === 0" />
 
     <!-- Keys List -->
-    <div v-else class="rounded-lg border overflow-hidden">
-      <table class="w-full">
-        <thead>
-          <tr class="border-b bg-muted/50">
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.name') || 'Name' }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.keyPrefix') || 'Key' }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">Scopes</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">Tier</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">Status</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</th>
-            <th class="px-4 py-3 text-left text-sm font-medium">Restrictions</th>
-            <th class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y">
-          <tr v-for="item in apiKeys" :key="item.id" class="hover:bg-muted/30">
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
-                <Key class="h-4 w-4 text-muted-foreground" />
-                <span class="font-medium">{{ item.label }}</span>
-              </div>
-            </td>
-            <td class="px-4 py-3">
-              <code class="text-sm font-mono text-muted-foreground">
-                {{ maskKey(item.keyPrefix) }}
-              </code>
-            </td>
-            <td class="px-4 py-3">
-              <div class="flex gap-1">
-                <span
-                  v-for="scope in item.scopes"
-                  :key="scope"
-                  class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium"
-                >
-                  {{ scope }}
-                </span>
-              </div>
-            </td>
-            <td class="px-4 py-3">
-              <span class="text-sm capitalize text-muted-foreground">{{ item.tier }}</span>
-            </td>
-            <td class="px-4 py-3">
+    <DataTable v-else>
+      <template #header>
+        <tr class="border-b bg-muted/50">
+          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.name') || 'Name' }}</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.keyPrefix') || 'Key' }}</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">Scopes</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">Tier</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">Status</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</th>
+          <th class="px-4 py-3 text-left text-sm font-medium">Restrictions</th>
+          <th class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</th>
+        </tr>
+      </template>
+      <template #body>
+        <tr v-for="item in apiKeys" :key="item.id" class="hover:bg-muted/30">
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-2">
+              <Key class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ item.label }}</span>
+            </div>
+          </td>
+          <td class="px-4 py-3">
+            <code class="text-sm font-mono text-muted-foreground">
+              {{ maskKey(item.keyPrefix) }}
+            </code>
+          </td>
+          <td class="px-4 py-3">
+            <div class="flex gap-1">
               <span
+                v-for="scope in item.scopes"
+                :key="scope"
+                class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium"
+              >
+                {{ scope }}
+              </span>
+            </div>
+          </td>
+          <td class="px-4 py-3">
+            <span class="text-sm capitalize text-muted-foreground">{{ item.tier }}</span>
+          </td>
+          <td class="px-4 py-3">
+            <StatusBadge :status="item.isActive ? 'active' : 'revoked'" />
+          </td>
+          <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</td>
+          <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</td>
+          <td class="px-4 py-3">
+            <StatusBadge :status="getKeyStatus(item.isActive ? 'active' : 'revoked', item.allowedModels, item.allowedProviders)" />
+          </td>
+          <td class="px-4 py-3 text-right">
+            <div class="flex items-center justify-end gap-2">
+              <Button
                 v-if="item.isActive"
-                class="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600"
+                variant="ghost"
+                size="sm"
+                @click="openEditModal(item)"
               >
-                Active
-              </span>
-              <span
-                v-else
-                class="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+                <Pencil class="h-4 w-4" />
+              </Button>
+              <Button
+                v-if="item.isActive"
+                variant="ghost"
+                size="sm"
+                @click="confirmRotate(item.id)"
               >
-                Revoked
-              </span>
-            </td>
-            <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</td>
-            <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</td>
-            <td class="px-4 py-3">
-              <span
-                v-if="!item.allowedModels?.length && !item.allowedProviders?.length"
-                class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                <RefreshCw class="h-4 w-4" />
+              </Button>
+              <Button
+                v-if="item.isActive"
+                variant="ghost"
+                size="sm"
+                class="text-destructive hover:text-destructive"
+                @click="confirmRevoke(item.id)"
               >
-                Unrestricted
-              </span>
-              <span
-                v-else
-                class="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600"
-              >
-                Restricted
-                <span v-if="item.allowedModels?.length"> ({{ item.allowedModels.length }} model{{ item.allowedModels.length !== 1 ? 's' : '' }})</span>
-                <span v-if="item.allowedProviders?.length"> ({{ item.allowedProviders.length }} provider{{ item.allowedProviders.length !== 1 ? 's' : '' }})</span>
-              </span>
-            </td>
-            <td class="px-4 py-3 text-right">
-              <div class="flex items-center justify-end gap-2">
-                <Button
-                  v-if="item.isActive"
-                  variant="ghost"
-                  size="sm"
-                  @click="openEditModal(item)"
-                >
-                  <Pencil class="h-4 w-4" />
-                </Button>
-                <Button
-                  v-if="item.isActive"
-                  variant="ghost"
-                  size="sm"
-                  @click="confirmRotate(item.id)"
-                >
-                  <RefreshCw class="h-4 w-4" />
-                </Button>
-                <Button
-                  v-if="item.isActive"
-                  variant="ghost"
-                  size="sm"
-                  class="text-destructive hover:text-destructive"
-                  @click="confirmRevoke(item.id)"
-                >
-                  <Trash2 class="h-4 w-4" />
-                </Button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- Empty State -->
-      <div v-if="apiKeys.length === 0 && !loading" class="p-8 text-center text-muted-foreground">
-        <Key class="h-12 w-12 mx-auto text-muted-foreground mb-4 opacity-50" />
-        <p>{{ t('apiKeys.empty') || 'No API keys yet' }}</p>
-        <p class="text-sm mt-1">Create your first API key to enable external agent access</p>
-      </div>
-    </div>
+                <Trash2 class="h-4 w-4" />
+              </Button>
+            </div>
+          </td>
+        </tr>
+      </template>
+      <template #empty>
+        <div v-if="apiKeys.length === 0 && !loading" class="p-8 text-center text-muted-foreground">
+          <Key class="h-12 w-12 mx-auto text-muted-foreground mb-4 opacity-50" />
+          <p>{{ t('apiKeys.empty') || 'No API keys yet' }}</p>
+          <p class="text-sm mt-1">Create your first API key to enable external agent access</p>
+        </div>
+      </template>
+    </DataTable>
 
     <!-- Pagination -->
-    <div v-if="apiKeys.length > 0" class="flex items-center justify-between">
-      <p class="text-sm text-muted-foreground">
-        Showing {{ offset + 1 }} - {{ Math.min(offset + limit, total) }} of {{ total }}
-      </p>
-      <div class="flex gap-2">
-        <Button variant="outline" size="sm" :disabled="!hasPrevPage" @click="prevPage">
-          Previous
-        </Button>
-        <Button variant="outline" size="sm" :disabled="!hasNextPage" @click="nextPage">
-          Next
-        </Button>
-      </div>
-    </div>
+    <Pagination
+      v-if="apiKeys.length > 0"
+      :offset="offset"
+      :limit="limit"
+      :total="total"
+      :has-prev="hasPrevPage"
+      :has-next="hasNextPage"
+      :on-prev="prevPage"
+      :on-next="nextPage"
+    />
 
     <!-- Create Modal -->
     <Dialog v-model:open="showCreateModal">
@@ -419,28 +395,16 @@ const hasPrevPage = computed(() => offset.value > 0)
         </DialogHeader>
 
         <!-- Newly created key display -->
-        <div v-if="newlyCreatedKey" class="space-y-4">
-          <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 p-4">
-            <div class="flex items-center gap-2 text-amber-600 mb-2">
-              <AlertTriangle class="h-4 w-4" />
-              <span class="text-sm font-medium">Save this key now — it will not be shown again</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
-                {{ newlyCreatedKey }}
-              </code>
-              <Button
-                size="sm"
-                variant="outline"
-                aria-label="Copy"
-                @click="copyToClipboard(newlyCreatedKey)"
-              >
-                <Copy class="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <Button class="w-full" @click="closeCreateWithKey">Done</Button>
-        </div>
+        <KeyDisplayCard
+          v-if="newlyCreatedKey"
+          :api-key="newlyCreatedKey"
+          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
+          :on-done="closeCreateWithKey"
+        >
+          <template #copy>
+            <CopyButton :text="newlyCreatedKey" />
+          </template>
+        </KeyDisplayCard>
 
         <!-- Create form -->
         <ApiKeyForm
@@ -515,28 +479,16 @@ const hasPrevPage = computed(() => offset.value > 0)
         </DialogHeader>
 
         <!-- Newly rotated key display -->
-        <div v-if="newlyRotatedKey" class="space-y-4">
-          <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 p-4">
-            <div class="flex items-center gap-2 text-amber-600 mb-2">
-              <AlertTriangle class="h-4 w-4" />
-              <span class="text-sm font-medium">Save this key now — it will not be shown again</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
-                {{ newlyRotatedKey }}
-              </code>
-              <Button
-                size="sm"
-                variant="outline"
-                aria-label="Copy"
-                @click="copyToClipboard(newlyRotatedKey)"
-              >
-                <Copy class="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <Button class="w-full" @click="closeRotateWithKey">Done</Button>
-        </div>
+        <KeyDisplayCard
+          v-if="newlyRotatedKey"
+          :api-key="newlyRotatedKey"
+          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
+          :on-done="closeRotateWithKey"
+        >
+          <template #copy>
+            <CopyButton :text="newlyRotatedKey" />
+          </template>
+        </KeyDisplayCard>
 
         <div v-else>
           <div v-if="rotateError" class="text-sm text-destructive mb-4">{{ rotateError }}</div>

@@ -1,26 +1,14 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, Check, Settings, Globe } from '@lucide/vue'
+import { Settings, Globe } from '@lucide/vue'
 import { useBaseUrl } from '@/composables/useBaseUrl'
 import { endpointsConfig } from '@/config/endpoints'
+import PageHeader from '@/components/PageHeader.vue'
+import MethodBadge from '@/components/MethodBadge.vue'
+import CopyButton from '@/components/CopyButton.vue'
 
 const { t } = useI18n()
 const { fullBaseUrl, isOverridden, setOverride, clearOverride } = useBaseUrl()
-
-const copied = ref<string | null>(null)
-
-async function copyToClipboard(text: string, id: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = id
-    setTimeout(() => {
-      copied.value = null
-    }, 2000)
-  } catch (err) {
-    console.error('Failed to copy:', err)
-  }
-}
 
 function handleBaseUrlEdit() {
   const newUrl = prompt('Enter custom base URL:', fullBaseUrl.value)
@@ -42,15 +30,10 @@ const categories = [
 
 <template>
   <div class="space-y-6">
-    <!-- Page Header -->
-    <div>
-      <h1 class="text-2xl font-semibold tracking-tight">
-        {{ t('endpoints.title') }}
-      </h1>
-      <p class="text-muted-foreground">
-        {{ t('endpoints.description') }}
-      </p>
-    </div>
+    <PageHeader
+      :title="t('endpoints.title')"
+      :description="t('endpoints.description')"
+    />
 
     <!-- Base URL Card -->
     <div class="rounded-lg border bg-card text-card-foreground shadow-sm">
@@ -73,13 +56,7 @@ const categories = [
           class="flex items-center justify-between rounded-md border bg-muted/50 px-3 py-2 font-mono text-sm"
         >
           <span class="truncate">{{ fullBaseUrl }}</span>
-          <button
-            @click="copyToClipboard(fullBaseUrl, 'base')"
-            class="ml-2 shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <Check v-if="copied === 'base'" class="h-4 w-4 text-green-500" />
-            <Copy v-else class="h-4 w-4" />
-          </button>
+          <CopyButton :text="fullBaseUrl" />
         </div>
         <p v-if="isOverridden" class="mt-2 text-xs text-muted-foreground">
           Using custom URL. Leave empty and save to revert to auto-detected.
@@ -103,31 +80,14 @@ const categories = [
             class="flex items-center justify-between px-4 py-3 hover:bg-muted/50"
           >
             <div class="flex items-center gap-4 min-w-0 flex-1">
-              <span
-                class="shrink-0 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground"
-                :class="{
-                  'bg-green-500': endpoint.method === 'GET',
-                  'bg-blue-500': endpoint.method === 'POST',
-                }"
-              >
-                {{ endpoint.method }}
-              </span>
+              <MethodBadge :method="endpoint.method" />
               <span class="font-mono text-sm truncate">{{ endpoint.path }}</span>
             </div>
             <div class="flex items-center gap-3 shrink-0">
               <span class="text-sm text-muted-foreground hidden sm:block">
                 {{ t(endpoint.descriptionKey) }}
               </span>
-              <button
-                @click="copyToClipboard(fullBaseUrl + endpoint.path, endpoint.path)"
-                class="text-muted-foreground hover:text-foreground"
-              >
-                <Check
-                  v-if="copied === endpoint.path"
-                  class="h-4 w-4 text-green-500"
-                />
-                <Copy v-else class="h-4 w-4" />
-              </button>
+              <CopyButton :text="fullBaseUrl + endpoint.path" />
             </div>
           </div>
         </div>
