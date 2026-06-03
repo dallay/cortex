@@ -140,7 +140,7 @@ function scopeSlug(value: string): string {
         data-testid="input-api-key-label"
         :model-value="modelValue.label"
         placeholder="e.g., opencode-agent, hermes-agent"
-        @update:model-value="(v) => update('label', v ?? '')"
+        @update:model-value="(v) => update('label', String(v ?? ''))"
       />
     </div>
 
@@ -200,7 +200,7 @@ function scopeSlug(value: string): string {
       <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
       <Select
         :model-value="modelValue.tier"
-        @update:model-value="(v) => update('tier', v ?? modelValue.tier)"
+        @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >
         <SelectTrigger id="api-key-tier" data-testid="api-key-tier">
           <SelectValue />
