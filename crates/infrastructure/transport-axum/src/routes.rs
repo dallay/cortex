@@ -694,15 +694,15 @@ fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Route
         .route("/api/rate-limits", get(handlers::rate_limits::list_rules))
         .route("/api/rate-limits", post(handlers::rate_limits::create_rule))
         .route(
-            "/api/rate-limits/:id",
+            "/api/rate-limits/{id}",
             put(handlers::rate_limits::update_rule),
         )
         .route(
-            "/api/rate-limits/:id",
+            "/api/rate-limits/{id}",
             delete(handlers::rate_limits::delete_rule),
         )
         .route(
-            "/api/rate-limits/:scope/:target/status",
+            "/api/rate-limits/{scope}/{target}/status",
             get(handlers::rate_limits::get_status),
         )
         .with_state(store)
