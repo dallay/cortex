@@ -1,17 +1,7 @@
-<script setup lang="ts" generic="T extends Record<string, any>">
+<script setup lang="ts">
 import {
   Table,
 } from '@/components/ui/table'
-
-withDefaults(defineProps<{
-  columns?: {
-    key: string
-    label: string
-    sortable?: boolean
-  }[]
-}>(), {
-  columns: () => [],
-})
 </script>
 
 <template>

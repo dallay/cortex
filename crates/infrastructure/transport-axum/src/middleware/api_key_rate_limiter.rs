@@ -26,8 +26,8 @@ pub struct RateLimiterConfig {
 #[derive(Debug, Clone)]
 pub struct TierConfig {
     pub requests_per_minute: u32,
-    pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
+    pub requests_per_day: Option<u32>, // reserved: daily request quota (not yet enforced in token-bucket)
+    pub tokens_per_minute: Option<u32>, // reserved: token-weighted rate (not yet enforced in token-bucket)
 }
 
 impl Default for RateLimiterConfig {
@@ -37,7 +37,7 @@ impl Default for RateLimiterConfig {
         tiers.insert(
             ApiKeyTier::Free,
             TierConfig {
-                requests_per_minute: 100, // 100 capacity, 10/s refill (original hardcoded)
+                requests_per_minute: 100, // 100 capacity, ~1.67/s refill (100 rpm ÷ 60)
                 requests_per_day: Some(1000),
                 tokens_per_minute: Some(10000),
             },
@@ -45,7 +45,7 @@ impl Default for RateLimiterConfig {
         tiers.insert(
             ApiKeyTier::Pro,
             TierConfig {
-                requests_per_minute: 1000, // 1000 capacity, 100/s refill (original hardcoded)
+                requests_per_minute: 1000, // 1000 capacity, ~16.67/s refill (1000 rpm ÷ 60)
                 requests_per_day: Some(100000),
                 tokens_per_minute: Some(100000),
             },
@@ -53,7 +53,7 @@ impl Default for RateLimiterConfig {
         tiers.insert(
             ApiKeyTier::Enterprise,
             TierConfig {
-                requests_per_minute: 10000, // 10000 capacity, 1000/s refill (original hardcoded)
+                requests_per_minute: 10000, // 10000 capacity, ~166.67/s refill (10000 rpm ÷ 60)
                 requests_per_day: Some(10000000),
                 tokens_per_minute: Some(1000000),
             },
@@ -272,20 +272,6 @@ impl ApiKeyRateLimiter {
         // Probabilistic eviction: run eviction ~1% of calls to keep latency low
         if rand_simple() < 0.01 {
             self.evict_stale_locked(&mut buckets).await;
-        }
-
-        // Enforce max entries: evict oldest entries if at capacity
-        if buckets.len() >= self.max_entries {
-            let mut entries: Vec<_> = buckets.iter().collect();
-            entries.sort_by_key(|(_, b)| b.last_refill);
-            let keys_to_remove: Vec<_> = entries
-                .into_iter()
-                .take(buckets.len() - self.max_entries)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for key in keys_to_remove {
-                buckets.remove(&key);
-            }
         }
 
         let bucket = buckets

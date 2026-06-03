@@ -2,7 +2,6 @@
 import type { WithClassAsProps } from "./interface"
 import { cn } from "@/lib/utils"
 import { useCarousel } from "./useCarousel"
-import { ref } from 'vue'
 
 defineOptions({
   inheritAttrs: false,
@@ -10,9 +9,7 @@ defineOptions({
 
 const props = defineProps<WithClassAsProps>()
 
-const carouselRef = ref<HTMLElement | null>(null)
-defineExpose({ carouselRef })
-const { orientation } = useCarousel()
+const { orientation, carouselRef } = useCarousel()
 </script>
 
 <template>

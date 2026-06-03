@@ -163,21 +163,6 @@ impl IpRateLimiter {
             self.evict_stale_locked(&mut buckets).await;
         }
 
-        // Enforce max entries: evict oldest entries if at capacity
-        if buckets.len() >= self.max_entries {
-            // Sort by last_refill (oldest first) and remove ~10% of oldest
-            let mut entries: Vec<_> = buckets.iter().collect();
-            entries.sort_by_key(|(_, b)| b.last_refill);
-            let ips_to_remove: Vec<_> = entries
-                .into_iter()
-                .take(self.max_entries / 10)
-                .map(|(ip, _)| *ip)
-                .collect();
-            for ip in ips_to_remove {
-                buckets.remove(&ip);
-            }
-        }
-
         let bucket = buckets
             .entry(ip)
             .or_insert_with(|| TokenBucket::new(self.capacity));

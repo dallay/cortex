@@ -28,7 +28,7 @@ defineProps<{
         </AlertDescription>
       </Alert>
       <div class="flex items-center gap-2 p-3 bg-muted rounded-md font-mono text-sm">
-        <code class="flex-1 break-all">{{ apiKey }}</code>
+        <code class="flex-1 break-words overflow-x-auto">{{ apiKey }}</code>
         <CopyButton :value="apiKey" />
       </div>
     </CardContent>

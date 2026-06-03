@@ -312,7 +312,7 @@ jobs:
         run: pnpm install --filter @dallay/rook-dashboard
       - name: Run Vitest with coverage
         working-directory: apps/rook/dashboard
-        run: pnpm exec vitest run --coverage --coverage.reporter=json --coverage.outputDirectory=coverage
+        run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json --coverage.reportsDirectory=coverage
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
@@ -340,6 +340,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: SonarQube Scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
