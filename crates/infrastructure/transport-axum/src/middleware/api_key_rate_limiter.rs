@@ -2,8 +2,7 @@
 //
 // Tracks rate limits by API key (X-Authz-Auth-ID header value).
 // Falls back to IP-based limiting when no API key context is available.
-// Tier-based limits: Free (100 cap, 10/s refill), Pro (1000 cap, 100/s refill),
-// Enterprise (10000 cap, 1000/s refill).
+// Tier-based limits configured via TOML RateLimiterConfig.
 
 use std::{
     collections::HashMap,
@@ -14,6 +13,48 @@ use std::{
 
 use rook_core::ApiKeyTier;
 use tokio::sync::Mutex;
+
+/// Rate limiting configuration for API keys
+#[derive(Debug, Clone)]
+pub struct RateLimiterConfig {
+    pub enabled: bool,
+    pub default_tier: ApiKeyTier,
+    pub tiers: HashMap<ApiKeyTier, TierConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TierConfig {
+    pub requests_per_minute: u32,
+    pub requests_per_day: Option<u32>,
+    pub tokens_per_minute: Option<u32>,
+}
+
+impl Default for RateLimiterConfig {
+    fn default() -> Self {
+        let mut tiers = HashMap::new();
+        // Default values match the original hardcoded tier_params for backward compatibility
+        tiers.insert(ApiKeyTier::Free, TierConfig {
+            requests_per_minute: 100,  // 100 capacity, 10/s refill (original hardcoded)
+            requests_per_day: Some(1000),
+            tokens_per_minute: Some(10000),
+        });
+        tiers.insert(ApiKeyTier::Pro, TierConfig {
+            requests_per_minute: 1000,  // 1000 capacity, 100/s refill (original hardcoded)
+            requests_per_day: Some(100000),
+            tokens_per_minute: Some(100000),
+        });
+        tiers.insert(ApiKeyTier::Enterprise, TierConfig {
+            requests_per_minute: 10000,  // 10000 capacity, 1000/s refill (original hardcoded)
+            requests_per_day: Some(10000000),
+            tokens_per_minute: Some(1000000),
+        });
+        Self {
+            enabled: false,
+            default_tier: ApiKeyTier::Free,
+            tiers,
+        }
+    }
+}
 
 /// Rate limit exceeded error with retry-after information
 #[derive(Debug, Clone, PartialEq)]
@@ -91,13 +132,23 @@ impl TokenBucket {
 #[derive(Debug, Clone)]
 pub struct ApiKeyRateLimiter {
     buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
+    config: Arc<RateLimiterConfig>,
 }
 
 impl ApiKeyRateLimiter {
-    /// Create a new API key rate limiter with empty bucket map
+    /// Create a new API key rate limiter with empty bucket map and default config
     pub fn new() -> Self {
         Self {
             buckets: Arc::new(Mutex::new(HashMap::new())),
+            config: Arc::new(RateLimiterConfig::default()),
+        }
+    }
+
+    /// Create a new API key rate limiter with custom config
+    pub fn with_config(config: Arc<RateLimiterConfig>) -> Self {
+        Self {
+            buckets: Arc::new(Mutex::new(HashMap::new())),
+            config,
         }
     }
 
@@ -111,7 +162,39 @@ impl ApiKeyRateLimiter {
         tier: ApiKeyTier,
         client_ip: Option<IpAddr>,
     ) -> Result<RateLimitSnapshot, RateLimitExceeded> {
-        let (capacity, refill_per_second) = tier_params(tier);
+        // Get tier config, fallback to default tier if not found
+        let tier_config = self.config.tiers.get(&tier).or_else(|| {
+            tracing::warn!(
+                tier = tier.as_str(),
+                default_tier = self.config.default_tier.as_str(),
+                "Tier config not found, falling back to default tier"
+            );
+            self.config.tiers.get(&self.config.default_tier)
+        });
+
+        let tier_config = match tier_config {
+            Some(cfg) => cfg,
+            None => {
+                tracing::error!("No tier config found, including default tier");
+                // Fallback to hardcoded safe defaults if config is completely missing
+                return self.check_with_params(key_id, client_ip, 60, 1.0).await;
+            }
+        };
+
+        let capacity = tier_config.requests_per_minute as u64;
+        let refill_per_second = tier_config.requests_per_minute as f64 / 60.0;
+
+        self.check_with_params(key_id, client_ip, capacity, refill_per_second).await
+    }
+
+    /// Internal check with explicit capacity and refill rate
+    async fn check_with_params(
+        &self,
+        key_id: &str,
+        client_ip: Option<IpAddr>,
+        capacity: u64,
+        refill_per_second: f64,
+    ) -> Result<RateLimitSnapshot, RateLimitExceeded> {
         let use_key = key_id != "_anonymous";
 
         let lookup_key = if use_key {
@@ -167,15 +250,6 @@ impl ApiKeyRateLimiter {
 impl Default for ApiKeyRateLimiter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Get tier parameters (capacity, refill per second)
-fn tier_params(tier: ApiKeyTier) -> (u64, f64) {
-    match tier {
-        ApiKeyTier::Free => (100, 10.0),
-        ApiKeyTier::Pro => (1_000, 100.0),
-        ApiKeyTier::Enterprise => (10_000, 1_000.0),
     }
 }
 

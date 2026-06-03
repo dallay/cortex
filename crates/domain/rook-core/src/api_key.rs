@@ -96,7 +96,7 @@ impl ApiKeyScope {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ApiKeyTier {
     Free,
     Pro,

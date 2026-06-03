@@ -24,10 +24,10 @@ Chain strategy: size-exception
 
 ## Phase 1: Wire ApiKeyRateLimiter into routes.rs
 
-- [ ] 1.1 Remove `_` prefix from `api_key_rate_limiter` parameter in `transport-axum/src/routes.rs`
-- [ ] 1.2 Add `.layer(from_fn_with_state(...))` for `ApiKeyRateLimiter` after `CsrfGuard`, before `authz`
-- [ ] 1.3 Verify existing `ApiKeyRateLimiter` tests pass when wired
-- [ ] 1.4 Add integration test: authenticated request over tier limit returns 429 with `Retry-After`
+- [x] 1.1 Remove `_` prefix from `api_key_rate_limiter` parameter in `transport-axum/src/routes.rs`
+- [x] 1.2 Add `.layer(from_fn_with_state(...))` for `ApiKeyRateLimiter` after `CsrfGuard`, before `authz`
+- [x] 1.3 Verify existing `ApiKeyRateLimiter` tests pass when wired
+- [x] 1.4 Add integration test: authenticated request over tier limit returns 429 with `Retry-After`
 
 ## Phase 2: TOML tiers replace tier_params()
 

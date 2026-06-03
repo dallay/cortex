@@ -223,11 +223,16 @@ impl RookContainer {
         .with_session_validator(validate_session)
         .with_bootstrap_status(bootstrap_status.clone());
 
+        // Build rate limiter config from TOML
+        let rate_limiter_config = Arc::new(build_rate_limiter_config(&config.rate_limiting));
+
         Ok(Self {
             usecases,
             authz_config,
             login_rate_limiter: Arc::new(transport_axum::LoginRateLimiter::new()),
-            api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::new()),
+            api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::with_config(
+                rate_limiter_config,
+            )),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
             format_registry,
         })
@@ -241,6 +246,32 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
         anyhow::bail!("{name} must not be empty when {context}");
     }
     Ok(value)
+}
+
+/// Build transport-axum RateLimiterConfig from apps/rook config
+fn build_rate_limiter_config(
+    cfg: &crate::config::RateLimiterConfig,
+) -> transport_axum::middleware::api_key_rate_limiter::RateLimiterConfig {
+    use std::collections::HashMap;
+    use transport_axum::middleware::api_key_rate_limiter::{RateLimiterConfig, TierConfig};
+
+    let mut tiers = HashMap::new();
+    for (tier, tier_cfg) in &cfg.tiers {
+        tiers.insert(
+            *tier,
+            TierConfig {
+                requests_per_minute: tier_cfg.requests_per_minute,
+                requests_per_day: tier_cfg.requests_per_day,
+                tokens_per_minute: tier_cfg.tokens_per_minute,
+            },
+        );
+    }
+
+    RateLimiterConfig {
+        enabled: cfg.enabled,
+        default_tier: cfg.default_tier,
+        tiers,
+    }
 }
 
 /// Resolve the API key hash secret.
