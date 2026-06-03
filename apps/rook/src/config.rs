@@ -59,9 +59,22 @@ fn default_allow_env_fallback() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderCrudConfig {
+    #[serde(default = "default_provider_crud_enabled")]
     pub enabled: bool,
+}
+
+impl Default for ProviderCrudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_provider_crud_enabled(),
+        }
+    }
+}
+
+fn default_provider_crud_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

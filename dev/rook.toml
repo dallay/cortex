@@ -13,4 +13,4 @@ ttl_secs = 300
 db_path = ":memory:"
 
 [provider_crud]
-enabled = false
+enabled = true

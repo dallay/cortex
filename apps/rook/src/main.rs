@@ -72,6 +72,12 @@ enum DbCommands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env file from repo root (silent failure if missing)
+    let dotenv_path = std::path::Path::new("/Users/acosta/Dev/dallay/cortex/.env");
+    if dotenv_path.exists() {
+        let _ = dotenv::from_path(dotenv_path);
+    }
+
     init_tracing();
 
     let cli = Cli::parse();
