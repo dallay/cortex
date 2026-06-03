@@ -82,9 +82,18 @@ vi.mock('@/components/ui/checkbox', () => ({
 
 vi.mock('@/components/ui/badge', () => ({
   Badge: defineComponent({
-    props: { variant: String, dataTestid: String },
+    props: { variant: String, dataTestid: String, class: String },
     setup(props, { slots }) {
-      return () => h('span', { 'data-testid': props.dataTestid ?? 'badge' }, slots.default?.())
+      return () => h('span', { 'data-testid': props.dataTestid ?? 'badge' }, slots.default?.() ?? [])
+    },
+  }),
+}))
+
+vi.mock('@/components/StatusBadge', () => ({
+  default: defineComponent({
+    props: { status: String },
+    setup(props) {
+      return () => h('span', { 'data-testid': 'status-badge' }, props.status)
     },
   }),
 }))
@@ -92,7 +101,7 @@ vi.mock('@lucide/vue', () => {
   const icon = defineComponent({ setup: () => () => h('span') })
   return {
     Plus: icon, Copy: icon, Key: icon, AlertTriangle: icon, RefreshCw: icon,
-    Pencil: icon, Trash2: icon, ShieldAlert: icon,
+    Pencil: icon, Trash2: icon, ShieldAlert: icon, ChevronLeft: icon, ChevronRight: icon,
   }
 })
 
@@ -271,7 +280,7 @@ describe('ApiKeysView', () => {
       const wrapper = makeWrapper()
       await wrapper.vm.$nextTick()
 
-      expect(wrapper.text()).toContain('Unrestricted')
+      expect(wrapper.text()).toContain('unrestricted')
     })
 
     it('shows Restricted badge when allowedModels is non-empty', async () => {
@@ -281,8 +290,7 @@ describe('ApiKeysView', () => {
       const wrapper = makeWrapper()
       await wrapper.vm.$nextTick()
 
-      expect(wrapper.text()).toContain('Restricted')
-      expect(wrapper.text()).toContain('1 model')
+      expect(wrapper.text()).toContain('restricted')
     })
 
     it('shows Restricted badge when allowedProviders is non-empty', async () => {
@@ -292,8 +300,7 @@ describe('ApiKeysView', () => {
       const wrapper = makeWrapper()
       await wrapper.vm.$nextTick()
 
-      expect(wrapper.text()).toContain('Restricted')
-      expect(wrapper.text()).toContain('1 provider')
+      expect(wrapper.text()).toContain('restricted')
     })
   })
 

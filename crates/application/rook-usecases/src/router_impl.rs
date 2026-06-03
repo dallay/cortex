@@ -41,6 +41,8 @@ struct CircuitState {
     is_open: bool,
     last_failure: Option<chrono::DateTime<Utc>>,
     cooldown_until: Option<Instant>,
+    /// Rate limit reset time from upstream provider (Unix epoch seconds)
+    rate_limit_reset: Option<u64>,
 }
 
 impl CircuitState {
@@ -51,6 +53,24 @@ impl CircuitState {
             self.is_open = true;
             self.cooldown_until = Some(Instant::now() + CIRCUIT_COOLDOWN);
         }
+    }
+
+    fn record_rate_limit(&mut self, retry_after_secs: u64, reset_at: Option<u64>) {
+        self.failures += 1;
+        self.last_failure = Some(Utc::now());
+        self.is_open = true;
+        // Use provider's reset time if available, otherwise calculate from retry_after
+        if let Some(reset) = reset_at {
+            self.rate_limit_reset = Some(reset);
+        } else {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            self.rate_limit_reset = Some(now + retry_after_secs);
+        }
+        // Set cooldown based on retry_after
+        self.cooldown_until = Some(Instant::now() + Duration::from_secs(retry_after_secs));
     }
 
     #[allow(dead_code)]
@@ -211,8 +231,26 @@ impl RouterPort for FallbackRouter {
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
 
-    async fn on_failure(&self, provider: &ProviderId, _error: &CortexError) {
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
         let mut state = self.circuits.entry(provider.clone()).or_default();
+
+        // Check if this is a rate limit error and extract retry info
+        if error.is_rate_limited() {
+            if let Some(retry_after_secs) = error.retry_after_secs() {
+                // Extract reset timestamp if available from error
+                let reset_at = error.rate_limit_reset();
+                state.record_rate_limit(retry_after_secs, reset_at);
+                tracing::warn!(
+                    provider = %provider,
+                    retry_after_secs = retry_after_secs,
+                    reset_at = ?reset_at,
+                    "provider rate limited, circuit opened with backoff"
+                );
+                return;
+            }
+        }
+
+        // Regular failure (not rate limit)
         state.record_failure();
         tracing::warn!(
             provider = %provider,

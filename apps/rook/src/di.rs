@@ -48,8 +48,10 @@ pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
     pub authz_config: transport_axum::authz::AuthzConfig,
     pub login_rate_limiter: Arc<transport_axum::LoginRateLimiter>,
+    pub ip_rate_limiter: Arc<transport_axum::IpRateLimiter>,
     pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
+    pub rate_limit_store: Option<transport_axum::handlers::rate_limits::RateLimitRuleStore>,
     /// Format registry for provider wire-format lookup — used in Phase 2 routing.
     #[allow(dead_code)]
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
@@ -223,12 +225,28 @@ impl RookContainer {
         .with_session_validator(validate_session)
         .with_bootstrap_status(bootstrap_status.clone());
 
+        // Build rate limiter config from TOML
+        let rate_limiter_config = Arc::new(build_rate_limiter_config(&config.rate_limiting));
+
+        // Build rate limit rule store if rate limiting is enabled
+        let rate_limit_store = if config.rate_limiting.enabled {
+            Some(Arc::new(dashmap::DashMap::new()))
+        } else {
+            None
+        };
+
         Ok(Self {
             usecases,
             authz_config,
             login_rate_limiter: Arc::new(transport_axum::LoginRateLimiter::new()),
-            api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::new()),
+            ip_rate_limiter: Arc::new(transport_axum::IpRateLimiter::with_capacity(
+                config.rate_limiting.ip_limits.requests_per_minute,
+            )),
+            api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::with_config(
+                rate_limiter_config,
+            )),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
+            rate_limit_store,
             format_registry,
         })
     }
@@ -241,6 +259,32 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
         anyhow::bail!("{name} must not be empty when {context}");
     }
     Ok(value)
+}
+
+/// Build transport-axum RateLimiterConfig from apps/rook config
+fn build_rate_limiter_config(
+    cfg: &crate::config::RateLimiterConfig,
+) -> transport_axum::middleware::api_key_rate_limiter::RateLimiterConfig {
+    use std::collections::HashMap;
+    use transport_axum::middleware::api_key_rate_limiter::{RateLimiterConfig, TierConfig};
+
+    let mut tiers = HashMap::new();
+    for (tier, tier_cfg) in &cfg.tiers {
+        tiers.insert(
+            *tier,
+            TierConfig {
+                requests_per_minute: tier_cfg.requests_per_minute,
+                requests_per_day: tier_cfg.requests_per_day,
+                tokens_per_minute: tier_cfg.tokens_per_minute,
+            },
+        );
+    }
+
+    RateLimiterConfig {
+        enabled: cfg.enabled,
+        default_tier: cfg.default_tier,
+        tiers,
+    }
 }
 
 /// Resolve the API key hash secret.

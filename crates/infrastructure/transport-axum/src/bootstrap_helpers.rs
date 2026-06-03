@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Build a minimal [`RookUsecases`] wired only for bootstrap integration tests.
+/// Build a minimal [`rook_usecases::RookUsecases`] wired only for bootstrap integration tests.
 #[allow(clippy::too_many_arguments)]
 pub fn make_test_bootstrap_usecases(
     user_repo: Arc<dyn UserRepositoryPort>,
@@ -75,7 +75,7 @@ pub fn make_test_bootstrap_usecases(
     ))
 }
 
-/// Build an axum [`Router`] with only the two bootstrap endpoints wired.
+/// Build an axum [`axum::Router`] with only the two bootstrap endpoints wired.
 pub fn bootstrap_test_router(usecases: Arc<rook_usecases::RookUsecases>) -> axum::Router {
     use crate::handlers::bootstrap::{setup_handler, status_handler};
     use axum::routing::{get, post};

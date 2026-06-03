@@ -36,4 +36,14 @@ paths = [
   '''apps/rook/tests/.*''',
   '''crates/infrastructure/transport-axum/tests/.*''',
   '''dev/e2e/.*''',
+  '''apps/rook/dashboard/.*\.spec\.ts''',
+  '''apps/rook/dashboard/.*\.test\.ts''',
+]
+
+regexTarget = "match"
+regexes = [
+  '''STRONG_TEST_PASSWORD''',
+  '''fake_google_access_token''',
+  '''resolve_api_key_secret''',
+  '''generate_setup_token''',
 ]

@@ -18,11 +18,11 @@ export default defineConfig({
   },
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
-  /* Limit parallelism locally to avoid overwhelming the backend rate-limiter.
-     On CI keep workers=1 (already serialized). */
-  workers: process.env.CI ? 1 : 2,
+  /* Limit parallelism to avoid hitting rate limits during test runs.
+     E2E tests hit many endpoints (login, CSRF, auth, API calls) in quick succession
+     and the backend's rate limiting can trigger if workers > 1 with low limits.
+     CI runs use PLAYWRIGHT_WORKERS from env; local/dev uses 1 to be safe. */
+  workers: parseInt(process.env.PLAYWRIGHT_WORKERS ?? '1', 10),
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */

@@ -21,3 +21,26 @@ enabled = false
 [auth.api_keys]
 enabled = true
 allow_env_fallback = false
+
+# E2E test rate limiting config — high limits so parallel Playwright workers don't get rate limited
+[rate_limiting]
+enabled = true
+default_tier = "Free"
+
+[rate_limiting.ip_limits]
+requests_per_minute = 10000
+
+[rate_limiting.tiers.Free]
+requests_per_minute = 10000
+requests_per_day = 1000000
+tokens_per_minute = 1000000
+
+[rate_limiting.tiers.Pro]
+requests_per_minute = 100000
+requests_per_day = 10000000
+tokens_per_minute = 10000000
+
+[rate_limiting.tiers.Enterprise]
+requests_per_minute = 1000000
+requests_per_day = 100000000
+tokens_per_minute = 100000000

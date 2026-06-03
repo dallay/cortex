@@ -67,12 +67,24 @@ async fn map_openai_http_error(provider_id: &ProviderId, resp: reqwest::Response
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
+    let reset_at = resp
+        .headers()
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
     let raw_body = resp.text().await.unwrap_or_default();
     let sanitized = sanitize_error_body(&raw_body);
 
     match status.as_u16() {
         401 => CortexError::auth_failed("OpenAI authentication failed"),
-        429 => CortexError::rate_limited(provider_id.clone(), retry_after.unwrap_or(60)),
+        429 => {
+            let retry_secs = retry_after.unwrap_or(60);
+            if let Some(reset) = reset_at {
+                CortexError::rate_limited_with_reset(provider_id.clone(), retry_secs, reset)
+            } else {
+                CortexError::rate_limited(provider_id.clone(), retry_secs)
+            }
+        }
         400 => CortexError::invalid_request(sanitized),
         _ => CortexError::provider(format!("OpenAI error {status}: {sanitized}")),
     }

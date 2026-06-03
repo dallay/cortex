@@ -20,7 +20,7 @@ import type { CreateApiKeyRequest, UpdateApiKeyRequest } from '@/lib/api'
 import PageHeader from '@/components/PageHeader.vue'
 import ErrorBanner from '@/components/ErrorBanner.vue'
 import LoadingState from '@/components/LoadingState.vue'
-import DataTable from '@/components/DataTable.vue'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import StatusBadge from '@/components/StatusBadge.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import KeyDisplayCard from '@/components/KeyDisplayCard.vue'
@@ -269,7 +269,7 @@ function getKeyStatus(status: 'active' | 'revoked', allowedModels?: string[], al
     </PageHeader>
 
     <!-- Error State -->
-    <ErrorBanner v-if="error" :error="error" @retry="fetch">
+    <ErrorBanner v-if="error" :message="error" @retry="fetch">
       <template #default>
         <Button variant="ghost" size="sm" @click="fetch">
           <RefreshCw class="h-4 w-4 mr-1" />
@@ -282,94 +282,100 @@ function getKeyStatus(status: 'active' | 'revoked', allowedModels?: string[], al
     <LoadingState v-if="loading && apiKeys.length === 0" />
 
     <!-- Keys List -->
-    <DataTable v-else>
-      <template #header>
-        <tr class="border-b bg-muted/50">
-          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.name') || 'Name' }}</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.keyPrefix') || 'Key' }}</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">Scopes</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">Tier</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">Status</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</th>
-          <th class="px-4 py-3 text-left text-sm font-medium">Restrictions</th>
-          <th class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</th>
-        </tr>
-      </template>
-      <template #body>
-        <tr v-for="item in apiKeys" :key="item.id" class="hover:bg-muted/30">
-          <td class="px-4 py-3">
-            <div class="flex items-center gap-2">
-              <Key class="h-4 w-4 text-muted-foreground" />
-              <span class="font-medium">{{ item.label }}</span>
-            </div>
-          </td>
-          <td class="px-4 py-3">
-            <code class="text-sm font-mono text-muted-foreground">
-              {{ maskKey(item.keyPrefix) }}
-            </code>
-          </td>
-          <td class="px-4 py-3">
-            <div class="flex gap-1">
-              <span
-                v-for="scope in item.scopes"
-                :key="scope"
-                class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium"
-              >
-                {{ scope }}
-              </span>
-            </div>
-          </td>
-          <td class="px-4 py-3">
-            <span class="text-sm capitalize text-muted-foreground">{{ item.tier }}</span>
-          </td>
-          <td class="px-4 py-3">
-            <StatusBadge :status="item.isActive ? 'active' : 'revoked'" />
-          </td>
-          <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</td>
-          <td class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</td>
-          <td class="px-4 py-3">
-            <StatusBadge :status="getKeyStatus(item.isActive ? 'active' : 'revoked', item.allowedModels, item.allowedProviders)" />
-          </td>
-          <td class="px-4 py-3 text-right">
-            <div class="flex items-center justify-end gap-2">
-              <Button
-                v-if="item.isActive"
-                variant="ghost"
-                size="sm"
-                @click="openEditModal(item)"
-              >
-                <Pencil class="h-4 w-4" />
-              </Button>
-              <Button
-                v-if="item.isActive"
-                variant="ghost"
-                size="sm"
-                @click="confirmRotate(item.id)"
-              >
-                <RefreshCw class="h-4 w-4" />
-              </Button>
-              <Button
-                v-if="item.isActive"
-                variant="ghost"
-                size="sm"
-                class="text-destructive hover:text-destructive"
-                @click="confirmRevoke(item.id)"
-              >
-                <Trash2 class="h-4 w-4" />
-              </Button>
-            </div>
-          </td>
-        </tr>
-      </template>
-      <template #empty>
-        <div v-if="apiKeys.length === 0 && !loading" class="p-8 text-center text-muted-foreground">
-          <Key class="h-12 w-12 mx-auto text-muted-foreground mb-4 opacity-50" />
-          <p>{{ t('apiKeys.empty') || 'No API keys yet' }}</p>
-          <p class="text-sm mt-1">Create your first API key to enable external agent access</p>
-        </div>
-      </template>
-    </DataTable>
+    <div v-else class="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow class="bg-muted/50">
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.name') || 'Name' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.keyPrefix') || 'Key' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">Scopes</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">Tier</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">Status</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">Restrictions</TableHead>
+            <TableHead class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <template v-if="apiKeys.length > 0">
+            <TableRow v-for="item in apiKeys" :key="item.id" class="hover:bg-muted/30">
+              <TableCell class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  <Key class="h-4 w-4 text-muted-foreground" />
+                  <span class="font-medium">{{ item.label }}</span>
+                </div>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <code class="text-sm font-mono text-muted-foreground">
+                  {{ maskKey(item.keyPrefix) }}
+                </code>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <div class="flex gap-1">
+                  <span
+                    v-for="scope in item.scopes"
+                    :key="scope"
+                    class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium"
+                  >
+                    {{ scope }}
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <span class="text-sm capitalize text-muted-foreground">{{ item.tier }}</span>
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <StatusBadge :status="item.isActive ? 'active' : 'revoked'" />
+              </TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</TableCell>
+              <TableCell class="px-4 py-3">
+                <StatusBadge :status="getKeyStatus(item.isActive ? 'active' : 'revoked', item.allowedModels, item.allowedProviders)" />
+              </TableCell>
+              <TableCell class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end gap-2">
+                  <Button
+                    v-if="item.isActive"
+                    variant="ghost"
+                    size="sm"
+                    @click="openEditModal(item)"
+                  >
+                    <Pencil class="h-4 w-4" />
+                  </Button>
+                  <Button
+                    v-if="item.isActive"
+                    variant="ghost"
+                    size="sm"
+                    @click="confirmRotate(item.id)"
+                  >
+                    <RefreshCw class="h-4 w-4" />
+                  </Button>
+                  <Button
+                    v-if="item.isActive"
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:text-destructive"
+                    @click="confirmRevoke(item.id)"
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          </template>
+          <TableRow v-else>
+            <TableCell :colspan="9" class="p-8 text-center text-muted-foreground">
+              <div class="flex flex-col items-center">
+                <Key class="h-12 w-12 mb-4 opacity-50" />
+                <p>{{ t('apiKeys.empty') || 'No API keys yet' }}</p>
+                <p class="text-sm mt-1">Create your first API key to enable external agent access</p>
+              </div>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
 
     <!-- Pagination -->
     <Pagination

@@ -29,6 +29,21 @@ impl CortexError {
             source: Box::new(RateLimitedError {
                 provider: provider.0.to_string(),
                 retry_after_secs,
+                reset_at: None,
+            }),
+        }
+    }
+
+    pub fn rate_limited_with_reset(
+        provider: super::ProviderId,
+        retry_after_secs: u64,
+        reset_at: u64,
+    ) -> Self {
+        Self {
+            source: Box::new(RateLimitedError {
+                provider: provider.0.to_string(),
+                retry_after_secs,
+                reset_at: Some(reset_at),
             }),
         }
     }
@@ -106,6 +121,12 @@ impl CortexError {
             .downcast_ref::<RateLimitedError>()
             .map(|e| e.retry_after_secs)
     }
+
+    pub fn rate_limit_reset(&self) -> Option<u64> {
+        self.source
+            .downcast_ref::<RateLimitedError>()
+            .and_then(|e| e.reset_at)
+    }
 }
 
 #[derive(Debug)]
@@ -134,6 +155,7 @@ impl std::error::Error for NotFoundError {}
 pub struct RateLimitedError {
     pub provider: String,
     pub retry_after_secs: u64,
+    pub reset_at: Option<u64>,
 }
 
 impl fmt::Display for RateLimitedError {

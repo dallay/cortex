@@ -21,7 +21,7 @@ use super::{
     anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*,
     provider_routes, HttpError,
 };
-use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter};
+use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
@@ -31,8 +31,10 @@ pub fn router(
     usecases: Usecases,
     authz_config: authz::AuthzConfig,
     login_rate_limiter: Arc<LoginRateLimiter>,
-    _api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
+    ip_rate_limiter: Arc<IpRateLimiter>,
+    api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
     csrf_guard: Arc<CsrfGuard>,
+    rate_limit_store: Option<handlers::rate_limits::RateLimitRuleStore>,
 ) -> Router {
     let max_body_size_bytes = authz_config.max_body_size_bytes();
 
@@ -72,6 +74,11 @@ pub fn router(
     // RookUsecases), so the route is always mounted.
     router = router.merge(crate::models_routes::router(usecases.clone()));
 
+    // Rate limit admin API (if enabled)
+    if let Some(store) = rate_limit_store {
+        router = router.merge(rate_limits_routes(store));
+    }
+
     router
         .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
         // Login rate limiter — applied only to POST /login before auth middleware
@@ -79,6 +86,18 @@ pub fn router(
         .layer(middleware::from_fn_with_state(
             login_rate_limiter.clone(),
             login_rate_limiter_middleware,
+        ))
+        // IP rate limiter — applied to unauthenticated CLIENT_API routes
+        // Runs before API key rate limiter; authenticated requests bypass this
+        .layer(middleware::from_fn_with_state(
+            ip_rate_limiter.clone(),
+            ip_rate_limiter_middleware,
+        ))
+        // API key rate limiter — applied to authenticated CLIENT_API routes
+        // Runs after CSRF guard but before authz to read headers stamped by authz
+        .layer(middleware::from_fn_with_state(
+            api_key_rate_limiter.clone(),
+            api_key_rate_limiter_middleware,
         ))
         .layer(middleware::from_fn_with_state(
             authz_config,
@@ -126,15 +145,185 @@ pub async fn login_rate_limiter_middleware(
     }
 }
 
-/// Extract client IP from request extensions or connection info
+/// Extract client IP from request — checks X-Forwarded-For, X-Real-IP headers
+/// (for reverse-proxy setups), then falls back to axum's ConnectInfo extension.
 fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
-    // Try to get from axum's ConnectInfo extension
-    // Falls back to 127.0.0.1 if not available
+    // Prefer X-Forwarded-For header (first comma-separated IP)
+    if let Some(fwd) = request.headers().get("x-forwarded-for") {
+        if let Ok(s) = fwd.to_str() {
+            let ip = s.split(',').next().map(|s| s.trim()).unwrap_or(s);
+            if let Ok(addr) = ip.parse() {
+                return addr;
+            }
+        }
+    }
+
+    // Fall back to X-Real-IP header
+    if let Some(real) = request.headers().get("x-real-ip") {
+        if let Ok(s) = real.to_str() {
+            if let Ok(addr) = s.parse() {
+                return addr;
+            }
+        }
+    }
+
+    // Last resort: connect info from the socket
     request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|ci| ci.0.ip())
         .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
+}
+
+/// API key rate limiter middleware — applies to authenticated CLIENT_API routes
+pub async fn api_key_rate_limiter_middleware(
+    State(limiter): State<Arc<ApiKeyRateLimiter>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    // Skip rate limiting for public routes (health, bootstrap, auth)
+    let path = request.uri().path();
+    if path == "/health"
+        || path.starts_with("/api/bootstrap")
+        || path == "/login"
+        || path == "/logout"
+    {
+        return next.run(request).await;
+    }
+
+    // Extract rate limit context from authz headers (set by authz middleware)
+    // x-authz-tier: free | pro | enterprise
+    // x-authz-auth-id: api_key_xyz or "_anonymous"
+    let headers = request.headers();
+    let tier_str = headers
+        .get("x-authz-tier")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("free");
+    let key_id = headers
+        .get("x-authz-auth-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("_anonymous");
+
+    let tier = match tier_str {
+        "pro" => rook_core::ApiKeyTier::Pro,
+        "enterprise" => rook_core::ApiKeyTier::Enterprise,
+        _ => rook_core::ApiKeyTier::Free,
+    };
+
+    // Skip API-key rate limiter for anonymous requests (unauthenticated traffic)
+    // IP rate limiter will handle these requests instead
+    if key_id == "_anonymous" {
+        return next.run(request).await;
+    }
+
+    let client_ip = Some(extract_client_ip(&request));
+
+    match limiter.check(key_id, tier, client_ip).await {
+        Ok(snapshot) => {
+            let mut response = next.run(request).await;
+            // Stamp rate limit headers on successful responses
+            let headers = response.headers_mut();
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(snapshot.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(snapshot.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(snapshot.reset_unix),
+            );
+            response
+        }
+        Err(rate_limit) => {
+            let body = serde_json::json!({
+                "error": "rate_limit_exceeded",
+                "message": "API key rate limit exceeded. Please try again later.",
+                "code": "RATE_LIMITED",
+                "retry_after": rate_limit.retry_after_secs,
+            });
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+            let headers = response.headers_mut();
+            headers.insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(rate_limit.retry_after_secs),
+            );
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(rate_limit.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(rate_limit.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(rate_limit.reset_unix),
+            );
+            response
+        }
+    }
+}
+
+/// IP rate limiter middleware — applies to unauthenticated CLIENT_API routes
+pub async fn ip_rate_limiter_middleware(
+    State(limiter): State<Arc<IpRateLimiter>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    // Skip rate limiting for public routes (health, bootstrap, auth)
+    let path = request.uri().path();
+    if path == "/health"
+        || path.starts_with("/api/bootstrap")
+        || path == "/login"
+        || path == "/logout"
+    {
+        return next.run(request).await;
+    }
+
+    // Skip if request has authentication (will be checked by ApiKeyRateLimiter instead)
+    // Check for Authorization or X-API-Key headers
+    let headers = request.headers();
+    let has_auth = headers.contains_key("authorization") || headers.contains_key("x-api-key");
+    if has_auth {
+        return next.run(request).await;
+    }
+
+    // Extract client IP
+    let client_ip = extract_client_ip(&request);
+
+    match limiter.check(client_ip).await {
+        Ok(()) => next.run(request).await,
+        Err(rate_limit) => {
+            let body = serde_json::json!({
+                "error": "rate_limit_exceeded",
+                "message": "IP rate limit exceeded. Please try again later.",
+                "code": "RATE_LIMITED",
+                "retry_after": rate_limit.retry_after_secs,
+            });
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+            let headers = response.headers_mut();
+            headers.insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(rate_limit.retry_after_secs),
+            );
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(rate_limit.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(rate_limit.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(rate_limit.reset_unix),
+            );
+            response
+        }
+    }
 }
 
 /// Extract `ApiKeyRestrictions` from the trusted authz headers stamped by the middleware.
@@ -158,7 +347,7 @@ fn restrictions_from_headers(headers: &HeaderMap) -> Result<ApiKeyRestrictions, 
     })
 }
 
-/// Parse a comma-separated header value into a Vec<String>.
+/// Parse a comma-separated header value into a `Vec<String>`.
 ///
 /// Returns `Err(HttpError)` if the header is missing or not valid UTF-8.
 /// An empty value (present but empty) yields an empty Vec (unrestricted).
@@ -523,4 +712,23 @@ fn api_key_routes(usecases: Usecases) -> Router {
             post(handlers::api_key::rotate_api_key),
         )
         .with_state(usecases)
+}
+
+fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Router {
+    Router::new()
+        .route("/api/rate-limits", get(handlers::rate_limits::list_rules))
+        .route("/api/rate-limits", post(handlers::rate_limits::create_rule))
+        .route(
+            "/api/rate-limits/{id}",
+            put(handlers::rate_limits::update_rule),
+        )
+        .route(
+            "/api/rate-limits/{id}",
+            delete(handlers::rate_limits::delete_rule),
+        )
+        .route(
+            "/api/rate-limits/{scope}/{target}/status",
+            get(handlers::rate_limits::get_status),
+        )
+        .with_state(store)
 }

@@ -17,7 +17,8 @@ pub mod provider_routes;
 pub mod routes;
 
 pub use middleware::{
-    ApiKeyRateLimitExceeded, ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter, RateLimitSnapshot,
+    ApiKeyRateLimitExceeded, ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter,
+    RateLimitSnapshot,
 };
 pub use routes::router;
 

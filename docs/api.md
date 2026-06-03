@@ -455,3 +455,132 @@ Rook uses `tower-http` CORS middleware with permissive settings (allows all orig
 ## Request IDs
 
 Each incoming request is assigned a `rook-{uuid}` ID for tracing. Audit entries record the original request ID for correlation.
+
+---
+
+## Rate Limit Admin API
+
+When `[rate_limiting].enabled = true`, admin users can manage custom rate limit rules via `/api/rate-limits` endpoints.
+
+All endpoints require admin session authentication.
+
+### GET /api/rate-limits
+
+List all rate limit rules.
+
+**Response:**
+
+```json
+[
+  {
+    "id": "rl_key_a1b2c3d4",
+    "scope": "api-key",
+    "target": "key_abc123",
+    "requests_per_minute": 120,
+    "requests_per_day": 5000,
+    "tokens_per_minute": 50000
+  }
+]
+```
+
+### POST /api/rate-limits
+
+Create a new rate limit rule.
+
+**Request:**
+
+```json
+{
+  "scope": "api-key",
+  "target": "key_abc123",
+  "requests_per_minute": 120,
+  "requests_per_day": 5000,
+  "tokens_per_minute": 50000
+}
+```
+
+| Field                  | Type   | Required | Description                                      |
+|------------------------|--------|----------|--------------------------------------------------|
+| `scope`                | enum   | Yes      | `"api-key"`, `"ip-address"`, or `"global"`       |
+| `target`               | string | Yes      | API key ID, IP address, or `"global"`            |
+| `requests_per_minute`  | u32    | Yes      | Maximum requests per minute (must be > 0)        |
+| `requests_per_day`     | u32    | No       | Maximum requests per day                         |
+| `tokens_per_minute`    | u32    | No       | Maximum tokens per minute                        |
+
+**Response:** `201 Created` with the created rule including generated `id`.
+
+**Validation:**
+- `target` cannot be empty
+- `scope: "global"` must have `target: "global"`
+- `requests_per_minute` must be greater than 0
+
+### PUT /api/rate-limits/:id
+
+Update an existing rate limit rule.
+
+**Request:** (all fields optional)
+
+```json
+{
+  "requests_per_minute": 200,
+  "requests_per_day": 10000,
+  "tokens_per_minute": 100000
+}
+```
+
+**Response:** `200 OK` with the updated rule.
+
+### DELETE /api/rate-limits/:id
+
+Delete a rate limit rule.
+
+**Response:** `204 No Content`
+
+### GET /api/rate-limits/:scope/:target/status
+
+Get current rate limit status for a specific target.
+
+**Example:** `GET /api/rate-limits/api_key/key_abc123/status`
+
+**Response:**
+
+```json
+{
+  "scope": "api-key",
+  "target": "key_abc123",
+  "current_minute_count": 45,
+  "current_day_count": 2300,
+  "remaining_minute": 55,
+  "remaining_day": 2700,
+  "reset_at": "2026-06-03T13:04:00Z"
+}
+```
+
+---
+
+## Rate Limit Headers
+
+All API responses include rate limit metadata headers:
+
+| Header                  | Description                                    |
+|-------------------------|------------------------------------------------|
+| `X-RateLimit-Limit`     | Maximum requests in current window             |
+| `X-RateLimit-Remaining` | Remaining requests in current window           |
+| `X-RateLimit-Reset`     | Unix timestamp when limit resets               |
+
+When rate limited (HTTP 429):
+
+| Header        | Description                    |
+|---------------|--------------------------------|
+| `Retry-After` | Seconds until limit resets     |
+
+**Example 429 response:**
+
+```json
+{
+  "error": "rate_limit_exceeded",
+  "message": "API key rate limit exceeded. Please try again later.",
+  "code": "RATE_LIMITED",
+  "retry_after": 42
+}
+```
