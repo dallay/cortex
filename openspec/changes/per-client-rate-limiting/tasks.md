@@ -42,15 +42,15 @@ Chain strategy: size-exception
 
 ## Phase 3: IpRateLimiter added
 
-- [ ] 3.1 Create `transport-axum/src/middleware/ip_rate_limiter.rs` with `IpRateLimiter` struct
-- [ ] 3.2 Implement middleware fn extracting IP from `ConnectInfo<SocketAddr>`
-- [ ] 3.3 Reuse `TokenBucket` from `login_rate_limiter.rs` for per-IP buckets
-- [ ] 3.4 Add `IpRateLimiter` to middleware chain in `routes.rs` before `ApiKeyRateLimiter`
-- [ ] 3.5 Export `IpRateLimiter` in `transport-axum/src/middleware/mod.rs`
-- [ ] 3.6 Wire `IpRateLimiter` in `apps/rook/src/di.rs` with config
-- [ ] 3.7 Add unit test: unauthenticated request under IP limit is allowed
-- [ ] 3.8 Add integration test: unauthenticated request over IP limit returns 429
-- [ ] 3.9 Add integration test: authenticated request bypasses IP limiter
+- [x] 3.1 Create `transport-axum/src/middleware/ip_rate_limiter.rs` with `IpRateLimiter` struct
+- [x] 3.2 Implement middleware fn extracting IP from `ConnectInfo<SocketAddr>`
+- [x] 3.3 Reuse `TokenBucket` from `login_rate_limiter.rs` for per-IP buckets
+- [x] 3.4 Add `IpRateLimiter` to middleware chain in `routes.rs` before `ApiKeyRateLimiter`
+- [x] 3.5 Export `IpRateLimiter` in `transport-axum/src/middleware/mod.rs`
+- [x] 3.6 Wire `IpRateLimiter` in `apps/rook/src/di.rs` with config
+- [x] 3.7 Add unit test: unauthenticated request under IP limit is allowed
+- [x] 3.8 Add integration test: unauthenticated request over IP limit returns 429
+- [x] 3.9 Add integration test: authenticated request bypasses IP limiter
 
 ## Phase 4: FallbackRouter records upstream 429s
 
