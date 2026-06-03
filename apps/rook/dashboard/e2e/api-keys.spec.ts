@@ -375,8 +375,8 @@ test.describe('API Keys - Revoke Flow', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
-    // Click revoke button (trash icon)
-    await row.locator('button').nth(1).click()
+    // Click revoke button (trash icon) — nth(2) because Rotate was added between Edit and Revoke
+    await row.locator('button').nth(2).click()
 
     // Confirmation dialog should appear
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -397,8 +397,8 @@ test.describe('API Keys - Revoke Flow', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: revokeLabel })
 
-    // Click revoke button
-    await row.locator('button').nth(1).click()
+    // Click revoke button — nth(2) because Rotate was added between Edit and Revoke
+    await row.locator('button').nth(2).click()
 
     // Confirm revocation
     await page.getByRole('button', { name: /revoke key/i }).click()

@@ -409,7 +409,7 @@ const hasPrevPage = computed(() => offset.value > 0)
 
     <!-- Create Modal -->
     <Dialog v-model:open="showCreateModal">
-      <DialogContent>
+      <DialogContent class="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create API Key</DialogTitle>
           <DialogDescription>
@@ -461,7 +461,7 @@ const hasPrevPage = computed(() => offset.value > 0)
 
     <!-- Edit Modal -->
     <Dialog v-model:open="showEditModal">
-      <DialogContent>
+      <DialogContent class="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit API Key</DialogTitle>
           <DialogDescription>Update the API key metadata.</DialogDescription>
