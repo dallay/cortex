@@ -3,7 +3,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Copy, Key, AlertTriangle, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -12,17 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { useApiKeys } from '@/composables/useApiKeys'
 import { useProviders } from '@/composables/useProviders'
+import { useAvailableModels } from '@/composables/useAvailableModels'
+import ApiKeyForm, { type ApiKeyFormState } from '@/components/ApiKeyForm.vue'
+import { SCOPES, DEFAULT_SCOPES } from '@/config/scopes'
 import type { CreateApiKeyRequest, UpdateApiKeyRequest } from '@/lib/api'
 
 const { t } = useI18n()
@@ -43,24 +36,40 @@ const {
   prevPage,
 } = useApiKeys()
 
+// Tier options are static (driven by the rate limiter in the backend).
+// The description field makes the contract visible to the user, which
+// is the main reason this view was redesigned.
+const TIER_OPTIONS = [
+  { value: 'free', label: 'Free', description: '100 req burst / ~10 req/min' },
+  { value: 'pro', label: 'Pro', description: '1,000 req burst / ~100 req/min' },
+  {
+    value: 'enterprise',
+    label: 'Enterprise',
+    description: '10,000 req burst / ~1,000 req/min',
+  },
+]
+
+function buildDefaultFormState(): ApiKeyFormState {
+  return {
+    label: '',
+    scopes: [...DEFAULT_SCOPES],
+    tier: 'enterprise',
+    expiresAt: null,
+    allowedModels: [],
+    allowedProviders: [],
+  }
+}
+
 // Create modal state
 const showCreateModal = ref(false)
-const createForm = ref<CreateApiKeyRequest & { allowedModelsInput: string }>({
-  label: '',
-  scopes: [],
-  tier: 'free',
-  expiresAt: null,
-  allowedModels: [],
-  allowedProviders: [],
-  allowedModelsInput: '',
-})
+const createForm = ref<ApiKeyFormState>(buildDefaultFormState())
 const createError = ref<string | null>(null)
 const newlyCreatedKey = ref<string | null>(null)
 
 // Edit modal state
 const showEditModal = ref(false)
 const editingKey = ref<string | null>(null)
-const editForm = ref<UpdateApiKeyRequest & { allowedModelsInput: string }>({} as any)
+const editForm = ref<ApiKeyFormState>(buildDefaultFormState())
 const editError = ref<string | null>(null)
 
 // Revoke confirmation
@@ -75,15 +84,15 @@ const rotateError = ref<string | null>(null)
 const newlyRotatedKey = ref<string | null>(null)
 const showRotatedKey = ref(false)
 
-// Providers for multi-select
+// Providers and available models for the form
 const { providers, fetch: fetchProviders } = useProviders()
+const { modelsByProvider, fetch: fetchAvailableModels } = useAvailableModels()
 
 // Visibility toggle for newly created key
 const showNewKey = ref(false)
 
-onMounted(() => {
-  fetch()
-  fetchProviders()
+onMounted(async () => {
+  await Promise.all([fetch(), fetchProviders(), fetchAvailableModels()])
 })
 
 function formatDate(dateStr: string | null): string {
@@ -101,15 +110,12 @@ function maskKey(keyPrefix: string): string {
 
 async function handleCreate() {
   createError.value = null
-  const errors: string[] = []
   if (!createForm.value.label.trim()) {
-    errors.push('Label is required')
+    createError.value = 'Label is required'
+    return
   }
   if (createForm.value.scopes.length === 0) {
-    errors.push('At least one scope is required')
-  }
-  if (errors.length > 0) {
-    createError.value = errors.join('. ')
+    createError.value = 'At least one scope is required'
     return
   }
 
@@ -118,7 +124,7 @@ async function handleCreate() {
     scopes: createForm.value.scopes,
     tier: createForm.value.tier,
     expiresAt: createForm.value.expiresAt,
-    allowedModels: parseAllowedModels(createForm.value.allowedModelsInput || ''),
+    allowedModels: createForm.value.allowedModels,
     allowedProviders: createForm.value.allowedProviders,
   }
 
@@ -126,8 +132,7 @@ async function handleCreate() {
   if (result) {
     newlyCreatedKey.value = result.plaintextKey
     showNewKey.value = true
-    // Reset form
-    createForm.value = { label: '', scopes: [], tier: 'free', expiresAt: null, allowedModels: [], allowedProviders: [], allowedModelsInput: '' }
+    createForm.value = buildDefaultFormState()
   } else {
     createError.value = error.value || 'Failed to create API key'
   }
@@ -149,7 +154,6 @@ function openEditModal(key: typeof apiKeys.value[0]) {
     expiresAt: key.expiresAt,
     allowedModels: [...(key.allowedModels || [])],
     allowedProviders: [...(key.allowedProviders || [])],
-    allowedModelsInput: (key.allowedModels || []).join(', '),
   }
   showEditModal.value = true
 }
@@ -164,7 +168,7 @@ async function handleUpdate() {
     tier: editForm.value.tier,
     isActive: editForm.value.isActive,
     expiresAt: editForm.value.expiresAt,
-    allowedModels: parseAllowedModels(editForm.value.allowedModelsInput || ''),
+    allowedModels: editForm.value.allowedModels,
     allowedProviders: editForm.value.allowedProviders,
   }
 
@@ -172,7 +176,7 @@ async function handleUpdate() {
   if (result) {
     showEditModal.value = false
     editingKey.value = null
-    editForm.value = {} as any
+    editForm.value = buildDefaultFormState()
   } else {
     editError.value = error.value || 'Failed to update API key'
   }
@@ -230,27 +234,8 @@ async function copyToClipboard(text: string) {
   }
 }
 
-function parseAllowedModels(input: string): string[] {
-  if (!input.trim()) return []
-  return input.split(',').map(s => s.trim()).filter(s => s.length > 0)
-}
-
 const hasNextPage = computed(() => offset.value + limit.value < total.value)
 const hasPrevPage = computed(() => offset.value > 0)
-
-const scopesOptions = [
-  { value: 'chat:read', label: 'Chat Read' },
-  { value: 'chat:write', label: 'Chat Write' },
-  { value: 'providers:read', label: 'Providers Read' },
-  { value: 'providers:write', label: 'Providers Write' },
-  { value: 'admin', label: 'Admin' },
-]
-
-const tierOptions = [
-  { value: 'free', label: 'Free' },
-  { value: 'pro', label: 'Pro' },
-  { value: 'enterprise', label: 'Enterprise' },
-]
 </script>
 
 <template>
@@ -259,7 +244,9 @@ const tierOptions = [
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('nav.apiKeys') }}</h1>
-        <p class="text-muted-foreground">{{ t('apiKeys.description') || 'Manage API keys for external agents' }}</p>
+        <p class="text-muted-foreground">
+          {{ t('apiKeys.description') || 'Manage API keys for external agents' }}
+        </p>
       </div>
       <Button @click="showCreateModal = true">
         <Plus class="h-4 w-4 mr-2" />
@@ -268,7 +255,10 @@ const tierOptions = [
     </div>
 
     <!-- Error State -->
-    <div v-if="error" class="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+    <div
+      v-if="error"
+      class="rounded-lg border border-destructive/50 bg-destructive/10 p-4"
+    >
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 text-destructive">
           <AlertTriangle class="h-4 w-4" />
@@ -423,8 +413,8 @@ const tierOptions = [
         <DialogHeader>
           <DialogTitle>Create API Key</DialogTitle>
           <DialogDescription>
-            Create a new API key for external agent authentication.
-            The key will only be shown once — save it securely.
+            Create a new API key for external agent authentication. The key will only be
+            shown once — save it securely.
           </DialogDescription>
         </DialogHeader>
 
@@ -439,7 +429,12 @@ const tierOptions = [
               <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
                 {{ newlyCreatedKey }}
               </code>
-              <Button size="sm" variant="outline" aria-label="Copy" @click="copyToClipboard(newlyCreatedKey)">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Copy"
+                @click="copyToClipboard(newlyCreatedKey)"
+              >
                 <Copy class="h-4 w-4" />
               </Button>
             </div>
@@ -448,88 +443,19 @@ const tierOptions = [
         </div>
 
         <!-- Create form -->
-        <form v-else @submit.prevent="handleCreate" class="space-y-4">
-          <div class="space-y-2">
-            <label for="create-key-label" class="text-sm font-medium">Label</label>
-            <Input
-              id="create-key-label"
-              v-model="createForm.label"
-              placeholder="e.g., opencode-agent, hermes-agent"
-            />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Scopes</label>
-            <div class="flex gap-4">
-              <label
-                v-for="scope in scopesOptions"
-                :key="scope.value"
-                class="flex items-center gap-2"
-              >
-                <input
-                  type="checkbox"
-                  :value="scope.value"
-                  v-model="createForm.scopes"
-                  class="rounded border-input"
-                />
-                <span class="text-sm">{{ scope.label }}</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Tier</label>
-            <Select v-model="createForm.tier">
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Tier</SelectLabel>
-                  <SelectItem v-for="tier in tierOptions" :key="tier.value" :value="tier.value">
-                    {{ tier.label }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div class="space-y-2">
-            <label for="create-allowed-models" class="text-sm font-medium">Allowed Models</label>
-            <Input
-              id="create-allowed-models"
-              v-model="createForm.allowedModelsInput"
-              placeholder="e.g., gpt-4, gpt-4o (comma-separated, empty = unrestricted)"
-            />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Allowed Providers</label>
-            <div class="flex flex-wrap gap-2">
-              <label
-                v-for="provider in providers"
-                :key="provider.id"
-                class="flex items-center gap-2"
-              >
-                <input
-                  type="checkbox"
-                  :value="provider.id"
-                  v-model="createForm.allowedProviders"
-                  class="rounded border-input"
-                />
-                <span class="text-sm">{{ provider.name }}</span>
-              </label>
-              <span v-if="providers.length === 0" class="text-sm text-muted-foreground">No providers configured</span>
-            </div>
-          </div>
-
-          <div v-if="createError" class="text-sm text-destructive">{{ createError }}</div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" @click="showCreateModal = false">Cancel</Button>
-            <Button type="submit">Create Key</Button>
-          </DialogFooter>
-        </form>
+        <ApiKeyForm
+          v-else
+          v-model="createForm"
+          :scopes="SCOPES"
+          :providers="providers"
+          :models-by-provider="modelsByProvider"
+          :tier-options="TIER_OPTIONS"
+          :error="createError"
+          submit-label="Create Key"
+          cancel-label="Cancel"
+          @submit="handleCreate"
+          @cancel="showCreateModal = false"
+        />
       </DialogContent>
     </Dialog>
 
@@ -538,89 +464,22 @@ const tierOptions = [
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit API Key</DialogTitle>
-          <DialogDescription>
-            Update the API key metadata.
-          </DialogDescription>
+          <DialogDescription>Update the API key metadata.</DialogDescription>
         </DialogHeader>
 
-        <form @submit.prevent="handleUpdate" class="space-y-4">
-          <div class="space-y-2">
-            <label for="edit-key-label" class="text-sm font-medium">Label</label>
-            <Input id="edit-key-label" v-model="editForm.label!" />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Scopes</label>
-            <div class="flex gap-4">
-              <label
-                v-for="scope in scopesOptions"
-                :key="scope.value"
-                class="flex items-center gap-2"
-              >
-                <input
-                  type="checkbox"
-                  :value="scope.value"
-                  v-model="editForm.scopes!"
-                  class="rounded border-input"
-                />
-                <span class="text-sm">{{ scope.label }}</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Tier</label>
-            <Select v-model="editForm.tier!">
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Tier</SelectLabel>
-                  <SelectItem v-for="tier in tierOptions" :key="tier.value" :value="tier.value">
-                    {{ tier.label }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div class="space-y-2">
-            <label for="edit-allowed-models" class="text-sm font-medium">Allowed Models</label>
-            <Input
-              id="edit-allowed-models"
-              v-model="editForm.allowedModelsInput"
-              placeholder="e.g., gpt-4, gpt-4o (comma-separated, empty = unrestricted)"
-            />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Allowed Providers</label>
-            <div class="flex flex-wrap gap-2">
-              <label
-                v-for="provider in providers"
-                :key="provider.id"
-                class="flex items-center gap-2"
-              >
-                <input
-                  type="checkbox"
-                  :value="provider.id"
-                  v-model="editForm.allowedProviders!"
-                  class="rounded border-input"
-                />
-                <span class="text-sm">{{ provider.name }}</span>
-              </label>
-              <span v-if="providers.length === 0" class="text-sm text-muted-foreground">No providers configured</span>
-            </div>
-          </div>
-
-          <div v-if="editError" class="text-sm text-destructive">{{ editError }}</div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" @click="showEditModal = false">Cancel</Button>
-            <Button type="submit">Save Changes</Button>
-          </DialogFooter>
-        </form>
+        <ApiKeyForm
+          v-model="editForm"
+          :scopes="SCOPES"
+          :providers="providers"
+          :models-by-provider="modelsByProvider"
+          :tier-options="TIER_OPTIONS"
+          :error="editError"
+          submit-label="Save Changes"
+          cancel-label="Cancel"
+          :is-edit="true"
+          @submit="handleUpdate"
+          @cancel="showEditModal = false"
+        />
       </DialogContent>
     </Dialog>
 
@@ -630,8 +489,8 @@ const tierOptions = [
         <DialogHeader>
           <DialogTitle>Revoke API Key</DialogTitle>
           <DialogDescription>
-            This will immediately invalidate the API key. External agents using this key will no
-            longer be able to authenticate. This action cannot be undone.
+            This will immediately invalidate the API key. External agents using this key
+            will no longer be able to authenticate. This action cannot be undone.
           </DialogDescription>
         </DialogHeader>
 
@@ -650,8 +509,8 @@ const tierOptions = [
         <DialogHeader>
           <DialogTitle>Rotate API Key</DialogTitle>
           <DialogDescription>
-            Rotate this key? The old key will stop working immediately and a new key will be generated.
-            Make sure to copy the new key — it will only be shown once.
+            Rotate this key? The old key will stop working immediately and a new key will
+            be generated. Make sure to copy the new key — it will only be shown once.
           </DialogDescription>
         </DialogHeader>
 
@@ -666,7 +525,12 @@ const tierOptions = [
               <code class="flex-1 text-sm font-mono bg-muted rounded px-3 py-2 break-all">
                 {{ newlyRotatedKey }}
               </code>
-              <Button size="sm" variant="outline" aria-label="Copy" @click="copyToClipboard(newlyRotatedKey)">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Copy"
+                @click="copyToClipboard(newlyRotatedKey)"
+              >
                 <Copy class="h-4 w-4" />
               </Button>
             </div>
