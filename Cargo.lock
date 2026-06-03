@@ -2753,6 +2753,7 @@ dependencies = [
  "bytes",
  "cache-memory",
  "clap",
+ "dashmap",
  "db-migration",
  "dirs",
  "dotenv",
