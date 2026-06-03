@@ -234,9 +234,11 @@ test.describe('API Keys - Create Flow', () => {
 
     await page.getByRole('button', { name: /create api key/i }).click()
 
-    // Fill in the form
+    // Fill in the form — click Admin (unchecked by default) to exercise
+    // scope selection logic rather than toggling off the pre-checked
+    // Chat Read which DEFAULT_SCOPES pre-populates.
     await page.getByLabel(/label/i).fill(createLabel)
-    await page.getByRole('dialog').getByText(/^chat read$/i).click()
+    await page.getByRole('dialog').getByText(/^admin$/i).click()
 
     // Submit
     await page.getByRole('button', { name: /create key/i }).click()

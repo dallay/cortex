@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use axum::{extract::State, Json};
+use tracing::error;
 use rook_core::{ModelCatalogEntry, ProviderConnection};
 
 use super::models_dto::{ListModelsResponse, ProviderModelsGroup};
@@ -61,7 +62,10 @@ async fn list_available_models_internal(
     // and the repository isn't reachable. In that case there are no
     // active providers and the response is just an empty list.
     let connections: Vec<ProviderConnection> = match usecases.manage_connections.as_ref() {
-        Some(mc) => mc.list().await.map_err(internal_error)?,
+        Some(mc) => mc.list().await.map_err(|e| {
+            error!("list_available_models: failed to list connections: {e}");
+            internal_error()
+        })?,
         None => Vec::new(),
     };
     let catalog = usecases.model_catalog.list().await;
@@ -79,11 +83,12 @@ pub async fn list_available_models(
     Ok(Json(response))
 }
 
-fn internal_error<E: std::fmt::Display>(error: E) -> HttpError {
+fn internal_error() -> HttpError {
+    error!("list_available_models: internal server error");
     HttpError {
         status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         code: "INTERNAL_ERROR",
-        message: format!("internal server error: {error}"),
+        message: "internal server error".to_string(),
     }
 }
 

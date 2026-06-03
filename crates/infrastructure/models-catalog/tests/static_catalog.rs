@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use models_catalog::StaticModelCatalog;
-use rook_core::{ModelCatalogEntry, ModelCatalogPort, ProviderKind};
+use rook_core::{ModelCatalogPort, ProviderKind};
 
 #[tokio::test]
 async fn list_is_non_empty() {
@@ -77,19 +77,28 @@ async fn list_is_stable_across_calls() {
 async fn list_returns_at_least_one_entry_per_supported_provider_kind() {
     let catalog = StaticModelCatalog::new();
     let entries = catalog.list().await;
-    let counts = count_per_kind(&entries);
-    for (kind, count) in counts {
+    let kinds_in_catalog: HashSet<ProviderKind> = entries.iter().map(|e| e.provider_kind).collect();
+
+    // Explicitly assert that every known ProviderKind appears at least once.
+    // This complements list_covers_every_known_provider_kind by verifying
+    // the *count* is non-zero for each kind, not just that the kind is absent.
+    for kind in [
+        ProviderKind::OpenAI,
+        ProviderKind::Anthropic,
+        ProviderKind::Ollama,
+        ProviderKind::Gemini,
+        ProviderKind::Groq,
+    ] {
+        let count = entries.iter().filter(|e| e.provider_kind == kind).count();
         assert!(
             count >= 1,
-            "provider kind {kind:?} must have at least one model"
+            "provider kind {kind:?} must have at least one model, but catalog has none"
+        );
+        // Also verify the kind is in the set (redundant with the above, but
+        // documents the intent that kinds_in_catalog is derived correctly).
+        assert!(
+            kinds_in_catalog.contains(&kind),
+            "provider kind {kind:?} must appear in catalog"
         );
     }
-}
-
-fn count_per_kind(entries: &[ModelCatalogEntry]) -> HashMap<ProviderKind, usize> {
-    let mut out: HashMap<ProviderKind, usize> = HashMap::new();
-    for entry in entries {
-        *out.entry(entry.provider_kind).or_insert(0) += 1;
-    }
-    out
 }
