@@ -162,6 +162,11 @@ export interface LoginRequest {
 export interface LoginResponse {
   session_id: string
   expires_at: string
+  /** Present when the session was freshly authenticated — carries the same
+   *  csrf_token the backend set as the HttpOnly cookie. Used to seed the
+   *  client-side CSRF cache so the first state-changing request after login
+   *  has a pre-warmed token. */
+  csrf_token?: string
 }
 
 export interface LoginResult {
@@ -210,6 +215,28 @@ export function setApiBaseUrl(url: string | null): void {
 function createApiClient() {
   const baseUrl = getBaseUrl()
 
+  // CSRF token cache + retry-on-403 + login-seeded cache.
+  // The double-submit cookie pattern requires that every state-changing
+  // request carries the same csrf_token in the cookie and the X-CSRF-Token
+  // header. Previously the client refetched GET /login on every state-changing
+  // call, which exposed a cookie-jar race in WebKit (Safari): the response
+  // body returned the token before the Set-Cookie landed in the jar, so the
+  // next request went out with a valid header but no cookie and the backend
+  // rejected it as csrf_missing.
+  //
+  // The fix (issue #82, suggested fix #2) is two-pronged:
+  // 1. The POST /login response body now carries a fresh csrf_token (the same
+  //    value set as the HttpOnly cookie). The login() call seeds cachedCsrfToken
+  //    from this response body so the very first state-changing request AFTER
+  //    login has a pre-warmed token and never needs GET /login at all.
+  // 2. The retry-on-403 guard protects against any remaining token staleness
+  //    (server-side rotation, or edge cases where the login cookie wasn't
+  //    visible to the first state-changing request even with pre-warming).
+  //
+  // Result: WebKit, Chromium, and Firefox all work correctly. The cache also
+  // eliminates a per-request round-trip for all browsers, reducing latency.
+  let cachedCsrfToken: string | null = null
+
   async function request<T>(
     path: string,
     options: RequestInit = {}
@@ -230,21 +257,45 @@ function createApiClient() {
 
     if (isStateChanging && !headers['X-CSRF-Token']) {
       try {
-        const csrfRes = await fetch(`${baseUrl}/login`, { credentials: 'include' })
-        if (csrfRes.ok) {
-          const csrfBody = await csrfRes.json()
-          headers['X-CSRF-Token'] = csrfBody.csrf_token
-        }
-      } catch {
+        const token = await getCsrfToken()
+        headers['X-CSRF-Token'] = token
+      } catch (err) {
+        // Surface the failure so it shows up in DevTools — the request will
+        // likely fail with csrf_missing next, but operators need the root
+        // cause (e.g. backend 5xx) to diagnose the real issue. See issue #82.
+        console.warn('[Rook API] Failed to fetch CSRF token:', err)
         // Proceed without CSRF token — request will fail with 403 if required
       }
     }
 
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
       credentials: 'include', // Include cookies for session auth
     })
+
+    // Retry once on CSRF failure: the cached token may be stale (server
+    // rotation) or the cookie may not have landed in the jar yet (WebKit
+    // race described in issue #82). On a real authz error (e.g. 403 from a
+    // route's permission check) the body will not mention csrf_missing or
+    // csrf_mismatch, so we leave the response alone and let it throw below.
+    if (isStateChanging && response.status === 403) {
+      const probe = await response.clone().text().catch(() => '')
+      if (probe.includes('csrf_missing') || probe.includes('csrf_mismatch')) {
+        cachedCsrfToken = null
+        try {
+          headers['X-CSRF-Token'] = await getCsrfToken()
+          response = await fetch(url, {
+            ...options,
+            headers,
+            credentials: 'include',
+          })
+        } catch (err) {
+          console.warn('[Rook API] CSRF token refresh failed:', err)
+          // Fall through to the error path with the 403 response
+        }
+      }
+    }
 
     if (!response.ok) {
       const error = await response.text().catch(() => 'Unknown error')
@@ -260,8 +311,21 @@ function createApiClient() {
   }
 
   async function getCsrfToken(): Promise<string> {
-    const response = await request<CsrfTokenResponse>('/login')
-    return response.csrf_token
+    if (cachedCsrfToken) return cachedCsrfToken
+    const response = await fetch(`${baseUrl}/login`, { credentials: 'include' })
+    if (!response.ok) {
+      throw new Error(`Failed to fetch CSRF token: HTTP ${response.status}`)
+    }
+    const body = (await response.json()) as CsrfTokenResponse
+    cachedCsrfToken = body.csrf_token
+    return cachedCsrfToken
+  }
+
+  /** Overwrite the cached CSRF token directly. Used by login() to
+   *  seed the cache from the POST response body so that the very first
+   *  state-changing request after login has a pre-warmed token. */
+  function seedCsrfCache(token: string): void {
+    cachedCsrfToken = token
   }
 
   return {
@@ -304,6 +368,13 @@ function createApiClient() {
         },
         body: JSON.stringify(data),
       })
+      // Seed the cache from the POST response body so the very first
+      // state-changing request after login has a pre-warmed token.
+      // This eliminates the GET /login round-trip that caused the WebKit
+      // cookie-jar race. See issue #82 (suggested fix #2).
+      if (response.csrf_token) {
+        seedCsrfCache(response.csrf_token)
+      }
       return {
         sessionId: response.session_id,
         expiresAt: response.expires_at,

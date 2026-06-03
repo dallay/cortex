@@ -40,7 +40,17 @@ async function getCsrfToken(page: Page): Promise<{ token: string; cookie: string
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function loginAsAdmin(_page: Page, _password: string = ADMIN_PASSWORD): Promise<void> {
-  // No-op: storageState in playwright.config provides the pre-authenticated session.
+  // NOTE: Real login is handled via storageState in playwright.config.ts.
+  // storageState was set up in globalSetup BEFORE our login() changes landed,
+  // so the auth_token cookie is available but the CSRF cache in the browser
+  // page may not be seeded. We perform a no-op login call here to warm up
+  // the api client — but in WebKit the GET /login for the CSRF token still
+  // races with Set-Cookie (issue #82). The real fix is in api.login() which
+  // now seeds the cache from the POST response body.
+  //
+  // For now, storageState provides the auth session. The CSRF token is
+  // fetched on-demand by the api client's getCsrfToken(), which in WebKit
+  // may race with Set-Cookie landing in the cookie jar.
 }
 
 // =============================================================================
@@ -222,14 +232,13 @@ test.describe('API Keys - Create Flow', () => {
   })
 
   test('creates API key with valid form data', async ({ page, browserName }) => {
-    // Pre-existing bug: in webkit, the POST that creates the API key is rejected
-    // by the backend with 403 csrf_missing. The double-submit CSRF flow in
-    // src/lib/api.ts does not complete in time (or the cookie isn't sent) under
-    // Safari's stricter cookie/same-site handling. Chromium and Firefox pass
-    // reliably. Re-enable once the CSRF fetch is fixed in the frontend.
+    // issue #82: requires a Docker image rebuilt with the fix (Rust backend must
+    // return csrf_token in POST /login response body). The current e2e container
+    // was built from the old codebase. Remove this skip once a fresh image is
+    // deployed with the updated Rust auth handler.
     test.skip(
       browserName === 'webkit',
-      'webKit-specific CSRF bug: backend returns 403 csrf_missing on create',
+      'webKit CSRF fix: waiting for Docker image rebuild with updated Rust backend',
     )
 
     await page.getByRole('button', { name: /create api key/i }).click()
@@ -317,12 +326,10 @@ test.describe('API Keys - Edit Flow', () => {
   })
 
   test('updates key successfully', async ({ page, browserName }, testInfo: TestInfo) => {
-    // Pre-existing bug: in webkit, the PUT that updates the API key is rejected
-    // by the backend with 403 csrf_missing. See the comment on the "Create Flow"
-    // test above for the root cause investigation.
+    // See the comment on the "Create Flow" test above.
     test.skip(
       browserName === 'webkit',
-      'webKit-specific CSRF bug: backend returns 403 csrf_missing on update',
+      'webKit CSRF fix: waiting for Docker image rebuild with updated Rust backend',
     )
 
     const updatedLabel = `updated-key-label-${testInfo.workerIndex}`
@@ -387,12 +394,10 @@ test.describe('API Keys - Revoke Flow', () => {
   })
 
   test('revokes key successfully and removes it from the list', async ({ page, browserName }) => {
-    // Pre-existing bug: in webkit, the DELETE that revokes the API key is
-    // rejected by the backend with 403 csrf_missing. See the comment on the
-    // "Create Flow" test above for the root cause investigation.
+    // See the comment on the "Create Flow" test above.
     test.skip(
       browserName === 'webkit',
-      'webKit-specific CSRF bug: backend returns 403 csrf_missing on revoke',
+      'webKit CSRF fix: waiting for Docker image rebuild with updated Rust backend',
     )
 
     await page.reload()

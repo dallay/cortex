@@ -45,16 +45,28 @@ pub async fn login_handler(
             let session_id = output.session_id.to_string();
             let expires_at = output.expires_at.to_rfc3339();
 
-            // Build Set-Cookie header
-            // Note: In production builds, Secure flag is set based on ROOK_ENV
-            let cookie = build_auth_token_cookie(&cookie_value);
+            // Issue a fresh CSRF token bundled into the login response body.
+            // This lets the client seed its CSRF cache before the first
+            // state-changing request, avoiding the GET /login round-trip
+            // that races with the Set-Cookie landing in WebKit's cookie jar.
+            let csrf_token = generate_csrf_token();
+            let secure = !cfg!(debug_assertions);
+            let csrf_cookie = build_csrf_token_cookie(&csrf_token, secure);
 
-            let body = serde_json::json!({
-                "session_id": session_id,
-                "expires_at": expires_at,
-            });
+            // Build auth_token Set-Cookie header
+            let auth_cookie = build_auth_token_cookie(&cookie_value);
 
-            (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
+            let body = LoginResponse {
+                session_id,
+                expires_at,
+                csrf_token,
+            };
+
+            (
+                AppendHeaders([(SET_COOKIE, auth_cookie), (SET_COOKIE, csrf_cookie)]),
+                Json(body),
+            )
+                .into_response()
         }
         Err(LoginError::PasswordNotSet) => {
             let body = serde_json::json!({
@@ -181,6 +193,11 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     pub session_id: String,
     pub expires_at: String,
+    /// Fresh CSRF token — the same value set as the csrf_token HttpOnly cookie.
+    /// Clients use this to seed their CSRF cache so the first state-changing
+    /// request after login has a pre-warmed token and avoids the GET /login
+    /// round-trip that races with the cookie being registered in WebKit.
+    pub csrf_token: String,
 }
 
 /// GET /api/me — return current authenticated user info
