@@ -68,6 +68,10 @@ pub fn router(
         router = router.merge(api_key_routes(usecases.clone()));
     }
 
+    // Model catalog is always available (the catalog port is mandatory on
+    // RookUsecases), so the route is always mounted.
+    router = router.merge(crate::models_routes::router(usecases.clone()));
+
     router
         .layer(RequestBodyLimitLayer::new(max_body_size_bytes))
         // Login rate limiter — applied only to POST /login before auth middleware

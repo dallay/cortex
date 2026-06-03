@@ -14,7 +14,7 @@ use rook_core::{
     Session, SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
 };
 use rook_usecases::{
-    BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login, Logout, ManageApiKeys,
+    BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys,
     ManageProviders, RouteRequest, RoutingStrategy, SetAdminPassword,
 };
 use shared_kernel::CacheKey;
