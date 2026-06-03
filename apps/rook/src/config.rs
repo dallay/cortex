@@ -1,11 +1,11 @@
 // config — load and validate RookConfig from TOML
 
+use rook_core::ApiKeyTier;
 use rook_usecases::RoutingStrategy;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-use rook_core::ApiKeyTier;
 
 /// Root configuration for rook
 #[derive(Debug, Clone, Deserialize)]
@@ -139,21 +139,30 @@ impl Default for RateLimiterConfig {
     fn default() -> Self {
         let mut tiers = HashMap::new();
         // Default values match the original hardcoded tier_params for backward compatibility
-        tiers.insert(ApiKeyTier::Free, TierConfig {
-            requests_per_minute: 100,  // 100 capacity, ~1.67/s refill (original: 100 cap, 10/s)
-            requests_per_day: Some(1000),
-            tokens_per_minute: Some(10000),
-        });
-        tiers.insert(ApiKeyTier::Pro, TierConfig {
-            requests_per_minute: 1000,  // 1000 capacity, ~16.67/s refill (original: 1000 cap, 100/s)
-            requests_per_day: Some(100000),
-            tokens_per_minute: Some(100000),
-        });
-        tiers.insert(ApiKeyTier::Enterprise, TierConfig {
-            requests_per_minute: 10000,  // 10000 capacity, ~166.67/s refill (original: 10000 cap, 1000/s)
-            requests_per_day: Some(10000000),
-            tokens_per_minute: Some(1000000),
-        });
+        tiers.insert(
+            ApiKeyTier::Free,
+            TierConfig {
+                requests_per_minute: 100, // 100 capacity, ~1.67/s refill (original: 100 cap, 10/s)
+                requests_per_day: Some(1000),
+                tokens_per_minute: Some(10000),
+            },
+        );
+        tiers.insert(
+            ApiKeyTier::Pro,
+            TierConfig {
+                requests_per_minute: 1000, // 1000 capacity, ~16.67/s refill (original: 1000 cap, 100/s)
+                requests_per_day: Some(100000),
+                tokens_per_minute: Some(100000),
+            },
+        );
+        tiers.insert(
+            ApiKeyTier::Enterprise,
+            TierConfig {
+                requests_per_minute: 10000, // 10000 capacity, ~166.67/s refill (original: 10000 cap, 1000/s)
+                requests_per_day: Some(10000000),
+                tokens_per_minute: Some(1000000),
+            },
+        );
         Self {
             enabled: false,
             default_tier: ApiKeyTier::Free,

@@ -18,6 +18,7 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         container.usecases.clone(),
         container.authz_config.clone(),
         container.login_rate_limiter.clone(),
+        container.ip_rate_limiter.clone(),
         container.api_key_rate_limiter.clone(),
         container.csrf_guard.clone(),
     )

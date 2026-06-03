@@ -31,14 +31,14 @@ Chain strategy: size-exception
 
 ## Phase 2: TOML tiers replace tier_params()
 
-- [ ] 2.1 Create `RateLimiterConfig`, `TierConfig`, `IpRateLimitConfig` in `apps/rook/src/config.rs`
-- [ ] 2.2 Add `[rate_limiting]` section with `enabled`, `default_tier`, `tiers` to TOML schema
-- [ ] 2.3 Modify `ApiKeyRateLimiter` to accept `Arc<RateLimiterConfig>` and replace `tier_params()` logic
-- [ ] 2.4 Update `apps/rook/src/di.rs` to build and inject `RateLimiterConfig` into limiter
-- [ ] 2.5 Add unit test: tier config parsed from TOML with 3 tiers (free/pro/enterprise)
-- [ ] 2.6 Add integration test: request using pro tier enforces correct rpm from config
-- [ ] 2.7 Add integration test: missing tier falls back to `default_tier` with warning log
-- [ ] 2.8 Add startup validation: reject `requests_per_minute = 0` or negative values
+- [x] 2.1 Create `RateLimiterConfig`, `TierConfig`, `IpRateLimitConfig` in `apps/rook/src/config.rs`
+- [x] 2.2 Add `[rate_limiting]` section with `enabled`, `default_tier`, `tiers` to TOML schema
+- [x] 2.3 Modify `ApiKeyRateLimiter` to accept `Arc<RateLimiterConfig>` and replace `tier_params()` logic
+- [x] 2.4 Update `apps/rook/src/di.rs` to build and inject `RateLimiterConfig` into limiter
+- [x] 2.5 Add unit test: tier config parsed from TOML with 3 tiers (free/pro/enterprise)
+- [x] 2.6 Add integration test: request using pro tier enforces correct rpm from config
+- [x] 2.7 Add integration test: missing tier falls back to `default_tier` with warning log
+- [x] 2.8 Add startup validation: reject `requests_per_minute = 0` or negative values
 
 ## Phase 3: IpRateLimiter added
 

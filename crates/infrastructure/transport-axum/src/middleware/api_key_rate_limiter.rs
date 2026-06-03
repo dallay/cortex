@@ -33,21 +33,30 @@ impl Default for RateLimiterConfig {
     fn default() -> Self {
         let mut tiers = HashMap::new();
         // Default values match the original hardcoded tier_params for backward compatibility
-        tiers.insert(ApiKeyTier::Free, TierConfig {
-            requests_per_minute: 100,  // 100 capacity, 10/s refill (original hardcoded)
-            requests_per_day: Some(1000),
-            tokens_per_minute: Some(10000),
-        });
-        tiers.insert(ApiKeyTier::Pro, TierConfig {
-            requests_per_minute: 1000,  // 1000 capacity, 100/s refill (original hardcoded)
-            requests_per_day: Some(100000),
-            tokens_per_minute: Some(100000),
-        });
-        tiers.insert(ApiKeyTier::Enterprise, TierConfig {
-            requests_per_minute: 10000,  // 10000 capacity, 1000/s refill (original hardcoded)
-            requests_per_day: Some(10000000),
-            tokens_per_minute: Some(1000000),
-        });
+        tiers.insert(
+            ApiKeyTier::Free,
+            TierConfig {
+                requests_per_minute: 100, // 100 capacity, 10/s refill (original hardcoded)
+                requests_per_day: Some(1000),
+                tokens_per_minute: Some(10000),
+            },
+        );
+        tiers.insert(
+            ApiKeyTier::Pro,
+            TierConfig {
+                requests_per_minute: 1000, // 1000 capacity, 100/s refill (original hardcoded)
+                requests_per_day: Some(100000),
+                tokens_per_minute: Some(100000),
+            },
+        );
+        tiers.insert(
+            ApiKeyTier::Enterprise,
+            TierConfig {
+                requests_per_minute: 10000, // 10000 capacity, 1000/s refill (original hardcoded)
+                requests_per_day: Some(10000000),
+                tokens_per_minute: Some(1000000),
+            },
+        );
         Self {
             enabled: false,
             default_tier: ApiKeyTier::Free,
@@ -184,7 +193,8 @@ impl ApiKeyRateLimiter {
         let capacity = tier_config.requests_per_minute as u64;
         let refill_per_second = tier_config.requests_per_minute as f64 / 60.0;
 
-        self.check_with_params(key_id, client_ip, capacity, refill_per_second).await
+        self.check_with_params(key_id, client_ip, capacity, refill_per_second)
+            .await
     }
 
     /// Internal check with explicit capacity and refill rate

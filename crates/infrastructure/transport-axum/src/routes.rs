@@ -21,7 +21,7 @@ use super::{
     anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*,
     provider_routes, HttpError,
 };
-use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, LoginRateLimiter};
+use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
@@ -31,6 +31,7 @@ pub fn router(
     usecases: Usecases,
     authz_config: authz::AuthzConfig,
     login_rate_limiter: Arc<LoginRateLimiter>,
+    ip_rate_limiter: Arc<IpRateLimiter>,
     api_key_rate_limiter: Arc<ApiKeyRateLimiter>,
     csrf_guard: Arc<CsrfGuard>,
 ) -> Router {
@@ -79,6 +80,12 @@ pub fn router(
         .layer(middleware::from_fn_with_state(
             login_rate_limiter.clone(),
             login_rate_limiter_middleware,
+        ))
+        // IP rate limiter — applied to unauthenticated CLIENT_API routes
+        // Runs before API key rate limiter; authenticated requests bypass this
+        .layer(middleware::from_fn_with_state(
+            ip_rate_limiter.clone(),
+            ip_rate_limiter_middleware,
         ))
         // API key rate limiter — applied to authenticated CLIENT_API routes
         // Runs after CSRF guard but before authz to read headers stamped by authz
@@ -203,6 +210,65 @@ pub async fn api_key_rate_limiter_middleware(
             let body = serde_json::json!({
                 "error": "rate_limit_exceeded",
                 "message": "API key rate limit exceeded. Please try again later.",
+                "code": "RATE_LIMITED",
+                "retry_after": rate_limit.retry_after_secs,
+            });
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+            let headers = response.headers_mut();
+            headers.insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(rate_limit.retry_after_secs),
+            );
+            headers.insert(
+                "x-ratelimit-limit",
+                axum::http::HeaderValue::from(rate_limit.limit),
+            );
+            headers.insert(
+                "x-ratelimit-remaining",
+                axum::http::HeaderValue::from(rate_limit.remaining),
+            );
+            headers.insert(
+                "x-ratelimit-reset",
+                axum::http::HeaderValue::from(rate_limit.reset_unix),
+            );
+            response
+        }
+    }
+}
+
+/// IP rate limiter middleware — applies to unauthenticated CLIENT_API routes
+pub async fn ip_rate_limiter_middleware(
+    State(limiter): State<Arc<IpRateLimiter>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    // Skip rate limiting for public routes (health, bootstrap, auth)
+    let path = request.uri().path();
+    if path == "/health"
+        || path.starts_with("/api/bootstrap")
+        || path == "/login"
+        || path == "/logout"
+    {
+        return next.run(request).await;
+    }
+
+    // Skip if request has authentication (will be checked by ApiKeyRateLimiter instead)
+    // Check for Authorization or X-API-Key headers
+    let headers = request.headers();
+    let has_auth = headers.contains_key("authorization") || headers.contains_key("x-api-key");
+    if has_auth {
+        return next.run(request).await;
+    }
+
+    // Extract client IP
+    let client_ip = extract_client_ip(&request);
+
+    match limiter.check(client_ip).await {
+        Ok(()) => next.run(request).await,
+        Err(rate_limit) => {
+            let body = serde_json::json!({
+                "error": "rate_limit_exceeded",
+                "message": "IP rate limit exceeded. Please try again later.",
                 "code": "RATE_LIMITED",
                 "retry_after": rate_limit.retry_after_secs,
             });

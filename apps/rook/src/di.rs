@@ -48,6 +48,7 @@ pub struct RookContainer {
     pub usecases: Arc<RookUsecases>,
     pub authz_config: transport_axum::authz::AuthzConfig,
     pub login_rate_limiter: Arc<transport_axum::LoginRateLimiter>,
+    pub ip_rate_limiter: Arc<transport_axum::IpRateLimiter>,
     pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
     /// Format registry for provider wire-format lookup — used in Phase 2 routing.
@@ -230,6 +231,9 @@ impl RookContainer {
             usecases,
             authz_config,
             login_rate_limiter: Arc::new(transport_axum::LoginRateLimiter::new()),
+            ip_rate_limiter: Arc::new(transport_axum::IpRateLimiter::with_capacity(
+                config.rate_limiting.ip_limits.requests_per_minute,
+            )),
             api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::with_config(
                 rate_limiter_config,
             )),
