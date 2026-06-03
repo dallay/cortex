@@ -17,6 +17,31 @@ export interface ApiKeyRecordResponse {
   allowedProviders: string[]
 }
 
+// =============================================================================
+// Model catalog types
+// =============================================================================
+
+/**
+ * One group of model ids for a single active provider connection.
+ * Returned by `GET /api/models` and consumed by the API key restriction UI.
+ */
+export interface ProviderModelsGroup {
+  providerId: string
+  providerName: string
+  providerKind: string
+  models: string[]
+}
+
+/**
+ * Response body for `GET /api/models`.
+ *
+ * The shape must match the Rust DTO in
+ * `crates/infrastructure/transport-axum/src/handlers/models_dto.rs`.
+ */
+export interface ListModelsResponse {
+  models: ProviderModelsGroup[]
+}
+
 export interface CreateApiKeyResponse {
   key: ApiKeyRecordResponse
   plaintextKey: string
@@ -375,6 +400,15 @@ function createApiClient() {
       return request<CreateApiKeyResponse>(`/api/api-keys/${id}/rotate`, {
         method: 'POST',
       })
+    },
+
+    // Model catalog (requires session auth)
+    /**
+     * Returns the model ids available to the API key restriction UI,
+     * grouped by active provider connection.
+     */
+    async getAvailableModels(): Promise<ListModelsResponse> {
+      return request<ListModelsResponse>('/api/models')
     },
   }
 }

@@ -97,4 +97,57 @@ describe('Rook auth API client', () => {
       body: JSON.stringify({ setup_token: 'setup-token', password: 'test-fixture-password' }),
     }))
   })
+
+  it('fetches available model groups from /api/models with session credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      models: [
+        {
+          providerId: '00000000-0000-0000-0000-000000000001',
+          providerName: 'OpenAI Primary',
+          providerKind: 'openai',
+          models: ['gpt-4o', 'gpt-4-turbo'],
+        },
+        {
+          providerId: '00000000-0000-0000-0000-000000000002',
+          providerName: 'Anthropic Primary',
+          providerKind: 'anthropic',
+          models: ['claude-3-5-sonnet-latest'],
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    vi.stubGlobal('fetch', fetchMock)
+    vi.resetModules()
+    const { useApi } = await import('./api')
+
+    const result = await useApi().getAvailableModels()
+
+    expect(result.models).toHaveLength(2)
+    expect(result.models[0]!.providerId).toBe('00000000-0000-0000-0000-000000000001')
+    expect(result.models[0]!.providerName).toBe('OpenAI Primary')
+    expect(result.models[0]!.providerKind).toBe('openai')
+    expect(result.models[0]!.models).toEqual(['gpt-4o', 'gpt-4-turbo'])
+    expect(result.models[1]!.models).toEqual(['claude-3-5-sonnet-latest'])
+    expect(fetchMock).toHaveBeenCalledWith('/api/models', expect.objectContaining({
+      credentials: 'include',
+    }))
+  })
+
+  it('returns an empty models list when no providers are configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ models: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    vi.stubGlobal('fetch', fetchMock)
+    vi.resetModules()
+    const { useApi } = await import('./api')
+
+    const result = await useApi().getAvailableModels()
+
+    expect(result.models).toEqual([])
+  })
 })
