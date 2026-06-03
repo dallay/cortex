@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Key, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -95,6 +95,22 @@ const showNewKey = ref(false)
 
 onMounted(async () => {
   await Promise.all([fetch(), fetchProviders(), fetchAvailableModels()])
+})
+
+// Clear ephemeral key state whenever the create modal closes via any path.
+watch(showCreateModal, (isOpen) => {
+  if (!isOpen) {
+    newlyCreatedKey.value = null
+    showNewKey.value = false
+  }
+})
+
+// Clear ephemeral key state whenever the rotate modal closes via any path.
+watch(showRotateConfirm, (isOpen) => {
+  if (!isOpen) {
+    newlyRotatedKey.value = null
+    showRotatedKey.value = false
+  }
 })
 
 function formatDate(dateStr: string | null): string {

@@ -32,6 +32,10 @@ const combos = ref([
 ])
 
 const showCreateForm = ref(false)
+
+function openCreateForm() {
+  showCreateForm.value = true
+}
 </script>
 
 <template>
@@ -96,7 +100,7 @@ const showCreateForm = ref(false)
       <template #title><h3 class="font-medium mb-2">{{ t('combos.empty') }}</h3></template>
       <template #description><p class="text-sm text-muted-foreground mb-4">{{ t('combos.emptyDescription') }}</p></template>
       <template #default>
-        <Button>{{ t('combos.createFirst') }}</Button>
+        <Button @click="openCreateForm">{{ t('combos.createFirst') }}</Button>
       </template>
     </EmptyState>
   </div>

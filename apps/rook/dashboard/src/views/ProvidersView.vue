@@ -124,7 +124,7 @@ async function handleTest(id: string) {
               </p>
             </td>
             <td class="px-4 py-3">
-              <div v-if="provider.testStatus.latencyMs" class="flex items-center gap-1 text-sm text-muted-foreground">
+              <div v-if="provider.testStatus.latencyMs != null" class="flex items-center gap-1 text-sm text-muted-foreground">
                 <Activity class="h-3 w-3" />
                 {{ provider.testStatus.latencyMs }}ms
               </div>
