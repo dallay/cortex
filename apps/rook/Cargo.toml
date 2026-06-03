@@ -26,6 +26,7 @@ encryption-inmemory = { path = "../../crates/infrastructure/encryption-inmemory"
 provider-sqlite = { path = "../../crates/infrastructure/provider-sqlite" }
 auth-sqlite = { path = "../../crates/infrastructure/auth-sqlite" }
 db-migration = { path = "../../crates/infrastructure/db-migration" }
+models-catalog = { path = "../../crates/infrastructure/models-catalog" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

@@ -7,14 +7,15 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use models_catalog::StaticModelCatalog;
 use rook_core::{
     ApiFormat, ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionRequest,
     CompletionResponse, CortexResult, FormatTranslatorPort, NewSession, PasswordHasher, RouterPort,
     Session, SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
 };
 use rook_usecases::{
-    BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
-    RoutingStrategy, SetAdminPassword,
+    BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login, Logout, ManageApiKeys,
+    ManageProviders, RouteRequest, RoutingStrategy, SetAdminPassword,
 };
 use shared_kernel::CacheKey;
 use std::time::Duration;
@@ -70,6 +71,7 @@ pub fn make_test_bootstrap_usecases(
         rook_usecases::Logout::new(session_repo.clone()),
         Arc::new(RwLock::new(setup_token)),
         session_repo,
+        Arc::new(StaticModelCatalog::new()),
     ))
 }
 

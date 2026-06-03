@@ -27,7 +27,7 @@ pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
 pub use manage_providers::ManageProviders;
-pub use rook_core::{RegistryError, SessionRepositoryPort};
+pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort};
 pub use route_request::RouteRequest;
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 
@@ -52,6 +52,9 @@ pub struct RookUsecases {
     pub logout: Logout,
     pub setup_token: Arc<RwLock<Option<String>>>,
     pub(crate) session_repo: Arc<dyn SessionRepositoryPort>,
+    /// Source of truth for "which models can an API key be restricted to".
+    /// Always present; implementations may be static or dynamic.
+    pub model_catalog: Arc<dyn ModelCatalogPort>,
 }
 
 impl RookUsecases {
@@ -71,6 +74,7 @@ impl RookUsecases {
         logout: Logout,
         setup_token: Arc<RwLock<Option<String>>>,
         session_repo: Arc<dyn SessionRepositoryPort>,
+        model_catalog: Arc<dyn ModelCatalogPort>,
     ) -> Self {
         Self {
             route_request,
@@ -86,6 +90,7 @@ impl RookUsecases {
             logout,
             setup_token,
             session_repo,
+            model_catalog,
         }
     }
 

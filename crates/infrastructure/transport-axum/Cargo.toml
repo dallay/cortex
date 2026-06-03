@@ -8,6 +8,7 @@ async-trait = { workspace = true }
 shared-kernel = { path = "../../domain/shared-kernel" }
 rook-core = { path = "../../domain/rook-core" }
 rook-usecases = { path = "../../application/rook-usecases" }
+models-catalog = { path = "../models-catalog" }
 
 # Web
 axum = { version = "0.8", features = ["macros"] }
