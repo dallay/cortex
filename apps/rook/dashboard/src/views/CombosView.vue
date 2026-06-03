@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, CircleDot, ArrowRight, Trash2 } from '@lucide/vue'
+import { CircleDot, ArrowRight, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 
 const { t } = useI18n()
 
@@ -34,17 +36,10 @@ const showCreateForm = ref(false)
 
 <template>
   <div class="space-y-6">
-    <!-- Page Header -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-semibold tracking-tight">{{ t('nav.combos') }}</h1>
-        <p class="text-muted-foreground">{{ t('combos.description') }}</p>
-      </div>
-      <Button>
-        <Plus class="h-4 w-4 mr-2" />
-        {{ t('combos.create') }}
-      </Button>
-    </div>
+    <PageHeader
+      :title="t('nav.combos')"
+      :description="t('combos.description')"
+    />
 
     <!-- Create Form -->
     <div v-if="showCreateForm" class="rounded-lg border bg-card p-4">
@@ -94,11 +89,15 @@ const showCreateForm = ref(false)
     </div>
 
     <!-- Empty State -->
-    <div v-if="combos.length === 0" class="text-center py-12">
-      <CircleDot class="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-      <h3 class="font-medium mb-2">{{ t('combos.empty') }}</h3>
-      <p class="text-sm text-muted-foreground mb-4">{{ t('combos.emptyDescription') }}</p>
-      <Button>{{ t('combos.createFirst') }}</Button>
-    </div>
+    <EmptyState v-if="combos.length === 0">
+      <template #icon>
+        <CircleDot class="h-12 w-12 mx-auto text-muted-foreground" />
+      </template>
+      <template #title><h3 class="font-medium mb-2">{{ t('combos.empty') }}</h3></template>
+      <template #description><p class="text-sm text-muted-foreground mb-4">{{ t('combos.emptyDescription') }}</p></template>
+      <template #default>
+        <Button>{{ t('combos.createFirst') }}</Button>
+      </template>
+    </EmptyState>
   </div>
 </template>

@@ -2,20 +2,19 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Lock, Eye, EyeOff, ShieldCheck } from '@lucide/vue'
+import { Lock, ShieldCheck } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/stores/auth'
+import PageHeader from '@/components/PageHeader.vue'
+import PasswordInput from '@/components/PasswordInput.vue'
 
 const { t } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
 
-// ── shared ────────────────────────────────────────────────────────────────────
-const showPassword = ref(false)
-
-// ── setup form ────────────────────────────────────────────────────────────────
+// ── setup form ─────────────────────────────────────────────────────────────────
 const setupToken = ref('')
 const setupPassword = ref('')
 const setupConfirm = ref('')
@@ -72,16 +71,14 @@ async function submitLogin() {
           <div class="flex justify-center">
             <ShieldCheck class="h-10 w-10 text-primary" />
           </div>
-          <h1 class="text-2xl font-semibold tracking-tight">
-            {{ t('setup.title') }}
-          </h1>
-          <p class="text-sm text-muted-foreground">
-            {{ t('setup.description') }}
-          </p>
+          <PageHeader
+            :title="t('setup.title')"
+            :description="t('setup.description')"
+          />
         </div>
 
         <form class="space-y-4" @submit.prevent="submitSetup">
-          <!-- Setup token — out-of-band secret printed to server logs at startup -->
+          <!-- Setup token -->
           <div class="space-y-2">
             <Label for="setup-token">{{ t('setup.field.token') }}</Label>
             <Input
@@ -96,35 +93,23 @@ async function submitLogin() {
 
           <div class="space-y-2">
             <Label for="setup-password">{{ t('setup.field.password') }}</Label>
-            <div class="relative">
-              <Input
-                id="setup-password"
-                v-model="setupPassword"
-                :type="showPassword ? 'text' : 'password'"
-                autocomplete="new-password"
-                required
-              />
-              <button
-                type="button"
-                class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
-                @click="showPassword = !showPassword"
-              >
-                <Eye v-if="!showPassword" class="h-4 w-4" />
-                <EyeOff v-else class="h-4 w-4" />
-              </button>
-            </div>
+            <PasswordInput
+              id="setup-password"
+              type="new-password"
+              v-model="setupPassword"
+              :required="true"
+              :error="!setupPasswordsMatch && setupConfirm !== ''"
+            />
           </div>
 
           <div class="space-y-2">
             <Label for="setup-confirm">{{ t('setup.field.confirm') }}</Label>
-            <Input
+            <PasswordInput
               id="setup-confirm"
+              type="new-password"
               v-model="setupConfirm"
-              type="password"
-              autocomplete="new-password"
-              :class="{ 'border-destructive': !setupPasswordsMatch }"
-              required
+              :required="true"
+              :error="!setupPasswordsMatch"
             />
             <p v-if="!setupPasswordsMatch" class="text-xs text-destructive">
               {{ t('setup.error.passwordMismatch') }}
@@ -142,41 +127,27 @@ async function submitLogin() {
         </form>
       </template>
 
-      <!-- ── Login mode ─────────────────────────────────────────────────── -->
+      <!-- ── Login mode ────────────────────────────────────────────────── -->
       <template v-else>
         <div class="space-y-2 text-center">
           <div class="flex justify-center">
             <Lock class="h-10 w-10 text-primary" />
           </div>
-          <h1 class="text-2xl font-semibold tracking-tight">
-            {{ t('auth.title') }}
-          </h1>
-          <p class="text-sm text-muted-foreground">
-            {{ t('auth.description') }}
-          </p>
+          <PageHeader
+            :title="t('auth.title')"
+            :description="t('auth.description')"
+          />
         </div>
 
         <form class="space-y-4" @submit.prevent="submitLogin">
           <div class="space-y-2">
             <Label for="login-password">{{ t('auth.field.password') }}</Label>
-            <div class="relative">
-              <Input
-                id="login-password"
-                v-model="loginPassword"
-                :type="showPassword ? 'text' : 'password'"
-                autocomplete="current-password"
-                required
-              />
-              <button
-                type="button"
-                class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
-                @click="showPassword = !showPassword"
-              >
-                <Eye v-if="!showPassword" class="h-4 w-4" />
-                <EyeOff v-else class="h-4 w-4" />
-              </button>
-            </div>
+            <PasswordInput
+              id="login-password"
+              type="current-password"
+              v-model="loginPassword"
+              :required="true"
+            />
           </div>
 
           <p v-if="loginError" class="text-sm text-destructive text-center">
