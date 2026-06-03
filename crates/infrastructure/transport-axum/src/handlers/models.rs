@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use axum::{extract::State, Json};
-use tracing::error;
 use rook_core::{ModelCatalogEntry, ProviderConnection};
+use tracing::error;
 
 use super::models_dto::{ListModelsResponse, ProviderModelsGroup};
 use crate::HttpError;
