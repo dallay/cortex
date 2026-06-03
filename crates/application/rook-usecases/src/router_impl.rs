@@ -233,7 +233,7 @@ impl RouterPort for FallbackRouter {
 
     async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
         let mut state = self.circuits.entry(provider.clone()).or_default();
-        
+
         // Check if this is a rate limit error and extract retry info
         if error.is_rate_limited() {
             if let Some(retry_after_secs) = error.retry_after_secs() {
@@ -249,7 +249,7 @@ impl RouterPort for FallbackRouter {
                 return;
             }
         }
-        
+
         // Regular failure (not rate limit)
         state.record_failure();
         tracing::warn!(

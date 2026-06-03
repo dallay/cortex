@@ -120,7 +120,10 @@ pub async fn create_rule(
 
     store.insert(id.clone(), rule.clone());
 
-    Ok((StatusCode::CREATED, Json(RateLimitRuleResponse::from(&rule))))
+    Ok((
+        StatusCode::CREATED,
+        Json(RateLimitRuleResponse::from(&rule)),
+    ))
 }
 
 /// PUT /api/rate-limits/:id — update an existing rate limit rule

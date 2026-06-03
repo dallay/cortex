@@ -692,10 +692,7 @@ fn api_key_routes(usecases: Usecases) -> Router {
 fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Router {
     Router::new()
         .route("/api/rate-limits", get(handlers::rate_limits::list_rules))
-        .route(
-            "/api/rate-limits",
-            post(handlers::rate_limits::create_rule),
-        )
+        .route("/api/rate-limits", post(handlers::rate_limits::create_rule))
         .route(
             "/api/rate-limits/:id",
             put(handlers::rate_limits::update_rule),
