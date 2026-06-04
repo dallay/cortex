@@ -67,6 +67,9 @@ pub struct RookContainer {
 
 impl RookContainer {
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
+        // Run startup migrations once before constructing any repositories
+        run_startup_migrations(&config.database.db_path)?;
+
         // 1. Cache
         let cache: Arc<dyn CachePort> = if config.cache.enabled {
             Arc::new(InMemoryCache::new(config.cache.ttl()))

@@ -302,13 +302,14 @@ pub async fn ip_rate_limiter_middleware(
     // Skip if request has authentication (will be checked by ApiKeyRateLimiter instead)
     // Check for Authorization, X-API-Key headers, or auth_token session cookie
     let headers = request.headers();
-    let has_auth_header = headers.contains_key("authorization") || headers.contains_key("x-api-key");
+    let has_auth_header =
+        headers.contains_key("authorization") || headers.contains_key("x-api-key");
     let has_session_cookie = headers
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .map(|cookies| cookies.contains("auth_token="))
         .unwrap_or(false);
-    
+
     if has_auth_header || has_session_cookie {
         return next.run(request).await;
     }

@@ -18,13 +18,15 @@ pub struct SqliteApiKeyRepository {
 
 impl SqliteApiKeyRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let mut conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(&db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;",
         )?;
-        db_migration::run_on_connection(&mut conn)?;
+        if db_path.as_ref().to_str() == Some(":memory:") {
+            db_migration::run_on_connection(&mut conn)?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -473,13 +475,15 @@ pub struct SqliteUserRepository {
 
 impl SqliteUserRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let mut conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(&db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;",
         )?;
-        db_migration::run_on_connection(&mut conn)?;
+        if db_path.as_ref().to_str() == Some(":memory:") {
+            db_migration::run_on_connection(&mut conn)?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -587,13 +591,15 @@ pub struct SqliteSessionRepository {
 
 impl SqliteSessionRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let mut conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(&db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;",
         )?;
-        db_migration::run_on_connection(&mut conn)?;
+        if db_path.as_ref().to_str() == Some(":memory:") {
+            db_migration::run_on_connection(&mut conn)?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -817,7 +823,9 @@ mod tests {
         let seq = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
         let pid = std::process::id();
         let dir = std::env::temp_dir();
-        dir.join(format!("rook_test_auth_{pid}_{nanos}_{seq}.db"))
+        let path = dir.join(format!("rook_test_auth_{pid}_{nanos}_{seq}.db"));
+        db_migration::run_migrations(&path.to_string_lossy()).expect("migrations");
+        path
     }
 
     fn cleanup_test_db(path: &Path) {

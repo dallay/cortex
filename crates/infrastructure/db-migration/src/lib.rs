@@ -21,10 +21,49 @@ pub fn run_migrations(db_path: &str) -> anyhow::Result<usize> {
 }
 
 /// Run all pending migrations on an existing open connection.
+///
+/// This function is idempotent — if migrations were already applied (e.g., by
+/// another connection sharing the same in-memory database via `cache=shared`),
+/// this returns 0 without error.
 pub fn run_on_connection(conn: &mut rusqlite::Connection) -> anyhow::Result<usize> {
     let runner = build_runner();
 
-    let report = runner.run(conn)?;
+    // For in-memory databases with cache=shared, multiple connections may attempt
+    // migrations concurrently. Before running migrations, check if the schema is
+    // already up-to-date by inspecting the applied migrations table.
+    // (If migrations table doesn't exist yet — this is the first run, return empty vec)
+    let applied = runner.get_applied_migrations(conn).unwrap_or_default();
+
+    // If migrations are already fully applied, skip.
+    let all_migrations_runner = embedded::migrations::runner();
+    let all_migrations = all_migrations_runner.get_migrations();
+    if !applied.is_empty() && applied.len() >= all_migrations.len() {
+        tracing::debug!("database schema is current");
+        return Ok(0);
+    }
+
+    // Run pending migrations. If another connection already created tables in a
+    // shared in-memory DB, treat "already exists" errors as non-fatal.
+    let report = match runner.run(conn) {
+        Ok(report) => report,
+        Err(e) => {
+            // If the error mentions "already exists", another connection won the race.
+            // Re-check applied migrations to confirm the schema is current.
+            let err_msg = e.to_string();
+            if err_msg.contains("already exists") {
+                let applied_after = runner.get_applied_migrations(conn)?;
+                if !applied_after.is_empty() {
+                    tracing::debug!(
+                        count = applied_after.len(),
+                        "migrations already applied by another connection"
+                    );
+                    return Ok(0);
+                }
+            }
+            return Err(e.into());
+        }
+    };
+
     let count = report.applied_migrations().len();
     if count > 0 {
         tracing::info!(count, "migrations applied at startup");
