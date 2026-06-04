@@ -11,7 +11,7 @@ permissions:
 jobs:
   label:
     name: 🏷️ Label PR
-    uses: dallay/common-actions/.github/workflows/pr-labeler.yml@v2.2.0
+    uses: dallay/common-actions/.github/workflows/pr-labeler.yml@v2.2.1
     with:
       sync-labels: true
       configuration-path: '.github/labeler.yml'

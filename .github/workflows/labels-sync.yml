@@ -12,7 +12,7 @@ permissions:
 jobs:
   sync:
     name: 🏷️ Sync Labels
-    uses: dallay/common-actions/.github/workflows/labels-sync.yml@v2.2.0
+    uses: dallay/common-actions/.github/workflows/labels-sync.yml@v2.2.1
     with:
       labels-file: '.github/labels.yml'
     secrets: inherit
