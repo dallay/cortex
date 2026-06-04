@@ -46,7 +46,7 @@ async-trait = "0.1"
 futures = "0.3"
 is-terminal = "0.4"
 dotenvy = "0.15"
-rand = "0.8"
+rand = "0.10"
 dashmap = "6"
 
 [dev-dependencies]
