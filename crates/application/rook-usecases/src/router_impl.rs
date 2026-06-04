@@ -81,6 +81,14 @@ impl CircuitState {
         self.cooldown_until = None;
     }
 
+    fn reset(&mut self) {
+        self.failures = 0;
+        self.is_open = false;
+        self.last_failure = None;
+        self.cooldown_until = None;
+        self.rate_limit_reset = None;
+    }
+
     fn is_open(&self) -> bool {
         if !self.is_open {
             return false;
@@ -138,36 +146,48 @@ impl FallbackRouter {
             .collect()
     }
 
-    /// Returns a snapshot of circuit breaker state for all providers.
-    /// Safe to call from any thread; clones state from DashMap.
+    /// Returns a snapshot of circuit breaker state for all registered providers.
+    /// Iterates the authoritative provider list so removed/stale entries are excluded.
+    /// Providers with no circuit history get default/empty state.
     pub fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
-        self.circuits
+        let providers = self.providers.read();
+        providers
             .iter()
-            .map(|entry| {
-                let provider_id = entry.key().clone();
-                let state = entry.value();
+            .map(|p| {
+                let provider_id = p.id().clone();
+                // Lookup circuit entry (if any) from DashMap
+                let state = self.circuits.get(&provider_id).map(|s| s.clone());
 
                 // Convert Instant to DateTime<Utc> for cooldown_until
-                let cooldown_until = state.cooldown_until.map(|instant| {
-                    let now = std::time::Instant::now();
-                    if instant > now {
-                        let remaining = instant.duration_since(now);
-                        Utc::now() + chrono::Duration::from_std(remaining).unwrap_or_default()
-                    } else {
-                        Utc::now()
-                    }
+                let cooldown_until = state.as_ref().and_then(|s| {
+                    s.cooldown_until.and_then(|instant| {
+                        let now = std::time::Instant::now();
+                        if instant > now {
+                            let remaining = instant.duration_since(now);
+                            Some(Utc::now() + chrono::Duration::from_std(remaining).unwrap_or_default())
+                        } else {
+                            None
+                        }
+                    })
                 });
 
                 let snapshot = rook_core::CircuitStateSnapshot {
-                    failures: state.failures,
-                    is_open: state.is_open(),
-                    last_failure: state.last_failure,
+                    failures: state.as_ref().map(|s| s.failures).unwrap_or(0),
+                    is_open: state.as_ref().map(|s| s.is_open()).unwrap_or(false),
+                    last_failure: state.as_ref().and_then(|s| s.last_failure),
                     cooldown_until,
-                    rate_limit_reset: state.rate_limit_reset,
+                    rate_limit_reset: state.as_ref().and_then(|s| s.rate_limit_reset),
                 };
                 (provider_id, snapshot)
             })
             .collect()
+    }
+
+    /// Manually reset the circuit breaker for a provider (admin operation).
+    pub fn reset_circuit(&self, provider_id: &ProviderId) {
+        if let Some(mut state) = self.circuits.get_mut(provider_id) {
+            state.reset();
+        }
     }
 }
 

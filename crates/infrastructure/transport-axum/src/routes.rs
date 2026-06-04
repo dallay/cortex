@@ -62,6 +62,10 @@ pub fn router(
         .route("/api/me", get(handlers::auth::get_me_handler))
         // Resilience observability endpoint
         .route("/api/resilience", get(handlers::resilience::get_resilience))
+        .route(
+            "/api/resilience/:provider/reset",
+            post(handlers::resilience::reset_provider),
+        )
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
@@ -717,19 +721,18 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
         "degraded"
     };
 
-    // Get circuit states from FallbackRouter
+    // Get circuit states from FallbackRouter and build a map for O(1) lookups
     let circuit_states = usecases.fallback_router.circuit_states();
+    use std::collections::HashMap;
+    let circuit_map: HashMap<_, _> = circuit_states.into_iter().collect();
 
     Json(serde_json::json!({
         "status": status,
         "providers": statuses.iter().map(|s| {
             let provider_id = s.provider_id();
 
-            // Lookup circuit state for this provider
-            let circuit_state = circuit_states
-                .iter()
-                .find(|(id, _)| id == provider_id)
-                .map(|(_, state)| state);
+            // O(1) lookup instead of O(n) search
+            let circuit_state = circuit_map.get(provider_id);
 
             let mut provider_json = serde_json::json!({
                 "id": provider_id.to_string(),

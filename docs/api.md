@@ -10,7 +10,8 @@ Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default:
 | `GET`    | `/v1/models`           | List available models (static)    | None    |
 | `POST`   | `/v1/messages`         | Anthropic-compatible messages     | None    |
 | `GET`    | `/health`              | Health check with circuit state  | None    |
-| `GET`    | `/api/resilience`      | Detailed circuit breaker state   | Session |
+| `GET`    | `/api/resilience`             | Detailed circuit breaker state   | Session |
+| `POST`   | `/api/resilience/:provider/reset` | Reset circuit for a provider    | Session |
 | `GET`    | `/api/api-keys`       | List API keys (paginated)       | Session |
 | `POST`   | `/api/api-keys`       | Create API key                  | Session |
 | `GET`    | `/api/api-keys/{id}`  | Get API key details             | Session |
@@ -269,7 +270,7 @@ Detailed circuit breaker state for all providers. Requires session authenticatio
     {
       "provider": "openai-primary",
       "failures": 0,
-      "is_open": false,
+      "state": "closed",
       "last_failure": null,
       "cooldown_until": null,
       "rate_limit_reset": null
@@ -277,7 +278,7 @@ Detailed circuit breaker state for all providers. Requires session authenticatio
     {
       "provider": "anthropic-primary",
       "failures": 3,
-      "is_open": true,
+      "state": "open",
       "last_failure": "2026-06-04T10:45:00Z",
       "cooldown_until": "2026-06-04T10:45:30Z",
       "rate_limit_reset": 1717499130
@@ -294,7 +295,7 @@ Detailed circuit breaker state for all providers. Requires session authenticatio
 |-------|------|-------------|
 | `provider` | string | Provider identifier |
 | `failures` | integer | Number of consecutive failures |
-| `is_open` | boolean | Whether the circuit breaker is open |
+| `state` | string | `"closed"` or `"open"` — circuit breaker state |
 | `last_failure` | string | ISO 8601 timestamp of last failure, or null |
 | `cooldown_until` | string | ISO 8601 timestamp when circuit will attempt recovery, or null |
 | `rate_limit_reset` | integer | Unix epoch seconds when rate limit resets, or null |
