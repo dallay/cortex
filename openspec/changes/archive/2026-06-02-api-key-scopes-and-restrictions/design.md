@@ -12,14 +12,14 @@ This is fundamentally a **spec alignment and 3-feature completion** change, not 
 
 ## Architecture Decisions
 
-| Decision | Choice | Rationale | Alternatives Considered |
-|----------|--------|-----------|-------------------------|
-| **Provider validation timing** | Eager validation at create/update time against `ProviderRegistryPort::providers()` | Typos are caught before the key goes live, not on the first request. Follows the same pattern as scope validation (eager rejection of unknown scopes). | **Lazy at request time**: rejected — a key with a typo'd provider ID would only surface the error on first use, after it's already distributed to clients. |
-| **Error code structure** | Introduce `RestrictionViolation` enum in `rook-core` with `ModelNotAllowed(ModelId)` and `ProviderNotAllowed(ProviderId)` variants | Type-safe, carries the denied ID for structured error envelopes, maps cleanly to 403 wire codes. Eliminates the free-text format string currently in `route_request.rs:62,84`. | **Keep free-text `CortexError::forbidden`**: rejected — not machine-readable, clients cannot distinguish model vs provider denials without parsing the message. **Accept existing `model_not_allowed`/`provider_not_allowed` codes**: acceptable fallback if structured types prove too invasive; defer final choice to implementation. |
-| **Dashboard provider input** | Multi-select chip group populated from `GET /v1/providers` (via existing `useProviders()`) | Eliminates typos at the UI layer — only currently-registered provider IDs are selectable. Matches the UX of existing provider pickers in the dashboard. | **Free-form text (like `allowedModels`)**: rejected — providers are a bounded set maintained in config, so a picker is better UX. Models are an unbounded set (any string is a valid model ID to some provider), so free-form is appropriate for models. |
-| **Scope parsing strategy** | Strict `ApiKeyScope::parse` for transport→use case, lenient `ApiKeyScope::parse_lenient` for DB→domain hydration | `parse_lenient` preserves backward compatibility for any in-development environments that still have pre-#46 `read`/`write` keys in their local SQLite. Production has never been released, so no production keys exist. | **Add a translation shim `read` → `chat:read` in the repository layer**: rejected — unnecessary complexity for a non-released project. `parse_lenient` already logs WARNs for unknown scopes; operators can identify and rotate legacy keys if needed. |
-| **Rotate revocation semantics** | Immediate revocation with no grace period | Matches the GitHub issue description and existing implementation (`manage_api_keys.rs:196`, `auth-sqlite/src/lib.rs:321`). The old raw key becomes invalid the instant the SQL `UPDATE` commits. | **Grace period (dual-hash window)**: rejected — adds state tracking complexity (two active hashes per key) for marginal benefit. Operators rotating a key should ensure the new key is distributed before triggering the rotation. |
-| **Provider restriction check timing** | After `FallbackRouter::select()` returns, before `provider.complete()` | The alternative (checking against the router's candidate list before selection) would double the authz cost on the happy path. A key restricted to `openai` will pay one wasted `select()` call when it requests an `anthropic` model, but this is acceptable — the selection is lightweight and the happy path (allowed provider) is optimized. | **Re-check allowlist before each fallback hop**: rejected — doubles authz cost on every request. **Check before any provider work**: rejected — requires replicating `FallbackRouter`'s selection logic in the authz layer, violating separation of concerns. |
+| Decision                              | Choice                                                                                                                             | Rationale                                                                                                                                                                                                                                                                                                                                        | Alternatives Considered                                                                                                                                                                                                                                                                                                                 |
+|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Provider validation timing**        | Eager validation at create/update time against `ProviderRegistryPort::providers()`                                                 | Typos are caught before the key goes live, not on the first request. Follows the same pattern as scope validation (eager rejection of unknown scopes).                                                                                                                                                                                           | **Lazy at request time**: rejected — a key with a typo'd provider ID would only surface the error on first use, after it's already distributed to clients.                                                                                                                                                                              |
+| **Error code structure**              | Introduce `RestrictionViolation` enum in `rook-core` with `ModelNotAllowed(ModelId)` and `ProviderNotAllowed(ProviderId)` variants | Type-safe, carries the denied ID for structured error envelopes, maps cleanly to 403 wire codes. Eliminates the free-text format string currently in `route_request.rs:62,84`.                                                                                                                                                                   | **Keep free-text `CortexError::forbidden`**: rejected — not machine-readable, clients cannot distinguish model vs provider denials without parsing the message. **Accept existing `model_not_allowed`/`provider_not_allowed` codes**: acceptable fallback if structured types prove too invasive; defer final choice to implementation. |
+| **Dashboard provider input**          | Multi-select chip group populated from `GET /v1/providers` (via existing `useProviders()`)                                         | Eliminates typos at the UI layer — only currently-registered provider IDs are selectable. Matches the UX of existing provider pickers in the dashboard.                                                                                                                                                                                          | **Free-form text (like `allowedModels`)**: rejected — providers are a bounded set maintained in config, so a picker is better UX. Models are an unbounded set (any string is a valid model ID to some provider), so free-form is appropriate for models.                                                                                |
+| **Scope parsing strategy**            | Strict `ApiKeyScope::parse` for transport→use case, lenient `ApiKeyScope::parse_lenient` for DB→domain hydration                   | `parse_lenient` preserves backward compatibility for any in-development environments that still have pre-#46 `read`/`write` keys in their local SQLite. Production has never been released, so no production keys exist.                                                                                                                         | **Add a translation shim `read` → `chat:read` in the repository layer**: rejected — unnecessary complexity for a non-released project. `parse_lenient` already logs WARNs for unknown scopes; operators can identify and rotate legacy keys if needed.                                                                                  |
+| **Rotate revocation semantics**       | Immediate revocation with no grace period                                                                                          | Matches the GitHub issue description and existing implementation (`manage_api_keys.rs:196`, `auth-sqlite/src/lib.rs:321`). The old raw key becomes invalid the instant the SQL `UPDATE` commits.                                                                                                                                                 | **Grace period (dual-hash window)**: rejected — adds state tracking complexity (two active hashes per key) for marginal benefit. Operators rotating a key should ensure the new key is distributed before triggering the rotation.                                                                                                      |
+| **Provider restriction check timing** | After `FallbackRouter::select()` returns, before `provider.complete()`                                                             | The alternative (checking against the router's candidate list before selection) would double the authz cost on the happy path. A key restricted to `openai` will pay one wasted `select()` call when it requests an `anthropic` model, but this is acceptable — the selection is lightweight and the happy path (allowed provider) is optimized. | **Re-check allowlist before each fallback hop**: rejected — doubles authz cost on every request. **Check before any provider work**: rejected — requires replicating `FallbackRouter`'s selection logic in the authz layer, violating separation of concerns.                                                                           |
 
 ## Implementation Plan
 
@@ -152,18 +152,18 @@ This is fundamentally a **spec alignment and 3-feature completion** change, not 
 **Tests:**
 
 - **New file: `tests/api_key_provider_validation.rs`** (6 test cases from spec):
-  - `create_with_unknown_provider_returns_validation_error`
-  - `update_with_unknown_provider_returns_validation_error`
-  - `create_with_empty_allowed_providers_passes`
-  - `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`
-  - `update_with_empty_allowed_providers_clears_restriction`
-  - `registry_subset_match_passes`
+    - `create_with_unknown_provider_returns_validation_error`
+    - `update_with_unknown_provider_returns_validation_error`
+    - `create_with_empty_allowed_providers_passes`
+    - `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`
+    - `update_with_empty_allowed_providers_clears_restriction`
+    - `registry_subset_match_passes`
 
 - **New or extended file: `tests/route_request_restrictions.rs`** (4 test cases):
-  - `allowed_models_contains_requested_model_passes` (may already exist at `route_request.rs:540`)
-  - `allowed_models_missing_requested_model_returns_403_with_structured_code`
-  - `allowed_providers_contains_selected_provider_passes`
-  - `allowed_providers_missing_selected_provider_returns_403_with_structured_code`
+    - `allowed_models_contains_requested_model_passes` (may already exist at `route_request.rs:540`)
+    - `allowed_models_missing_requested_model_returns_403_with_structured_code`
+    - `allowed_providers_contains_selected_provider_passes`
+    - `allowed_providers_missing_selected_provider_returns_403_with_structured_code`
 
 ---
 
@@ -313,40 +313,40 @@ Verify that `FallbackRouter` is constructed before `ManageApiKeys` in the DI ord
    ```
 
 2. **Add `allowedModels` input field** in Create and Edit modals:
-   - Label: "Allowed Models (optional)"
-   - Type: `<Input>` or `<Textarea>` accepting comma- or space-separated model IDs
-   - Placeholder: `gpt-4, claude-3-opus, gemini-pro` (examples)
-   - On submit, split by `,` and whitespace, trim, filter out empty strings
-   - Empty input → `allowedModels: []` in request body
+    - Label: "Allowed Models (optional)"
+    - Type: `<Input>` or `<Textarea>` accepting comma- or space-separated model IDs
+    - Placeholder: `gpt-4, claude-3-opus, gemini-pro` (examples)
+    - On submit, split by `,` and whitespace, trim, filter out empty strings
+    - Empty input → `allowedModels: []` in request body
 
 3. **Add `allowedProviders` multi-select chip group** in Create and Edit modals:
-   - Label: "Allowed Providers (optional)"
-   - Populated from `useProviders()` (existing composable that calls `GET /v1/providers`)
-   - Only currently-registered provider IDs are selectable
-   - Empty selection → `allowedProviders: []`
+    - Label: "Allowed Providers (optional)"
+    - Populated from `useProviders()` (existing composable that calls `GET /v1/providers`)
+    - Only currently-registered provider IDs are selectable
+    - Empty selection → `allowedProviders: []`
 
 4. **Add Rotate button** in each list row (between Edit and Revoke):
-   - Icon: rotate/refresh icon
-   - Opens a confirmation dialog:
-     - Title: "Rotate API Key"
-     - Body: "This will immediately invalidate the current key and generate a new one. The new key will be shown once. This action cannot be undone."
-     - Confirm button: "Rotate" (destructive variant)
-   - On confirm, call `useApiKeys().rotate(id)`
-   - On success:
-     - Close dialog
-     - Display new raw key in the **same** amber copy-banner used by Create (with Copy button)
-     - Update list row's `keyPrefix` in place
-   - On error:
-     - Show inline error message in dialog
-     - Do NOT show banner
+    - Icon: rotate/refresh icon
+    - Opens a confirmation dialog:
+        - Title: "Rotate API Key"
+        - Body: "This will immediately invalidate the current key and generate a new one. The new key will be shown once. This action cannot be undone."
+        - Confirm button: "Rotate" (destructive variant)
+    - On confirm, call `useApiKeys().rotate(id)`
+    - On success:
+        - Close dialog
+        - Display new raw key in the **same** amber copy-banner used by Create (with Copy button)
+        - Update list row's `keyPrefix` in place
+    - On error:
+        - Show inline error message in dialog
+        - Do NOT show banner
 
 5. **Add restrictions badge** in list display:
-   - Computed from `allowedModels.length` and `allowedProviders.length`:
-     - Both empty → gray `Unrestricted` badge
-     - Only models → amber `Restricted (N models)` badge
-     - Only providers → amber `Restricted (N providers)` badge
-     - Both → amber `Restricted (N models, M providers)` badge
-   - Place in a new "Restrictions" column or as a sub-line under the Name column
+    - Computed from `allowedModels.length` and `allowedProviders.length`:
+        - Both empty → gray `Unrestricted` badge
+        - Only models → amber `Restricted (N models)` badge
+        - Only providers → amber `Restricted (N providers)` badge
+        - Both → amber `Restricted (N models, M providers)` badge
+    - Place in a new "Restrictions" column or as a sub-line under the Name column
 
 #### `useApiKeys.ts` (or `apiKeys.ts` store) changes
 
@@ -410,10 +410,10 @@ Export `rotate` alongside existing `create`, `update`, `revoke`, `fetch`, `nextP
 **Tests:**
 
 - **New file: `tests/ApiKeysView.spec.ts`** (Vitest component tests):
-  - Test create modal with 5 scopes, `allowedModels`, `allowedProviders`
-  - Test rotate flow: button → dialog → success → banner
-  - Test restrictions badge rendering (4 states: unrestricted, models only, providers only, both)
-  - Test validation: at least one scope required, empty restrictions pass validation
+    - Test create modal with 5 scopes, `allowedModels`, `allowedProviders`
+    - Test rotate flow: button → dialog → success → banner
+    - Test restrictions badge rendering (4 states: unrestricted, models only, providers only, both)
+    - Test validation: at least one scope required, empty restrictions pass validation
 
 ---
 
@@ -473,13 +473,13 @@ Each delta has `## MODIFIED Requirements`, `## ADDED Requirements`, and `## REMO
 
 ## Test Strategy
 
-| Layer | Test File | What to Test | Count |
-|-------|-----------|--------------|-------|
-| **Use Case** | `tests/api_key_provider_validation.rs` | Provider validation logic: unknown IDs rejected, empty passes, registry-empty edge case | 6 |
-| **Use Case** | `tests/route_request_restrictions.rs` | Model/provider restriction enforcement, structured error codes | 4 |
-| **Transport** | `tests/api_key_routes.rs` | Fix 4 legacy `"read"`/`"write"` strings to `"chat:read"`/`"chat:write"` | 4 (fixes) |
-| **Transport** | `tests/scope_routing.rs` | Route-to-scope matrix: 5 routes × 5 scopes = 25 parametrized cases | 25 |
-| **Dashboard** | `tests/ApiKeysView.spec.ts` | Create flow, rotate flow, restriction badges, validation errors | 8-10 |
+| Layer         | Test File                              | What to Test                                                                            | Count     |
+|---------------|----------------------------------------|-----------------------------------------------------------------------------------------|-----------|
+| **Use Case**  | `tests/api_key_provider_validation.rs` | Provider validation logic: unknown IDs rejected, empty passes, registry-empty edge case | 6         |
+| **Use Case**  | `tests/route_request_restrictions.rs`  | Model/provider restriction enforcement, structured error codes                          | 4         |
+| **Transport** | `tests/api_key_routes.rs`              | Fix 4 legacy `"read"`/`"write"` strings to `"chat:read"`/`"chat:write"`                 | 4 (fixes) |
+| **Transport** | `tests/scope_routing.rs`               | Route-to-scope matrix: 5 routes × 5 scopes = 25 parametrized cases                      | 25        |
+| **Dashboard** | `tests/ApiKeysView.spec.ts`            | Create flow, rotate flow, restriction badges, validation errors                         | 8-10      |
 
 **Total new/modified tests:** ~45-50 test cases.
 
@@ -532,12 +532,12 @@ The project has not been released. No production keys exist. The 4 spec files ar
 
 ## Open Questions and Risks
 
-| Question / Risk | Likelihood | Mitigation |
-|-----------------|------------|------------|
-| **Provider validation requires the registry to be seeded before key creation** | Medium | Document the constraint explicitly. If no providers are configured, only an empty `allowed_providers` is valid. The validation will reject any non-empty list when the registry is empty (verified by test case `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`). |
-| **Dashboard `allowedModels` is free-form text** | Low | Could be wired to `GET /v1/models` in a follow-up, but free-form is acceptable for an admin tool. Models are an unbounded set (any string is a valid model ID), so a picker would not eliminate typos anyway. |
-| **Structured error codes vs existing `model_not_allowed`/`provider_not_allowed`** | Low | The proposal suggests `MODEL_RESTRICTED`/`PROVIDER_RESTRICTED`, but the code currently returns `model_not_allowed`/`provider_not_allowed` via `CortexError::forbidden_code()`. Two options: (A) accept existing codes and update acceptance criteria, (B) refactor to structured `RestrictionViolation` enum. **Recommendation: Option B** for cleaner architecture, but Option A is acceptable if time is constrained. |
-| **Rotate endpoint revokes immediately with no grace period** | Low | Confirmed by GitHub issue #46 and existing implementation. Operators must coordinate key distribution carefully. Document this in user-facing docs (out of scope for this change). |
+| Question / Risk                                                                   | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                              |
+|-----------------------------------------------------------------------------------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Provider validation requires the registry to be seeded before key creation**    | Medium     | Document the constraint explicitly. If no providers are configured, only an empty `allowed_providers` is valid. The validation will reject any non-empty list when the registry is empty (verified by test case `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`).                                                                                                                                 |
+| **Dashboard `allowedModels` is free-form text**                                   | Low        | Could be wired to `GET /v1/models` in a follow-up, but free-form is acceptable for an admin tool. Models are an unbounded set (any string is a valid model ID), so a picker would not eliminate typos anyway.                                                                                                                                                                                                           |
+| **Structured error codes vs existing `model_not_allowed`/`provider_not_allowed`** | Low        | The proposal suggests `MODEL_RESTRICTED`/`PROVIDER_RESTRICTED`, but the code currently returns `model_not_allowed`/`provider_not_allowed` via `CortexError::forbidden_code()`. Two options: (A) accept existing codes and update acceptance criteria, (B) refactor to structured `RestrictionViolation` enum. **Recommendation: Option B** for cleaner architecture, but Option A is acceptable if time is constrained. |
+| **Rotate endpoint revokes immediately with no grace period**                      | Low        | Confirmed by GitHub issue #46 and existing implementation. Operators must coordinate key distribution carefully. Document this in user-facing docs (out of scope for this change).                                                                                                                                                                                                                                      |
 
 ---
 

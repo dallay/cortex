@@ -60,14 +60,14 @@ OpenAIChatResponse          AnthropicMessagesResponse
 
 ## Affected Areas
 
-| Path | Why it's affected |
-|------|-------------------|
-| `crates/domain/rook-core/src/model.rs` | `CompletionRequest` / `CompletionResponse` / `Message` lack tool call, multi-modal content, and system prompt (top-level) fields |
-| `crates/infrastructure/transport-axum/src/openai_adapter.rs` | Needs tool call types; `deny_unknown_fields` will reject tool payloads |
-| `crates/infrastructure/transport-axum/src/anthropic_adapter.rs` | Same; also missing `From<CompletionResponse>` impl; `deny_unknown_fields` is risky |
-| `crates/infrastructure/transport-axum/src/routes.rs` | Inline `AnthropicMessagesResponse` construction should move to adapter |
-| `crates/infrastructure/providers-openai/src/provider.rs` | `OpenAIRequest` struct has no `tools` field; duplicates `SseBuffer` |
-| `crates/infrastructure/providers-anthropic/src/lib.rs` | `AnthropicStreamRequest` has no `tools` field; duplicates `SseBuffer`; `complete()` returns unimplemented error |
+| Path                                                            | Why it's affected                                                                                                                |
+|-----------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `crates/domain/rook-core/src/model.rs`                          | `CompletionRequest` / `CompletionResponse` / `Message` lack tool call, multi-modal content, and system prompt (top-level) fields |
+| `crates/infrastructure/transport-axum/src/openai_adapter.rs`    | Needs tool call types; `deny_unknown_fields` will reject tool payloads                                                           |
+| `crates/infrastructure/transport-axum/src/anthropic_adapter.rs` | Same; also missing `From<CompletionResponse>` impl; `deny_unknown_fields` is risky                                               |
+| `crates/infrastructure/transport-axum/src/routes.rs`            | Inline `AnthropicMessagesResponse` construction should move to adapter                                                           |
+| `crates/infrastructure/providers-openai/src/provider.rs`        | `OpenAIRequest` struct has no `tools` field; duplicates `SseBuffer`                                                              |
+| `crates/infrastructure/providers-anthropic/src/lib.rs`          | `AnthropicStreamRequest` has no `tools` field; duplicates `SseBuffer`; `complete()` returns unimplemented error                  |
 
 ---
 
@@ -76,6 +76,7 @@ OpenAIChatResponse          AnthropicMessagesResponse
 **Zero tool/function call support exists anywhere in the codebase today.**
 
 Specifically:
+
 - `CompletionRequest.messages` is `Vec<Message>` where `Message.content: String` — content
   is a plain string only, no content block variants (text, image, tool_use, tool_result).
 - `CompletionRequest` has no `tools: Vec<Tool>` or `tool_choice` field.
@@ -112,15 +113,15 @@ fidelity* direction: can the domain model represent everything a client might se
 
 Based on the issue title and the observed architecture, the likely acceptance criteria are:
 
-| Gap | Severity | Notes |
-|-----|----------|-------|
-| Tool / function call support in domain model | **Critical** | `Message.content` must become an enum of content blocks; `CompletionRequest` needs `tools` and `tool_choice` |
-| Multi-modal content (images, documents) in domain model | High | Both OpenAI and Anthropic support image content blocks; `content: String` is too narrow |
-| `deny_unknown_fields` on adapter request types | High | Will reject any field not explicitly modeled (tools, vision, etc.) — must be relaxed or extended |
-| `AnthropicMessagesResponse` `From` impl missing | Medium | Inline construction in `routes.rs` is a maintenance risk |
-| `SseBuffer` duplication | Low | Should be extracted to a shared crate (e.g., `shared-kernel` or a new `sse-utils` crate) |
-| `AnthropicProvider.complete()` unimplemented | Medium | Returns `Err("not yet implemented")` — non-streaming Anthropic requests always fail |
-| No `ProviderFormat`/`ClientApiFormat` type | Low | Not needed for basic routing; only needed if format negotiation becomes dynamic |
+| Gap                                                     | Severity     | Notes                                                                                                        |
+|---------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------------------|
+| Tool / function call support in domain model            | **Critical** | `Message.content` must become an enum of content blocks; `CompletionRequest` needs `tools` and `tool_choice` |
+| Multi-modal content (images, documents) in domain model | High         | Both OpenAI and Anthropic support image content blocks; `content: String` is too narrow                      |
+| `deny_unknown_fields` on adapter request types          | High         | Will reject any field not explicitly modeled (tools, vision, etc.) — must be relaxed or extended             |
+| `AnthropicMessagesResponse` `From` impl missing         | Medium       | Inline construction in `routes.rs` is a maintenance risk                                                     |
+| `SseBuffer` duplication                                 | Low          | Should be extracted to a shared crate (e.g., `shared-kernel` or a new `sse-utils` crate)                     |
+| `AnthropicProvider.complete()` unimplemented            | Medium       | Returns `Err("not yet implemented")` — non-streaming Anthropic requests always fail                          |
+| No `ProviderFormat`/`ClientApiFormat` type              | Low          | Not needed for basic routing; only needed if format negotiation becomes dynamic                              |
 
 ---
 
@@ -207,10 +208,10 @@ the domain would be the cleanest approach.
 
 ### Decision: new crate or not?
 
-| Option | When to choose |
-|--------|---------------|
-| Extend `transport-axum` adapters | If format adapters only need to handle the request/response boundary — **recommended for now** |
-| New `format-translator` crate | Only if format conversion logic becomes complex enough to need independent testing, or if multiple transport crates (HTTP + gRPC) need to share it |
+| Option                           | When to choose                                                                                                                                     |
+|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+| Extend `transport-axum` adapters | If format adapters only need to handle the request/response boundary — **recommended for now**                                                     |
+| New `format-translator` crate    | Only if format conversion logic becomes complex enough to need independent testing, or if multiple transport crates (HTTP + gRPC) need to share it |
 
 **Start in `transport-axum`. Extract later if needed.**
 

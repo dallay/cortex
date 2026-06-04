@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use rand::RngCore;
+use rand::Rng;
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier,
     ApiKeyValidationError, ModelId, ProviderId, ProviderRegistryPort,
@@ -307,7 +307,7 @@ impl ManageApiKeys {
 
 fn generate_api_key() -> String {
     let mut bytes = [0u8; 24];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     format!("rk-{}", encoded)
 }

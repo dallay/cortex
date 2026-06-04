@@ -43,7 +43,7 @@ just dev          # Watch mode: check + test + clippy on file change
 cargo run -p rook                      # Run rook binary
 ```
 
-**CI order** (important): `markdown-lint` → `fmt --check` → `clippy` → `check` → `test` (Rust) → `test-frontend` (Vitest) → `test-e2e` (Playwright) → `doc` → `audit`
+**CI order** (important): `markdown-lint` → `fmt --check` → `clippy` → `check` → `test` (Rust) → `test-frontend` (Vitest) → `doc` → `audit` → `test-e2e` (Playwright)
 
 ## Architecture
 

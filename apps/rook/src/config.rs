@@ -118,6 +118,13 @@ fn default_usage_sweep_interval_hours() -> u32 {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Background health check interval in seconds (default: 30)
+    #[serde(default = "default_health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+}
+
+fn default_health_check_interval_secs() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -245,5 +252,49 @@ impl RookConfig {
         }
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_check_interval_defaults_to_30() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.server.health_check_interval_secs, 30);
+    }
+
+    #[test]
+    fn test_health_check_interval_can_be_overridden() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+            health_check_interval_secs = 10
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.server.health_check_interval_secs, 10);
     }
 }

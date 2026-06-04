@@ -15,8 +15,8 @@ Per-client rate limiting has been implemented, verified, and archived. All 86 ta
 
 ## Spec Sync
 
-| Domain | Action | Details |
-|--------|--------|---------|
+| Domain        | Action  | Details                                                                          |
+|---------------|---------|----------------------------------------------------------------------------------|
 | rate-limiting | Created | New domain spec created at `openspec/specs/rate-limiting/spec.md` (11,610 bytes) |
 
 **Delta spec**: `openspec/changes/archive/2026-06-03-per-client-rate-limiting/1-spec.md`
@@ -28,14 +28,14 @@ This was a new domain (no prior `rate-limiting` spec existed), so the delta spec
 
 ## Requirements Coverage
 
-| Req | Description | Status |
-|-----|-------------|--------|
-| R1 | Rate Limit Middleware (sliding window, 429 + Retry-After) | ✅ Implemented |
-| R2 | Per-API-Key Rate Limiting (Bearer / X-API-Key extraction, tier fallback) | ✅ Implemented |
-| R3 | Per-IP Rate Limiting for Unauthenticated Requests (X-Forwarded-For, X-Real-IP fallback) | ✅ Implemented |
-| R4 | Provider Rate Limit Awareness (upstream 429, circuit breaker backoff) | ✅ Implemented |
-| R5 | TOML Configuration (tiers, requests_per_minute, requests_per_day, tokens_per_minute, default_tier) | ✅ Implemented |
-| R6 | Admin API CRUD + status endpoint (/api/rate-limits) | ✅ Implemented |
+| Req | Description                                                                                        | Status        |
+|-----|----------------------------------------------------------------------------------------------------|---------------|
+| R1  | Rate Limit Middleware (sliding window, 429 + Retry-After)                                          | ✅ Implemented |
+| R2  | Per-API-Key Rate Limiting (Bearer / X-API-Key extraction, tier fallback)                           | ✅ Implemented |
+| R3  | Per-IP Rate Limiting for Unauthenticated Requests (X-Forwarded-For, X-Real-IP fallback)            | ✅ Implemented |
+| R4  | Provider Rate Limit Awareness (upstream 429, circuit breaker backoff)                              | ✅ Implemented |
+| R5  | TOML Configuration (tiers, requests_per_minute, requests_per_day, tokens_per_minute, default_tier) | ✅ Implemented |
+| R6  | Admin API CRUD + status endpoint (/api/rate-limits)                                                | ✅ Implemented |
 
 Compliance: 31/33 test scenarios pass; 2 partial (daily quota enforcement not tested, invalid-config startup validation not tested).
 

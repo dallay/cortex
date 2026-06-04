@@ -227,11 +227,11 @@ ci-local:
     @echo "$(YELLOW)6/9 test (Frontend - Vitest)...$(RESET)"
     cd apps/rook/dashboard && pnpm exec vitest run || (echo "$(RED)Frontend tests failed!$(RESET)" && exit 1)
     @echo "$(YELLOW)7/9 doc...$(RESET)"
-    cargo doc --workspace --no-deps || (echo "$(RED)Doc build failed!$(RESET)" && exit 1)
+    RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps || (echo "$(RED)Doc build failed!$(RESET)" && exit 1)
     @echo "$(YELLOW)8/9 audit...$(RESET)"
     cargo audit || echo "$(YELLOW)Audit warnings (non-blocking)$(RESET)"
     @echo "$(YELLOW)9/9 e2e (Playwright)...$(RESET)"
-    ./dev/e2e/run-api-keys-e2e.sh --test || (echo "$(RED)E2E tests failed!$(RESET)" && exit 1)
+    ./dev/e2e/run-api-keys-e2e.sh --test; rc=$$?; ./dev/e2e/run-api-keys-e2e.sh --cleanup || true; exit $$rc
     @echo "$(GREEN)=== CI local complete ===$(RESET)"
 
 # === Release ===

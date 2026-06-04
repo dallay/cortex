@@ -2,14 +2,14 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | 400-550 |
-| 400-line budget risk | Medium |
-| Chained PRs recommended | No |
-| Suggested split | Single PR with 5 incremental phases |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | size-exception |
+| Field                   | Value                               |
+|-------------------------|-------------------------------------|
+| Estimated changed lines | 400-550                             |
+| 400-line budget risk    | Medium                              |
+| Chained PRs recommended | No                                  |
+| Suggested split         | Single PR with 5 incremental phases |
+| Delivery strategy       | ask-on-risk                         |
+| Chain strategy          | size-exception                      |
 
 Decision needed before apply: Yes
 Chained PRs recommended: No
@@ -18,9 +18,9 @@ Chain strategy: size-exception
 
 ### Suggested Work Units
 
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | Complete 5-phase implementation | PR 1 | All phases; tests/docs included; may request size:exception |
+| Unit | Goal                            | Likely PR | Notes                                                       |
+|------|---------------------------------|-----------|-------------------------------------------------------------|
+| 1    | Complete 5-phase implementation | PR 1      | All phases; tests/docs included; may request size:exception |
 
 ## Phase 1: Wire ApiKeyRateLimiter into routes.rs
 

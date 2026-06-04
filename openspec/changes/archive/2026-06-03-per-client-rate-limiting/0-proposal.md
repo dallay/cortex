@@ -7,6 +7,7 @@ Implement configurable per-client rate limiting that throttles requests based on
 ## Scope
 
 ### In Scope
+
 - Wire up existing `ApiKeyRateLimiter` as proper middleware (remove `_` prefix, add to layer)
 - Add TOML configuration section for rate limit tiers (Free/Pro/Enterprise with rpm/rpd/tpm)
 - Per-IP rate limiter for unauthenticated requests (new `IpRateLimiter` middleware)
@@ -15,6 +16,7 @@ Implement configurable per-client rate limiting that throttles requests based on
 - Status endpoint: GET `/api/rate-limits/:scope/:target/status`
 
 ### Out of Scope
+
 - Distributed rate limiting (Redis) — in-memory only for MVP
 - Per-model rate limits (only per-client)
 - Automatic tier migration from hardcoded to configurable rules
@@ -57,6 +59,7 @@ Request → IpRateLimiter (unauthenticated) → ApiKeyRateLimiter (authenticated
 ### Provider Rate Limit Awareness
 
 Extend `FallbackRouter` to track per-client provider failures:
+
 - On upstream 429, record client identifier + provider in circuit breaker state
 - Extract `Retry-After` and `X-RateLimit-Reset` headers
 - Return `429 Too Many Requests` to client with `Retry-After` when quota exhausted
@@ -93,24 +96,24 @@ ProviderRateLimit {
 
 ## Affected Areas
 
-| Area | Impact | Description |
-|------|--------|-------------|
-| `transport-axum/src/routes.rs` | Modified | Wire `ApiKeyRateLimiter` and `IpRateLimiter` into middleware chain |
-| `transport-axum/src/middleware/api_key_rate_limiter.rs` | Modified | Accept `RateLimitingConfig` from DI; remove `_` prefix |
-| `transport-axum/src/middleware/ip_rate_limiter.rs` | New | Per-IP token bucket for unauthenticated requests |
-| `apps/rook/src/config.rs` | Modified | Add `[rate_limiting]` TOML section with tier configs |
-| `apps/rook/src/di.rs` | Modified | Wire `IpRateLimiter`, `RateLimitRuleRepository` into DI |
-| `rook-usecases/src/router_impl.rs` | Modified | Track upstream 429s per client; use `Retry-After` / `X-RateLimit-Reset` |
-| `shared-kernel/src/error.rs` | Modified | Ensure `RateLimitedError` covers all 429 variants |
-| `transport-axum/src/handlers/rate_limits.rs` | New | Admin CRUD handlers + status endpoint |
+| Area                                                    | Impact   | Description                                                             |
+|---------------------------------------------------------|----------|-------------------------------------------------------------------------|
+| `transport-axum/src/routes.rs`                          | Modified | Wire `ApiKeyRateLimiter` and `IpRateLimiter` into middleware chain      |
+| `transport-axum/src/middleware/api_key_rate_limiter.rs` | Modified | Accept `RateLimitingConfig` from DI; remove `_` prefix                  |
+| `transport-axum/src/middleware/ip_rate_limiter.rs`      | New      | Per-IP token bucket for unauthenticated requests                        |
+| `apps/rook/src/config.rs`                               | Modified | Add `[rate_limiting]` TOML section with tier configs                    |
+| `apps/rook/src/di.rs`                                   | Modified | Wire `IpRateLimiter`, `RateLimitRuleRepository` into DI                 |
+| `rook-usecases/src/router_impl.rs`                      | Modified | Track upstream 429s per client; use `Retry-After` / `X-RateLimit-Reset` |
+| `shared-kernel/src/error.rs`                            | Modified | Ensure `RateLimitedError` covers all 429 variants                       |
+| `transport-axum/src/handlers/rate_limits.rs`            | New      | Admin CRUD handlers + status endpoint                                   |
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| In-memory rate limit state resets on restart | High | Document as MVP limitation; Redis persistence is follow-up |
-| Hardcoded tier values leak into existing auth paths | Med | Deprecate hardcoded paths; config is source of truth |
-| `ApiKeyRateLimiter` not actually limiting (underscore bug) | Low | Add integration test that asserts 429 is returned on quota exceed |
+| Risk                                                       | Likelihood | Mitigation                                                        |
+|------------------------------------------------------------|------------|-------------------------------------------------------------------|
+| In-memory rate limit state resets on restart               | High       | Document as MVP limitation; Redis persistence is follow-up        |
+| Hardcoded tier values leak into existing auth paths        | Med        | Deprecate hardcoded paths; config is source of truth              |
+| `ApiKeyRateLimiter` not actually limiting (underscore bug) | Low        | Add integration test that asserts 429 is returned on quota exceed |
 
 ## Rollback Plan
 

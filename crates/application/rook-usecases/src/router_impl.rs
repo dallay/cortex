@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use rand::RngExt;
 use rook_core::{
     CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
 };
@@ -80,6 +81,14 @@ impl CircuitState {
         self.cooldown_until = None;
     }
 
+    fn reset(&mut self) {
+        self.failures = 0;
+        self.is_open = false;
+        self.last_failure = None;
+        self.cooldown_until = None;
+        self.rate_limit_reset = None;
+    }
+
     fn is_open(&self) -> bool {
         if !self.is_open {
             return false;
@@ -135,6 +144,53 @@ impl FallbackRouter {
             })
             .cloned()
             .collect()
+    }
+
+    /// Returns a snapshot of circuit breaker state for all registered providers.
+    /// Iterates the authoritative provider list so removed/stale entries are excluded.
+    /// Providers with no circuit history get default/empty state.
+    pub fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
+        let providers = self.providers.read();
+        providers
+            .iter()
+            .map(|p| {
+                let provider_id = p.id().clone();
+                // Lookup circuit entry (if any) from DashMap
+                let state = self.circuits.get(&provider_id).map(|s| s.clone());
+
+                // Convert Instant to DateTime<Utc> for cooldown_until
+                let cooldown_until = state.as_ref().and_then(|s| {
+                    s.cooldown_until.and_then(|instant| {
+                        let now = std::time::Instant::now();
+                        if instant > now {
+                            let remaining = instant.duration_since(now);
+                            Some(
+                                Utc::now()
+                                    + chrono::Duration::from_std(remaining).unwrap_or_default(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                let snapshot = rook_core::CircuitStateSnapshot {
+                    failures: state.as_ref().map(|s| s.failures).unwrap_or(0),
+                    is_open: state.as_ref().map(|s| s.is_open()).unwrap_or(false),
+                    last_failure: state.as_ref().and_then(|s| s.last_failure),
+                    cooldown_until,
+                    rate_limit_reset: state.as_ref().and_then(|s| s.rate_limit_reset),
+                };
+                (provider_id, snapshot)
+            })
+            .collect()
+    }
+
+    /// Manually reset the circuit breaker for a provider (admin operation).
+    pub fn reset_circuit(&self, provider_id: &ProviderId) {
+        if let Some(mut state) = self.circuits.get_mut(provider_id) {
+            state.reset();
+        }
     }
 }
 
@@ -206,10 +262,9 @@ impl RouterPort for FallbackRouter {
                     // Fall back to first if weights don't match
                     candidates.first().cloned()
                 } else {
-                    use rand::Rng;
-                    let mut rng = rand::thread_rng();
+                    let mut rng = rand::rng();
                     let total: f32 = weights.iter().sum();
-                    let r = rng.gen::<f32>() * total;
+                    let r = rng.random::<f32>() * total;
                     let mut sum = 0.0_f32;
                     candidates
                         .iter()

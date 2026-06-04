@@ -13,13 +13,13 @@ in-memory (DashMap / `tokio::sync::Mutex`) — same pattern as
 
 ## Architecture Decisions
 
-| Decision | Rationale |
-|---|---|
+| Decision                                           | Rationale                                                                                                                                    |
+|----------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | Reuse existing token-bucket in `ApiKeyRateLimiter` | Already battle-tested; rps derivable from `requests_per_minute / 60`. Sliding window can replace later without changing `RateLimitSnapshot`. |
-| Keep `IpRateLimiter` separate | Mirrors `LoginRateLimiter`; IP and API-key limits evolve independently (own TOML section, own defaults). |
-| Custom rules in-process (DashMap) | Mutated at runtime via admin API; persistence not required for MVP, avoids hot-path async I/O. |
-| `Retry-After` propagation in `FallbackRouter` | `router_impl.rs` already owns `CircuitState` — extend with `rate_limit_reset`, no new port, no handler-side re-decoding. |
-| `RateLimitScope` in `shared-kernel` | Same flavor as `ApiKeyTier` in `rook-core`; avoids a transport-axum dep from rook-usecases. |
+| Keep `IpRateLimiter` separate                      | Mirrors `LoginRateLimiter`; IP and API-key limits evolve independently (own TOML section, own defaults).                                     |
+| Custom rules in-process (DashMap)                  | Mutated at runtime via admin API; persistence not required for MVP, avoids hot-path async I/O.                                               |
+| `Retry-After` propagation in `FallbackRouter`      | `router_impl.rs` already owns `CircuitState` — extend with `rate_limit_reset`, no new port, no handler-side re-decoding.                     |
+| `RateLimitScope` in `shared-kernel`                | Same flavor as `ApiKeyTier` in `rook-core`; avoids a transport-axum dep from rook-usecases.                                                  |
 
 ## Middleware Chain (routes.rs)
 
@@ -40,18 +40,18 @@ Both limiters run **before** `authz` to read headers it stamps (e.g.
 
 ## File Changes
 
-| File | Action | Change |
-|---|---|---|
-| `crates/infrastructure/transport-axum/src/routes.rs` | Modify | Drop `_` prefix; add `.layer(from_fn_with_state(...))` for both limiters, ordered after `CsrfGuard`, before `authz`. |
-| `…/transport-axum/src/middleware/api_key_rate_limiter.rs` | Modify | Accept `Arc<RateLimiterConfig>`; replace `tier_params()` with config lookup; stamp `x-ratelimit-*` headers. |
-| `…/transport-axum/src/middleware/ip_rate_limiter.rs` | Create | `IpRateLimiter` + middleware; reuses `TokenBucket` from `login_rate_limiter.rs`; IP from `ConnectInfo`. |
-| `…/transport-axum/src/middleware/mod.rs` | Modify | `pub use IpRateLimiter;` |
-| `…/transport-axum/src/handlers/{mod.rs,rate_limits.rs}` | Create | `pub mod rate_limits;` + admin CRUD + status handler. Admin writes gated by `authz` Admin-scope. |
-| `crates/domain/shared-kernel/src/{lib.rs,rate_limit.rs}` | Create | `pub mod rate_limit;` exporting `RateLimitScope` + `RateLimitRule`. |
-| `crates/application/rook-usecases/src/router_impl.rs` | Modify | Add `rate_limit_reset` to `CircuitState`; `record_rate_limit()`; emit `RateLimitedError` carrying `retry_after`. |
-| `apps/rook/src/config.rs` | Modify | New `RateLimiterConfig` / `TierConfig` / `IpRateLimitConfig`; add to `RookConfig`. |
-| `apps/rook/src/di.rs` | Modify | Build `IpRateLimiter` + DashMap-backed `RateLimitRuleStore`; thread config into limiter via `with_config()`. |
-| `apps/rook/src/server.rs` | Modify | Pass new fields; merge `/api/rate-limits`. |
+| File                                                      | Action | Change                                                                                                               |
+|-----------------------------------------------------------|--------|----------------------------------------------------------------------------------------------------------------------|
+| `crates/infrastructure/transport-axum/src/routes.rs`      | Modify | Drop `_` prefix; add `.layer(from_fn_with_state(...))` for both limiters, ordered after `CsrfGuard`, before `authz`. |
+| `…/transport-axum/src/middleware/api_key_rate_limiter.rs` | Modify | Accept `Arc<RateLimiterConfig>`; replace `tier_params()` with config lookup; stamp `x-ratelimit-*` headers.          |
+| `…/transport-axum/src/middleware/ip_rate_limiter.rs`      | Create | `IpRateLimiter` + middleware; reuses `TokenBucket` from `login_rate_limiter.rs`; IP from `ConnectInfo`.              |
+| `…/transport-axum/src/middleware/mod.rs`                  | Modify | `pub use IpRateLimiter;`                                                                                             |
+| `…/transport-axum/src/handlers/{mod.rs,rate_limits.rs}`   | Create | `pub mod rate_limits;` + admin CRUD + status handler. Admin writes gated by `authz` Admin-scope.                     |
+| `crates/domain/shared-kernel/src/{lib.rs,rate_limit.rs}`  | Create | `pub mod rate_limit;` exporting `RateLimitScope` + `RateLimitRule`.                                                  |
+| `crates/application/rook-usecases/src/router_impl.rs`     | Modify | Add `rate_limit_reset` to `CircuitState`; `record_rate_limit()`; emit `RateLimitedError` carrying `retry_after`.     |
+| `apps/rook/src/config.rs`                                 | Modify | New `RateLimiterConfig` / `TierConfig` / `IpRateLimitConfig`; add to `RookConfig`.                                   |
+| `apps/rook/src/di.rs`                                     | Modify | Build `IpRateLimiter` + DashMap-backed `RateLimitRuleStore`; thread config into limiter via `with_config()`.         |
+| `apps/rook/src/server.rs`                                 | Modify | Pass new fields; merge `/api/rate-limits`.                                                                           |
 
 ## Data Flow
 
@@ -99,15 +99,15 @@ pub struct RateLimiterConfig {
 
 ## Testing Strategy
 
-| Layer | What | Approach |
-|---|---|---|
-| Unit | token bucket | Keep existing `api_key_rate_limiter` tests; add config-driven tier and `IpRateLimiter` tests. |
-| Unit | `RateLimitRule` | Reject empty `target`; reject `Global` with non-`"global"` target. |
-| Integration | chain order | 429 with `Retry-After` **before** `authz`; 401/403 still come from `authz`. |
-| Integration | 429 shape | Free-tier over quota → 429 + `Retry-After` + `x-ratelimit-remaining: 0`. |
-| Integration | refill | Stub time, exhaust, advance 60s, assert refill. |
-| Integration | admin CRUD | `POST` (admin) → 201; non-admin → 403; `GET .../status` returns counters. |
-| Integration | upstream 429 | Mock provider `Retry-After: 30`; client response carries the same. |
+| Layer       | What            | Approach                                                                                      |
+|-------------|-----------------|-----------------------------------------------------------------------------------------------|
+| Unit        | token bucket    | Keep existing `api_key_rate_limiter` tests; add config-driven tier and `IpRateLimiter` tests. |
+| Unit        | `RateLimitRule` | Reject empty `target`; reject `Global` with non-`"global"` target.                            |
+| Integration | chain order     | 429 with `Retry-After` **before** `authz`; 401/403 still come from `authz`.                   |
+| Integration | 429 shape       | Free-tier over quota → 429 + `Retry-After` + `x-ratelimit-remaining: 0`.                      |
+| Integration | refill          | Stub time, exhaust, advance 60s, assert refill.                                               |
+| Integration | admin CRUD      | `POST` (admin) → 201; non-admin → 403; `GET .../status` returns counters.                     |
+| Integration | upstream 429    | Mock provider `Retry-After: 30`; client response carries the same.                            |
 
 ## Migration / Rollout
 

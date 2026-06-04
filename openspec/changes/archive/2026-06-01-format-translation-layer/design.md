@@ -84,13 +84,13 @@ pub struct Message {
 
 **Migration impact** — every `m.content` used as `&str` / `String` becomes `m.content.as_text()` or `m.content.into_text()`:
 
-| File | Current | After |
-|------|---------|-------|
-| `providers-anthropic/src/lib.rs:244` | `m.content.clone()` | `m.content.as_text().to_string()` |
-| `providers-openai/src/provider.rs` (build request body) | `m.content.clone()` | `m.content.as_text().to_string()` |
-| `transport-axum/src/openai_adapter.rs` From impl | `content: m.content` | `content: m.content.into_text()` |
-| `transport-axum/src/anthropic_adapter.rs` From impl | `content: m.content` | `content: m.content.into_text()` |
-| `rook-usecases` (any `message.content` access) | direct string | `.as_text()` |
+| File                                                    | Current              | After                             |
+|---------------------------------------------------------|----------------------|-----------------------------------|
+| `providers-anthropic/src/lib.rs:244`                    | `m.content.clone()`  | `m.content.as_text().to_string()` |
+| `providers-openai/src/provider.rs` (build request body) | `m.content.clone()`  | `m.content.as_text().to_string()` |
+| `transport-axum/src/openai_adapter.rs` From impl        | `content: m.content` | `content: m.content.into_text()`  |
+| `transport-axum/src/anthropic_adapter.rs` From impl     | `content: m.content` | `content: m.content.into_text()`  |
+| `rook-usecases` (any `message.content` access)          | direct string        | `.as_text()`                      |
 
 Phase 2 adds:
 
@@ -352,16 +352,16 @@ controls the mode) to serve both paths.
 CortexError` in `providers-openai/src/provider.rs`. Both replace the current raw
 `format!("{status}: {body}")` string-wrapping.
 
-| HTTP Status | Provider context | → CortexError variant |
-|-------------|-----------------|----------------------|
-| 400 | Any | `CortexError::invalid_request(body)` |
-| 401 / 403 | Any | `CortexError::auth_failed("invalid api key")` |
-| 404 | Any | `CortexError::invalid_request("model not found")` |
-| 429 | Any | `CortexError::rate_limited(retry_after_from_header)` |
-| 408 / 504 | Any | `CortexError::timeout()` |
-| 500 / 502 / 503 | Any | `CortexError::provider(sanitized_body)` |
-| Other 4xx | Any | `CortexError::invalid_request(sanitized_body)` |
-| Other 5xx | Any | `CortexError::provider(sanitized_body)` |
+| HTTP Status     | Provider context | → CortexError variant                                |
+|-----------------|------------------|------------------------------------------------------|
+| 400             | Any              | `CortexError::invalid_request(body)`                 |
+| 401 / 403       | Any              | `CortexError::auth_failed("invalid api key")`        |
+| 404             | Any              | `CortexError::invalid_request("model not found")`    |
+| 429             | Any              | `CortexError::rate_limited(retry_after_from_header)` |
+| 408 / 504       | Any              | `CortexError::timeout()`                             |
+| 500 / 502 / 503 | Any              | `CortexError::provider(sanitized_body)`              |
+| Other 4xx       | Any              | `CortexError::invalid_request(sanitized_body)`       |
+| Other 5xx       | Any              | `CortexError::provider(sanitized_body)`              |
 
 The `Retry-After` header (when present on 429) is parsed to feed `CortexError::rate_limited`
 with a concrete retry delay. The existing `sanitize_error_body()` helper in
@@ -408,38 +408,38 @@ OpenAI client → POST /v1/chat/completions
 
 ## Phase boundaries
 
-| Item | Phase 1 | Phase 2 |
-|------|---------|---------|
-| `MessageContent::Text` enum variant | ✅ | — |
-| `MessageContent::Blocks` + `ContentBlock` | — | ✅ |
-| `CompletionRequest.tools` / `tool_choice` (typed) | — | ✅ |
-| `deny_unknown_fields` removal | ✅ | — |
-| `tools`/`tool_choice` as `Option<Value>` forward-compat | ✅ | — |
-| `tools`/`tool_choice` as typed structs | — | ✅ |
-| `AnthropicMessagesResponse` From impl | ✅ | — |
-| `AnthropicProvider.complete()` implemented | ✅ | — |
-| `FormatRegistry` struct + defaults | ✅ | — |
-| Error normalization (`map_*_http_error`) | ✅ | — |
-| `SseBuffer` extraction to shared location | — | ✅ (shared-kernel) |
-| OpenAI `tool_calls` ↔ Anthropic `tool_use` translation | — | ✅ |
-| Streaming tool call delta reassembly | — | ✅ |
+| Item                                                    | Phase 1 | Phase 2           |
+|---------------------------------------------------------|---------|-------------------|
+| `MessageContent::Text` enum variant                     | ✅       | —                 |
+| `MessageContent::Blocks` + `ContentBlock`               | —       | ✅                 |
+| `CompletionRequest.tools` / `tool_choice` (typed)       | —       | ✅                 |
+| `deny_unknown_fields` removal                           | ✅       | —                 |
+| `tools`/`tool_choice` as `Option<Value>` forward-compat | ✅       | —                 |
+| `tools`/`tool_choice` as typed structs                  | —       | ✅                 |
+| `AnthropicMessagesResponse` From impl                   | ✅       | —                 |
+| `AnthropicProvider.complete()` implemented              | ✅       | —                 |
+| `FormatRegistry` struct + defaults                      | ✅       | —                 |
+| Error normalization (`map_*_http_error`)                | ✅       | —                 |
+| `SseBuffer` extraction to shared location               | —       | ✅ (shared-kernel) |
+| OpenAI `tool_calls` ↔ Anthropic `tool_use` translation  | —       | ✅                 |
+| Streaming tool call delta reassembly                    | —       | ✅                 |
 
 ---
 
 ## Test strategy
 
-| Layer | Scope | Approach |
-|-------|-------|----------|
-| Unit: `MessageContent` | `rook-core` | `as_text()`, `From<String>`, serde round-trip |
-| Unit: `openai_adapter` From impls | `transport-axum` | Deserialize request with `tools` field — must not 422 |
-| Unit: `anthropic_adapter` From impls | `transport-axum` | Deserialize request with `system` top-level field; verify prepended message |
-| Unit: `AnthropicMessagesResponse` From | `transport-axum` | `CompletionResponse` → `AnthropicMessagesResponse` JSON matches spec |
-| Unit: `map_*_http_error` | each provider crate | 429 → rate_limited with retry_after; 401 → auth_failed |
-| Unit: `FormatRegistry` | `transport-axum` | `format_for("openai")` = OpenAI; unknown key = None |
-| Integration: non-stream Anthropic | `providers-anthropic` tests | Mock HTTP server returns `AnthropicNonStreamResponse`; verify `CompletionResponse.content` |
-| Integration: cross-format text route | `transport-axum` integration | POST `/v1/chat/completions` → routed to Anthropic provider → OpenAI response shape |
-| Golden file: OpenAI wire → domain | `transport-axum` | Snapshot `CompletionRequest` from real OpenAI payloads including `tools` |
-| Golden file: Anthropic wire → domain | `transport-axum` | Snapshot `CompletionRequest` from real Anthropic payloads including `system` |
+| Layer                                  | Scope                        | Approach                                                                                   |
+|----------------------------------------|------------------------------|--------------------------------------------------------------------------------------------|
+| Unit: `MessageContent`                 | `rook-core`                  | `as_text()`, `From<String>`, serde round-trip                                              |
+| Unit: `openai_adapter` From impls      | `transport-axum`             | Deserialize request with `tools` field — must not 422                                      |
+| Unit: `anthropic_adapter` From impls   | `transport-axum`             | Deserialize request with `system` top-level field; verify prepended message                |
+| Unit: `AnthropicMessagesResponse` From | `transport-axum`             | `CompletionResponse` → `AnthropicMessagesResponse` JSON matches spec                       |
+| Unit: `map_*_http_error`               | each provider crate          | 429 → rate_limited with retry_after; 401 → auth_failed                                     |
+| Unit: `FormatRegistry`                 | `transport-axum`             | `format_for("openai")` = OpenAI; unknown key = None                                        |
+| Integration: non-stream Anthropic      | `providers-anthropic` tests  | Mock HTTP server returns `AnthropicNonStreamResponse`; verify `CompletionResponse.content` |
+| Integration: cross-format text route   | `transport-axum` integration | POST `/v1/chat/completions` → routed to Anthropic provider → OpenAI response shape         |
+| Golden file: OpenAI wire → domain      | `transport-axum`             | Snapshot `CompletionRequest` from real OpenAI payloads including `tools`                   |
+| Golden file: Anthropic wire → domain   | `transport-axum`             | Snapshot `CompletionRequest` from real Anthropic payloads including `system`               |
 
 The mock HTTP server approach (using `wiremock` or `httpmock`) avoids live API calls in CI
 and matches the existing test infrastructure pattern used in `providers-openai`.

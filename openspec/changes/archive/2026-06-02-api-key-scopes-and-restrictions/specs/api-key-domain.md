@@ -18,13 +18,13 @@ code does not.
 The system SHALL support exactly five canonical scope values, defined by the
 `KnownScope` enum in `crates/domain/rook-core/src/api_key.rs:29`:
 
-| Variant             | Wire string       | Purpose                                                    |
-|---------------------|-------------------|------------------------------------------------------------|
-| `ChatRead`          | `chat:read`       | Read-only access to chat operations (e.g. listing models)  |
-| `ChatWrite`         | `chat:write`      | Write access to chat operations (e.g. POST chat completions) |
-| `ProvidersRead`     | `providers:read`  | Read-only access to provider configuration                 |
-| `ProvidersWrite`    | `providers:write` | Write access to provider configuration                     |
-| `Admin`             | `admin`           | Full administrative access (including API key management)   |
+| Variant          | Wire string       | Purpose                                                      |
+|------------------|-------------------|--------------------------------------------------------------|
+| `ChatRead`       | `chat:read`       | Read-only access to chat operations (e.g. listing models)    |
+| `ChatWrite`      | `chat:write`      | Write access to chat operations (e.g. POST chat completions) |
+| `ProvidersRead`  | `providers:read`  | Read-only access to provider configuration                   |
+| `ProvidersWrite` | `providers:write` | Write access to provider configuration                       |
+| `Admin`          | `admin`           | Full administrative access (including API key management)    |
 
 The `KnownScope::as_str` method SHALL return the wire string for each variant,
 and `FromStr for KnownScope` SHALL accept the wire string and reject any other

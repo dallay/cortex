@@ -2,14 +2,14 @@
 
 ## Review Workload Forecast
 
-| Field                   | Value                |
-|-------------------------|----------------------|
-| Estimated changed lines | 450–600              |
-| 400-line budget risk    | High                 |
-| Chained PRs recommended | Yes                  |
-| Suggested split         | PR 1 → PR 2          |
-| Delivery strategy       | ask-on-risk          |
-| Chain strategy          | pending              |
+| Field                   | Value       |
+|-------------------------|-------------|
+| Estimated changed lines | 450–600     |
+| 400-line budget risk    | High        |
+| Chained PRs recommended | Yes         |
+| Suggested split         | PR 1 → PR 2 |
+| Delivery strategy       | ask-on-risk |
+| Chain strategy          | pending     |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
@@ -18,10 +18,10 @@ Chain strategy: pending
 
 ### Suggested Work Units
 
-| Unit | Goal                                             | Likely PR | Notes                                                    |
-|------|--------------------------------------------------|-----------|----------------------------------------------------------|
-| 1    | Backend validation + structured errors + tests   | PR 1      | Domain, use cases, transport, DI; base = main           |
-| 2    | Dashboard UI + rotate + restrictions + tests     | PR 2      | Vue dashboard; depends on PR 1; base = PR 1 branch      |
+| Unit | Goal                                           | Likely PR | Notes                                              |
+|------|------------------------------------------------|-----------|----------------------------------------------------|
+| 1    | Backend validation + structured errors + tests | PR 1      | Domain, use cases, transport, DI; base = main      |
+| 2    | Dashboard UI + rotate + restrictions + tests   | PR 2      | Vue dashboard; depends on PR 1; base = PR 1 branch |
 
 **Rationale**: The backend changes (provider validation, structured error codes, scope matrix tests, DI wiring) are self-contained and reviewable without the UI. The dashboard work adds 4 hours of Vue components, templates, and composable methods that can be reviewed independently. Splitting keeps each PR under 400 lines and focuses reviews on one layer at a time.
 
@@ -59,7 +59,7 @@ Chain strategy: pending
 
 - [ ] **TASK-2.2**: Add `validate_providers` private helper to `ManageApiKeys`
     - **Files**: `crates/application/rook-usecases/src/manage_api_keys.rs` (new private method)
-    - **What**: 
+    - **What**:
       ```rust
       fn validate_providers(&self, requested: &[ProviderId]) -> ManageApiKeysResult<()> {
           if requested.is_empty() { return Ok(()); }
@@ -101,12 +101,12 @@ Chain strategy: pending
 - [ ] **TASK-2.5**: Write provider validation tests
     - **Files**: `crates/application/rook-usecases/tests/api_key_provider_validation.rs` (new file)
     - **What**: Write 6 test cases from spec:
-      - `create_with_unknown_provider_returns_validation_error`
-      - `update_with_unknown_provider_returns_validation_error`
-      - `create_with_empty_allowed_providers_passes`
-      - `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`
-      - `update_with_empty_allowed_providers_clears_restriction`
-      - `registry_subset_match_passes`
+        - `create_with_unknown_provider_returns_validation_error`
+        - `update_with_unknown_provider_returns_validation_error`
+        - `create_with_empty_allowed_providers_passes`
+        - `create_when_registry_is_empty_and_allowed_providers_non_empty_fails`
+        - `update_with_empty_allowed_providers_clears_restriction`
+        - `registry_subset_match_passes`
     - **Test**: This IS the test
     - **Verification**: `cargo test -p rook-usecases --test api_key_provider_validation` passes (all 6 green)
     - **Estimate**: 45 min
@@ -133,10 +133,10 @@ Chain strategy: pending
 - [ ] **TASK-2.7**: Write route restriction tests
     - **Files**: `crates/application/rook-usecases/tests/route_request_restrictions.rs` (new file, or extend existing `route_request.rs` test module)
     - **What**: Write 4 test cases from spec:
-      - `allowed_models_contains_requested_model_passes`
-      - `allowed_models_missing_requested_model_returns_403_with_structured_code`
-      - `allowed_providers_contains_selected_provider_passes`
-      - `allowed_providers_missing_selected_provider_returns_403_with_structured_code`
+        - `allowed_models_contains_requested_model_passes`
+        - `allowed_models_missing_requested_model_returns_403_with_structured_code`
+        - `allowed_providers_contains_selected_provider_passes`
+        - `allowed_providers_missing_selected_provider_returns_403_with_structured_code`
     - **Test**: This IS the test
     - **Verification**: `cargo test -p rook-usecases --test route_request_restrictions` (or `--lib` if embedded) passes (all 4 green)
     - **Estimate**: 30 min
@@ -146,10 +146,10 @@ Chain strategy: pending
 - [ ] **TASK-3.1**: Fix 4 legacy scope strings in `api_key_routes.rs` integration test
     - **Files**: `crates/infrastructure/transport-axum/tests/api_key_routes.rs` (lines 54, 61, 70, 78 — search for `"read"` and `"write"`)
     - **What**: Replace legacy `"read"` → `"chat:read"`, `"write"` → `"chat:write"`, etc. in test fixtures
-      - Line ~54: `"scopes": ["chat:read"]`
-      - Line ~61: `"scopes": ["chat:write"]`
-      - Line ~70: `"scopes": ["chat:read", "chat:write"]`
-      - Line ~78: `"scopes": ["admin"]`
+        - Line ~54: `"scopes": ["chat:read"]`
+        - Line ~61: `"scopes": ["chat:write"]`
+        - Line ~70: `"scopes": ["chat:read", "chat:write"]`
+        - Line ~78: `"scopes": ["admin"]`
     - **Test**: The test itself (should still pass after the change)
     - **Verification**: `cargo test -p transport-axum --test api_key_routes` passes
     - **Estimate**: 10 min
@@ -181,9 +181,9 @@ Chain strategy: pending
 - [ ] **TASK-3.3**: Write scope routing matrix test
     - **Files**: `crates/infrastructure/transport-axum/tests/scope_routing.rs` (new file)
     - **What**: Write 25 parametrized test cases (5 routes × 5 scopes):
-      - Routes: `POST /v1/chat/completions` (requires `chat:write`), `GET /v1/chat/completions` (requires `chat:read`), `GET /v1/providers` (requires `providers:read`), `POST /v1/providers` (requires `providers:write`), `POST /api/api-keys` (requires `admin`)
-      - Scopes: `chat:read`, `chat:write`, `providers:read`, `providers:write`, `admin`
-      - Assert: `admin` satisfies all; exact match → 2xx; mismatch → `403 INSUFFICIENT_SCOPE`
+        - Routes: `POST /v1/chat/completions` (requires `chat:write`), `GET /v1/chat/completions` (requires `chat:read`), `GET /v1/providers` (requires `providers:read`), `POST /v1/providers` (requires `providers:write`), `POST /api/api-keys` (requires `admin`)
+        - Scopes: `chat:read`, `chat:write`, `providers:read`, `providers:write`, `admin`
+        - Assert: `admin` satisfies all; exact match → 2xx; mismatch → `403 INSUFFICIENT_SCOPE`
     - **Test**: This IS the test
     - **Verification**: `cargo test -p transport-axum --test scope_routing` passes (all 25 green)
     - **Estimate**: 60 min
@@ -191,8 +191,8 @@ Chain strategy: pending
 - [ ] **TASK-3.4**: Write restriction error code integration test
     - **Files**: `crates/infrastructure/transport-axum/tests/api_key_routes.rs` or new file `restriction_errors.rs`
     - **What**: Add 2 test cases:
-      - Key with `allowed_models = ["gpt-4"]` requesting `gpt-4o` → `403 MODEL_RESTRICTED`
-      - Key with `allowed_providers = ["openai"]` routed to `anthropic` → `403 PROVIDER_RESTRICTED`
+        - Key with `allowed_models = ["gpt-4"]` requesting `gpt-4o` → `403 MODEL_RESTRICTED`
+        - Key with `allowed_providers = ["openai"]` routed to `anthropic` → `403 PROVIDER_RESTRICTED`
     - **Test**: This IS the test
     - **Verification**: `cargo test -p transport-axum --test api_key_routes` (or `restriction_errors`) passes
     - **Estimate**: 30 min
@@ -269,11 +269,11 @@ Chain strategy: pending
 - [ ] **TASK-5.7**: Add restriction badges to list display
     - **Files**: `apps/rook/dashboard/src/views/ApiKeysView.vue` (list template)
     - **What**: Add `Restrictions` column (or sub-line under Name) showing:
-      - Both empty → gray `Unrestricted` badge
-      - Only models → amber `Restricted (N models)` badge
-      - Only providers → amber `Restricted (N providers)` badge
-      - Both → amber `Restricted (N models, M providers)` badge
-      Computed from `allowedModels.length` and `allowedProviders.length`
+        - Both empty → gray `Unrestricted` badge
+        - Only models → amber `Restricted (N models)` badge
+        - Only providers → amber `Restricted (N providers)` badge
+        - Both → amber `Restricted (N models, M providers)` badge
+          Computed from `allowedModels.length` and `allowedProviders.length`
     - **Test**: No test yet (component test comes in TASK-5.8)
     - **Verification**: Visual inspection
     - **Estimate**: 20 min
@@ -281,13 +281,13 @@ Chain strategy: pending
 - [ ] **TASK-5.8**: Write dashboard component tests
     - **Files**: `apps/rook/dashboard/tests/ApiKeysView.spec.ts` (new file)
     - **What**: Write 8-10 Vitest component tests:
-      - Create flow with 5 scopes, `allowedModels`, `allowedProviders`
-      - Rotate flow with banner
-      - Edit flow with pre-populated fields
-      - Restriction badges display correctly (4 states)
-      - Validation errors from backend (unknown provider)
-      - At least one scope required
-      - Empty restrictions pass validation
+        - Create flow with 5 scopes, `allowedModels`, `allowedProviders`
+        - Rotate flow with banner
+        - Edit flow with pre-populated fields
+        - Restriction badges display correctly (4 states)
+        - Validation errors from backend (unknown provider)
+        - At least one scope required
+        - Empty restrictions pass validation
     - **Test**: This IS the test
     - **Verification**: `pnpm exec vitest run` passes (all 8-10 green)
     - **Estimate**: 60 min

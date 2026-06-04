@@ -43,7 +43,7 @@ pub mod manage_providers;
 pub struct RookUsecases {
     pub route_request: RouteRequest,
     pub manage_providers: ManageProviders,
-    pub health_check: HealthCheck,
+    pub health_check: Arc<HealthCheck>,
     pub authenticate_client_api: Option<AuthenticateClientApi>,
     pub manage_connections: Option<ManageConnections>,
     pub manage_api_keys: Option<ManageApiKeys>,
@@ -58,6 +58,9 @@ pub struct RookUsecases {
     /// Source of truth for "which models can an API key be restricted to".
     /// Always present; implementations may be static or dynamic.
     pub model_catalog: Arc<dyn ModelCatalogPort>,
+    /// Direct reference to FallbackRouter for circuit state exposure.
+    /// Used by /health and /api/resilience endpoints to read circuit breaker state.
+    pub fallback_router: Arc<FallbackRouter>,
 }
 
 impl RookUsecases {
@@ -66,7 +69,7 @@ impl RookUsecases {
     pub fn new(
         route_request: RouteRequest,
         manage_providers: ManageProviders,
-        health_check: HealthCheck,
+        health_check: Arc<HealthCheck>,
         authenticate_client_api: Option<AuthenticateClientApi>,
         manage_connections: Option<ManageConnections>,
         manage_api_keys: Option<ManageApiKeys>,
@@ -79,6 +82,7 @@ impl RookUsecases {
         setup_token: Arc<RwLock<Option<String>>>,
         session_repo: Arc<dyn SessionRepositoryPort>,
         model_catalog: Arc<dyn ModelCatalogPort>,
+        fallback_router: Arc<FallbackRouter>,
     ) -> Self {
         Self {
             route_request,
@@ -96,6 +100,7 @@ impl RookUsecases {
             setup_token,
             session_repo,
             model_catalog,
+            fallback_router,
         }
     }
 

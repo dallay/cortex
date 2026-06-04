@@ -7,6 +7,7 @@ The Rook proxy already uses the domain model as a translation pivot between wire
 ## Scope
 
 ### In Scope
+
 - Extend `rook-core` domain types: `MessageContent` enum (`Text`); `ToolUse`/`ToolResult` deferred to Phase 2
 - Remove `deny_unknown_fields` from OpenAI and Anthropic adapters; accept `tools`/`tool_choice` without rejection
 - Implement `AnthropicProvider.complete()` (non-streaming path was unimplemented)
@@ -16,6 +17,7 @@ The Rook proxy already uses the domain model as a translation pivot between wire
 - **Phase 2** (tool call translation: OpenAI `tools`/`tool_choice` ↔ Anthropic `tool_use`; `Tool`, `ToolChoice`, `ToolResult` domain types; `SseBuffer` extraction)
 
 ### Out of Scope
+
 - Gemini, Ollama, Groq format adapters (Phase 3, deferred)
 - Streaming tool call reassembly beyond basic delta merging
 - Role inference beyond `system → user` normalization for providers that reject system role
@@ -30,23 +32,23 @@ The Rook proxy already uses the domain model as a translation pivot between wire
 
 ## Affected Components
 
-| Component | Change | Summary |
-|-----------|--------|---------|
-| `rook-core/src/model.rs` | Modified | Add `MessageContent`, `Tool`, `ToolChoice`, `FinishReason::ToolCalls` wired up |
-| `transport-axum/src/openai/` | Modified | Remove `deny_unknown_fields`, add `tools`/`tool_choice` fields, map to domain |
-| `transport-axum/src/anthropic/` | Modified | Remove `deny_unknown_fields`, add tool_use serialization, fix `content` handling |
-| `transport-axum/src/format_registry.rs` | New | `FormatRegistry` mapping provider kind → format adapter |
-| `transport-axum/src/sse_buffer.rs` | New | Extract `SseBuffer` from provider-specific locations to shared module |
-| `providers-anthropic/src/lib.rs` | Modified | Implement `complete()` (non-streaming), normalize errors via `From` |
-| `rook-usecases/src/` | Modified | Route tool-bearing requests; pass `Tool` list through use-case boundary |
+| Component                               | Change   | Summary                                                                          |
+|-----------------------------------------|----------|----------------------------------------------------------------------------------|
+| `rook-core/src/model.rs`                | Modified | Add `MessageContent`, `Tool`, `ToolChoice`, `FinishReason::ToolCalls` wired up   |
+| `transport-axum/src/openai/`            | Modified | Remove `deny_unknown_fields`, add `tools`/`tool_choice` fields, map to domain    |
+| `transport-axum/src/anthropic/`         | Modified | Remove `deny_unknown_fields`, add tool_use serialization, fix `content` handling |
+| `transport-axum/src/format_registry.rs` | New      | `FormatRegistry` mapping provider kind → format adapter                          |
+| `transport-axum/src/sse_buffer.rs`      | New      | Extract `SseBuffer` from provider-specific locations to shared module            |
+| `providers-anthropic/src/lib.rs`        | Modified | Implement `complete()` (non-streaming), normalize errors via `From`              |
+| `rook-usecases/src/`                    | Modified | Route tool-bearing requests; pass `Tool` list through use-case boundary          |
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| `MessageContent` enum breaks existing snapshot/integration tests that assert on `String` content | High | Update tests in same PR; add golden-file tests for both wire formats |
-| Anthropic `complete()` edge cases (rate limits, vision content) not covered by Phase 1 | Med | Scope Phase 1 to text-only; mark unsupported content types as `CortexError::Unsupported` |
-| `FormatRegistry` initialization order at DI bootstrap causes runtime panic | Low | Initialize registry before router construction; add a startup smoke test |
+| Risk                                                                                             | Likelihood | Mitigation                                                                               |
+|--------------------------------------------------------------------------------------------------|------------|------------------------------------------------------------------------------------------|
+| `MessageContent` enum breaks existing snapshot/integration tests that assert on `String` content | High       | Update tests in same PR; add golden-file tests for both wire formats                     |
+| Anthropic `complete()` edge cases (rate limits, vision content) not covered by Phase 1           | Med        | Scope Phase 1 to text-only; mark unsupported content types as `CortexError::Unsupported` |
+| `FormatRegistry` initialization order at DI bootstrap causes runtime panic                       | Low        | Initialize registry before router construction; add a startup smoke test                 |
 
 ## Rollback Plan
 

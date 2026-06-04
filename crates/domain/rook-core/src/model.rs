@@ -456,6 +456,26 @@ pub struct CostBreakdown {
     pub by_api_key: HashMap<ApiKeyId, f64>,
 }
 
+// ============================================================================
+// Circuit Breaker State — read-only snapshot for observability
+// ============================================================================
+
+/// Read-only snapshot of circuit breaker state for a provider.
+/// Serialization-safe (no Instant, all timestamps are DateTime<Utc>).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CircuitStateSnapshot {
+    /// Number of consecutive failures recorded
+    pub failures: u32,
+    /// Whether the circuit is currently open (provider unavailable)
+    pub is_open: bool,
+    /// Last failure timestamp (UTC), or None if no failures
+    pub last_failure: Option<DateTime<Utc>>,
+    /// Cooldown expiry (UTC), or None if circuit is closed
+    pub cooldown_until: Option<DateTime<Utc>>,
+    /// Rate limit reset timestamp (Unix epoch seconds), or None if not rate-limited
+    pub rate_limit_reset: Option<u64>,
+}
+
 impl AuditEntry {
     pub fn success(
         request_id: &RequestId,

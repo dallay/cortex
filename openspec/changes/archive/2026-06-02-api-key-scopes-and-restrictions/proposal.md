@@ -20,10 +20,10 @@ This change closes that gap: rewrites the 4 stale spec files to match the implem
 - **`allowed_providers` validation** in `ManageApiKeys::create` and `update` against `ProviderRegistryPort::providers()`. Unknown provider IDs return `400 VALIDATION_ERROR` listing the offenders.
 - **Structured 403 error codes** `INSUFFICIENT_SCOPE` (already exists in `authz.rs`), `MODEL_RESTRICTED`, and `PROVIDER_RESTRICTED` (need to be added — currently model/provider violations return `CortexError::forbidden` with free-text only, in `route_request.rs:62,84`).
 - **Dashboard UI** in `apps/rook/dashboard/src/views/ApiKeysView.vue`:
-  - Create modal: 5-scope multi-select (currently hard-codes only 2 scopes), `allowedModels` and `allowedProviders` inputs.
-  - Edit modal: same restriction fields, populated.
-  - Rotate action: button per row + confirmation dialog + new raw key banner (same UX as create).
-  - List display: chips for active scopes, badges for `Restricted (N models)` / `Restricted (N providers)` / `Unrestricted`.
+    - Create modal: 5-scope multi-select (currently hard-codes only 2 scopes), `allowedModels` and `allowedProviders` inputs.
+    - Edit modal: same restriction fields, populated.
+    - Rotate action: button per row + confirmation dialog + new raw key banner (same UX as create).
+    - List display: chips for active scopes, badges for `Restricted (N models)` / `Restricted (N providers)` / `Unrestricted`.
 - **Docs-only correction** in `openspec/ARCHITECTURE.md`: the "per-key rate limiter deferred" note is stale — the per-key rate limit is already enforced in `authz.rs:604` for the SQLite-authenticated path. Strike the deferred note.
 
 ### Out of Scope
@@ -56,8 +56,8 @@ No new migration; `V1__allowed_models_providers.sql` already added the JSON colu
 
 - Extend `ManageApiKeys::new` to take an `Arc<dyn ProviderRegistryPort>` as a third dependency.
 - Add `validate_providers(requested: &[ProviderId], registry: &dyn ProviderRegistryPort) -> ManageApiKeysResult<()>`:
-  - If `requested` is empty, return `Ok(())` (unrestricted is always valid).
-  - Otherwise, intersect `requested` with `registry.providers()`. Any unmatched ID goes into a `ManageApiKeysError::Validation("unknown provider(s): …")` error listing the offenders.
+    - If `requested` is empty, return `Ok(())` (unrestricted is always valid).
+    - Otherwise, intersect `requested` with `registry.providers()`. Any unmatched ID goes into a `ManageApiKeysError::Validation("unknown provider(s): …")` error listing the offenders.
 - Call `validate_providers` from both `create` and `update` before persisting. Wire `Arc<dyn ProviderRegistryPort>` through `RookUsecases::new` and the DI graph in `apps/rook/src/di.rs`.
 - Add a new `authz::check_scope` helper signature in the spec (not new code — `check_scope` already lives in `authz.rs:671` and the 5-scope mapping is in `required_scope` at `authz.rs:542`). Document: `check_scope(method, path, &subject) -> Option<AuthOutcome>` and the rejection codes per route class.
 - The new structured error codes for model/provider violations (`MODEL_RESTRICTED`, `PROVIDER_RESTRICTED`) replace the free-text messages in `route_request.rs:62,84`. Return a structured error type that maps to a 403 JSON envelope; the wire format follows the existing rejection shape in `authz.rs:815`.
@@ -66,14 +66,14 @@ No new migration; `V1__allowed_models_providers.sql` already added the JSON colu
 
 The 6 routes are already wired in `routes.rs:507-521`. Spec the route-to-scope mapping:
 
-| Route                                                       | Method          | Required scope     |
-|-------------------------------------------------------------|-----------------|--------------------|
-| `/v1/chat/completions`, `/v1/messages` (Anthropic adapter)  | POST            | `chat:write`       |
-| `/v1/chat/completions`, `/v1/messages`                      | GET             | `chat:read`        |
-| `/v1/models`, `/v1/usage`                                   | GET             | `chat:read`        |
-| `/v1/providers`, `/v1/providers/{id}`                       | GET             | `providers:read`   |
-| `/v1/providers/*`                                           | POST/PUT/DELETE | `providers:write`  |
-| `/api/api-keys/*` (all 6)                                   | any             | `admin`            |
+| Route                                                      | Method          | Required scope    |
+|------------------------------------------------------------|-----------------|-------------------|
+| `/v1/chat/completions`, `/v1/messages` (Anthropic adapter) | POST            | `chat:write`      |
+| `/v1/chat/completions`, `/v1/messages`                     | GET             | `chat:read`       |
+| `/v1/models`, `/v1/usage`                                  | GET             | `chat:read`       |
+| `/v1/providers`, `/v1/providers/{id}`                      | GET             | `providers:read`  |
+| `/v1/providers/*`                                          | POST/PUT/DELETE | `providers:write` |
+| `/api/api-keys/*` (all 6)                                  | any             | `admin`           |
 
 `POST` chat and `GET` chat share the same routes; `check_scope` checks method+path, not body, so a `chat:read`-only key calling `POST /v1/chat/completions` correctly returns 403. This is the intended behavior.
 
@@ -100,17 +100,17 @@ Use the existing `apiKeys` Pinia store and the existing `useApiKeys` composable;
 
 - **Fix `api_key_routes.rs:54,61,70,78`**: replace `"read"` and `"write"` strings with `"chat:read"` and `"chat:write"`. (The test should still pass because the DTO accepts the wire string — only the fixture needs to change.)
 - **New use case tests** in a new `crates/application/rook-usecases/tests/api_key_provider_validation.rs`:
-  - `create_with_unknown_provider_returns_validation_error` — registry seeded with `[openai]`, request asks for `[openai, fake-provider]` → `Err(Validation("unknown provider(s): fake-provider"))`.
-  - `update_with_unknown_provider_returns_validation_error` — same shape.
-  - `create_with_empty_allowed_providers_is_unrestricted` — empty vec passes validation regardless of registry contents.
-  - `create_when_registry_is_empty_must_have_empty_allowed_providers` — registry has no providers; a non-empty `allowed_providers` request fails. This codifies the constraint that "you cannot allowlist a provider that doesn't exist".
+    - `create_with_unknown_provider_returns_validation_error` — registry seeded with `[openai]`, request asks for `[openai, fake-provider]` → `Err(Validation("unknown provider(s): fake-provider"))`.
+    - `update_with_unknown_provider_returns_validation_error` — same shape.
+    - `create_with_empty_allowed_providers_is_unrestricted` — empty vec passes validation regardless of registry contents.
+    - `create_when_registry_is_empty_must_have_empty_allowed_providers` — registry has no providers; a non-empty `allowed_providers` request fails. This codifies the constraint that "you cannot allowlist a provider that doesn't exist".
 - **New authz tests** in `crates/infrastructure/transport-axum/tests/scope_routing.rs`:
-  - 5 representative routes × 5 scope variants = 25 parametrized cases. For each (route, scope), assert 403 with `INSUFFICIENT_SCOPE` unless the key is `admin`.
+    - 5 representative routes × 5 scope variants = 25 parametrized cases. For each (route, scope), assert 403 with `INSUFFICIENT_SCOPE` unless the key is `admin`.
 - **New restriction tests** in `crates/application/rook-usecases/tests/route_request_restrictions.rs`:
-  - `allowed_models_contains_requested_model_passes` (existing test in `route_request.rs:540`).
-  - `allowed_models_missing_requested_model_returns_403_with_model_restricted_code`.
-  - `allowed_providers_contains_selected_provider_passes`.
-  - `allowed_providers_missing_selected_provider_returns_403_with_provider_restricted_code`.
+    - `allowed_models_contains_requested_model_passes` (existing test in `route_request.rs:540`).
+    - `allowed_models_missing_requested_model_returns_403_with_model_restricted_code`.
+    - `allowed_providers_contains_selected_provider_passes`.
+    - `allowed_providers_missing_selected_provider_returns_403_with_provider_restricted_code`.
 
 ## Alternatives Considered
 
@@ -120,13 +120,13 @@ Use the existing `apiKeys` Pinia store and the existing `useApiKeys` composable;
 
 ## Risks and Open Questions
 
-| Risk                                                                                                       | Likelihood | Mitigation                                                                                                                |
-|------------------------------------------------------------------------------------------------------------|------------|---------------------------------------------------------------------------------------------------------------------------|
-| Any environment that has been used for manual testing with the old `read`/`write` keys will see them fail | Low        | Project not released; the 4 spec docs are being rewritten precisely to fix this. Document in the change's verify report. |
-| `allowed_providers` validation requires the provider registry to be seeded before key creation           | Medium     | Document the constraint explicitly. If a key is created with no providers configured, only an empty `allowed_providers` is valid. |
-| Dashboard `allowedModels` input is free-form text                                                          | Low        | Wire it to the existing `useProviders()` listing is overkill (that's providers, not models). `GET /v1/models` exists but may be slow. Free-form is acceptable for an admin tool; spec it as such. |
-| `POST /api/api-keys/{id}/rotate` immediately revokes the old key                                          | Low        | No grace period in the implementation. Confirm with #46 that immediate revocation is the intended UX. It is documented in `api_key.rs` and matches the GitHub issue description. |
-| Structured error codes `MODEL_RESTRICTED` / `PROVIDER_RESTRICTED` don't exist yet                          | Low        | Real, small new work in `route_request.rs` and a transport-layer mapping. Add to the spec; capture in tasks.              |
+| Risk                                                                                                      | Likelihood | Mitigation                                                                                                                                                                                        |
+|-----------------------------------------------------------------------------------------------------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Any environment that has been used for manual testing with the old `read`/`write` keys will see them fail | Low        | Project not released; the 4 spec docs are being rewritten precisely to fix this. Document in the change's verify report.                                                                          |
+| `allowed_providers` validation requires the provider registry to be seeded before key creation            | Medium     | Document the constraint explicitly. If a key is created with no providers configured, only an empty `allowed_providers` is valid.                                                                 |
+| Dashboard `allowedModels` input is free-form text                                                         | Low        | Wire it to the existing `useProviders()` listing is overkill (that's providers, not models). `GET /v1/models` exists but may be slow. Free-form is acceptable for an admin tool; spec it as such. |
+| `POST /api/api-keys/{id}/rotate` immediately revokes the old key                                          | Low        | No grace period in the implementation. Confirm with #46 that immediate revocation is the intended UX. It is documented in `api_key.rs` and matches the GitHub issue description.                  |
+| Structured error codes `MODEL_RESTRICTED` / `PROVIDER_RESTRICTED` don't exist yet                         | Low        | Real, small new work in `route_request.rs` and a transport-layer mapping. Add to the spec; capture in tasks.                                                                                      |
 
 ## Acceptance Criteria
 
