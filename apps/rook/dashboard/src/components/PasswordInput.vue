@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useVModel } from '@vueuse/core'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Eye, EyeOff } from '@lucide/vue'
 
-defineProps<{
+const props = defineProps<{
   id?: string
   type?: 'current-password' | 'new-password'
   required?: boolean
@@ -15,6 +16,10 @@ defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
+
+const model = useVModel(props, 'modelValue', emit, {
+  passive: true,
+})
 
 const showPassword = ref(false)
 
@@ -27,12 +32,11 @@ const toggleVisibility = () => {
   <div class="relative">
     <Input
       :id="id"
+      v-model="model"
       :type="showPassword ? 'text' : 'password'"
       :autocomplete="type"
       :required="required"
       :class="{ 'border-destructive': error }"
-      :value="modelValue"
-      @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       class="pr-10"
     />
     <Button

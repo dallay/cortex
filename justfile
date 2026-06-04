@@ -1,5 +1,6 @@
 set shell := ["/bin/bash", "-c"]
 set dotenv-load := true
+set positional-arguments := true
 
 # === Colors ===
 # Generated via printf because just 1.51.0 doesn't accept \033 (octal) or \x1b (hex)
@@ -211,28 +212,148 @@ clean:
     cargo llvm-cov clean --workspace
 
 # === Full CI (local) ===
+# Each ci-* recipe is independent and can be run standalone.
+# ci-local chains them sequentially — stops on first failure with a clear banner.
+# Run individual steps with: just ci-lint, just ci-test-rust, etc.
 
+_ci-header phase:
+    @echo "{{YELLOW}}🔍  {{ phase }}{{RESET}}"
+
+ci-lint: (_ci-header "1/9 markdown-lint...")
+    @pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+
+ci-fmt: (_ci-header "2/9 fmt-check...")
+    @cargo fmt --all -- --check
+
+ci-clippy: (_ci-header "3/9 clippy...")
+    @cargo clippy --workspace --all-targets -- -D warnings
+
+ci-check: (_ci-header "4/9 cargo check...")
+    @cargo check --workspace
+
+ci-test-rust: (_ci-header "5/9 cargo test (Rust)...")
+    @cargo test --workspace --all-features
+
+ci-test-vitest: (_ci-header "6/9 vitest (Frontend)...")
+    @cd apps/rook/dashboard && pnpm exec vitest run
+
+ci-doc: (_ci-header "7/9 cargo doc...")
+    @RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps
+
+ci-audit: (_ci-header "8/9 cargo audit...")
+    @cargo audit || true
+
+ci-e2e: (_ci-header "9/9 e2e (Playwright)...")
+    @./dev/e2e/run-api-keys-e2e.sh --test
+
+# ---------------------------------------------------------------------------
+# ci-local: sequential fail-fast with clear error banner
+# ---------------------------------------------------------------------------
+# Runs every ci-* step in order. On first failure, prints a red banner with
+# the step name and elapsed time, then exits immediately.
 ci-local:
-    @echo "{{YELLOW}}=== Running full CI locally ==={{RESET}}"
-    @echo "{{YELLOW}}1/9 markdown-lint...{{RESET}}"
-    pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" || (echo "{{RED}}Markdown lint failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}2/9 fmt-check...{{RESET}}"
-    cargo fmt --all -- --check || (echo "{{RED}}Fmt failed! Run 'just fmt'{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}3/9 clippy...{{RESET}}"
-    cargo clippy --workspace --all-targets -- -D warnings || (echo "{{RED}}Clippy failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}4/9 check...{{RESET}}"
-    cargo check --workspace || (echo "{{RED}}Check failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}5/9 test (Rust)...{{RESET}}"
-    cargo test --workspace --all-features || (echo "{{RED}}Rust tests failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}6/9 test (Frontend - Vitest)...{{RESET}}"
-    cd apps/rook/dashboard && pnpm exec vitest run || (echo "{{RED}}Frontend tests failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}7/9 doc...{{RESET}}"
-    RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps || (echo "{{RED}}Doc build failed!{{RESET}}" && exit 1)
-    @echo "{{YELLOW}}8/9 audit...{{RESET}}"
-    cargo audit || echo "{{YELLOW}}Audit warnings (non-blocking){{RESET}}"
-    @echo "{{YELLOW}}9/9 e2e (Playwright)...{{RESET}}"
-    ./dev/e2e/run-api-keys-e2e.sh --test || (echo "{{RED}}E2E tests failed!{{RESET}}" && exit 1)
-    @echo "{{GREEN}}=== CI local complete ==={{RESET}}"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    G="$(printf '\033[0;32m')" Y="$(printf '\033[0;33m')" R="$(printf '\033[0;31m')" N="$(printf '\033[0m')"
+    TOTAL_START=$SECONDS
+    run_step() {
+      local label="$1"; shift
+      echo "${Y}🔍  ${label}${N}"
+      local step_start=$SECONDS
+      if "$@"; then
+        local elapsed=$(( SECONDS - step_start ))
+        echo "${G}   ✓ ${label} (${elapsed}s)${N}"
+      else
+        local elapsed=$(( SECONDS - step_start ))
+        echo ""
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo "${R}  ✗ FAILED at: ${label} (${elapsed}s)${N}"
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo ""
+        exit 1
+      fi
+    }
+    echo ""
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo "${Y}  CI LOCAL — fail-fast on first error${N}"
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo ""
+    run_step "1/9 markdown-lint"   pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+    run_step "2/9 fmt-check"       cargo fmt --all -- --check
+    run_step "3/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
+    run_step "4/9 cargo check"     cargo check --workspace
+    run_step "5/9 cargo test"      cargo test --workspace --all-features
+    run_step "6/9 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
+    run_step "8/9 cargo audit"     bash -c 'cargo audit || true'
+    run_step "9/9 e2e"             ./dev/e2e/run-api-keys-e2e.sh --test
+    TOTAL=$(( SECONDS - TOTAL_START ))
+    echo ""
+    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo "${G}  CI LOCAL — ALL PASSED ✓  (${TOTAL}s total)${N}"
+    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo ""
+
+# Run only linting + formatting stages
+ci-lint-only:
+    @just ci-lint
+    @just ci-fmt
+    @echo "{{GREEN}}Lint stages passed{{RESET}}"
+
+# Run only compile + type-check stages
+ci-check-only:
+    @just ci-clippy
+    @just ci-check
+    @echo "{{GREEN}}Check stages passed{{RESET}}"
+
+# Run only test stages (fast feedback loop)
+ci-test-only:
+    @just ci-test-rust
+    @just ci-test-vitest
+    @echo "{{GREEN}}Test stages passed{{RESET}}"
+
+# Run CI without E2E (skip Docker dependency for quick iteration)
+ci-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    G="$(printf '\033[0;32m')" Y="$(printf '\033[0;33m')" R="$(printf '\033[0;31m')" N="$(printf '\033[0m')"
+    TOTAL_START=$SECONDS
+    run_step() {
+      local label="$1"; shift
+      echo "${Y}🔍  ${label}${N}"
+      local step_start=$SECONDS
+      if "$@"; then
+        local elapsed=$(( SECONDS - step_start ))
+        echo "${G}   ✓ ${label} (${elapsed}s)${N}"
+      else
+        local elapsed=$(( SECONDS - step_start ))
+        echo ""
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo "${R}  ✗ FAILED at: ${label} (${elapsed}s)${N}"
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo ""
+        exit 1
+      fi
+    }
+    echo ""
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo "${Y}  CI (no E2E) — fail-fast on first error${N}"
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo ""
+    run_step "1/8 markdown-lint"   pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+    run_step "2/8 fmt-check"       cargo fmt --all -- --check
+    run_step "3/8 clippy"          cargo clippy --workspace --all-targets -- -D warnings
+    run_step "4/8 cargo check"     cargo check --workspace
+    run_step "5/8 cargo test"      cargo test --workspace --all-features
+    run_step "6/8 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
+    run_step "8/8 cargo audit"     bash -c 'cargo audit || true'
+    TOTAL=$(( SECONDS - TOTAL_START ))
+    echo ""
+    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo "${G}  CI (no E2E) — ALL PASSED ✓  (${TOTAL}s total)${N}"
+    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo ""
 
 # === Release ===
 
@@ -254,7 +375,11 @@ help:
     @echo "  just test-integration - Run integration tests"
     @echo "  just coverage     - Generate HTML coverage report"
     @echo "  just audit        - Check for vulnerabilities"
-    @echo "  just ci-local     - Run full CI locally (markdown → fmt → clippy → check → test → vitest → doc → audit → e2e)"
+    @echo "  just ci-local     - Run full CI locally (fail-fast: stops on first error)"
+    @echo "  just ci-ci        - Full CI without E2E (no Docker needed)"
+    @echo "  just ci-lint-only - Lint + fmt only"
+    @echo "  just ci-check-only - Clippy + cargo check only"
+    @echo "  just ci-test-only - Rust + Vitest tests only"
     @echo ""
     @echo "E2E Tests (Playwright):"
     @echo "  just test-e2e-build      - Build Docker image for e2e"

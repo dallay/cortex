@@ -24,11 +24,14 @@ Before generating any code or shell commands, scan with the Semgrep tools:
 ## Dev Commands
 
 ```bash
-just fmt          # Format code
-just clippy       # Clippy (deny warnings)
-just test         # Full test suite (workspace)
-just ci-local     # Full CI locally (markdown → fmt → clippy → check → test → vitest → doc → audit → e2e)
-just dev          # Watch mode: check + test + clippy on file change
+just fmt             # Format code
+just clippy          # Clippy (deny warnings)
+just test            # Full test suite (workspace)
+just ci-local        # Full CI locally (fail-fast: stops on first error)
+just ci-ci           # CI without E2E (skip Docker dependency)
+just ci-lint-only    # Lint + fmt only
+just ci-check-only   # Clippy + cargo check only
+just ci-test-only    # Rust + Vitest tests only
 
 # Focused runs
 cargo test -p rook --test '*'       # Single integration test file
