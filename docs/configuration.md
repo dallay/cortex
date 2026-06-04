@@ -64,10 +64,11 @@ requests_per_minute = 30
 
 ### `[server]`
 
-| Field  | Type   | Default       | Description  |
-|--------|--------|---------------|--------------|
-| `host` | string | `"127.0.0.1"` | Bind address |
-| `port` | u16    | `8080`        | Listen port  |
+| Field                        | Type  | Default | Description                                 |
+|------------------------------|-------|---------|---------------------------------------------|
+| `host`                       | string | `"127.0.0.1"` | Bind address                            |
+| `port`                       | u16    | `8080`        | Listen port                             |
+| `health_check_interval_secs` | u64    | `30`          | Background health check interval in seconds |
 
 ### `[routing]`
 

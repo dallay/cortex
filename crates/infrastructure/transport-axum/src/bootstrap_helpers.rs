@@ -54,7 +54,7 @@ pub fn make_test_bootstrap_usecases(
         format_translator,
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
-    let health_check = HealthCheck::new(fallback_router.clone());
+    let health_check = Arc::new(HealthCheck::new(fallback_router.clone()));
 
     Arc::new(rook_usecases::RookUsecases::new(
         route_request,
@@ -76,6 +76,7 @@ pub fn make_test_bootstrap_usecases(
         Arc::new(RwLock::new(setup_token)),
         session_repo,
         Arc::new(StaticModelCatalog::new()),
+        fallback_router.clone(),
     ))
 }
 

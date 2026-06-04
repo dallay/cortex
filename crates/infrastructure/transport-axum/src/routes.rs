@@ -60,6 +60,8 @@ pub fn router(
         .route("/login", get(handlers::auth::get_login_handler))
         .route("/logout", post(handlers::auth::logout_handler))
         .route("/api/me", get(handlers::auth::get_me_handler))
+        // Resilience observability endpoint
+        .route("/api/resilience", get(handlers::resilience::get_resilience))
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
@@ -715,15 +717,37 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
         "degraded"
     };
 
+    // Get circuit states from FallbackRouter
+    let circuit_states = usecases.fallback_router.circuit_states();
+
     Json(serde_json::json!({
         "status": status,
         "providers": statuses.iter().map(|s| {
-            serde_json::json!({
-                "id": s.provider_id().to_string(),
+            let provider_id = s.provider_id();
+
+            // Lookup circuit state for this provider
+            let circuit_state = circuit_states
+                .iter()
+                .find(|(id, _)| id == provider_id)
+                .map(|(_, state)| state);
+
+            let mut provider_json = serde_json::json!({
+                "id": provider_id.to_string(),
                 "healthy": s.is_healthy(),
                 "latency_ms": s.latency_ms(),
                 "last_error": s.last_error(),
-            })
+            });
+
+            // Add circuit state fields if available
+            if let Some(state) = circuit_state {
+                provider_json["circuit_state"] = serde_json::json!(
+                    if state.is_open { "open" } else { "closed" }
+                );
+                provider_json["failure_count"] = serde_json::json!(state.failures);
+                provider_json["cooldown_until"] = serde_json::json!(state.cooldown_until);
+            }
+
+            provider_json
         }).collect::<Vec<_>>()
     }))
 }

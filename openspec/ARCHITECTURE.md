@@ -16,7 +16,7 @@ Routes are classified into three authentication tiers:
 
 MANAGEMENT routes use session-based authentication backed by SQLite:
 
-```
+```text
 Request → AuthTier classification
         → Trusted-header cleanup (remove X-Authz-* from inbound)
         → [MANAGEMENT] Session cookie validation via middleware

@@ -1,0 +1,20 @@
+change: health-circuit-visibility
+current_phase: verify
+completed:
+  - init
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+next: archive
+updated: 2026-06-04T12:20:00Z
+verification:
+  verdict: PASS WITH WARNINGS
+  critical_issues: 0
+  warnings: 6
+  tests_passed: 398
+  tests_missing: 6
+  integration_tests_complete: false

@@ -9,15 +9,16 @@ Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default:
 | `POST`   | `/v1/chat/completions` | OpenAI-compatible completions     | None    |
 | `GET`    | `/v1/models`           | List available models (static)    | None    |
 | `POST`   | `/v1/messages`         | Anthropic-compatible messages     | None    |
-| `GET`    | `/health`              | Health check with provider status | None    |
-| `GET`    | `/api/api-keys`        | List API keys (paginated)         | Session |
-| `POST`   | `/api/api-keys`        | Create API key                    | Session |
-| `GET`    | `/api/api-keys/{id}`   | Get API key details               | Session |
-| `PUT`    | `/api/api-keys/{id}`   | Update API key                    | Session |
-| `DELETE` | `/api/api-keys/{id}`   | Revoke API key (soft delete)      | Session |
-| `GET`    | `/login`               | Get CSRF token for login          | None    |
-| `POST`   | `/login`               | Login (create session)            | None    |
-| `POST`   | `/logout`              | Logout (revoke session)           | Session |
+| `GET`    | `/health`              | Health check with circuit state  | None    |
+| `GET`    | `/api/resilience`      | Detailed circuit breaker state   | Session |
+| `GET`    | `/api/api-keys`       | List API keys (paginated)       | Session |
+| `POST`   | `/api/api-keys`       | Create API key                  | Session |
+| `GET`    | `/api/api-keys/{id}`  | Get API key details             | Session |
+| `PUT`    | `/api/api-keys/{id}`  | Update API key                  | Session |
+| `DELETE` | `/api/api-keys/{id}`  | Revoke API key (soft delete)   | Session |
+| `GET`    | `/login`              | Get CSRF token for login       | None    |
+| `POST`   | `/login`              | Login (create session)         | None    |
+| `POST`   | `/logout`             | Logout (revoke session)        | Session |
 
 ## POST /v1/chat/completions
 
@@ -206,7 +207,7 @@ provider error: connection timeout
 
 ## GET /health
 
-Aggregated health status of all configured providers.
+Aggregated health status of all configured providers with circuit breaker state.
 
 ### Response
 
@@ -218,13 +219,19 @@ Aggregated health status of all configured providers.
       "id": "openai-primary",
       "healthy": true,
       "latency_ms": 45,
-      "last_error": null
+      "last_error": null,
+      "circuit_state": "closed",
+      "failure_count": 0,
+      "cooldown_until": null
     },
     {
       "id": "anthropic-primary",
       "healthy": false,
       "latency_ms": null,
-      "last_error": "HTTP 401"
+      "last_error": "HTTP 401",
+      "circuit_state": "open",
+      "failure_count": 3,
+      "cooldown_until": "2026-06-04T10:45:30Z"
     }
   ]
 }
@@ -235,6 +242,62 @@ Aggregated health status of all configured providers.
 - `"healthy"` — all providers are healthy
 - `"degraded"` — some providers are unhealthy
 - `"no_providers_configured"` — no providers are configured
+
+**Provider fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Provider identifier |
+| `healthy` | boolean | Whether the provider is currently healthy |
+| `latency_ms` | integer | Last health check latency in milliseconds |
+| `last_error` | string | Last error message, or null if healthy |
+| `circuit_state` | string | `"closed"` or `"open"` — circuit breaker state |
+| `failure_count` | integer | Number of consecutive failures |
+| `cooldown_until` | string | ISO 8601 timestamp when circuit will attempt recovery, or null if closed |
+
+---
+
+## GET /api/resilience
+
+Detailed circuit breaker state for all providers. Requires session authentication.
+
+### Response
+
+```json
+{
+  "circuit_states": [
+    {
+      "provider": "openai-primary",
+      "failures": 0,
+      "is_open": false,
+      "last_failure": null,
+      "cooldown_until": null,
+      "rate_limit_reset": null
+    },
+    {
+      "provider": "anthropic-primary",
+      "failures": 3,
+      "is_open": true,
+      "last_failure": "2026-06-04T10:45:00Z",
+      "cooldown_until": "2026-06-04T10:45:30Z",
+      "rate_limit_reset": 1717499130
+    }
+  ]
+}
+```
+
+**Authentication:** Requires valid session cookie (same as `/api/*` management endpoints).
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | string | Provider identifier |
+| `failures` | integer | Number of consecutive failures |
+| `is_open` | boolean | Whether the circuit breaker is open |
+| `last_failure` | string | ISO 8601 timestamp of last failure, or null |
+| `cooldown_until` | string | ISO 8601 timestamp when circuit will attempt recovery, or null |
+| `rate_limit_reset` | integer | Unix epoch seconds when rate limit resets, or null |
 
 ---
 

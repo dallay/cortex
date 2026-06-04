@@ -30,9 +30,9 @@ use crate::config::RookConfig;
 
 /// Generate a cryptographically random setup token with a recognisable prefix.
 pub fn generate_setup_token() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..24).map(|_| rng.gen::<u8>()).collect();
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..24).map(|_| rng.random::<u8>()).collect();
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!("rk-setup-{hex}")
 }
@@ -78,7 +78,7 @@ impl RookContainer {
         let strategy: RoutingStrategy = config.routing.strategy.into();
         let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(strategy));
         let router: Arc<dyn RouterPort> = fallback_router.clone();
-        let registry: Arc<dyn ProviderRegistryPort> = fallback_router;
+        let registry: Arc<dyn ProviderRegistryPort> = fallback_router.clone();
 
         // 4. Auth — user/session repos and password hasher
         let user_repo: Arc<dyn rook_core::UserRepositoryPort> =
@@ -197,6 +197,13 @@ impl RookContainer {
         );
         let format_registry = Arc::new(format_registry);
 
+        // Create HealthCheck and spawn background task
+        let health_check = Arc::new(HealthCheck::new(registry));
+        let health_check_interval =
+            std::time::Duration::from_secs(config.server.health_check_interval_secs);
+        let _health_check_task =
+            HealthCheck::spawn_background_task(health_check.clone(), health_check_interval);
+
         let usecases: Arc<rook_usecases::RookUsecases> =
             Arc::new(rook_usecases::RookUsecases::new(
                 RouteRequest::new(
@@ -209,7 +216,7 @@ impl RookContainer {
                     format_registry.clone(),
                 ),
                 ManageProviders::new(router.clone()),
-                HealthCheck::new(registry),
+                health_check,
                 authenticate_client_api.clone(),
                 manage_connections,
                 manage_api_keys,
@@ -222,6 +229,7 @@ impl RookContainer {
                 Arc::new(tokio::sync::RwLock::new(None)),
                 session_repo.clone(),
                 Arc::new(StaticModelCatalog::new()),
+                fallback_router.clone(),
             ));
 
         // Check initialization state to decide on setup token.

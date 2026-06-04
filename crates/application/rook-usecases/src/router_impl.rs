@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use rand::RngExt;
 use rook_core::{
     CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
 };
@@ -136,6 +137,38 @@ impl FallbackRouter {
             .cloned()
             .collect()
     }
+
+    /// Returns a snapshot of circuit breaker state for all providers.
+    /// Safe to call from any thread; clones state from DashMap.
+    pub fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
+        self.circuits
+            .iter()
+            .map(|entry| {
+                let provider_id = entry.key().clone();
+                let state = entry.value();
+
+                // Convert Instant to DateTime<Utc> for cooldown_until
+                let cooldown_until = state.cooldown_until.map(|instant| {
+                    let now = std::time::Instant::now();
+                    if instant > now {
+                        let remaining = instant.duration_since(now);
+                        Utc::now() + chrono::Duration::from_std(remaining).unwrap_or_default()
+                    } else {
+                        Utc::now()
+                    }
+                });
+
+                let snapshot = rook_core::CircuitStateSnapshot {
+                    failures: state.failures,
+                    is_open: state.is_open(),
+                    last_failure: state.last_failure,
+                    cooldown_until,
+                    rate_limit_reset: state.rate_limit_reset,
+                };
+                (provider_id, snapshot)
+            })
+            .collect()
+    }
 }
 
 impl ProviderRegistryPort for FallbackRouter {
@@ -206,10 +239,9 @@ impl RouterPort for FallbackRouter {
                     // Fall back to first if weights don't match
                     candidates.first().cloned()
                 } else {
-                    use rand::Rng;
-                    let mut rng = rand::thread_rng();
+                    let mut rng = rand::rng();
                     let total: f32 = weights.iter().sum();
-                    let r = rng.gen::<f32>() * total;
+                    let r = rng.random::<f32>() * total;
                     let mut sum = 0.0_f32;
                     candidates
                         .iter()
