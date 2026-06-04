@@ -55,7 +55,7 @@ clippy:
 
 clippy-fail-fast:
     cargo clippy --workspace --all-targets -- -D warnings || true
-    @echo "$(GREEN)Clippy complete$(RESET)"
+    @echo "{{GREEN}}Clippy complete{{RESET}}"
 
 fmt:
     cargo fmt --all
@@ -80,23 +80,23 @@ test-doc:
 # === E2E Tests ===
 
 test-e2e-build:
-    @echo "$(YELLOW)Building Docker image for e2e tests...$(RESET)"
+    @echo "{{YELLOW}}Building Docker image for e2e tests...{{RESET}}"
     docker build -f Dockerfile.dev -t rook:e2e-api-keys .
 
 test-e2e:
-    @echo "$(YELLOW)Running E2E tests (Playwright)...$(RESET)"
+    @echo "{{YELLOW}}Running E2E tests (Playwright)...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh --test
 
 test-e2e-dev:
-    @echo "$(YELLOW)Starting E2E dev environment (manual testing)...$(RESET)"
+    @echo "{{YELLOW}}Starting E2E dev environment (manual testing)...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh
 
 test-e2e-cleanup:
-    @echo "$(YELLOW)Cleaning up E2E containers...$(RESET)"
+    @echo "{{YELLOW}}Cleaning up E2E containers...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh --cleanup
 
 test-e2e-install-deps:
-    @echo "$(YELLOW)Installing dashboard dependencies...$(RESET)"
+    @echo "{{YELLOW}}Installing dashboard dependencies...{{RESET}}"
     cd apps/rook/dashboard && pnpm install
 
 coverage:
@@ -115,19 +115,19 @@ build-app:
 
 build-targets:
     # Cross-compile for all targets
-    @echo "$(YELLOW)Building for macOS Intel...$(RESET)"
+    @echo "{{YELLOW}}Building for macOS Intel...{{RESET}}"
     cargo build -p rook --release --target x86_64-apple-darwin
-    @echo "$(YELLOW)Building for macOS ARM64...$(RESET)"
+    @echo "{{YELLOW}}Building for macOS ARM64...{{RESET}}"
     cargo build -p rook --release --target aarch64-apple-darwin
-    @echo "$(YELLOW)Building for Linux x86_64...$(RESET)"
+    @echo "{{YELLOW}}Building for Linux x86_64...{{RESET}}"
     cargo build -p rook --release --target x86_64-unknown-linux-gnu
-    @echo "$(YELLOW)Building for Linux ARM64...$(RESET)"
+    @echo "{{YELLOW}}Building for Linux ARM64...{{RESET}}"
     cargo build -p rook --release --target aarch64-unknown-linux-gnu
-    @echo "$(YELLOW)Building for Windows x86_64...$(RESET)"
+    @echo "{{YELLOW}}Building for Windows x86_64...{{RESET}}"
     cargo build -p rook --release --target x86_64-pc-windows-msvc
-    @echo "$(YELLOW)Building for Windows ARM64...$(RESET)"
+    @echo "{{YELLOW}}Building for Windows ARM64...{{RESET}}"
     cargo build -p rook --release --target aarch64-pc-windows-msvc
-    @echo "$(GREEN)All targets built!$(RESET)"
+    @echo "{{GREEN}}All targets built!{{RESET}}"
 
 # === Run ===
 
@@ -150,19 +150,19 @@ dashboard-install:
 # causes SQLite error 522 ("file truncated") on the next startup.
 db-reset:
     @rm -f ~/.local/share/cortex/rook/rook.db{,-wal,-shm}
-    @echo "$(GREEN)Database reset — rook.db, rook.db-wal, rook.db-shm removed$(RESET)"
+    @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
 
 # Kill any process occupying port 8080 (stale rook instance)
 kill-backend:
-    @lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "$(GREEN)Killed process on :8080$(RESET)" || echo "$(YELLOW)Nothing running on :8080$(RESET)"
+    @lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :8080{{RESET}}" || echo "{{YELLOW}}Nothing running on :8080{{RESET}}"
 
 # One-shot first-time setup: install dashboard deps + verify Rust toolchain
 setup:
-    @echo "$(YELLOW)Installing dashboard dependencies...$(RESET)"
+    @echo "{{YELLOW}}Installing dashboard dependencies...{{RESET}}"
     cd apps/rook/dashboard && pnpm install
-    @echo "$(YELLOW)Verifying Rust toolchain...$(RESET)"
+    @echo "{{YELLOW}}Verifying Rust toolchain...{{RESET}}"
     rustup show
-    @echo "$(GREEN)Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another$(RESET)"
+    @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
 # === Quality ===
 
@@ -213,31 +213,31 @@ clean:
 # === Full CI (local) ===
 
 ci-local:
-    @echo "$(YELLOW)=== Running full CI locally ===$(RESET)"
-    @echo "$(YELLOW)1/9 markdown-lint...$(RESET)"
-    pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" || (echo "$(RED)Markdown lint failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)2/9 fmt-check...$(RESET)"
-    cargo fmt --all -- --check || (echo "$(RED)Fmt failed! Run 'just fmt'$(RESET)" && exit 1)
-    @echo "$(YELLOW)3/9 clippy...$(RESET)"
-    cargo clippy --workspace --all-targets -- -D warnings || (echo "$(RED)Clippy failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)4/9 check...$(RESET)"
-    cargo check --workspace || (echo "$(RED)Check failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)5/9 test (Rust)...$(RESET)"
-    cargo test --workspace --all-features || (echo "$(RED)Rust tests failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)6/9 test (Frontend - Vitest)...$(RESET)"
-    cd apps/rook/dashboard && pnpm exec vitest run || (echo "$(RED)Frontend tests failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)7/9 doc...$(RESET)"
-    RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps || (echo "$(RED)Doc build failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)8/9 audit...$(RESET)"
-    cargo audit || echo "$(YELLOW)Audit warnings (non-blocking)$(RESET)"
-    @echo "$(YELLOW)9/9 e2e (Playwright)...$(RESET)"
-    ./dev/e2e/run-api-keys-e2e.sh --test || (echo "$(RED)E2E tests failed!$(RESET)" && exit 1)
-    @echo "$(GREEN)=== CI local complete ===$(RESET)"
+    @echo "{{YELLOW}}=== Running full CI locally ==={{RESET}}"
+    @echo "{{YELLOW}}1/9 markdown-lint...{{RESET}}"
+    pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" || (echo "{{RED}}Markdown lint failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}2/9 fmt-check...{{RESET}}"
+    cargo fmt --all -- --check || (echo "{{RED}}Fmt failed! Run 'just fmt'{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}3/9 clippy...{{RESET}}"
+    cargo clippy --workspace --all-targets -- -D warnings || (echo "{{RED}}Clippy failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}4/9 check...{{RESET}}"
+    cargo check --workspace || (echo "{{RED}}Check failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}5/9 test (Rust)...{{RESET}}"
+    cargo test --workspace --all-features || (echo "{{RED}}Rust tests failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}6/9 test (Frontend - Vitest)...{{RESET}}"
+    cd apps/rook/dashboard && pnpm exec vitest run || (echo "{{RED}}Frontend tests failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}7/9 doc...{{RESET}}"
+    RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps || (echo "{{RED}}Doc build failed!{{RESET}}" && exit 1)
+    @echo "{{YELLOW}}8/9 audit...{{RESET}}"
+    cargo audit || echo "{{YELLOW}}Audit warnings (non-blocking){{RESET}}"
+    @echo "{{YELLOW}}9/9 e2e (Playwright)...{{RESET}}"
+    ./dev/e2e/run-api-keys-e2e.sh --test || (echo "{{RED}}E2E tests failed!{{RESET}}" && exit 1)
+    @echo "{{GREEN}}=== CI local complete ==={{RESET}}"
 
 # === Release ===
 
 release-dry-run:
-    @echo "$(YELLOW)Running release-please dry-run...$(RESET)"
+    @echo "{{YELLOW}}Running release-please dry-run...{{RESET}}"
     npx release-please release-pr --token=$$GITHUB_TOKEN --dry-run
 
 # === Help ===
