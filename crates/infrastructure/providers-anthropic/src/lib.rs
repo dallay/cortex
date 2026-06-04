@@ -35,6 +35,10 @@ struct AnthropicNonStreamContentBlock {
 struct AnthropicNonStreamUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
 }
 
 /// Anthropic streaming request body
@@ -113,6 +117,10 @@ struct AnthropicMessageDeltaUsage {
     output_tokens: u32,
     #[serde(default)]
     input_tokens: Option<u32>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -317,6 +325,9 @@ impl ProviderPort for AnthropicProvider {
                 completion_tokens: anthropic_resp.usage.output_tokens,
                 total_tokens: anthropic_resp.usage.input_tokens
                     + anthropic_resp.usage.output_tokens,
+                cache_read_tokens: anthropic_resp.usage.cache_read_input_tokens,
+                cache_creation_tokens: anthropic_resp.usage.cache_creation_input_tokens,
+                reasoning_tokens: None,
                 estimated_cost_usd: None,
             },
             latency_ms: start.elapsed().as_millis() as u64,
@@ -433,6 +444,9 @@ impl ProviderPort for AnthropicProvider {
                                         .input_tokens
                                         .unwrap_or(0)
                                         .saturating_add(usage.output_tokens),
+                                    cache_read_tokens: usage.cache_read_input_tokens,
+                                    cache_creation_tokens: usage.cache_creation_input_tokens,
+                                    reasoning_tokens: None,
                                     estimated_cost_usd: None,
                                 }),
                             }));

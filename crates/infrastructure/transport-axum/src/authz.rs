@@ -15,7 +15,7 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rook_core::ApiKeyTier;
+use rook_core::{ApiKeyId, ApiKeyTier};
 use rook_usecases::{
     AuthenticateClientApi, AuthenticateClientApiError, BootstrapStatus, ValidateSession,
 };
@@ -768,6 +768,20 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
     })
 }
 
+pub fn extract_api_key_id(req: &Request) -> Option<ApiKeyId> {
+    extract_api_key_id_from_headers(req.headers())
+}
+
+pub fn extract_api_key_id_from_headers(headers: &HeaderMap) -> Option<ApiKeyId> {
+    headers
+        .get("x-authz-auth-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| *value != "public")
+        .map(ApiKeyId::new)
+}
+
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     if let Some(value) = headers
         .get(AUTHORIZATION)
@@ -1076,6 +1090,31 @@ mod tests {
         assert!(!outcome.allow);
         assert_eq!(outcome.status, Some(StatusCode::UNAUTHORIZED));
         assert_eq!(outcome.code, Some("MISSING_API_KEY"));
+    }
+
+    #[test]
+    fn extract_api_key_id_maps_trusted_auth_header_to_api_key_id() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-auth-id", HeaderValue::from_static(" key_abc123 "));
+
+        let api_key_id = extract_api_key_id_from_headers(&headers);
+
+        assert_eq!(
+            api_key_id.map(|id| id.to_string()),
+            Some("key_abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_id_treats_missing_empty_and_public_as_none() {
+        assert!(extract_api_key_id_from_headers(&HeaderMap::new()).is_none());
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-auth-id", HeaderValue::from_static("   "));
+        assert!(extract_api_key_id_from_headers(&headers).is_none());
+
+        headers.insert("x-authz-auth-id", HeaderValue::from_static("public"));
+        assert!(extract_api_key_id_from_headers(&headers).is_none());
     }
 
     #[test]

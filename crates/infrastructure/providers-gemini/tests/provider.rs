@@ -8,6 +8,7 @@ async fn health_check_returns_unknown() {
     let provider = GeminiProvider::new(GeminiProviderConfig {
         id: ProviderId::new("gemini-test"),
         api_key: "test-key".to_string(),
+        base_url: None,
         models: vec![ModelId::new("gemini-2.0-flash")],
         timeout_secs: 10,
     })
@@ -30,6 +31,7 @@ async fn health_check_is_unhealthy_on_error() {
     let provider = GeminiProvider::new(GeminiProviderConfig {
         id: ProviderId::new("gemini-test"),
         api_key: "bad-key".to_string(),
+        base_url: Some(server.uri()),
         models: vec![ModelId::new("gemini-2.0-flash")],
         timeout_secs: 10,
     })
@@ -41,10 +43,37 @@ async fn health_check_is_unhealthy_on_error() {
 }
 
 #[tokio::test]
-async fn complete_returns_error_not_implemented() {
+async fn complete_returns_response_with_token_counts() {
+    // T5.3: Gemini complete() parses usageMetadata.promptTokenCount and candidatesTokenCount.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path(
+            "/v1beta/models/gemini-2.0-flash:generateContent",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "role": "model",
+                        "parts": [{ "text": "Hello, world!" }]
+                    },
+                    "finishReason": "STOP",
+                    "index": 0
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 20,
+                    "candidatesTokenCount": 12,
+                    "totalTokenCount": 32
+                }
+            })),
+        )
+        .mount(&server)
+        .await;
+
     let provider = GeminiProvider::new(GeminiProviderConfig {
         id: ProviderId::new("gemini-test"),
         api_key: "test-key".to_string(),
+        base_url: Some(server.uri()),
         models: vec![ModelId::new("gemini-2.0-flash")],
         timeout_secs: 10,
     })
@@ -66,13 +95,21 @@ async fn complete_returns_error_not_implemented() {
             origin: "test".to_string(),
             cacheable: true,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
 
     let result = provider.complete(&req).await;
-    // Gemini provider not yet implemented — should return an error
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("not yet implemented"));
+    assert!(result.is_ok());
+    let resp = result.unwrap();
+    assert_eq!(resp.content, "Hello, world!");
+    // T5.3: Gemini parses promptTokenCount and candidatesTokenCount
+    assert_eq!(resp.usage.prompt_tokens, 20);
+    assert_eq!(resp.usage.completion_tokens, 12);
+    // Cache/reasoning tokens not available in Gemini API
+    assert_eq!(resp.usage.cache_read_tokens, None);
+    assert_eq!(resp.usage.cache_creation_tokens, None);
+    assert_eq!(resp.usage.reasoning_tokens, None);
 }

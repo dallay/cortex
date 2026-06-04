@@ -8,8 +8,36 @@ use tracing::info;
 
 use super::config::ServerConfig;
 use super::di::RookContainer;
+use crate::usage_retention::{
+    run_startup_usage_retention_sweep, spawn_periodic_usage_retention_sweep,
+};
 
 pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Result<()> {
+    // Run startup retention sweep BEFORE accepting traffic.
+    // Failures warn but do not prevent server start.
+    let startup_deleted = run_startup_usage_retention_sweep(
+        &container.usage_repository,
+        container.usage_config.retention_days,
+    )
+    .await
+    .inspect_err(|e| {
+        tracing::warn!(error = %e, "startup usage retention sweep failed — continuing without it");
+    })
+    .unwrap_or(0);
+    if startup_deleted > 0 {
+        tracing::info!(
+            deleted_rows = startup_deleted,
+            "startup retention sweep completed before traffic"
+        );
+    }
+
+    // Spawn periodic retention sweep in the background.
+    let _periodic_sweep = spawn_periodic_usage_retention_sweep(
+        container.usage_repository.clone(),
+        container.usage_config.retention_days,
+        container.usage_config.sweep_interval_hours,
+    );
+
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
         .context("invalid address")?;

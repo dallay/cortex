@@ -238,6 +238,8 @@ mod tests {
                 origin: "test".to_string(),
                 cacheable: false,
                 priority: 0,
+                api_key_id: None,
+                requested_tier: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         };

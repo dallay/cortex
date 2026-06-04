@@ -11,12 +11,24 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use futures::StreamExt;
 use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse,
-    CortexError, FormatTranslatorPort, RequestStatus, RouterPort, StreamChunk, TokenUsage,
+    CortexError, FormatTranslatorPort, ProviderRepositoryPort, RequestStatus, RouterPort,
+    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ProviderId, RestrictionViolation};
+use shared_kernel::{ConnectionId, ProviderId, RestrictionViolation};
+
+use crate::PricingConfig;
+
+/// Grouped metrics for usage recording to avoid excessive parameter count
+struct UsageMetrics<'a> {
+    status: RequestStatus,
+    usage: Option<&'a TokenUsage>,
+    ttft_ms: Option<u64>,
+    latency_ms: u64,
+}
 
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -25,6 +37,9 @@ pub struct RouteRequest {
     router: Arc<dyn RouterPort>,
     cache: Arc<dyn CachePort>,
     audit: Arc<dyn AuditPort>,
+    usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
+    provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+    pricing: Arc<PricingConfig>,
     format_translator: Arc<dyn FormatTranslatorPort>,
 }
 
@@ -33,12 +48,18 @@ impl RouteRequest {
         router: Arc<dyn RouterPort>,
         cache: Arc<dyn CachePort>,
         audit: Arc<dyn AuditPort>,
+        usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
+        provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+        pricing: Arc<PricingConfig>,
         format_translator: Arc<dyn FormatTranslatorPort>,
     ) -> Self {
         Self {
             router,
             cache,
             audit,
+            usage_recorder,
+            provider_repository,
+            pricing,
             format_translator,
         }
     }
@@ -73,6 +94,7 @@ impl RouteRequest {
         // 2. Select provider
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
+        let connection_id = self.resolve_connection_id(&provider_id).await;
 
         // 2a. Provider restriction check (after selection, before execution)
         if !req.restrictions.allowed_providers.is_empty()
@@ -118,11 +140,30 @@ impl RouteRequest {
                     tracing::warn!(error = %e, "failed to record audit entry");
                 }
 
+                self.record_usage(
+                    &req,
+                    &provider_id,
+                    connection_id,
+                    UsageMetrics {
+                        status: RequestStatus::Success,
+                        usage: Some(&resp.usage),
+                        ttft_ms: Some(latency_ms),
+                        latency_ms,
+                    },
+                )
+                .await;
+
                 Ok(resp)
             }
             Err(e) => {
-                self.record_failure(&req, &provider_id, start.elapsed().as_millis() as u64, &e)
-                    .await;
+                self.record_failure(
+                    &req,
+                    &provider_id,
+                    connection_id,
+                    start.elapsed().as_millis() as u64,
+                    &e,
+                )
+                .await;
                 Err(e)
             }
         }
@@ -154,6 +195,7 @@ impl RouteRequest {
 
         let provider = self.router.select(&req).await?;
         let provider_id = provider.id().clone();
+        let connection_id = self.resolve_connection_id(&provider_id).await;
 
         // 0a. Provider restriction check
         if !req.restrictions.allowed_providers.is_empty()
@@ -170,14 +212,23 @@ impl RouteRequest {
         let mut upstream = provider.stream(&provider_req).await?;
         let audit = self.audit.clone();
         let router = self.router.clone();
+        let usage_recorder = self.usage_recorder.clone();
+        let pricing = self.pricing.clone();
         let request_id = req.id.clone();
         let model = req.model.clone();
+        let api_key_id = req.metadata.api_key_id.clone();
+        let requested_tier = req.metadata.requested_tier.clone();
 
         let stream = async_stream::try_stream! {
             let mut final_usage: Option<TokenUsage> = None;
+            let mut ttft_ms: Option<u64> = None;
+
             while let Some(chunk) = upstream.next().await {
                 match chunk {
                     Ok(chunk) => {
+                        if ttft_ms.is_none() {
+                            ttft_ms = Some(start.elapsed().as_millis() as u64);
+                        }
                         if chunk.usage.is_some() {
                             final_usage = chunk.usage.clone();
                         }
@@ -190,40 +241,122 @@ impl RouteRequest {
                         } else {
                             RequestStatus::Failure
                         };
+                        let latency_ms = start.elapsed().as_millis() as u64;
+
                         let entry = AuditEntry::failure(
                             &request_id,
                             &provider_id,
                             &model,
                             status,
-                            start.elapsed().as_millis() as u64,
+                            latency_ms,
                         );
                         if let Err(audit_err) = audit.record(entry).await {
                             tracing::warn!(error = %audit_err, "failed to record audit entry");
                         }
+
+                        // Record usage failure
+                        if let Some(recorder) = usage_recorder.as_ref() {
+                            let usage_entry = UsageEntry {
+                                request_id: request_id.clone(),
+                                provider: provider_id.clone(),
+                                model: model.clone(),
+                                status,
+                                requested_tier: requested_tier.clone(),
+                                api_key_id: api_key_id.clone(),
+                                connection_id,
+                                tokens_prompt: None,
+                                tokens_completion: None,
+                                tokens_cache_read: None,
+                                tokens_cache_creation: None,
+                                tokens_reasoning: None,
+                                ttft_ms,
+                                latency_ms,
+                                cost_usd: None,
+                                timestamp: Utc::now(),
+                            };
+                            if let Err(usage_err) = recorder.record(usage_entry).await {
+                                tracing::warn!(
+                                    usage_record_failed = true,
+                                    request_id = %request_id,
+                                    provider = %provider_id,
+                                    error = %usage_err,
+                                    "failed to record usage entry"
+                                );
+                                metrics::counter!("usage_record_failed_total").increment(1);
+                            }
+                        }
+
                         Err(error)?;
                     }
                 }
             }
 
+            let latency_ms = start.elapsed().as_millis() as u64;
+
             let entry = AuditEntry::success(
                 &request_id,
                 &provider_id,
                 &model,
-                final_usage,
-                start.elapsed().as_millis() as u64,
+                final_usage.clone(),
+                latency_ms,
             );
             if let Err(audit_err) = audit.record(entry).await {
                 tracing::warn!(error = %audit_err, "failed to record audit entry");
+            }
+
+            // Record usage success
+            if let Some(recorder) = usage_recorder.as_ref() {
+                let usage_entry = UsageEntry {
+                    request_id: request_id.clone(),
+                    provider: provider_id.clone(),
+                    model: model.clone(),
+                    status: RequestStatus::Success,
+                    requested_tier: requested_tier.clone(),
+                    api_key_id: api_key_id.clone(),
+                    connection_id,
+                    tokens_prompt: final_usage.as_ref().map(|u| u.prompt_tokens as u64),
+                    tokens_completion: final_usage.as_ref().map(|u| u.completion_tokens as u64),
+                    tokens_cache_read: final_usage.as_ref().and_then(|u| u.cache_read_tokens),
+                    tokens_cache_creation: final_usage.as_ref().and_then(|u| u.cache_creation_tokens),
+                    tokens_reasoning: final_usage.as_ref().and_then(|u| u.reasoning_tokens),
+                    ttft_ms,
+                    latency_ms,
+                    cost_usd: crate::estimate_cost_usd(&pricing, &provider_id, &model, final_usage.as_ref()),
+                    timestamp: Utc::now(),
+                };
+                if let Err(usage_err) = recorder.record(usage_entry).await {
+                    tracing::warn!(
+                        usage_record_failed = true,
+                        request_id = %request_id,
+                        provider = %provider_id,
+                        error = %usage_err,
+                        "failed to record usage entry"
+                    );
+                    metrics::counter!("usage_record_failed_total").increment(1);
+                }
             }
         };
 
         Ok(Box::pin(stream))
     }
 
+    async fn resolve_connection_id(&self, provider_id: &ProviderId) -> Option<ConnectionId> {
+        let repository = self.provider_repository.as_ref()?;
+
+        match repository.find_connection_id_by_runtime(provider_id).await {
+            Ok(connection_id) => connection_id,
+            Err(error) => {
+                tracing::warn!(provider = %provider_id, error = %error, "failed to resolve provider connection id");
+                None
+            }
+        }
+    }
+
     async fn record_failure(
         &self,
         req: &CompletionRequest,
         provider_id: &ProviderId,
+        connection_id: Option<ConnectionId>,
         latency_ms: u64,
         error: &CortexError,
     ) {
@@ -240,6 +373,66 @@ impl RouteRequest {
         if let Err(audit_err) = self.audit.record(entry).await {
             tracing::warn!(error = %audit_err, "failed to record audit entry");
         }
+
+        self.record_usage(
+            req,
+            provider_id,
+            connection_id,
+            UsageMetrics {
+                status,
+                usage: None,
+                ttft_ms: None,
+                latency_ms,
+            },
+        )
+        .await;
+    }
+
+    async fn record_usage(
+        &self,
+        req: &CompletionRequest,
+        provider_id: &ProviderId,
+        connection_id: Option<ConnectionId>,
+        metrics: UsageMetrics<'_>,
+    ) {
+        let Some(usage_recorder) = self.usage_recorder.as_ref() else {
+            return;
+        };
+
+        let entry = UsageEntry {
+            request_id: req.id.clone(),
+            provider: provider_id.clone(),
+            model: req.model.clone(),
+            status: metrics.status,
+            requested_tier: req.metadata.requested_tier.clone(),
+            api_key_id: req.metadata.api_key_id.clone(),
+            connection_id,
+            tokens_prompt: metrics.usage.map(|usage| usage.prompt_tokens as u64),
+            tokens_completion: metrics.usage.map(|usage| usage.completion_tokens as u64),
+            tokens_cache_read: metrics.usage.and_then(|usage| usage.cache_read_tokens),
+            tokens_cache_creation: metrics.usage.and_then(|usage| usage.cache_creation_tokens),
+            tokens_reasoning: metrics.usage.and_then(|usage| usage.reasoning_tokens),
+            ttft_ms: metrics.ttft_ms,
+            latency_ms: metrics.latency_ms,
+            cost_usd: crate::estimate_cost_usd(
+                &self.pricing,
+                provider_id,
+                &req.model,
+                metrics.usage,
+            ),
+            timestamp: Utc::now(),
+        };
+
+        if let Err(error) = usage_recorder.record(entry).await {
+            tracing::warn!(
+                usage_record_failed = true,
+                request_id = %req.id,
+                provider = %provider_id,
+                error = %error,
+                "failed to record usage entry"
+            );
+            metrics::counter!("usage_record_failed_total").increment(1);
+        }
     }
 }
 
@@ -249,14 +442,17 @@ mod tests {
     use async_trait::async_trait;
     use futures::{stream, StreamExt};
     use rook_core::{
-        HealthStatus, Message, ModelId, ProviderId, ProviderPort, RequestMetadata, Role,
-        StreamChunk, TokenUsage,
+        ApiKeyId, CostBreakdown, HealthStatus, Message, ModelId, Pagination, ProviderId,
+        ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, StreamChunk, TokenUsage,
+        UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
     };
-    use shared_kernel::{CacheKey, CortexResult, RequestId};
+    use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     struct TestProvider {
         id: ProviderId,
+        complete_error: Option<CortexError>,
     }
 
     #[async_trait]
@@ -285,6 +481,10 @@ mod tests {
         }
 
         async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            if self.complete_error.is_some() {
+                return Err(CortexError::provider("provider failed"));
+            }
+
             Ok(CompletionResponse {
                 id: req.id.clone(),
                 provider: self.id.clone(),
@@ -295,6 +495,9 @@ mod tests {
                     prompt_tokens: 1,
                     completion_tokens: 1,
                     total_tokens: 2,
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
                     estimated_cost_usd: None,
                 },
                 latency_ms: 1,
@@ -322,6 +525,9 @@ mod tests {
                         prompt_tokens: 2,
                         completion_tokens: 3,
                         total_tokens: 5,
+                        cache_read_tokens: None,
+                        cache_creation_tokens: None,
+                        reasoning_tokens: None,
                         estimated_cost_usd: None,
                     }),
                 }),
@@ -389,6 +595,141 @@ mod tests {
         }
     }
 
+    struct TestUsageRecorder {
+        entries: Mutex<Vec<UsageEntry>>,
+        fail_recording: bool,
+    }
+
+    #[async_trait]
+    impl UsageRecorderPort for TestUsageRecorder {
+        async fn record(&self, entry: UsageEntry) -> CortexResult<()> {
+            if self.fail_recording {
+                return Err(CortexError::provider("usage recording failed"));
+            }
+            self.entries.lock().unwrap().push(entry);
+            Ok(())
+        }
+
+        async fn list(
+            &self,
+            _filters: UsageFilters,
+            _pagination: Pagination,
+        ) -> CortexResult<Vec<UsageEntry>> {
+            Ok(vec![])
+        }
+
+        async fn count(&self, _filters: UsageFilters) -> CortexResult<u64> {
+            Ok(0)
+        }
+
+        async fn summary(&self, _filters: UsageFilters) -> CortexResult<UsageSummary> {
+            Ok(UsageSummary::default())
+        }
+
+        async fn cost_breakdown(&self, _filters: UsageFilters) -> CortexResult<CostBreakdown> {
+            Ok(CostBreakdown::default())
+        }
+    }
+
+    struct TestProviderRepository {
+        connection_id: Option<ConnectionId>,
+        fail_lookup: bool,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for TestProviderRepository {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find(
+            &self,
+            _id: &ConnectionId,
+        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_connection_id_by_runtime(
+            &self,
+            _provider: &ProviderId,
+        ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
+            if self.fail_lookup {
+                Err(rook_core::RepositoryError::Database(
+                    "lookup failed".to_string(),
+                ))
+            } else {
+                Ok(self.connection_id)
+            }
+        }
+
+        async fn create(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+            _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+    }
+
+    struct FailingProviderRepository;
+
+    #[async_trait]
+    impl ProviderRepositoryPort for FailingProviderRepository {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find(
+            &self,
+            _id: &ConnectionId,
+        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_connection_id_by_runtime(
+            &self,
+            _provider: &ProviderId,
+        ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
+            Err(rook_core::RepositoryError::Database(
+                "lookup failed".to_string(),
+            ))
+        }
+
+        async fn create(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+            _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+    }
+
     struct TestFormatTranslator;
 
     impl FormatTranslatorPort for TestFormatTranslator {
@@ -431,6 +772,8 @@ mod tests {
                 origin: "test".to_string(),
                 cacheable: true,
                 priority: 1,
+                api_key_id: None,
+                requested_tier: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         }
@@ -440,6 +783,7 @@ mod tests {
     async fn execute_stream_bypasses_cache_and_audits_final_usage() {
         let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
             id: ProviderId::new("test-provider"),
+            complete_error: None,
         });
         let cache = Arc::new(TestCache {
             get_calls: Mutex::new(0),
@@ -452,6 +796,9 @@ mod tests {
             Arc::new(TestRouter { provider }),
             cache.clone(),
             audit.clone(),
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         );
 
@@ -486,6 +833,7 @@ mod tests {
     fn make_usecase() -> RouteRequest {
         let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
             id: ProviderId::new("test-provider"),
+            complete_error: None,
         });
         RouteRequest::new(
             Arc::new(TestRouter { provider }),
@@ -496,8 +844,218 @@ mod tests {
             Arc::new(TestAudit {
                 entries: Mutex::new(Vec::new()),
             }),
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         )
+    }
+
+    #[tokio::test]
+    async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_connection_lookup_failure(
+    ) {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            Some(Arc::new(FailingProviderRepository)),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+
+        let result = usecase.execute(request()).await;
+
+        assert!(
+            result.is_ok(),
+            "lookup failure should not fail routing: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let connection_id = ConnectionId::new();
+        let mut pricing = crate::PricingConfig::default();
+        pricing.providers.insert(
+            "test-provider".to_string(),
+            HashMap::from([(
+                TEST_MODEL.as_str().to_string(),
+                crate::PricingEntry {
+                    prompt_per_million: 1.0,
+                    completion_per_million: 2.0,
+                    cache_read_per_million: None,
+                    cache_creation_per_million: None,
+                },
+            )]),
+        );
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            Some(Arc::new(TestProviderRepository {
+                connection_id: Some(connection_id),
+                fail_lookup: false,
+            })),
+            Arc::new(pricing),
+            Arc::new(TestFormatTranslator),
+        );
+        let mut req = request();
+        req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
+        req.metadata.requested_tier = Some("premium".to_string());
+
+        let response = usecase.execute(req.clone()).await.expect("success");
+
+        assert_eq!(response.content, "cached path");
+        let entries = usage_recorder.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.request_id, req.id);
+        assert_eq!(entry.provider, ProviderId::new("test-provider"));
+        assert_eq!(entry.model, TEST_MODEL.clone());
+        assert_eq!(entry.status, RequestStatus::Success);
+        assert_eq!(entry.requested_tier.as_deref(), Some("premium"));
+        assert_eq!(entry.api_key_id, Some(ApiKeyId::new("key_123")));
+        assert_eq!(entry.connection_id, Some(connection_id));
+        assert_eq!(entry.tokens_prompt, Some(1));
+        assert_eq!(entry.tokens_completion, Some(1));
+        assert_eq!(entry.tokens_cache_read, None);
+        assert_eq!(entry.tokens_cache_creation, None);
+        assert_eq!(entry.tokens_reasoning, None);
+        assert_eq!(entry.ttft_ms, Some(entry.latency_ms));
+        assert_eq!(entry.cost_usd, Some(0.000003));
+    }
+
+    #[tokio::test]
+    async fn non_stream_usage_records_failure_with_nullable_tokens_and_ttft() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: Some(CortexError::provider("provider failed")),
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+        let req = request();
+
+        let result = usecase.execute(req.clone()).await;
+
+        assert!(result.is_err());
+        let entries = usage_recorder.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.request_id, req.id);
+        assert_eq!(entry.status, RequestStatus::Failure);
+        assert_eq!(entry.tokens_prompt, None);
+        assert_eq!(entry.tokens_completion, None);
+        assert_eq!(entry.tokens_cache_read, None);
+        assert_eq!(entry.tokens_cache_creation, None);
+        assert_eq!(entry.tokens_reasoning, None);
+        assert_eq!(entry.ttft_ms, None);
+        assert_eq!(entry.cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn non_stream_usage_recording_failure_does_not_fail_successful_client_response() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: true,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+
+        let result = usecase.execute(request()).await;
+
+        assert!(
+            result.is_ok(),
+            "usage recorder failures should not fail response: {result:?}"
+        );
+        assert!(usage_recorder.entries.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_stream_usage_missing_pricing_records_null_cost_not_zero() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+
+        let result = usecase.execute(request()).await;
+
+        assert!(result.is_ok());
+        let entries = usage_recorder.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].cost_usd, None);
     }
 
     #[tokio::test]
@@ -575,5 +1133,218 @@ mod tests {
         let result = usecase.execute_stream(req).await;
         assert!(result.is_err());
         assert!(result.err().unwrap().is_forbidden());
+    }
+
+    #[tokio::test]
+    async fn streaming_usage_records_ttft_from_first_chunk_and_final_usage_on_success() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let connection_id = ConnectionId::new();
+        let mut pricing = crate::PricingConfig::default();
+        pricing.providers.insert(
+            "test-provider".to_string(),
+            HashMap::from([(
+                TEST_MODEL.as_str().to_string(),
+                crate::PricingEntry {
+                    prompt_per_million: 1.0,
+                    completion_per_million: 2.0,
+                    cache_read_per_million: None,
+                    cache_creation_per_million: None,
+                },
+            )]),
+        );
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            Some(Arc::new(TestProviderRepository {
+                connection_id: Some(connection_id),
+                fail_lookup: false,
+            })),
+            Arc::new(pricing),
+            Arc::new(TestFormatTranslator),
+        );
+        let mut req = request();
+        req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
+
+        let stream = usecase
+            .execute_stream(req.clone())
+            .await
+            .expect("stream starts");
+        let _chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+
+        let entries = usage_recorder.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1, "should record one usage entry");
+        let entry = &entries[0];
+        assert_eq!(entry.request_id, req.id);
+        assert_eq!(entry.status, RequestStatus::Success);
+        assert_eq!(entry.tokens_prompt, Some(2));
+        assert_eq!(entry.tokens_completion, Some(3));
+        assert!(
+            entry.ttft_ms.is_some(),
+            "ttft_ms should be captured from first chunk"
+        );
+        assert!(
+            entry.ttft_ms.unwrap() <= entry.latency_ms,
+            "ttft should be <= total latency"
+        );
+        assert_eq!(entry.api_key_id, Some(ApiKeyId::new("key_streaming")));
+        assert_eq!(entry.connection_id, Some(connection_id));
+        assert!(entry.cost_usd.is_some(), "cost should be calculated");
+    }
+
+    #[tokio::test]
+    async fn streaming_usage_records_failure_with_nullable_tokens_and_rate_limited_status() {
+        struct FailingStreamProvider {
+            id: ProviderId,
+        }
+
+        #[async_trait]
+        impl ProviderPort for FailingStreamProvider {
+            fn id(&self) -> &ProviderId {
+                &self.id
+            }
+
+            fn supported_models(&self) -> &[ModelId] {
+                std::slice::from_ref(&TEST_MODEL)
+            }
+
+            fn api_format(&self) -> ApiFormat {
+                ApiFormat::OpenAI
+            }
+
+            fn is_available(&self) -> bool {
+                true
+            }
+
+            async fn health_check(&self) -> HealthStatus {
+                HealthStatus::Healthy {
+                    provider: self.id.clone(),
+                    latency_ms: 1,
+                }
+            }
+
+            async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+                Err(CortexError::rate_limited(self.id.clone(), 60))
+            }
+
+            async fn stream(
+                &self,
+                _req: &CompletionRequest,
+            ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>>
+            {
+                Ok(Box::pin(stream::iter(vec![
+                    Ok(StreamChunk {
+                        id: RequestId::new(),
+                        model: TEST_MODEL.clone(),
+                        delta: "start".to_string(),
+                        finish_reason: None,
+                        usage: None,
+                    }),
+                    Err(CortexError::rate_limited(self.id.clone(), 60)),
+                ])))
+            }
+        }
+
+        let provider: Arc<dyn ProviderPort> = Arc::new(FailingStreamProvider {
+            id: ProviderId::new("test-provider"),
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+
+        let mut stream = usecase
+            .execute_stream(request())
+            .await
+            .expect("stream starts");
+        let _first_chunk = stream.next().await.expect("first chunk").expect("ok");
+        let second_result = stream.next().await.expect("second item");
+        assert!(second_result.is_err(), "second chunk should error");
+
+        let entries = usage_recorder.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1, "should record failure");
+        let entry = &entries[0];
+        assert_eq!(entry.status, RequestStatus::RateLimited);
+        assert_eq!(entry.tokens_prompt, None);
+        assert_eq!(entry.tokens_completion, None);
+        assert!(
+            entry.ttft_ms.is_some(),
+            "ttft captured before failure from first chunk"
+        );
+        assert_eq!(entry.cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_without_aborting_stream(
+    ) {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usage_recorder = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: true,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            Some(usage_recorder.clone()),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+        );
+
+        let stream = usecase
+            .execute_stream(request())
+            .await
+            .expect("stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+
+        assert_eq!(
+            chunks.len(),
+            2,
+            "stream should complete despite recording failure"
+        );
+        assert!(
+            chunks.iter().all(|c| c.is_ok()),
+            "all chunks should succeed"
+        );
+        assert!(
+            usage_recorder.entries.lock().unwrap().is_empty(),
+            "recording should have failed"
+        );
     }
 }

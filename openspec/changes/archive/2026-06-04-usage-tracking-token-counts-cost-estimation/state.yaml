@@ -1,0 +1,14 @@
+change: usage-tracking-token-counts-cost-estimation
+current_phase: archived
+completed:
+  - init
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+  - archive
+next: none
+updated: "2026-06-04T10:58:00Z"

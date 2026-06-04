@@ -13,7 +13,8 @@ use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ConnectionId, CortexResult, ModelId, ProviderId};
 
 use super::{
-    ApiFormat, AuditEntry, CompletionRequest, CompletionResponse, HealthStatus, StreamChunk,
+    ApiFormat, AuditEntry, CompletionRequest, CompletionResponse, CostBreakdown, HealthStatus,
+    Pagination, StreamChunk, UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
@@ -121,6 +122,23 @@ pub trait AuditPort: Send + Sync {
     async fn record(&self, entry: AuditEntry) -> CortexResult<()>;
 }
 
+#[async_trait]
+pub trait UsageRecorderPort: Send + Sync {
+    async fn record(&self, entry: UsageEntry) -> CortexResult<()>;
+
+    async fn list(
+        &self,
+        filters: UsageFilters,
+        pagination: Pagination,
+    ) -> CortexResult<Vec<UsageEntry>>;
+
+    async fn count(&self, filters: UsageFilters) -> CortexResult<u64>;
+
+    async fn summary(&self, filters: UsageFilters) -> CortexResult<UsageSummary>;
+
+    async fn cost_breakdown(&self, filters: UsageFilters) -> CortexResult<CostBreakdown>;
+}
+
 // ---------------------------------------------------------------------------
 // HealthPort — aggregated health checks
 // ---------------------------------------------------------------------------
@@ -161,6 +179,12 @@ pub trait ProviderRegistryPort: Send + Sync {
 pub trait ProviderRepositoryPort: Send + Sync {
     async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError>;
     async fn find(&self, id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError>;
+    async fn find_connection_id_by_runtime(
+        &self,
+        _provider: &ProviderId,
+    ) -> Result<Option<ConnectionId>, RepositoryError> {
+        Ok(None)
+    }
     async fn create(&self, conn: &ProviderConnection) -> Result<(), RepositoryError>;
     async fn update(
         &self,
@@ -338,6 +362,140 @@ pub trait PasswordHasher: Send + Sync {
 // ---------------------------------------------------------------------------
 
 pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
+
+#[cfg(test)]
+mod usage_port_tests {
+    use super::*;
+    use crate::{CostBreakdown, Pagination, RequestStatus, UsageEntry, UsageFilters, UsageSummary};
+    use shared_kernel::RequestId;
+
+    struct FakeUsageRecorder;
+
+    #[async_trait]
+    impl UsageRecorderPort for FakeUsageRecorder {
+        async fn record(&self, _entry: UsageEntry) -> CortexResult<()> {
+            Ok(())
+        }
+
+        async fn list(
+            &self,
+            _filters: UsageFilters,
+            pagination: Pagination,
+        ) -> CortexResult<Vec<UsageEntry>> {
+            assert_eq!(pagination.limit, Pagination::DEFAULT_LIMIT);
+            Ok(Vec::new())
+        }
+
+        async fn count(&self, _filters: UsageFilters) -> CortexResult<u64> {
+            Ok(0)
+        }
+
+        async fn summary(&self, _filters: UsageFilters) -> CortexResult<UsageSummary> {
+            Ok(UsageSummary::default())
+        }
+
+        async fn cost_breakdown(&self, _filters: UsageFilters) -> CortexResult<CostBreakdown> {
+            Ok(CostBreakdown::default())
+        }
+    }
+
+    struct FakeProviderRepository {
+        runtime_id: ProviderId,
+        connection_id: ConnectionId,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for FakeProviderRepository {
+        async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
+            Ok(Vec::new())
+        }
+
+        async fn find(
+            &self,
+            _id: &ConnectionId,
+        ) -> Result<Option<ProviderConnection>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_connection_id_by_runtime(
+            &self,
+            provider: &ProviderId,
+        ) -> Result<Option<ConnectionId>, RepositoryError> {
+            Ok((provider == &self.runtime_id).then_some(self.connection_id))
+        }
+
+        async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &ProviderConnection,
+            _expected_updated_at: DateTime<Utc>,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn usage_recorder_port_exposes_write_and_read_methods() {
+        let port = FakeUsageRecorder;
+        let entry = UsageEntry {
+            request_id: RequestId::new(),
+            provider: ProviderId::new("openai"),
+            model: ModelId::new("gpt-4o"),
+            status: RequestStatus::Success,
+            requested_tier: None,
+            api_key_id: None,
+            connection_id: None,
+            tokens_prompt: Some(10),
+            tokens_completion: Some(20),
+            tokens_cache_read: None,
+            tokens_cache_creation: None,
+            tokens_reasoning: None,
+            ttft_ms: Some(100),
+            latency_ms: 200,
+            cost_usd: None,
+            timestamp: Utc::now(),
+        };
+
+        futures::executor::block_on(async {
+            port.record(entry).await.expect("record");
+            let filters = UsageFilters::default();
+            port.list(filters.clone(), Pagination::default())
+                .await
+                .expect("list");
+            assert_eq!(port.count(filters.clone()).await.expect("count"), 0);
+            port.summary(filters.clone()).await.expect("summary");
+            port.cost_breakdown(filters).await.expect("cost breakdown");
+        });
+    }
+
+    #[test]
+    fn provider_repository_port_resolves_connection_id_by_runtime_provider() {
+        let connection_id = ConnectionId::new();
+        let repo = FakeProviderRepository {
+            runtime_id: ProviderId::new("openai-primary"),
+            connection_id,
+        };
+
+        let found = futures::executor::block_on(
+            repo.find_connection_id_by_runtime(&ProviderId::new("openai-primary")),
+        )
+        .expect("lookup");
+        let missing = futures::executor::block_on(
+            repo.find_connection_id_by_runtime(&ProviderId::new("ollama-local")),
+        )
+        .expect("lookup");
+
+        assert_eq!(found, Some(connection_id));
+        assert_eq!(missing, None);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ModelCatalogPort — source of truth for "which models can an API key be

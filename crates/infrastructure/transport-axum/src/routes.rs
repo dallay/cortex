@@ -74,6 +74,9 @@ pub fn router(
     // RookUsecases), so the route is always mounted.
     router = router.merge(crate::models_routes::router(usecases.clone()));
 
+    // Usage history routes — always mounted, returns 503 if usage recorder is unavailable
+    router = router.merge(usage_routes(usecases.clone()));
+
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
         router = router.merge(rate_limits_routes(store));
@@ -731,4 +734,12 @@ fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Route
             get(handlers::rate_limits::get_status),
         )
         .with_state(store)
+}
+
+fn usage_routes(usecases: Usecases) -> Router {
+    Router::new()
+        .route("/api/usage", get(handlers::usage::list_usage))
+        .route("/api/usage/summary", get(handlers::usage::usage_summary))
+        .route("/api/usage/cost", get(handlers::usage::usage_cost))
+        .with_state(usecases)
 }

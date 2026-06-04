@@ -1,7 +1,7 @@
 // config — load and validate RookConfig from TOML
 
 use rook_core::ApiKeyTier;
-use rook_usecases::RoutingStrategy;
+use rook_usecases::{PricingConfig, RoutingStrategy};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,6 +21,12 @@ pub struct RookConfig {
     pub provider_crud: ProviderCrudConfig,
     #[serde(default)]
     pub rate_limiting: RateLimiterConfig,
+    #[serde(default)]
+    #[allow(dead_code)] // TODO: Phase 7 - wire usage recorder and retention sweep
+    pub usage: UsageConfig,
+    #[serde(default)]
+    #[allow(dead_code)] // TODO: Phase 7 - wire pricing through DI
+    pub pricing: PricingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,6 +85,33 @@ impl Default for ProviderCrudConfig {
 
 fn default_provider_crud_enabled() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UsageConfig {
+    #[serde(default = "default_usage_retention_days")]
+    #[allow(dead_code)] // TODO: Phase 7 - wire retention sweep
+    pub retention_days: u32,
+    #[serde(default = "default_usage_sweep_interval_hours")]
+    #[allow(dead_code)] // TODO: Phase 7 - wire retention sweep
+    pub sweep_interval_hours: u32,
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: default_usage_retention_days(),
+            sweep_interval_hours: default_usage_sweep_interval_hours(),
+        }
+    }
+}
+
+fn default_usage_retention_days() -> u32 {
+    90
+}
+
+fn default_usage_sweep_interval_hours() -> u32 {
+    6
 }
 
 #[derive(Debug, Clone, Deserialize)]

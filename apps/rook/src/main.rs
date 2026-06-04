@@ -6,6 +6,7 @@ mod config;
 mod dashboard;
 mod di;
 mod server;
+mod usage_retention;
 
 use anyhow::Context;
 use clap::Parser;
