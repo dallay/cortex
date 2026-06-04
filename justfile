@@ -214,19 +214,23 @@ clean:
 
 ci-local:
     @echo "$(YELLOW)=== Running full CI locally ===$(RESET)"
-    @echo "$(YELLOW)1/7 fmt-check...$(RESET)"
+    @echo "$(YELLOW)1/9 markdown-lint...$(RESET)"
+    pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" || (echo "$(RED)Markdown lint failed!$(RESET)" && exit 1)
+    @echo "$(YELLOW)2/9 fmt-check...$(RESET)"
     cargo fmt --all -- --check || (echo "$(RED)Fmt failed! Run 'just fmt'$(RESET)" && exit 1)
-    @echo "$(YELLOW)2/7 clippy...$(RESET)"
+    @echo "$(YELLOW)3/9 clippy...$(RESET)"
     cargo clippy --workspace --all-targets -- -D warnings || (echo "$(RED)Clippy failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)3/7 check...$(RESET)"
+    @echo "$(YELLOW)4/9 check...$(RESET)"
     cargo check --workspace || (echo "$(RED)Check failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)4/7 test...$(RESET)"
-    cargo test --workspace || (echo "$(RED)Tests failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)5/7 doc...$(RESET)"
+    @echo "$(YELLOW)5/9 test (Rust)...$(RESET)"
+    cargo test --workspace --all-features || (echo "$(RED)Rust tests failed!$(RESET)" && exit 1)
+    @echo "$(YELLOW)6/9 test (Frontend - Vitest)...$(RESET)"
+    cd apps/rook/dashboard && pnpm exec vitest run || (echo "$(RED)Frontend tests failed!$(RESET)" && exit 1)
+    @echo "$(YELLOW)7/9 doc...$(RESET)"
     cargo doc --workspace --no-deps || (echo "$(RED)Doc build failed!$(RESET)" && exit 1)
-    @echo "$(YELLOW)6/7 audit...$(RESET)"
+    @echo "$(YELLOW)8/9 audit...$(RESET)"
     cargo audit || echo "$(YELLOW)Audit warnings (non-blocking)$(RESET)"
-    @echo "$(YELLOW)7/7 e2e (Playwright)...$(RESET)"
+    @echo "$(YELLOW)9/9 e2e (Playwright)...$(RESET)"
     ./dev/e2e/run-api-keys-e2e.sh --test || (echo "$(RED)E2E tests failed!$(RESET)" && exit 1)
     @echo "$(GREEN)=== CI local complete ===$(RESET)"
 
@@ -250,7 +254,7 @@ help:
     @echo "  just test-integration - Run integration tests"
     @echo "  just coverage     - Generate HTML coverage report"
     @echo "  just audit        - Check for vulnerabilities"
-    @echo "  just ci-local     - Run full CI locally"
+    @echo "  just ci-local     - Run full CI locally (markdown → fmt → clippy → check → test → vitest → doc → audit → e2e)"
     @echo ""
     @echo "E2E Tests (Playwright):"
     @echo "  just test-e2e-build      - Build Docker image for e2e"

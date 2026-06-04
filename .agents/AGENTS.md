@@ -32,7 +32,7 @@ Rust monorepo for **Rook**, an AI proxy/router that routes LLM requests to multi
 just fmt          # Format code
 just clippy       # Clippy with deny warnings
 just test         # Run all tests (workspace)
-just ci-local     # Full CI locally (fmt → clippy → check → test → doc → audit)
+just ci-local     # Full CI locally (markdown → fmt → clippy → check → test → vitest → doc → audit → e2e)
 
 # Focused commands
 cargo test -p rook --test '*'        # Single integration test file
@@ -43,7 +43,7 @@ just dev          # Watch mode: check + test + clippy on file change
 cargo run -p rook                      # Run rook binary
 ```
 
-**CI order** (important): `fmt --check` → `clippy` → `check` → `test` → `doc` → `audit`
+**CI order** (important): `markdown-lint` → `fmt --check` → `clippy` → `check` → `test` (Rust) → `test-frontend` (Vitest) → `test-e2e` (Playwright) → `doc` → `audit`
 
 ## Architecture
 
@@ -116,9 +116,9 @@ running this list** — it enforces evidence-before-assertion.
 just ci-local
 ```
 
-Runs in order: `cargo fmt --all -- --check` → `cargo clippy --workspace
+Runs in order: `markdownlint-cli2` → `cargo fmt --all -- --check` → `cargo clippy --workspace
 --all-targets -- -D warnings` → `cargo check --workspace` →
-`cargo test --workspace` → `cargo doc --workspace --no-deps` → `cargo audit`
+`cargo test --workspace --all-features` → `vitest run` (frontend) → `cargo doc --workspace --no-deps` → `cargo audit`
 (warnings only) → Playwright e2e (`./dev/e2e/run-api-keys-e2e.sh --test`).
 
 If any step is red, the work is not done. Fix and re-run until fully green.
