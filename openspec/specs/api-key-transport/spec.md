@@ -10,14 +10,14 @@ Defines the REST API surface, DTOs, error responses, and routing for API key man
 
 All routes require session auth (same middleware as `/api/providers`).
 
-| Method   | Path                              | Handler          | Auth     |
-|----------|-----------------------------------|------------------|----------|
-| `POST`   | `/api/api-keys`                   | `create_api_key` | Session  |
-| `GET`    | `/api/api-keys`                   | `list_api_keys`  | Session  |
-| `GET`    | `/api/api-keys/:id`              | `get_api_key`    | Session  |
-| `PUT`    | `/api/api-keys/:id`              | `update_api_key` | Session  |
-| `DELETE` | `/api/api-keys/:id`              | `revoke_api_key` | Session  |
-| `POST`   | `/api/api-keys/:id/rotate`       | `rotate_api_key` | Session  |
+| Method   | Path                       | Handler          | Auth    |
+|----------|----------------------------|------------------|---------|
+| `POST`   | `/api/api-keys`            | `create_api_key` | Session |
+| `GET`    | `/api/api-keys`            | `list_api_keys`  | Session |
+| `GET`    | `/api/api-keys/:id`        | `get_api_key`    | Session |
+| `PUT`    | `/api/api-keys/:id`        | `update_api_key` | Session |
+| `DELETE` | `/api/api-keys/:id`        | `revoke_api_key` | Session |
+| `POST`   | `/api/api-keys/:id/rotate` | `rotate_api_key` | Session |
 
 ---
 

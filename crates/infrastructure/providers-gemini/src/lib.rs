@@ -142,7 +142,11 @@ impl ProviderPort for GeminiProvider {
         }
 
         let start = std::time::Instant::now();
-        let url = format!("{}/v1beta/models/{}:generateContent", self.base_url(), model);
+        let url = format!(
+            "{}/v1beta/models/{}:generateContent",
+            self.base_url(),
+            model
+        );
 
         let resp = self
             .client

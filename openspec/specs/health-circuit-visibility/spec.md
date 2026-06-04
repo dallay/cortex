@@ -159,6 +159,7 @@ The system MUST provide a public method `circuit_states()` on `FallbackRouter` t
 ```
 
 **New Fields:**
+
 - `circuit_state`: `"closed" | "open" | "half_open"`
 - `failure_count`: non-negative integer
 - `cooldown_until`: ISO 8601 timestamp or `null`

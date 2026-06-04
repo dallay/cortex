@@ -56,14 +56,14 @@ The system SHALL expose exactly 6 routes for `/api/api-keys/*`, all under
 the **MANAGEMENT** auth tier (cookie-based session auth via
 `authz.rs:682`). Wiring: `routes.rs:507–521`.
 
-| Method   | Path                                | Handler              | Returns          |
-|----------|-------------------------------------|----------------------|------------------|
-| `GET`    | `/api/api-keys`                     | `list_api_keys`      | `200` + DTO      |
-| `POST`   | `/api/api-keys`                     | `create_api_key`     | `201` + DTO w/ `plaintextKey` |
-| `GET`    | `/api/api-keys/{id}`                | `get_api_key`        | `200` + DTO      |
-| `PUT`    | `/api/api-keys/{id}`                | `update_api_key`     | `200` + DTO      |
-| `DELETE` | `/api/api-keys/{id}`                | `revoke_api_key`     | `204` No Content |
-| `POST`   | `/api/api-keys/{id}/rotate`         | `rotate_api_key`     | `200` + DTO w/ `plaintextKey` (NEW) |
+| Method   | Path                        | Handler          | Returns                             |
+|----------|-----------------------------|------------------|-------------------------------------|
+| `GET`    | `/api/api-keys`             | `list_api_keys`  | `200` + DTO                         |
+| `POST`   | `/api/api-keys`             | `create_api_key` | `201` + DTO w/ `plaintextKey`       |
+| `GET`    | `/api/api-keys/{id}`        | `get_api_key`    | `200` + DTO                         |
+| `PUT`    | `/api/api-keys/{id}`        | `update_api_key` | `200` + DTO                         |
+| `DELETE` | `/api/api-keys/{id}`        | `revoke_api_key` | `204` No Content                    |
+| `POST`   | `/api/api-keys/{id}/rotate` | `rotate_api_key` | `200` + DTO w/ `plaintextKey` (NEW) |
 
 The 6th route (`rotate`) is the new addition. It is documented in
 REQ-TRANS-8 below.
@@ -166,14 +166,14 @@ chat path. The naming follows the **current** code, not the proposal's
 `authz::required_scope` (`authz.rs:542`) defines the client-API tier
 authorization matrix. The transport contract is:
 
-| Route prefix                | Method  | Required scope    |
-|-----------------------------|---------|-------------------|
-| `/v1/providers/*`           | GET     | `providers:read`  |
-| `/v1/providers/*`           | non-GET | `providers:write` |
-| `/v1/chat/completions`, `/v1/chat/*`, `/v1/messages` | GET  | `chat:read` |
-| `/v1/chat/completions`, `/v1/chat/*`, `/v1/messages` | non-GET | `chat:write` |
-| `/v1/models`, `/v1/usage`, other `/v1/*` | GET  | `chat:read` |
-| `/v1/models`, `/v1/usage`, other `/v1/*` | non-GET | `chat:write` |
+| Route prefix                                         | Method  | Required scope    |
+|------------------------------------------------------|---------|-------------------|
+| `/v1/providers/*`                                    | GET     | `providers:read`  |
+| `/v1/providers/*`                                    | non-GET | `providers:write` |
+| `/v1/chat/completions`, `/v1/chat/*`, `/v1/messages` | GET     | `chat:read`       |
+| `/v1/chat/completions`, `/v1/chat/*`, `/v1/messages` | non-GET | `chat:write`      |
+| `/v1/models`, `/v1/usage`, other `/v1/*`             | GET     | `chat:read`       |
+| `/v1/models`, `/v1/usage`, other `/v1/*`             | non-GET | `chat:write`      |
 
 The `admin` scope SHALL satisfy any required scope (the
 `check_scope` short-circuit at `authz.rs:673`: `s == "admin" || s == required`).

@@ -2,14 +2,14 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
+| Field                   | Value         |
+|-------------------------|---------------|
 | Estimated changed lines | 250-350 lines |
-| 400-line budget risk | Low |
-| Chained PRs recommended | No |
-| Suggested split | Single PR |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | N/A |
+| 400-line budget risk    | Low           |
+| Chained PRs recommended | No            |
+| Suggested split         | Single PR     |
+| Delivery strategy       | ask-on-risk   |
+| Chain strategy          | N/A           |
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -98,43 +98,50 @@ Each task within a phase can be worked sequentially or in parallel where noted. 
 
 ## Testing Coverage
 
-| Requirement | Test Type | Location | Task |
-|-------------|-----------|----------|------|
-| R1: Enhanced /health endpoint | Integration | transport-axum/tests/health_test.rs | 2.3, 2.4 |
-| R2: Authenticated /api/resilience | Integration | transport-axum/tests/resilience_test.rs | 2.5, 2.6 |
-| R3: Background health task | Integration | transport-axum/tests/health_integration_test.rs | 3.5 |
-| R4: Graceful shutdown | Integration | apps/rook/tests/server_shutdown_test.rs | 3.6 |
-| R5: Circuit state exposure | Unit | rook-usecases/tests/router_impl_test.rs | 1.4 |
-| DTO serialization | Unit | rook-core/src/model.rs | 1.3 |
-| Background task lifecycle | Unit | rook-usecases/tests/health_check_test.rs | 3.4 |
+| Requirement                       | Test Type   | Location                                        | Task     |
+|-----------------------------------|-------------|-------------------------------------------------|----------|
+| R1: Enhanced /health endpoint     | Integration | transport-axum/tests/health_test.rs             | 2.3, 2.4 |
+| R2: Authenticated /api/resilience | Integration | transport-axum/tests/resilience_test.rs         | 2.5, 2.6 |
+| R3: Background health task        | Integration | transport-axum/tests/health_integration_test.rs | 3.5      |
+| R4: Graceful shutdown             | Integration | apps/rook/tests/server_shutdown_test.rs         | 3.6      |
+| R5: Circuit state exposure        | Unit        | rook-usecases/tests/router_impl_test.rs         | 1.4      |
+| DTO serialization                 | Unit        | rook-core/src/model.rs                          | 1.3      |
+| Background task lifecycle         | Unit        | rook-usecases/tests/health_check_test.rs        | 3.4      |
 
 All 17 spec scenarios covered across 9 test files (7 new tests + manual verification).
 
 ## Verification Steps
 
 ### After Phase 1
+
 ```bash
 cargo test -p rook-core --lib model
 cargo test -p rook-usecases --test router_impl_test
 ```
+
 Expected: `CircuitStateSnapshot` serialization and `circuit_states()` method tests pass.
 
 ### After Phase 2
+
 ```bash
 cargo test -p transport-axum --test health_test
 cargo test -p transport-axum --test resilience_test
 ```
+
 Expected: `/health` includes circuit fields, `/api/resilience` requires auth, backwards compatibility verified.
 
 ### After Phase 3
+
 ```bash
 cargo test -p rook-usecases --test health_check_test
 cargo test -p transport-axum --test health_integration_test
 cargo test -p rook --test server_shutdown_test
 ```
+
 Expected: Background task exits on drop, updates within interval, graceful shutdown completes.
 
 ### Final Verification (Phase 4)
+
 ```bash
 just ci-local
 cargo run -p rook

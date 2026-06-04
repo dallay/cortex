@@ -142,7 +142,7 @@ The registry is gated behind `provider_crud.enabled = true`. When disabled, `man
 
 These items were identified during implementation but not completed:
 
-| Issue                                          | Status          | Notes                                                                                                                      |
-|------------------------------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------|
-| `POST /logout` returns 501                     | Not implemented | Needs `session_repo` wiring to handler; session revocation logic exists in `Logout` use case but handler can't access repo |
-| `rook admin set-password` CLI not fully wired  | Deferred        | Use case and validation implemented; actual CLI wiring in `main.rs` pending                                                |
+| Issue                                         | Status          | Notes                                                                                                                      |
+|-----------------------------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------|
+| `POST /logout` returns 501                    | Not implemented | Needs `session_repo` wiring to handler; session revocation logic exists in `Logout` use case but handler can't access repo |
+| `rook admin set-password` CLI not fully wired | Deferred        | Use case and validation implemented; actual CLI wiring in `main.rs` pending                                                |

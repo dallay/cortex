@@ -13,6 +13,7 @@ This change exposes circuit breaker state through two HTTP endpoints and adds a 
 **Choice**: Public method on `FallbackRouter` returns `Vec<(ProviderId, CircuitStateSnapshot)>` where `CircuitStateSnapshot` is a serialization-safe DTO.
 
 **Alternatives considered**:
+
 - Add to `RouterPort` trait — rejected, this is FallbackRouter-specific behavior, not a routing contract
 - Add to `ProviderRegistryPort` — rejected, circuit state is routing concern not registry concern
 - Expose `DashMap` directly — rejected, leaks internal implementation and prevents future refactoring
@@ -24,6 +25,7 @@ This change exposes circuit breaker state through two HTTP endpoints and adds a 
 **Choice**: Background task spawned with `Arc::downgrade` reference; exits gracefully when strong count reaches zero.
 
 **Alternatives considered**:
+
 - CancellationToken from tokio-util — adds dependency, overkill for simple shutdown
 - Manual abort via `JoinHandle` — requires storing handle in server state, complex lifecycle
 - Strong `Arc<HealthCheck>` — prevents clean shutdown, server waits for task sleep
@@ -35,6 +37,7 @@ This change exposes circuit breaker state through two HTTP endpoints and adds a 
 **Choice**: `CircuitStateSnapshot` uses `Option<DateTime<Utc>>` for `cooldown_until`. Convert from `Instant` in `FallbackRouter::circuit_states()` using `SystemTime::now() + remaining_duration`.
 
 **Alternatives considered**:
+
 - Expose `Instant` directly — rejected, not serializable, meaningless to clients (monotonic clock)
 - Return seconds-until-reset integer — rejected, clients must poll to interpret, loses timezone context
 - Store `DateTime<Utc>` in `CircuitState` — rejected, changes circuit breaker internals unnecessarily
@@ -46,6 +49,7 @@ This change exposes circuit breaker state through two HTTP endpoints and adds a 
 **Choice**: Add `server.health_check_interval_secs` field (default 30), pass to background task at spawn.
 
 **Alternatives considered**:
+
 - Environment variable only — rejected, inconsistent with existing config strategy
 - Hardcoded 30s — rejected, operators need control without recompile
 - Per-provider intervals — rejected, adds complexity without clear use case
@@ -57,6 +61,7 @@ This change exposes circuit breaker state through two HTTP endpoints and adds a 
 **Choice**: `/health` adds optional fields to existing provider objects (JSON forward-compatible). `/api/resilience` is new MANAGEMENT route requiring session auth.
 
 **Alternatives considered**:
+
 - Single `/health?detailed=true` endpoint — rejected, auth would break existing public monitoring
 - Move all circuit state to authenticated endpoint — rejected, operators need basic circuit visibility without auth for uptime monitoring
 - JWT or API key auth for `/api/resilience` — rejected, session auth is already wired for dashboard
@@ -125,16 +130,16 @@ HTTP 200 OK
 
 ## File Changes
 
-| File | Action | Description |
-|------|--------|-------------|
-| `crates/application/rook-usecases/src/router_impl.rs` | Modify | Add `circuit_states()` method returning `Vec<(ProviderId, CircuitStateSnapshot)>` |
-| `crates/domain/rook-core/src/model.rs` | Modify | Add `CircuitStateSnapshot` struct with `failures`, `is_open`, `last_failure`, `cooldown_until`, `rate_limit_reset` |
-| `crates/infrastructure/transport-axum/src/routes.rs` | Modify | Enhance `health_check()` handler to include circuit fields in response |
-| `crates/infrastructure/transport-axum/src/routes.rs` | Modify | Add `GET /api/resilience` route with session auth |
-| `crates/application/rook-usecases/src/health_check.rs` | Modify | Add `spawn_background_task(Arc<HealthCheck>, Duration) -> JoinHandle` helper |
-| `apps/rook/src/config.rs` | Modify | Add `server.health_check_interval_secs` field (default 30) |
-| `apps/rook/src/di.rs` | Modify | Spawn background task after HealthCheck construction, store `JoinHandle` for graceful abort |
-| `apps/rook/src/server.rs` | Modify | Abort background task on shutdown signal (emergency fallback, weak ref is primary) |
+| File                                                   | Action | Description                                                                                                        |
+|--------------------------------------------------------|--------|--------------------------------------------------------------------------------------------------------------------|
+| `crates/application/rook-usecases/src/router_impl.rs`  | Modify | Add `circuit_states()` method returning `Vec<(ProviderId, CircuitStateSnapshot)>`                                  |
+| `crates/domain/rook-core/src/model.rs`                 | Modify | Add `CircuitStateSnapshot` struct with `failures`, `is_open`, `last_failure`, `cooldown_until`, `rate_limit_reset` |
+| `crates/infrastructure/transport-axum/src/routes.rs`   | Modify | Enhance `health_check()` handler to include circuit fields in response                                             |
+| `crates/infrastructure/transport-axum/src/routes.rs`   | Modify | Add `GET /api/resilience` route with session auth                                                                  |
+| `crates/application/rook-usecases/src/health_check.rs` | Modify | Add `spawn_background_task(Arc<HealthCheck>, Duration) -> JoinHandle` helper                                       |
+| `apps/rook/src/config.rs`                              | Modify | Add `server.health_check_interval_secs` field (default 30)                                                         |
+| `apps/rook/src/di.rs`                                  | Modify | Spawn background task after HealthCheck construction, store `JoinHandle` for graceful abort                        |
+| `apps/rook/src/server.rs`                              | Modify | Abort background task on shutdown signal (emergency fallback, weak ref is primary)                                 |
 
 ## Interfaces / Contracts
 
@@ -273,17 +278,17 @@ impl HealthCheck {
 
 ## Testing Strategy
 
-| Layer | What to Test | Approach |
-|-------|-------------|----------|
-| Unit | `FallbackRouter::circuit_states()` returns correct snapshot | Mock DashMap with known circuit state, verify DTO conversion |
-| Unit | `CircuitStateSnapshot` serialization (JSON round-trip) | serde_json test with all fields populated |
-| Unit | Background task exits when `HealthCheck` dropped | Spawn task, drop Arc, verify task completes within 2 * interval |
-| Integration | `/health` includes circuit fields after 3 failures | Trigger circuit breaker via 3 failed requests, GET /health, assert `circuit_state: "open"` |
-| Integration | `/health` backwards-compatible | Parse response with old schema (ignore new fields), verify no errors |
-| Integration | `/api/resilience` requires auth | GET /api/resilience without session → 401 |
-| Integration | `/api/resilience` returns detailed state | Open circuit via failures, GET /api/resilience with session, verify `rate_limit_reset` present |
-| Integration | Background task updates within interval | Start server, wait interval * 2, verify statuses non-empty |
-| Integration | Graceful shutdown (no hang) | Start server, trigger shutdown, verify exits within 5s (no task deadlock) |
+| Layer       | What to Test                                                | Approach                                                                                       |
+|-------------|-------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| Unit        | `FallbackRouter::circuit_states()` returns correct snapshot | Mock DashMap with known circuit state, verify DTO conversion                                   |
+| Unit        | `CircuitStateSnapshot` serialization (JSON round-trip)      | serde_json test with all fields populated                                                      |
+| Unit        | Background task exits when `HealthCheck` dropped            | Spawn task, drop Arc, verify task completes within 2 * interval                                |
+| Integration | `/health` includes circuit fields after 3 failures          | Trigger circuit breaker via 3 failed requests, GET /health, assert `circuit_state: "open"`     |
+| Integration | `/health` backwards-compatible                              | Parse response with old schema (ignore new fields), verify no errors                           |
+| Integration | `/api/resilience` requires auth                             | GET /api/resilience without session → 401                                                      |
+| Integration | `/api/resilience` returns detailed state                    | Open circuit via failures, GET /api/resilience with session, verify `rate_limit_reset` present |
+| Integration | Background task updates within interval                     | Start server, wait interval * 2, verify statuses non-empty                                     |
+| Integration | Graceful shutdown (no hang)                                 | Start server, trigger shutdown, verify exits within 5s (no task deadlock)                      |
 
 ## Migration / Rollout
 
@@ -295,6 +300,7 @@ No migration required. This is a **read-only feature addition**:
 - Stateless — full rollback via revert + redeploy
 
 **Deployment steps**:
+
 1. Deploy new binary to staging
 2. Verify `/health` includes new fields
 3. Verify `/api/resilience` returns 401 without auth, 200 with session

@@ -6,13 +6,13 @@ Defines per-client rate limiting behavior, the middleware chain, upstream 429 aw
 
 ## Affected Domains
 
-| Domain | Type | Notes |
-|---|---|---|
-| `rate-limiting` | New | Middleware, sliding window, tier resolution |
-| `api-key` | Modified | Per-key consumption and tier lookup |
-| `transport-axum` | Modified | Middleware chain, admin handlers |
-| `config` | Modified | `[rate_limiting]` TOML section |
-| `router` | Modified | `FallbackRouter` upstream 429 handling |
+| Domain           | Type     | Notes                                       |
+|------------------|----------|---------------------------------------------|
+| `rate-limiting`  | New      | Middleware, sliding window, tier resolution |
+| `api-key`        | Modified | Per-key consumption and tier lookup         |
+| `transport-axum` | Modified | Middleware chain, admin handlers            |
+| `config`         | Modified | `[rate_limiting]` TOML section              |
+| `router`         | Modified | `FallbackRouter` upstream 429 handling      |
 
 ---
 
@@ -219,13 +219,13 @@ Scenario: Invalid TOML config fails startup
 
 The system MUST expose the following admin endpoints under `/api/rate-limits`:
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/rate-limits` | List all rules |
-| `POST` | `/api/rate-limits` | Create a new rule |
-| `PUT` | `/api/rate-limits/:id` | Update a rule |
-| `DELETE` | `/api/rate-limits/:id` | Delete a rule |
-| `GET` | `/api/rate-limits/:scope/:target/status` | Current usage counters |
+| Method   | Path                                     | Purpose                |
+|----------|------------------------------------------|------------------------|
+| `GET`    | `/api/rate-limits`                       | List all rules         |
+| `POST`   | `/api/rate-limits`                       | Create a new rule      |
+| `PUT`    | `/api/rate-limits/:id`                   | Update a rule          |
+| `DELETE` | `/api/rate-limits/:id`                   | Delete a rule          |
+| `GET`    | `/api/rate-limits/:scope/:target/status` | Current usage counters |
 
 All admin endpoints MUST require admin session auth.
 

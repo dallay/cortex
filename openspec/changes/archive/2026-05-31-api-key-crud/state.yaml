@@ -1,6 +1,6 @@
 change: api-key-crud
 current_phase: spec
-completed: [init, explore, propose, spec]
+completed: [ init, explore, propose, spec ]
 next: sdd-archive
 updated: "2026-05-31"
 project: cortex

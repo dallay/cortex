@@ -2,21 +2,21 @@
 
 ## Functional Requirements
 
-| ID | Title |
-|----|-------|
-| FR-1 | `deny_unknown_fields` removed from both adapter request structs |
-| FR-2 | OpenAI → domain request translation preserves all text fields |
-| FR-3 | Anthropic → domain request translation preserves all text fields |
-| FR-4 | Domain → OpenAI response translation (non-streaming) |
-| FR-5 | Domain → Anthropic response translation (non-streaming) via `From` impl |
-| FR-6 | Domain → OpenAI SSE chunk translation (streaming) |
-| FR-7 | Domain → Anthropic SSE event translation (streaming) |
-| FR-8 | `system` role normalized to `user` for providers that reject system role |
-| FR-9 | `AnthropicProvider::complete()` returns a valid non-streaming response |
-| FR-10 | Missing `max_tokens` handled with provider-appropriate defaults |
-| FR-11 | All provider errors surface as `CortexError` variants — no raw provider error leaks |
-| FR-12 | `SseBuffer` extracted to a single shared module within `transport-axum` *(Phase 2 — deferred)* |
-| FR-13 | `FormatRegistry` maps `ProviderKind` → format adapter; extensible at DI bootstrap |
+| ID    | Title                                                                                             |
+|-------|---------------------------------------------------------------------------------------------------|
+| FR-1  | `deny_unknown_fields` removed from both adapter request structs                                   |
+| FR-2  | OpenAI → domain request translation preserves all text fields                                     |
+| FR-3  | Anthropic → domain request translation preserves all text fields                                  |
+| FR-4  | Domain → OpenAI response translation (non-streaming)                                              |
+| FR-5  | Domain → Anthropic response translation (non-streaming) via `From` impl                           |
+| FR-6  | Domain → OpenAI SSE chunk translation (streaming)                                                 |
+| FR-7  | Domain → Anthropic SSE event translation (streaming)                                              |
+| FR-8  | `system` role normalized to `user` for providers that reject system role                          |
+| FR-9  | `AnthropicProvider::complete()` returns a valid non-streaming response                            |
+| FR-10 | Missing `max_tokens` handled with provider-appropriate defaults                                   |
+| FR-11 | All provider errors surface as `CortexError` variants — no raw provider error leaks               |
+| FR-12 | `SseBuffer` extracted to a single shared module within `transport-axum` *(Phase 2 — deferred)*    |
+| FR-13 | `FormatRegistry` maps `ProviderKind` → format adapter; extensible at DI bootstrap                 |
 | FR-14 | *(Phase 2 — deferred)* Tool call translation: OpenAI `tools`/`tool_choice` ↔ Anthropic `tool_use` |
 
 ---
