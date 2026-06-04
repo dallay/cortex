@@ -126,17 +126,13 @@ impl ProviderPort for GeminiProvider {
         });
 
         let start = std::time::Instant::now();
-        let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
-            self.base_url(),
-            model,
-            self.config.api_key
-        );
+        let url = format!("{}/v1beta/models/{}:generateContent", self.base_url(), model);
 
         let resp = self
             .client
             .post(&url)
             .header("content-type", "application/json")
+            .header("x-goog-api-key", &self.config.api_key)
             .json(&body)
             .send()
             .await
