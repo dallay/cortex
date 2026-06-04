@@ -175,9 +175,7 @@ impl ComboRepositoryPort for ComboSqliteRepository {
 
     async fn create(&self, combo: &Combo) -> Result<(), ComboRepositoryError> {
         // Validate before persisting
-        combo
-            .validate()
-            .map_err(ComboRepositoryError::Validation)?;
+        combo.validate().map_err(ComboRepositoryError::Validation)?;
 
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(db_error)?;
@@ -243,9 +241,7 @@ impl ComboRepositoryPort for ComboSqliteRepository {
 
     async fn update(&self, combo: &Combo) -> Result<(), ComboRepositoryError> {
         // Validate before persisting
-        combo
-            .validate()
-            .map_err(ComboRepositoryError::Validation)?;
+        combo.validate().map_err(ComboRepositoryError::Validation)?;
 
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(db_error)?;
@@ -345,7 +341,10 @@ impl ComboRepositoryPort for ComboSqliteRepository {
 
 // Helper functions
 
-fn load_steps(conn: &Connection, combo_id: &ComboId) -> Result<Vec<ComboStep>, ComboRepositoryError> {
+fn load_steps(
+    conn: &Connection,
+    combo_id: &ComboId,
+) -> Result<Vec<ComboStep>, ComboRepositoryError> {
     let mut stmt = conn
         .prepare(
             "SELECT provider_id, model, connection_id, priority
@@ -368,7 +367,8 @@ fn load_steps(conn: &Connection, combo_id: &ComboId) -> Result<Vec<ComboStep>, C
 
     let mut steps = Vec::new();
     for step_row in step_rows {
-        let (provider_id_str, model_str, connection_id_str, priority) = step_row.map_err(db_error)?;
+        let (provider_id_str, model_str, connection_id_str, priority) =
+            step_row.map_err(db_error)?;
 
         let connection_id = match connection_id_str {
             Some(id_str) => Some(ConnectionId::parse_str(&id_str).map_err(|e| {
@@ -421,7 +421,7 @@ mod tests {
     async fn setup_test_repo() -> (ComboSqliteRepository, NamedTempFile) {
         let temp_file = NamedTempFile::new().expect("create temp db");
         let repo = ComboSqliteRepository::new(temp_file.path()).expect("create repo");
-        
+
         // Run migration to create tables
         let conn = repo.conn.lock().unwrap();
         conn.execute_batch(
@@ -453,7 +453,7 @@ mod tests {
         )
         .expect("run migration");
         drop(conn);
-        
+
         (repo, temp_file)
     }
 
@@ -656,10 +656,7 @@ mod tests {
         let combo = create_test_combo("", vec![]); // Empty name and empty steps
 
         let result = repo.create(&combo).await;
-        assert!(matches!(
-            result,
-            Err(ComboRepositoryError::Validation(_))
-        ));
+        assert!(matches!(result, Err(ComboRepositoryError::Validation(_))));
     }
 
     #[tokio::test]
@@ -682,10 +679,7 @@ mod tests {
         combo.steps = vec![];
 
         let result = repo.update(&combo).await;
-        assert!(matches!(
-            result,
-            Err(ComboRepositoryError::Validation(_))
-        ));
+        assert!(matches!(result, Err(ComboRepositoryError::Validation(_))));
     }
 
     #[tokio::test]

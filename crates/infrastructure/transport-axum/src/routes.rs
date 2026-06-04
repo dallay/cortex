@@ -18,8 +18,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
 use super::{
-    anthropic_adapter::*, authz, combo_routes, handlers, middleware::csrf_guard,
-    openai_adapter::*, provider_routes, HttpError,
+    anthropic_adapter::*, authz, combo_routes, handlers, middleware::csrf_guard, openai_adapter::*,
+    provider_routes, HttpError,
 };
 use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter};
 
@@ -63,7 +63,7 @@ pub fn router(
         // Resilience observability endpoint
         .route("/api/resilience", get(handlers::resilience::get_resilience))
         .route(
-            "/api/resilience/:provider/reset",
+            "/api/resilience/{provider}/reset",
             post(handlers::resilience::reset_provider),
         )
         .with_state(usecases.clone());

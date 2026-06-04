@@ -582,7 +582,11 @@ async fn seed_combos_from_config(
     }
 
     if seeded > 0 {
-        tracing::info!(seeded = seeded, failed = failed, "seeded combos from config");
+        tracing::info!(
+            seeded = seeded,
+            failed = failed,
+            "seeded combos from config"
+        );
     }
     if failed > 0 {
         tracing::warn!(failed = failed, "some combos failed to seed from config");

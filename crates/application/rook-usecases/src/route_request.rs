@@ -394,16 +394,20 @@ impl RouteRequest {
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        let combo_repo = self.combo_repository.as_ref().ok_or_else(|| {
-            CortexError::provider("combo repository not configured")
-        })?;
+        let combo_repo = self
+            .combo_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::provider("combo repository not configured"))?;
 
         // 1. Load combo from repository
         let combo = match combo_repo.find(combo_id).await {
             Ok(Some(combo)) => combo,
             Ok(None) => return Err(CortexError::combo_not_found(*combo_id)),
             Err(e) => {
-                return Err(CortexError::provider(format!("combo repository error: {}", e)))
+                return Err(CortexError::provider(format!(
+                    "combo repository error: {}",
+                    e
+                )))
             }
         };
 
@@ -495,11 +499,9 @@ impl RouteRequest {
             )?;
 
             let step_start = Instant::now();
-            let step_result = tokio::time::timeout(
-                Self::COMBO_STEP_TIMEOUT,
-                provider.complete(&provider_req),
-            )
-            .await;
+            let step_result =
+                tokio::time::timeout(Self::COMBO_STEP_TIMEOUT, provider.complete(&provider_req))
+                    .await;
 
             let latency_ms = step_start.elapsed().as_millis() as u64;
             steps_attempted += 1;
@@ -718,12 +720,7 @@ impl RouteRequest {
             tokens_reasoning: None,
             ttft_ms: None,
             latency_ms,
-            cost_usd: crate::estimate_cost_usd(
-                &self.pricing,
-                provider_id,
-                &req.model,
-                None,
-            ),
+            cost_usd: crate::estimate_cost_usd(&self.pricing, provider_id, &req.model, None),
             timestamp: Utc::now(),
         };
 

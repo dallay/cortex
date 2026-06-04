@@ -448,17 +448,17 @@ mod tests {
         let config: RookConfig = toml::from_str(toml).expect("parse config");
         assert_eq!(config.routing.default_combo, Some("main-chain".to_string()));
         assert_eq!(config.combos.len(), 1);
-        
+
         let combo = &config.combos[0];
         assert_eq!(combo.id, "main-chain");
         assert_eq!(combo.name, "OpenAI → Anthropic → Ollama");
         assert_eq!(combo.strategy, "priority");
         assert_eq!(combo.steps.len(), 3);
-        
+
         assert_eq!(combo.steps[0].provider_id, "openai-primary");
         assert_eq!(combo.steps[0].model, "gpt-4o");
         assert_eq!(combo.steps[0].priority, 1);
-        
+
         assert_eq!(combo.steps[2].provider_id, "ollama-local");
         assert_eq!(combo.steps[2].model, "llama3");
         assert_eq!(combo.steps[2].priority, 3);

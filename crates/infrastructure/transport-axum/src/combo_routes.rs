@@ -9,9 +9,7 @@ use axum::{
 use rook_core::ComboRepositoryPort;
 use shared_kernel::ComboId;
 
-use super::combo_dto::{
-    ComboListResponse, ComboResponse, CreateComboRequest, UpdateComboRequest,
-};
+use super::combo_dto::{ComboListResponse, ComboResponse, CreateComboRequest, UpdateComboRequest};
 use super::HttpError;
 
 type ComboRepository = Arc<dyn ComboRepositoryPort>;
@@ -46,12 +44,10 @@ async fn create_combo(
     State(repo): State<ComboRepository>,
     Json(req): Json<CreateComboRequest>,
 ) -> Result<(StatusCode, Json<ComboResponse>), HttpError> {
-    let combo = req.to_domain().map_err(|e| {
-        HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "VALIDATION_ERROR",
-            message: e,
-        }
+    let combo = req.to_domain().map_err(|e| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        code: "VALIDATION_ERROR",
+        message: e,
     })?;
 
     repo.create(&combo).await.map_err(map_error)?;
@@ -90,12 +86,10 @@ async fn update_combo(
         .ok_or_else(|| not_found("combo not found"))?;
 
     // Build updated combo with same ID and timestamps
-    let combo = req.to_domain(combo_id).map_err(|e| {
-        HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "VALIDATION_ERROR",
-            message: e,
-        }
+    let combo = req.to_domain(combo_id).map_err(|e| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        code: "VALIDATION_ERROR",
+        message: e,
     })?;
 
     // Preserve original created_at, use current time for updated_at
@@ -217,18 +211,12 @@ mod tests {
         }
 
         async fn create(&self, combo: &Combo) -> Result<(), rook_core::ComboRepositoryError> {
-            self.combos
-                .lock()
-                .unwrap()
-                .insert(combo.id, combo.clone());
+            self.combos.lock().unwrap().insert(combo.id, combo.clone());
             Ok(())
         }
 
         async fn update(&self, combo: &Combo) -> Result<(), rook_core::ComboRepositoryError> {
-            self.combos
-                .lock()
-                .unwrap()
-                .insert(combo.id, combo.clone());
+            self.combos.lock().unwrap().insert(combo.id, combo.clone());
             Ok(())
         }
 

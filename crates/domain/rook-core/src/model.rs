@@ -467,7 +467,7 @@ pub struct CostBreakdown {
 // ============================================================================
 
 /// Read-only snapshot of circuit breaker state for a provider.
-/// Serialization-safe (no Instant, all timestamps are DateTime<Utc>).
+/// Serialization-safe (no Instant, all timestamps are `DateTime<Utc>`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircuitStateSnapshot {
     /// Number of consecutive failures recorded
@@ -840,38 +840,48 @@ mod combo_tests {
 
     #[test]
     fn combo_validate_rejects_empty_name() {
-        let combo = Combo::new(String::new(), ComboStrategy::Priority, vec![
-            ComboStep {
+        let combo = Combo::new(
+            String::new(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
                 provider_id: ProviderId::new("openai"),
                 model: ModelId::new("gpt-4o"),
                 connection_id: None,
                 priority: 1,
-            },
-        ]);
+            }],
+        );
         assert_eq!(combo.validate(), Err(ComboValidationError::EmptyName));
     }
 
     #[test]
     fn combo_validate_rejects_name_too_long() {
         let long_name = "a".repeat(101);
-        let combo = Combo::new(long_name, ComboStrategy::Priority, vec![ComboStep {
-            provider_id: ProviderId::new("openai"),
-            model: ModelId::new("gpt-4o"),
-            connection_id: None,
-            priority: 1,
-        }]);
+        let combo = Combo::new(
+            long_name,
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
         assert_eq!(combo.validate(), Err(ComboValidationError::NameTooLong));
     }
 
     #[test]
     fn combo_validate_accepts_name_at_max_length() {
         let max_name = "a".repeat(100);
-        let combo = Combo::new(max_name, ComboStrategy::Priority, vec![ComboStep {
-            provider_id: ProviderId::new("openai"),
-            model: ModelId::new("gpt-4o"),
-            connection_id: None,
-            priority: 1,
-        }]);
+        let combo = Combo::new(
+            max_name,
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
         assert!(combo.validate().is_ok());
     }
 
@@ -934,14 +944,16 @@ mod combo_tests {
 
     #[test]
     fn combo_validate_rejects_priority_zero() {
-        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, vec![
-            ComboStep {
+        let combo = Combo::new(
+            "test".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
                 provider_id: ProviderId::new("openai"),
                 model: ModelId::new("gpt-4o"),
                 connection_id: None,
                 priority: 0,
-            },
-        ]);
+            }],
+        );
         assert_eq!(
             combo.validate(),
             Err(ComboValidationError::InvalidPriority { priority: 0 })
@@ -950,14 +962,16 @@ mod combo_tests {
 
     #[test]
     fn combo_validate_accepts_priority_255() {
-        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, vec![
-            ComboStep {
+        let combo = Combo::new(
+            "test".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
                 provider_id: ProviderId::new("openai"),
                 model: ModelId::new("gpt-4o"),
                 connection_id: None,
                 priority: 255,
-            },
-        ]);
+            }],
+        );
         assert!(combo.validate().is_ok());
     }
 
@@ -1034,8 +1048,7 @@ mod combo_tests {
 
     #[test]
     fn combo_strategy_deserializes_from_lowercase() {
-        let strategy: ComboStrategy =
-            serde_json::from_str(r#""priority""#).expect("deserialize");
+        let strategy: ComboStrategy = serde_json::from_str(r#""priority""#).expect("deserialize");
         assert_eq!(strategy, ComboStrategy::Priority);
     }
 }
