@@ -121,25 +121,49 @@ async fn test_circuit_states_returns_snapshot_for_all_providers() {
         states.iter().map(|(id, s)| (id.as_str(), s)).collect();
 
     // Assert provider-1: default state (never failed)
-    let p1 = states_map.get("provider-1").expect("provider-1 should be present");
+    let p1 = states_map
+        .get("provider-1")
+        .expect("provider-1 should be present");
     assert_eq!(p1.failures, 0, "provider-1 should have 0 failures");
     assert!(!p1.is_open, "provider-1 should not be open");
-    assert!(p1.last_failure.is_none(), "provider-1 should have no last_failure");
-    assert!(p1.cooldown_until.is_none(), "provider-1 should have no cooldown_until");
+    assert!(
+        p1.last_failure.is_none(),
+        "provider-1 should have no last_failure"
+    );
+    assert!(
+        p1.cooldown_until.is_none(),
+        "provider-1 should have no cooldown_until"
+    );
 
     // Assert provider-2: failed 3 times, circuit is open
-    let p2 = states_map.get("provider-2").expect("provider-2 should be present");
+    let p2 = states_map
+        .get("provider-2")
+        .expect("provider-2 should be present");
     assert_eq!(p2.failures, 3, "provider-2 should have 3 failures");
     assert!(p2.is_open, "provider-2 should be open");
-    assert!(p2.last_failure.is_some(), "provider-2 should have last_failure");
-    assert!(p2.cooldown_until.is_some(), "provider-2 should have cooldown_until");
+    assert!(
+        p2.last_failure.is_some(),
+        "provider-2 should have last_failure"
+    );
+    assert!(
+        p2.cooldown_until.is_some(),
+        "provider-2 should have cooldown_until"
+    );
 
     // Assert provider-3: default state (never failed)
-    let p3 = states_map.get("provider-3").expect("provider-3 should be present");
+    let p3 = states_map
+        .get("provider-3")
+        .expect("provider-3 should be present");
     assert_eq!(p3.failures, 0, "provider-3 should have 0 failures");
     assert!(!p3.is_open, "provider-3 should not be open");
-    assert!(p3.last_failure.is_none(), "provider-3 should have no last_failure");
-    assert!(p3.cooldown_until.is_none(), "provider-3 should have no cooldown_until");
+    assert!(
+        p3.last_failure.is_none(),
+        "provider-3 should have no last_failure"
+    );
+    assert!(
+        p3.cooldown_until.is_none(),
+        "provider-3 should have no cooldown_until"
+    );
 }
 
 #[test]

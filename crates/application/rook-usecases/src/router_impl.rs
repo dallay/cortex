@@ -164,7 +164,10 @@ impl FallbackRouter {
                         let now = std::time::Instant::now();
                         if instant > now {
                             let remaining = instant.duration_since(now);
-                            Some(Utc::now() + chrono::Duration::from_std(remaining).unwrap_or_default())
+                            Some(
+                                Utc::now()
+                                    + chrono::Duration::from_std(remaining).unwrap_or_default(),
+                            )
                         } else {
                             None
                         }
