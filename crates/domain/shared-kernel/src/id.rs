@@ -114,6 +114,32 @@ impl std::fmt::Display for ConnectionId {
     }
 }
 
+/// Combo identifier for multi-step fallback chains (UUID v4)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ComboId(pub uuid::Uuid);
+
+impl ComboId {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+
+    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
+        uuid::Uuid::parse_str(s).map(Self)
+    }
+}
+
+impl Default for ComboId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for ComboId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +376,88 @@ mod tests {
         let id = ModelId::new("debug-test");
         let debug = format!("{:?}", id);
         assert!(debug.contains("ModelId"));
+    }
+
+    // =============================================================================
+    // ComboId tests
+    // =============================================================================
+
+    #[test]
+    fn combo_id_new_generates_uuid_v4() {
+        let id = ComboId::new();
+        assert_eq!(id.0.get_version_num(), 4);
+    }
+
+    #[test]
+    fn combo_id_default_generates_uuid_v4() {
+        let id = ComboId::default();
+        assert_eq!(id.0.get_version_num(), 4);
+    }
+
+    #[test]
+    fn combo_id_display_is_uuid_string() {
+        let rendered = ComboId::new().to_string();
+        assert_eq!(rendered.len(), 36);
+        assert!(rendered.contains('-'));
+    }
+
+    #[test]
+    fn combo_id_new_is_unique() {
+        assert_ne!(ComboId::new(), ComboId::new());
+    }
+
+    #[test]
+    fn combo_id_parse_str_valid_uuid() {
+        let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
+        let result = ComboId::parse_str(uuid_str);
+        assert!(result.is_ok());
+        let id = result.unwrap();
+        assert_eq!(id.0.get_version_num(), 4);
+    }
+
+    #[test]
+    fn combo_id_parse_str_invalid_format_error() {
+        let invalid = "not-a-valid-uuid";
+        let result = ComboId::parse_str(invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn combo_id_parse_str_empty_string_error() {
+        let result = ComboId::parse_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn combo_id_display_matches_parsed_uuid() {
+        let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
+        let id = ComboId::parse_str(uuid_str).unwrap();
+        assert_eq!(id.to_string(), uuid_str);
+    }
+
+    #[test]
+    fn combo_id_debug_format() {
+        let id = ComboId::new();
+        let debug = format!("{:?}", id);
+        assert!(debug.contains("ComboId"));
+    }
+
+    #[test]
+    fn combo_id_clone_equals() {
+        let id1 = ComboId::new();
+        let id2 = id1;
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn combo_id_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id = ComboId::new();
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        id.hash(&mut h1);
+        id.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
     }
 }

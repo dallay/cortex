@@ -1,0 +1,19 @@
+[package]
+name = "combo-sqlite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-migration = { path = "../../infrastructure/db-migration" }
+shared-kernel = { path = "../../domain/shared-kernel" }
+rook-core = { path = "../../domain/rook-core" }
+
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"

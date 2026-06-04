@@ -13,13 +13,13 @@ use axum::{
 };
 use futures::StreamExt;
 use rook_core::{ApiFormat, ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus};
-use shared_kernel::{CortexError, ModelId, ProviderId};
+use shared_kernel::{ComboId, CortexError, ModelId, ProviderId};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
 use super::{
-    anthropic_adapter::*, authz, handlers, middleware::csrf_guard, openai_adapter::*,
-    provider_routes, HttpError,
+    anthropic_adapter::*, authz, combo_routes, handlers, middleware::csrf_guard,
+    openai_adapter::*, provider_routes, HttpError,
 };
 use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter};
 
@@ -74,6 +74,13 @@ pub fn router(
 
     if usecases.manage_api_keys.is_some() {
         router = router.merge(api_key_routes(usecases.clone()));
+    }
+
+    // Combo routes (if combo repository is available)
+    if usecases.route_request.combo_repository().is_some() {
+        router = router.merge(combo_routes::router(
+            usecases.route_request.combo_repository().unwrap(),
+        ));
     }
 
     // Model catalog is always available (the catalog port is mandatory on
@@ -413,6 +420,20 @@ async fn chat_completions(
     {
         req.metadata.requested_tier = Some(tier.to_string());
     }
+    // Extract X-Rook-Combo header if present
+    if let Some(combo_header) = headers.get("x-rook-combo") {
+        let combo_str = combo_header.to_str().map_err(|_| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_HEADER",
+            message: "X-Rook-Combo header must be valid UTF-8".to_string(),
+        })?;
+        let combo_id = ComboId::parse_str(combo_str).map_err(|_| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_COMBO_ID",
+            message: format!("Invalid combo ID: must be a valid UUID, got: {}", combo_str),
+        })?;
+        req.metadata.combo_id = Some(combo_id);
+    }
 
     if req.stream {
         return chat_completions_stream(usecases, req).await;
@@ -616,6 +637,20 @@ async fn anthropic_messages(
         .filter(|s| !s.is_empty())
     {
         req.metadata.requested_tier = Some(tier.to_string());
+    }
+    // Extract X-Rook-Combo header if present
+    if let Some(combo_header) = headers.get("x-rook-combo") {
+        let combo_str = combo_header.to_str().map_err(|_| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_HEADER",
+            message: "X-Rook-Combo header must be valid UTF-8".to_string(),
+        })?;
+        let combo_id = ComboId::parse_str(combo_str).map_err(|_| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_COMBO_ID",
+            message: format!("Invalid combo ID: must be a valid UUID, got: {}", combo_str),
+        })?;
+        req.metadata.combo_id = Some(combo_id);
     }
 
     if req.stream {

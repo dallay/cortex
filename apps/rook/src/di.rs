@@ -9,15 +9,17 @@ use std::time::Duration;
 use audit_sqlite::{SqliteAudit, SqliteUsageRepository};
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
+use combo_sqlite::ComboSqliteRepository;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use models_catalog::StaticModelCatalog;
 use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
 use rook_core::{
-    ApiKeyRepositoryPort, AuditPort, CachePort, ConnectionId, DecryptedCredentials, PasswordHasher,
-    ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
-    RouterPort, SessionRepositoryPort, UsageRecorderPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
+    ComboStrategy, ConnectionId, DecryptedCredentials, PasswordHasher, ProviderId, ProviderKind,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
+    UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -25,6 +27,7 @@ use rook_usecases::{
     ProviderBuilderPort, RookUsecases, RouteRequest, RoutingStrategy, SetAdminPassword,
     ValidateSession,
 };
+use shared_kernel::{ComboId, ModelId};
 
 use crate::config::RookConfig;
 
@@ -159,6 +162,10 @@ impl RookContainer {
         );
         let usage_recorder: Option<Arc<dyn UsageRecorderPort>> = Some(sqlite_usage.clone());
 
+        // 7c. Combo repository — SQLite-backed combo storage
+        let combo_repo: Arc<dyn ComboRepositoryPort> =
+            Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
+
         // 8. Run async initialization tasks concurrently:
         // - registry refresh (if provider_crud enabled)
         // - ensure admin user exists
@@ -182,6 +189,9 @@ impl RookContainer {
         let admin =
             admin_result.map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
         tracing::info!(admin_id = %admin.id, "admin user ready");
+
+        // 8b. Seed combos from config into SQLite
+        seed_combos_from_config(&combo_repo, &config.combos).await;
 
         // 9. Format registry and use cases
         let mut format_registry = transport_axum::format_registry::FormatRegistry::new();
@@ -212,6 +222,7 @@ impl RookContainer {
                     audit.clone(),
                     usage_recorder.clone(),
                     provider_repository_for_usage,
+                    Some(combo_repo.clone()), // combo_repository - wired in Phase 4
                     Arc::new(config.pricing.clone()),
                     format_registry.clone(),
                 ),
@@ -434,6 +445,148 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     );
 
     Ok(secret)
+}
+
+/// Seed combos from config into SQLite on startup.
+///
+/// For each combo in config:
+/// - Parse combo ID from string
+/// - Convert config steps to domain ComboStep objects
+/// - Try to find existing combo by ID
+/// - If exists: update with new config
+/// - If not: create new combo
+///
+/// Errors are logged but don't block startup.
+async fn seed_combos_from_config(
+    combo_repo: &Arc<dyn ComboRepositoryPort>,
+    combos: &[crate::config::ComboConfig],
+) {
+    if combos.is_empty() {
+        return;
+    }
+
+    let mut seeded = 0;
+    let mut failed = 0;
+
+    for combo_cfg in combos {
+        // Parse combo ID
+        let combo_id = match ComboId::parse_str(&combo_cfg.id) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(
+                    combo_name = %combo_cfg.name,
+                    combo_id = %combo_cfg.id,
+                    error = %e,
+                    "invalid combo ID format - skipping"
+                );
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Parse strategy
+        let strategy = match combo_cfg.strategy.as_str() {
+            "priority" => ComboStrategy::Priority,
+            other => {
+                tracing::warn!(
+                    combo_name = %combo_cfg.name,
+                    strategy = %other,
+                    "unsupported strategy - skipping"
+                );
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Convert steps
+        let steps: Vec<ComboStep> = combo_cfg
+            .steps
+            .iter()
+            .map(|s| ComboStep {
+                provider_id: ProviderId::new(s.provider_id.clone()),
+                model: ModelId::new(s.model.clone()),
+                connection_id: None, // Config-based combos don't specify connection_id
+                priority: s.priority,
+            })
+            .collect();
+
+        // Create domain combo
+        let mut combo = Combo::new(combo_cfg.name.clone(), strategy, steps);
+        combo.id = combo_id; // Override generated ID with config ID
+
+        // Validate
+        if let Err(e) = combo.validate() {
+            tracing::warn!(
+                combo_name = %combo_cfg.name,
+                error = %e,
+                "combo validation failed - skipping"
+            );
+            failed += 1;
+            continue;
+        }
+
+        // Upsert: try to find existing, then update or create
+        match combo_repo.find(&combo_id).await {
+            Ok(Some(existing)) => {
+                // Update existing combo
+                combo.created_at = existing.created_at; // Preserve creation time
+                match combo_repo.update(&combo).await {
+                    Ok(()) => {
+                        tracing::debug!(
+                            combo_id = %combo_id,
+                            combo_name = %combo_cfg.name,
+                            "updated combo from config"
+                        );
+                        seeded += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            combo_name = %combo_cfg.name,
+                            error = %e,
+                            "failed to update combo - skipping"
+                        );
+                        failed += 1;
+                    }
+                }
+            }
+            Ok(None) => {
+                // Create new combo
+                match combo_repo.create(&combo).await {
+                    Ok(()) => {
+                        tracing::debug!(
+                            combo_id = %combo_id,
+                            combo_name = %combo_cfg.name,
+                            "created combo from config"
+                        );
+                        seeded += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            combo_name = %combo_cfg.name,
+                            error = %e,
+                            "failed to create combo - skipping"
+                        );
+                        failed += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    combo_name = %combo_cfg.name,
+                    error = %e,
+                    "failed to check existing combo - skipping"
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    if seeded > 0 {
+        tracing::info!(seeded = seeded, failed = failed, "seeded combos from config");
+    }
+    if failed > 0 {
+        tracing::warn!(failed = failed, "some combos failed to seed from config");
+    }
 }
 
 // ---------------------------------------------------------------------------

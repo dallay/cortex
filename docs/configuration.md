@@ -72,11 +72,100 @@ requests_per_minute = 30
 
 ### `[routing]`
 
-| Field      | Type | Default      | Description                              |
-|------------|------|--------------|------------------------------------------|
-| `strategy` | enum | `"priority"` | Routing strategy. See Routing Strategies |
+| Field           | Type   | Default      | Description                                    |
+|-----------------|--------|--------------|------------------------------------------------|
+| `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies       |
+| `default_combo` | string | `null`       | Optional default combo ID (UUID) to use when no `X-Rook-Combo` header is present |
 
 Supported values for `strategy`: `priority`, `round-robin`, `model-based`
+
+### `[[combos]]` — Multi-step Fallback Chains
+
+Combos define multi-step fallback chains for automatic provider failover. Each combo is an ordered list of provider/model pairs that are tried in priority order until one succeeds.
+
+```toml
+[routing]
+strategy = "priority"
+default_combo = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # Optional default combo
+
+[[combos]]
+id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+name = "OpenAI → Anthropic → Ollama"
+strategy = "priority"  # Currently only "priority" is supported
+
+  [[combos.steps]]
+  provider_id = "openai-primary"
+  model = "gpt-4o"
+  priority = 1
+
+  [[combos.steps]]
+  provider_id = "anthropic-primary"
+  model = "claude-opus-4"
+  priority = 2
+
+  [[combos.steps]]
+  provider_id = "ollama-local"
+  model = "llama3"
+  priority = 3
+```
+
+**Combo Fields:**
+
+| Field      | Type   | Required | Description                                               |
+|------------|--------|----------|-----------------------------------------------------------|
+| `id`       | string | Yes      | Unique combo UUID (used for `X-Rook-Combo` header)       |
+| `name`     | string | Yes      | Human-readable name (1-100 chars, unique)                 |
+| `strategy` | string | No       | Execution strategy (default: `"priority"`)                |
+| `steps`    | array  | Yes      | Ordered steps to try (1-10 steps)                         |
+
+**Step Fields:**
+
+| Field         | Type   | Required | Description                                        |
+|---------------|--------|----------|----------------------------------------------------|
+| `provider_id` | string | Yes      | Provider ID to use for this step                   |
+| `model`       | string | Yes      | Model to request from the provider                 |
+| `priority`    | u8     | Yes      | Priority order (1-255, lower = attempted first)    |
+
+**Validation Rules:**
+
+- Combo name must be 1-100 characters, unique
+- Must have 1-10 steps
+- Priorities must be unique within a combo, range 1-255
+- Warnings are logged at startup for:
+  - Duplicate combo names or IDs
+  - Invalid strategy
+  - Duplicate priorities
+  - Provider IDs not found in registry
+
+**Execution Behavior:**
+
+Steps are tried in priority order (lower priority = attempted first):
+
+1. **Success**: Return immediately with the response
+2. **4xx error (except 429)**: Stop immediately, return error (no fallback)
+3. **429 / 5xx / network error**: Continue to next step
+4. **Circuit breaker open**: Skip step, continue to next
+5. **Provider not in registry**: Skip step, continue to next
+6. **Per-step timeout (10s)**: Continue to next step
+7. **Overall timeout (60s)**: Stop combo execution
+
+If all steps fail, return `AllProvidersExhausted` error.
+
+**Usage:**
+
+1. **Via header**: Set `X-Rook-Combo: <combo-id>` on any chat completion request
+2. **Default combo**: Set `routing.default_combo = "<combo-id>"` to use when no header is present
+3. **Manage via API**: Use `/api/combos` CRUD endpoints to create/update/delete combos
+
+**Streaming Limitation:**
+
+⚠️ **Combos only apply before streaming starts.** Once the first chunk is sent to the client, no fallback occurs. For maximum reliability, use combos with non-streaming requests or ensure the first provider in the chain is highly available.
+
+**Example Use Cases:**
+
+- **Cost optimization**: Try cheaper model first, fall back to premium if it fails
+- **Availability**: Primary provider → backup provider → local fallback
+- **Geography**: Try regional provider, fall back to global endpoint
 
 ### `[cache]`
 

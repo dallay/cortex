@@ -27,6 +27,9 @@ pub struct RookConfig {
     #[serde(default)]
     #[allow(dead_code)] // TODO: Phase 7 - wire pricing through DI
     pub pricing: PricingConfig,
+    /// Combo (multi-step fallback chain) definitions
+    #[serde(default)]
+    pub combos: Vec<ComboConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,9 +130,42 @@ fn default_health_check_interval_secs() -> u64 {
     30
 }
 
+/// Configuration for a single step in a combo fallback chain
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComboStepConfig {
+    /// Provider ID to use for this step
+    pub provider_id: String,
+    /// Model to request from the provider
+    pub model: String,
+    /// Priority order (lower = attempted first, 1-255)
+    pub priority: u8,
+}
+
+/// Configuration for a combo (multi-step fallback chain)
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComboConfig {
+    /// Unique combo ID (used for X-Rook-Combo header reference)
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Execution strategy (currently only "priority" supported)
+    #[serde(default = "default_combo_strategy")]
+    pub strategy: String,
+    /// Ordered steps to try in fallback order
+    pub steps: Vec<ComboStepConfig>,
+}
+
+fn default_combo_strategy() -> String {
+    "priority".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutingConfig {
     pub strategy: StrategyConfig,
+    /// Optional default combo ID to use when no X-Rook-Combo header is present
+    #[serde(default)]
+    #[allow(dead_code)] // Used in DI for wiring combo execution
+    pub default_combo: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -251,7 +287,82 @@ impl RookConfig {
                 .replace('~', home.to_str().unwrap_or(""));
         }
 
+        // Validate combo configurations
+        Self::validate_combos(&config.combos);
+
         Ok(config)
+    }
+
+    /// Validate combo configurations and emit warnings for issues
+    fn validate_combos(combos: &[ComboConfig]) {
+        use std::collections::{HashMap, HashSet};
+
+        let mut seen_names: HashSet<String> = HashSet::new();
+        let mut seen_ids: HashSet<String> = HashSet::new();
+
+        for combo in combos {
+            // Check duplicate combo names
+            if !seen_names.insert(combo.name.clone()) {
+                tracing::warn!(
+                    combo_name = %combo.name,
+                    "duplicate combo name found in config - later definition will override"
+                );
+            }
+
+            // Check duplicate combo IDs
+            if !seen_ids.insert(combo.id.clone()) {
+                tracing::warn!(
+                    combo_id = %combo.id,
+                    "duplicate combo ID found in config - later definition will override"
+                );
+            }
+
+            // Validate strategy
+            if combo.strategy != "priority" {
+                tracing::warn!(
+                    combo_name = %combo.name,
+                    strategy = %combo.strategy,
+                    "unsupported combo strategy - only 'priority' is supported in this version"
+                );
+            }
+
+            // Check for duplicate priorities within combo
+            let mut priorities: HashMap<u8, usize> = HashMap::new();
+            for (idx, step) in combo.steps.iter().enumerate() {
+                if let Some(prev_idx) = priorities.insert(step.priority, idx) {
+                    tracing::warn!(
+                        combo_name = %combo.name,
+                        priority = step.priority,
+                        step_indices = format!("{prev_idx}, {idx}"),
+                        "duplicate priority within combo - execution order may be unpredictable"
+                    );
+                }
+
+                // Validate priority range
+                if step.priority == 0 {
+                    tracing::warn!(
+                        combo_name = %combo.name,
+                        step_index = idx,
+                        "priority must be between 1 and 255, got 0 - this combo may fail at runtime"
+                    );
+                }
+            }
+
+            // Check step count
+            if combo.steps.is_empty() {
+                tracing::warn!(
+                    combo_name = %combo.name,
+                    "combo has no steps - it will fail at runtime"
+                );
+            }
+            if combo.steps.len() > 10 {
+                tracing::warn!(
+                    combo_name = %combo.name,
+                    step_count = combo.steps.len(),
+                    "combo has more than 10 steps - maximum is 10, this may fail at runtime"
+                );
+            }
+        }
     }
 }
 
@@ -296,5 +407,108 @@ mod tests {
 
         let config: RookConfig = toml::from_str(toml).expect("parse config");
         assert_eq!(config.server.health_check_interval_secs, 10);
+    }
+
+    #[test]
+    fn test_combo_config_parses_correctly() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+            default_combo = "main-chain"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+
+            [[combos]]
+            id = "main-chain"
+            name = "OpenAI → Anthropic → Ollama"
+            strategy = "priority"
+
+              [[combos.steps]]
+              provider_id = "openai-primary"
+              model = "gpt-4o"
+              priority = 1
+
+              [[combos.steps]]
+              provider_id = "anthropic-primary"
+              model = "claude-opus-4"
+              priority = 2
+
+              [[combos.steps]]
+              provider_id = "ollama-local"
+              model = "llama3"
+              priority = 3
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.routing.default_combo, Some("main-chain".to_string()));
+        assert_eq!(config.combos.len(), 1);
+        
+        let combo = &config.combos[0];
+        assert_eq!(combo.id, "main-chain");
+        assert_eq!(combo.name, "OpenAI → Anthropic → Ollama");
+        assert_eq!(combo.strategy, "priority");
+        assert_eq!(combo.steps.len(), 3);
+        
+        assert_eq!(combo.steps[0].provider_id, "openai-primary");
+        assert_eq!(combo.steps[0].model, "gpt-4o");
+        assert_eq!(combo.steps[0].priority, 1);
+        
+        assert_eq!(combo.steps[2].provider_id, "ollama-local");
+        assert_eq!(combo.steps[2].model, "llama3");
+        assert_eq!(combo.steps[2].priority, 3);
+    }
+
+    #[test]
+    fn test_combo_config_defaults_to_empty() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.combos.len(), 0);
+        assert_eq!(config.routing.default_combo, None);
+    }
+
+    #[test]
+    fn test_combo_strategy_defaults_to_priority() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+
+            [[combos]]
+            id = "test-combo"
+            name = "Test Combo"
+
+              [[combos.steps]]
+              provider_id = "openai"
+              model = "gpt-4"
+              priority = 1
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.combos[0].strategy, "priority");
     }
 }

@@ -1,0 +1,12 @@
+change: multi-step-fallback-chains
+current_phase: verify
+completed:
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+next: archive
+updated: 2026-06-04T16:23:17Z

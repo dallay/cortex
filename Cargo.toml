@@ -19,6 +19,7 @@ members = [
     "crates/infrastructure/provider-sqlite",
     "crates/infrastructure/db-migration",
     "crates/infrastructure/models-catalog",
+    "crates/infrastructure/combo-sqlite",
     "apps/rook",
 ]
 

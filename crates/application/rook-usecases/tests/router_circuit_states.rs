@@ -95,6 +95,7 @@ async fn test_circuit_states_returns_snapshot_for_all_providers() {
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: ApiKeyRestrictions::default(),
     };
