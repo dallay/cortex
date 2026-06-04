@@ -127,6 +127,70 @@ impl CortexError {
             .downcast_ref::<RateLimitedError>()
             .and_then(|e| e.reset_at)
     }
+
+    // --- Combo-related constructors ---
+
+    pub fn combo_not_found(combo_id: super::ComboId) -> Self {
+        Self {
+            source: Box::new(ComboNotFoundError(combo_id)),
+        }
+    }
+
+    pub fn duplicate_combo_name(name: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(DuplicateComboNameError(name.into())),
+        }
+    }
+
+    pub fn invalid_combo_step(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(InvalidComboStepError(msg.into())),
+        }
+    }
+
+    pub fn all_providers_exhausted_combo(
+        combo_id: super::ComboId,
+        steps_attempted: usize,
+        errors: Vec<(super::ProviderId, String)>,
+    ) -> Self {
+        Self {
+            source: Box::new(AllProvidersExhaustedComboError {
+                combo_id,
+                steps_attempted,
+                errors,
+            }),
+        }
+    }
+
+    // --- Error classification helpers ---
+
+    /// Returns true if the error represents an HTTP 4xx status (client error),
+    /// excluding 429 (rate limiting).
+    pub fn is_4xx(&self) -> bool {
+        // Check for structured errors that map to 4xx
+        self.is_invalid_request() || self.is_auth_failed() || self.is_forbidden()
+    }
+
+    /// Returns true if the error is retryable (5xx, network errors, or rate limiting).
+    pub fn is_retryable(&self) -> bool {
+        // Rate limiting is retryable
+        if self.is_rate_limited() {
+            return true;
+        }
+
+        // Provider errors (network, 5xx) are retryable
+        if self.source.is::<ProviderError>() {
+            return true;
+        }
+
+        // 4xx errors are NOT retryable
+        if self.is_4xx() {
+            return false;
+        }
+
+        // Default: assume retryable for unknown errors
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -213,6 +277,63 @@ impl fmt::Display for ForbiddenError {
 }
 
 impl std::error::Error for ForbiddenError {}
+
+// ---------------------------------------------------------------------------
+// Combo-related errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ComboNotFoundError(pub super::ComboId);
+
+impl fmt::Display for ComboNotFoundError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "combo not found: {}", self.0)
+    }
+}
+
+impl std::error::Error for ComboNotFoundError {}
+
+#[derive(Debug)]
+pub struct DuplicateComboNameError(pub String);
+
+impl fmt::Display for DuplicateComboNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "combo with name '{}' already exists", self.0)
+    }
+}
+
+impl std::error::Error for DuplicateComboNameError {}
+
+#[derive(Debug)]
+pub struct InvalidComboStepError(pub String);
+
+impl fmt::Display for InvalidComboStepError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid combo step: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidComboStepError {}
+
+/// Error when all providers in a combo have been exhausted.
+#[derive(Debug)]
+pub struct AllProvidersExhaustedComboError {
+    pub combo_id: super::ComboId,
+    pub steps_attempted: usize,
+    pub errors: Vec<(super::ProviderId, String)>,
+}
+
+impl fmt::Display for AllProvidersExhaustedComboError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "all providers exhausted for combo {}: {} steps attempted",
+            self.combo_id, self.steps_attempted
+        )
+    }
+}
+
+impl std::error::Error for AllProvidersExhaustedComboError {}
 
 // ---------------------------------------------------------------------------
 // Restriction Violation Errors

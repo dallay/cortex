@@ -16,7 +16,8 @@ pub use provider_connection::*;
 
 // Re-export shared_kernel types that are used across the domain
 pub use shared_kernel::{
-    CacheKey, ConnectionId, CortexError, CortexResult, Instant, ModelId, ProviderId, RequestId,
+    CacheKey, ComboId, ConnectionId, CortexError, CortexResult, Instant, ModelId, ProviderId,
+    RequestId,
 };
 
 #[cfg(test)]

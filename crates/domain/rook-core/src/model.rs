@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared_kernel::{CacheKey, ConnectionId, ModelId, ProviderId, RequestId};
+use shared_kernel::{CacheKey, ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
 
 use crate::ApiKeyId;
@@ -177,6 +177,8 @@ pub struct RequestMetadata {
     pub api_key_id: Option<ApiKeyId>,
     /// Requested service tier from the client request, if present.
     pub requested_tier: Option<String>,
+    /// Combo identifier for multi-step fallback execution, if present.
+    pub combo_id: Option<ComboId>,
 }
 
 /// The content of a message in the provider-agnostic domain model.
@@ -376,6 +378,10 @@ pub struct AuditEntry {
     pub usage: Option<TokenUsage>,
     pub latency_ms: u64,
     pub timestamp: DateTime<Utc>,
+    /// Combo identifier if this request was part of a combo execution
+    pub combo_id: Option<ComboId>,
+    /// Step index within the combo (0-based) if applicable
+    pub combo_step_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,7 +467,7 @@ pub struct CostBreakdown {
 // ============================================================================
 
 /// Read-only snapshot of circuit breaker state for a provider.
-/// Serialization-safe (no Instant, all timestamps are DateTime<Utc>).
+/// Serialization-safe (no Instant, all timestamps are `DateTime<Utc>`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircuitStateSnapshot {
     /// Number of consecutive failures recorded
@@ -474,6 +480,142 @@ pub struct CircuitStateSnapshot {
     pub cooldown_until: Option<DateTime<Utc>>,
     /// Rate limit reset timestamp (Unix epoch seconds), or None if not rate-limited
     pub rate_limit_reset: Option<u64>,
+}
+
+// ============================================================================
+// Combo — multi-step fallback chains
+// ============================================================================
+
+/// Strategy for executing combo steps (MVP: priority-based only)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComboStrategy {
+    /// Execute steps in priority order (lower priority = attempted first)
+    Priority,
+}
+
+/// A single step in a combo fallback chain
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComboStep {
+    /// The provider to use for this step
+    pub provider_id: ProviderId,
+    /// The model to request from the provider
+    pub model: ModelId,
+    /// Optional connection ID for connection-specific routing
+    pub connection_id: Option<ConnectionId>,
+    /// Priority order (1-255, lower = attempted first)
+    pub priority: u8,
+}
+
+/// Validation errors for combo creation/update
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComboValidationError {
+    /// Combo name is empty
+    EmptyName,
+    /// Combo name exceeds 100 characters
+    NameTooLong,
+    /// Combo has no steps
+    EmptySteps,
+    /// Combo has more than 10 steps
+    TooManySteps,
+    /// Two or more steps have the same priority
+    DuplicatePriority { priority: u8 },
+    /// Priority is outside valid range (1-255)
+    InvalidPriority { priority: u8 },
+}
+
+impl std::fmt::Display for ComboValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyName => write!(f, "combo name cannot be empty"),
+            Self::NameTooLong => write!(f, "combo name cannot exceed 100 characters"),
+            Self::EmptySteps => write!(f, "combo must have at least one step"),
+            Self::TooManySteps => write!(f, "combo cannot have more than 10 steps"),
+            Self::DuplicatePriority { priority } => {
+                write!(f, "duplicate priority value: {priority}")
+            }
+            Self::InvalidPriority { priority } => {
+                write!(f, "priority must be between 1 and 255, got: {priority}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ComboValidationError {}
+
+/// A multi-step fallback chain aggregate
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Combo {
+    /// Unique combo identifier
+    pub id: ComboId,
+    /// Human-readable name (unique, 1-100 chars)
+    pub name: String,
+    /// Execution strategy
+    pub strategy: ComboStrategy,
+    /// Ordered steps to try
+    pub steps: Vec<ComboStep>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last update timestamp
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Combo {
+    /// Create a new combo with the given parameters.
+    /// Note: Call `validate()` to ensure the combo is valid before persisting.
+    pub fn new(name: String, strategy: ComboStrategy, steps: Vec<ComboStep>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: ComboId::new(),
+            name,
+            strategy,
+            steps,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Validate the combo according to business rules.
+    pub fn validate(&self) -> Result<(), ComboValidationError> {
+        // Name: 1-100 characters, non-empty
+        if self.name.is_empty() {
+            return Err(ComboValidationError::EmptyName);
+        }
+        if self.name.len() > 100 {
+            return Err(ComboValidationError::NameTooLong);
+        }
+
+        // Steps: 1-10 items
+        if self.steps.is_empty() {
+            return Err(ComboValidationError::EmptySteps);
+        }
+        if self.steps.len() > 10 {
+            return Err(ComboValidationError::TooManySteps);
+        }
+
+        // Priority: unique within combo, range 1-255
+        let mut seen_priorities = std::collections::HashSet::new();
+        for step in &self.steps {
+            if step.priority == 0 {
+                return Err(ComboValidationError::InvalidPriority { priority: 0 });
+            }
+            // Note: u8 max is 255, so no need to check upper bound
+            if !seen_priorities.insert(step.priority) {
+                return Err(ComboValidationError::DuplicatePriority {
+                    priority: step.priority,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns steps sorted by priority ascending (lower priority = attempted first).
+    pub fn sorted_steps(&self) -> Vec<&ComboStep> {
+        let mut sorted: Vec<&ComboStep> = self.steps.iter().collect();
+        sorted.sort_by_key(|s| s.priority);
+        sorted
+    }
 }
 
 impl AuditEntry {
@@ -492,6 +634,30 @@ impl AuditEntry {
             usage,
             latency_ms,
             timestamp: Utc::now(),
+            combo_id: None,
+            combo_step_index: None,
+        }
+    }
+
+    pub fn success_with_combo(
+        request_id: &RequestId,
+        provider: &ProviderId,
+        model: &ModelId,
+        usage: Option<TokenUsage>,
+        latency_ms: u64,
+        combo_id: Option<ComboId>,
+        combo_step_index: Option<usize>,
+    ) -> Self {
+        Self {
+            request_id: request_id.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            status: RequestStatus::Success,
+            usage,
+            latency_ms,
+            timestamp: Utc::now(),
+            combo_id,
+            combo_step_index,
         }
     }
 
@@ -510,6 +676,30 @@ impl AuditEntry {
             usage: None,
             latency_ms,
             timestamp: Utc::now(),
+            combo_id: None,
+            combo_step_index: None,
+        }
+    }
+
+    pub fn failure_with_combo(
+        request_id: &RequestId,
+        provider: &ProviderId,
+        model: &ModelId,
+        status: RequestStatus,
+        latency_ms: u64,
+        combo_id: Option<ComboId>,
+        combo_step_index: Option<usize>,
+    ) -> Self {
+        Self {
+            request_id: request_id.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            status,
+            usage: None,
+            latency_ms,
+            timestamp: Utc::now(),
+            combo_id,
+            combo_step_index,
         }
     }
 }
@@ -622,5 +812,243 @@ mod message_content_tests {
 
         let serialized = serde_json::to_string(&msg).expect("serialize");
         assert!(serialized.contains(r#""content":"hi""#));
+    }
+}
+
+#[cfg(test)]
+mod combo_tests {
+    use super::*;
+
+    #[test]
+    fn combo_new_generates_id_and_timestamps() {
+        let combo = Combo::new(
+            "test-combo".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        assert_eq!(combo.name, "test-combo");
+        assert_eq!(combo.strategy, ComboStrategy::Priority);
+        assert_eq!(combo.steps.len(), 1);
+        assert!(combo.created_at <= Utc::now());
+        assert!(combo.updated_at <= Utc::now());
+    }
+
+    #[test]
+    fn combo_validate_rejects_empty_name() {
+        let combo = Combo::new(
+            String::new(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        assert_eq!(combo.validate(), Err(ComboValidationError::EmptyName));
+    }
+
+    #[test]
+    fn combo_validate_rejects_name_too_long() {
+        let long_name = "a".repeat(101);
+        let combo = Combo::new(
+            long_name,
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        assert_eq!(combo.validate(), Err(ComboValidationError::NameTooLong));
+    }
+
+    #[test]
+    fn combo_validate_accepts_name_at_max_length() {
+        let max_name = "a".repeat(100);
+        let combo = Combo::new(
+            max_name,
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        assert!(combo.validate().is_ok());
+    }
+
+    #[test]
+    fn combo_validate_rejects_empty_steps() {
+        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, vec![]);
+        assert_eq!(combo.validate(), Err(ComboValidationError::EmptySteps));
+    }
+
+    #[test]
+    fn combo_validate_rejects_too_many_steps() {
+        let steps: Vec<ComboStep> = (1..=11)
+            .map(|i| ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: i as u8,
+            })
+            .collect();
+        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, steps);
+        assert_eq!(combo.validate(), Err(ComboValidationError::TooManySteps));
+    }
+
+    #[test]
+    fn combo_validate_accepts_10_steps() {
+        let steps: Vec<ComboStep> = (1..=10)
+            .map(|i| ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: i as u8,
+            })
+            .collect();
+        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, steps);
+        assert!(combo.validate().is_ok());
+    }
+
+    #[test]
+    fn combo_validate_rejects_duplicate_priority() {
+        let steps = vec![
+            ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            },
+            ComboStep {
+                provider_id: ProviderId::new("anthropic"),
+                model: ModelId::new("claude-opus-4"),
+                connection_id: None,
+                priority: 1,
+            },
+        ];
+        let combo = Combo::new("test".to_string(), ComboStrategy::Priority, steps);
+        assert_eq!(
+            combo.validate(),
+            Err(ComboValidationError::DuplicatePriority { priority: 1 })
+        );
+    }
+
+    #[test]
+    fn combo_validate_rejects_priority_zero() {
+        let combo = Combo::new(
+            "test".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 0,
+            }],
+        );
+        assert_eq!(
+            combo.validate(),
+            Err(ComboValidationError::InvalidPriority { priority: 0 })
+        );
+    }
+
+    #[test]
+    fn combo_validate_accepts_priority_255() {
+        let combo = Combo::new(
+            "test".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 255,
+            }],
+        );
+        assert!(combo.validate().is_ok());
+    }
+
+    #[test]
+    fn combo_sorted_steps_returns_ascending_priority() {
+        let combo = Combo::new(
+            "test".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: ProviderId::new("ollama"),
+                    model: ModelId::new("llama3.1:70b"),
+                    connection_id: None,
+                    priority: 3,
+                },
+                ComboStep {
+                    provider_id: ProviderId::new("openai"),
+                    model: ModelId::new("gpt-4o"),
+                    connection_id: None,
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: ProviderId::new("anthropic"),
+                    model: ModelId::new("claude-opus-4"),
+                    connection_id: None,
+                    priority: 2,
+                },
+            ],
+        );
+
+        let sorted = combo.sorted_steps();
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].priority, 1);
+        assert_eq!(sorted[0].provider_id, ProviderId::new("openai"));
+        assert_eq!(sorted[1].priority, 2);
+        assert_eq!(sorted[1].provider_id, ProviderId::new("anthropic"));
+        assert_eq!(sorted[2].priority, 3);
+        assert_eq!(sorted[2].provider_id, ProviderId::new("ollama"));
+    }
+
+    #[test]
+    fn combo_validation_error_display() {
+        assert_eq!(
+            ComboValidationError::EmptyName.to_string(),
+            "combo name cannot be empty"
+        );
+        assert_eq!(
+            ComboValidationError::NameTooLong.to_string(),
+            "combo name cannot exceed 100 characters"
+        );
+        assert_eq!(
+            ComboValidationError::EmptySteps.to_string(),
+            "combo must have at least one step"
+        );
+        assert_eq!(
+            ComboValidationError::TooManySteps.to_string(),
+            "combo cannot have more than 10 steps"
+        );
+        assert_eq!(
+            ComboValidationError::DuplicatePriority { priority: 5 }.to_string(),
+            "duplicate priority value: 5"
+        );
+        assert_eq!(
+            ComboValidationError::InvalidPriority { priority: 0 }.to_string(),
+            "priority must be between 1 and 255, got: 0"
+        );
+    }
+
+    #[test]
+    fn combo_strategy_serializes_as_lowercase() {
+        let json = serde_json::to_string(&ComboStrategy::Priority).expect("serialize");
+        assert_eq!(json, r#""priority""#);
+    }
+
+    #[test]
+    fn combo_strategy_deserializes_from_lowercase() {
+        let strategy: ComboStrategy = serde_json::from_str(r#""priority""#).expect("deserialize");
+        assert_eq!(strategy, ComboStrategy::Priority);
     }
 }

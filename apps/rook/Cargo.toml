@@ -16,6 +16,7 @@ rook-usecases = { path = "../../crates/application/rook-usecases" }
 transport-axum = { path = "../../crates/infrastructure/transport-axum" }
 cache-memory = { path = "../../crates/infrastructure/cache-memory" }
 audit-sqlite = { path = "../../crates/infrastructure/audit-sqlite" }
+combo-sqlite = { path = "../../crates/infrastructure/combo-sqlite" }
 observability = { path = "../../crates/infrastructure/observability" }
 providers-openai = { path = "../../crates/infrastructure/providers-openai" }
 providers-anthropic = { path = "../../crates/infrastructure/providers-anthropic" }

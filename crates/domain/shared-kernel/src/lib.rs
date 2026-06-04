@@ -11,7 +11,7 @@ pub mod rate_limit;
 pub mod time_;
 
 pub use error::{CortexError, CortexResult, RestrictionViolation};
-pub use id::{ConnectionId, ModelId, ProviderId, RequestId};
+pub use id::{ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 pub use rate_limit::{ProviderRateLimit, RateLimitRule, RateLimitScope, RateLimitStatus};
 pub use time_::Instant;
 

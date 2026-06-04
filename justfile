@@ -231,7 +231,7 @@ ci-local:
     @echo "$(YELLOW)8/9 audit...$(RESET)"
     cargo audit || echo "$(YELLOW)Audit warnings (non-blocking)$(RESET)"
     @echo "$(YELLOW)9/9 e2e (Playwright)...$(RESET)"
-    ./dev/e2e/run-api-keys-e2e.sh --test; rc=$$?; ./dev/e2e/run-api-keys-e2e.sh --cleanup || true; exit $$rc
+    ./dev/e2e/run-api-keys-e2e.sh --test || (echo "$(RED)E2E tests failed!$(RESET)" && exit 1)
     @echo "$(GREEN)=== CI local complete ===$(RESET)"
 
 # === Release ===

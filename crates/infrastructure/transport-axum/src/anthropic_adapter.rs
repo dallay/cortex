@@ -128,6 +128,7 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
                 priority: 5,
                 api_key_id: None,
                 requested_tier: None,
+                combo_id: None,
             },
             restrictions: ApiKeyRestrictions::default(),
         }

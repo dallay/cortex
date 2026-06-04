@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use futures::StreamExt;
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse,
-    CortexError, FormatTranslatorPort, ProviderRepositoryPort, RequestStatus, RouterPort,
-    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
+    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
+    CompletionResponse, CortexError, FormatTranslatorPort, ProviderRepositoryPort, RequestStatus,
+    RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ConnectionId, ProviderId, RestrictionViolation};
+use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
 use crate::PricingConfig;
 
@@ -39,17 +39,20 @@ pub struct RouteRequest {
     audit: Arc<dyn AuditPort>,
     usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
     provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+    combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
     pricing: Arc<PricingConfig>,
     format_translator: Arc<dyn FormatTranslatorPort>,
 }
 
 impl RouteRequest {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<dyn RouterPort>,
         cache: Arc<dyn CachePort>,
         audit: Arc<dyn AuditPort>,
         usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
         provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+        combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
         pricing: Arc<PricingConfig>,
         format_translator: Arc<dyn FormatTranslatorPort>,
     ) -> Self {
@@ -59,9 +62,15 @@ impl RouteRequest {
             audit,
             usage_recorder,
             provider_repository,
+            combo_repository,
             pricing,
             format_translator,
         }
+    }
+
+    /// Get combo repository reference (for HTTP layer wiring)
+    pub fn combo_repository(&self) -> Option<Arc<dyn ComboRepositoryPort>> {
+        self.combo_repository.clone()
     }
 
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
@@ -73,6 +82,11 @@ impl RouteRequest {
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
+        // 0. Check if combo execution is requested
+        if let Some(combo_id) = req.metadata.combo_id {
+            return self.execute_combo(&combo_id, req, client_format).await;
+        }
+
         let cache_key = req.cache_key();
         let start = Instant::now();
 
@@ -338,6 +352,383 @@ impl RouteRequest {
         };
 
         Ok(Box::pin(stream))
+    }
+
+    // -------------------------------------------------------------------------
+    // Combo execution
+    // -------------------------------------------------------------------------
+
+    /// Per-step timeout: 10 seconds
+    const COMBO_STEP_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Overall combo timeout: 60 seconds
+    const COMBO_TOTAL_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Execute a request using a multi-step fallback combo.
+    ///
+    /// Loads the combo from the repository, then iterates through steps in priority order,
+    /// attempting each provider until one succeeds or all fail.
+    ///
+    /// ## Streaming Limitation
+    ///
+    /// ⚠️ **Combos only apply before streaming starts.** Once the first chunk is sent
+    /// to the client, no fallback occurs. This is because streaming is a one-way data
+    /// transfer that cannot be interrupted and restarted from a different provider.
+    ///
+    /// For maximum reliability, use combos with non-streaming requests, or ensure the
+    /// first provider in your combo chain has high availability.
+    ///
+    /// ## Error Handling
+    ///
+    /// Per step:
+    /// - Success: record success, return response immediately
+    /// - 4xx (except 429): record failure, return error immediately (STOP)
+    /// - 429 / 5xx / network: record failure, continue to next step (CONTINUE)
+    /// - Timeout (10s): record failure, continue to next step
+    /// - Circuit breaker open: skip step, continue to next step
+    ///
+    /// If all steps fail, returns `AllProvidersExhausted`.
+    pub async fn execute_combo(
+        &self,
+        combo_id: &ComboId,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
+        let combo_repo = self
+            .combo_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::provider("combo repository not configured"))?;
+
+        // 1. Load combo from repository
+        let combo = match combo_repo.find(combo_id).await {
+            Ok(Some(combo)) => combo,
+            Ok(None) => return Err(CortexError::combo_not_found(*combo_id)),
+            Err(e) => {
+                return Err(CortexError::provider(format!(
+                    "combo repository error: {}",
+                    e
+                )))
+            }
+        };
+
+        tracing::info!(
+            combo_id = %combo.id,
+            combo_name = %combo.name,
+            steps = combo.steps.len(),
+            "starting combo execution"
+        );
+
+        // 2. Sort steps by priority ascending
+        let sorted_steps: Vec<_> = combo.sorted_steps().into_iter().collect();
+        let total_steps = sorted_steps.len();
+
+        // Track errors for the final AllProvidersExhausted
+        let mut steps_attempted = 0;
+        let mut errors: Vec<(ProviderId, String)> = Vec::new();
+
+        // Overall combo timeout
+        let combo_start = Instant::now();
+
+        for (step_index, step) in sorted_steps.into_iter().enumerate() {
+            // Check overall timeout
+            if combo_start.elapsed() >= Self::COMBO_TOTAL_TIMEOUT {
+                tracing::warn!(combo_id = %combo_id, "combo execution timed out after 60s");
+                break;
+            }
+
+            let provider_id = &step.provider_id;
+            let model = &step.model;
+
+            tracing::info!(
+                step_index = step_index + 1,
+                total = total_steps,
+                provider_id = %provider_id,
+                model = %model,
+                priority = step.priority,
+                "trying combo step"
+            );
+
+            // 3a. Check circuit breaker — skip if open
+            // Router doesn't expose is_circuit_open directly, so we rely on
+            // router.providers() to check if provider is registered and
+            // the on_failure call to update circuit state.
+            let available_providers = self.router.providers();
+            if !available_providers.contains(provider_id) {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    provider_id = %provider_id,
+                    "skipping step: provider not in registry"
+                );
+                continue;
+            }
+
+            // 3b. Get provider from router (we need to find the actual provider instance)
+            let provider = match self.router.select(&req).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        step_index = step_index + 1,
+                        error = %e,
+                        "failed to select provider for step"
+                    );
+                    errors.push((provider_id.clone(), e.to_string()));
+                    steps_attempted += 1;
+                    continue;
+                }
+            };
+
+            // Verify it's the right provider (router may have its own selection logic)
+            // For combo execution we want the specific provider_id, so we check
+            // and skip if router selected a different one
+            if provider.id() != provider_id {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    selected = %provider.id(),
+                    expected = %provider_id,
+                    "router selected different provider, skipping to maintain combo order"
+                );
+                continue;
+            }
+
+            // 3c. Execute with per-step timeout
+            let provider_format = provider.api_format();
+            let provider_req = self.format_translator.translate_request(
+                client_format,
+                provider_format,
+                req.clone(),
+            )?;
+
+            let step_start = Instant::now();
+            let step_result =
+                tokio::time::timeout(Self::COMBO_STEP_TIMEOUT, provider.complete(&provider_req))
+                    .await;
+
+            let latency_ms = step_start.elapsed().as_millis() as u64;
+            steps_attempted += 1;
+
+            match step_result {
+                Ok(Ok(provider_resp)) => {
+                    // SUCCESS
+                    let resp = self.format_translator.translate_response(
+                        provider_format,
+                        client_format,
+                        provider_resp,
+                    )?;
+
+                    tracing::info!(
+                        step_index = step_index + 1,
+                        latency_ms = latency_ms,
+                        "combo step succeeded"
+                    );
+
+                    // Record success (fire-and-forget)
+                    self.record_combo_success(
+                        combo_id,
+                        step_index,
+                        provider_id,
+                        latency_ms,
+                        &req,
+                        &resp,
+                    )
+                    .await;
+
+                    return Ok(resp);
+                }
+                Ok(Err(e)) => {
+                    // Provider returned an error
+                    errors.push((provider_id.clone(), e.to_string()));
+
+                    // Determine if we should STOP or CONTINUE
+                    let should_stop = e.is_4xx();
+
+                    tracing::warn!(
+                        step_index = step_index + 1,
+                        error = %e,
+                        retryable = !should_stop,
+                        "combo step failed"
+                    );
+
+                    // Record failure (fire-and-forget)
+                    self.record_combo_failure(
+                        combo_id,
+                        step_index,
+                        provider_id,
+                        latency_ms,
+                        &req,
+                        &e,
+                    )
+                    .await;
+
+                    // Notify router of failure (circuit breaker)
+                    self.router.on_failure(provider_id, &e).await;
+
+                    if should_stop {
+                        // 4xx (except 429) stops the chain immediately
+                        return Err(e);
+                    }
+                    // 429 / 5xx / network errors: continue to next step
+                    continue;
+                }
+                Err(_timeout) => {
+                    // Step timed out
+                    let err = CortexError::provider(format!(
+                        "step {} timed out after {:?}",
+                        step_index + 1,
+                        Self::COMBO_STEP_TIMEOUT
+                    ));
+                    errors.push((provider_id.clone(), err.to_string()));
+
+                    tracing::warn!(
+                        step_index = step_index + 1,
+                        timeout_secs = 10,
+                        "combo step timed out"
+                    );
+
+                    self.record_combo_failure(
+                        combo_id,
+                        step_index,
+                        provider_id,
+                        latency_ms,
+                        &req,
+                        &err,
+                    )
+                    .await;
+
+                    self.router.on_failure(provider_id, &err).await;
+                    continue;
+                }
+            }
+        }
+
+        // All steps exhausted
+        let total_latency_ms = combo_start.elapsed().as_millis() as u64;
+        tracing::error!(
+            combo_id = %combo_id,
+            steps_attempted = steps_attempted,
+            total_latency_ms = total_latency_ms,
+            "all combo steps exhausted"
+        );
+
+        Err(CortexError::all_providers_exhausted_combo(
+            *combo_id,
+            steps_attempted,
+            errors,
+        ))
+    }
+
+    /// Record combo success — fire-and-forget audit + usage.
+    async fn record_combo_success(
+        &self,
+        combo_id: &ComboId,
+        step_index: usize,
+        provider_id: &ProviderId,
+        latency_ms: u64,
+        req: &CompletionRequest,
+        resp: &CompletionResponse,
+    ) {
+        // Audit entry with combo metadata
+        let entry = AuditEntry::success_with_combo(
+            &req.id,
+            provider_id,
+            &req.model,
+            Some(resp.usage.clone()),
+            latency_ms,
+            Some(*combo_id),
+            Some(step_index),
+        );
+        if let Err(e) = self.audit.record(entry).await {
+            tracing::warn!(error = %e, "failed to record combo audit entry");
+        }
+
+        // Usage recording
+        let connection_id = self.resolve_connection_id(provider_id).await;
+        let entry = UsageEntry {
+            request_id: req.id.clone(),
+            provider: provider_id.clone(),
+            model: req.model.clone(),
+            status: RequestStatus::Success,
+            requested_tier: req.metadata.requested_tier.clone(),
+            api_key_id: req.metadata.api_key_id.clone(),
+            connection_id,
+            tokens_prompt: Some(resp.usage.prompt_tokens as u64),
+            tokens_completion: Some(resp.usage.completion_tokens as u64),
+            tokens_cache_read: resp.usage.cache_read_tokens,
+            tokens_cache_creation: resp.usage.cache_creation_tokens,
+            tokens_reasoning: resp.usage.reasoning_tokens,
+            ttft_ms: Some(latency_ms),
+            latency_ms,
+            cost_usd: crate::estimate_cost_usd(
+                &self.pricing,
+                provider_id,
+                &req.model,
+                Some(&resp.usage),
+            ),
+            timestamp: Utc::now(),
+        };
+
+        if let Some(recorder) = self.usage_recorder.as_ref() {
+            if let Err(e) = recorder.record(entry).await {
+                tracing::warn!(error = %e, "failed to record combo usage entry");
+            }
+        }
+    }
+
+    /// Record combo failure — fire-and-forget audit + usage.
+    async fn record_combo_failure(
+        &self,
+        combo_id: &ComboId,
+        step_index: usize,
+        provider_id: &ProviderId,
+        latency_ms: u64,
+        req: &CompletionRequest,
+        error: &CortexError,
+    ) {
+        let status = if error.is_rate_limited() {
+            RequestStatus::RateLimited
+        } else {
+            RequestStatus::Failure
+        };
+
+        // Audit entry with combo metadata
+        let entry = AuditEntry::failure_with_combo(
+            &req.id,
+            provider_id,
+            &req.model,
+            status,
+            latency_ms,
+            Some(*combo_id),
+            Some(step_index),
+        );
+        if let Err(e) = self.audit.record(entry).await {
+            tracing::warn!(error = %e, "failed to record combo failure audit");
+        }
+
+        // Usage recording
+        let connection_id = self.resolve_connection_id(provider_id).await;
+        let entry = UsageEntry {
+            request_id: req.id.clone(),
+            provider: provider_id.clone(),
+            model: req.model.clone(),
+            status,
+            requested_tier: req.metadata.requested_tier.clone(),
+            api_key_id: req.metadata.api_key_id.clone(),
+            connection_id,
+            tokens_prompt: None,
+            tokens_completion: None,
+            tokens_cache_read: None,
+            tokens_cache_creation: None,
+            tokens_reasoning: None,
+            ttft_ms: None,
+            latency_ms,
+            cost_usd: crate::estimate_cost_usd(&self.pricing, provider_id, &req.model, None),
+            timestamp: Utc::now(),
+        };
+
+        if let Some(recorder) = self.usage_recorder.as_ref() {
+            if let Err(e) = recorder.record(entry).await {
+                tracing::warn!(error = %e, "failed to record combo failure usage");
+            }
+        }
     }
 
     async fn resolve_connection_id(&self, provider_id: &ProviderId) -> Option<ConnectionId> {
@@ -774,6 +1165,7 @@ mod tests {
                 priority: 1,
                 api_key_id: None,
                 requested_tier: None,
+                combo_id: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         }
@@ -796,6 +1188,7 @@ mod tests {
             Arc::new(TestRouter { provider }),
             cache.clone(),
             audit.clone(),
+            None,
             None,
             None,
             Arc::new(crate::PricingConfig::default()),
@@ -846,6 +1239,7 @@ mod tests {
             }),
             None,
             None,
+            None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         )
@@ -869,6 +1263,7 @@ mod tests {
             }),
             None,
             Some(Arc::new(FailingProviderRepository)),
+            None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         );
@@ -920,6 +1315,7 @@ mod tests {
                 connection_id: Some(connection_id),
                 fail_lookup: false,
             })),
+            None,
             Arc::new(pricing),
             Arc::new(TestFormatTranslator),
         );
@@ -970,6 +1366,7 @@ mod tests {
             }),
             Some(usage_recorder.clone()),
             None,
+            None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         );
@@ -1013,6 +1410,7 @@ mod tests {
             }),
             Some(usage_recorder.clone()),
             None,
+            None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         );
@@ -1046,6 +1444,7 @@ mod tests {
                 entries: Mutex::new(Vec::new()),
             }),
             Some(usage_recorder.clone()),
+            None,
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
@@ -1175,6 +1574,7 @@ mod tests {
                 connection_id: Some(connection_id),
                 fail_lookup: false,
             })),
+            None,
             Arc::new(pricing),
             Arc::new(TestFormatTranslator),
         );
@@ -1278,6 +1678,7 @@ mod tests {
             }),
             Some(usage_recorder.clone()),
             None,
+            None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
         );
@@ -1324,6 +1725,7 @@ mod tests {
                 entries: Mutex::new(Vec::new()),
             }),
             Some(usage_recorder.clone()),
+            None,
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),

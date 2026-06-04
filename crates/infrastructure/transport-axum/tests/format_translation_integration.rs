@@ -373,6 +373,7 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
         Arc::new(NoopAudit),
         None,
         None,
+        None, // combo_repository
         Arc::new(rook_usecases::PricingConfig::default()),
         registry_with_openai_anthropic_pairs(),
     )
@@ -397,6 +398,7 @@ fn registry_domain_request() -> CompletionRequest {
             priority: 1,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     }

@@ -50,6 +50,7 @@ pub fn make_test_bootstrap_usecases(
         audit,
         None,
         None,
+        None,
         Arc::new(rook_usecases::PricingConfig::default()),
         format_translator,
     );

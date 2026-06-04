@@ -187,6 +187,7 @@ async fn allowed_models_contains_requested_model_passes() {
         audit,
         None,
         None,
+        None,
         Arc::new(PricingConfig::default()),
         translator,
     );
@@ -209,6 +210,7 @@ async fn allowed_models_contains_requested_model_passes() {
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("gpt-3.5-turbo")],
@@ -236,6 +238,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         audit,
         None,
         None,
+        None,
         Arc::new(PricingConfig::default()),
         translator,
     );
@@ -258,6 +261,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4")],
@@ -289,6 +293,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
         audit,
         None,
         None,
+        None,
         Arc::new(PricingConfig::default()),
         translator,
     );
@@ -311,6 +316,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],
@@ -338,6 +344,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         audit,
         None,
         None,
+        None,
         Arc::new(PricingConfig::default()),
         translator,
     );
@@ -360,6 +367,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],

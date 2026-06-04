@@ -79,6 +79,7 @@ async fn complete_returns_valid_response_from_mock_server() {
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -152,6 +153,7 @@ async fn complete_parses_cache_tokens() {
             priority: 0,
             api_key_id: None,
             requested_tier: None,
+            combo_id: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };

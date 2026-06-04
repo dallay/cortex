@@ -10,16 +10,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use shared_kernel::{CacheKey, ConnectionId, CortexResult, ModelId, ProviderId};
+use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, ProviderId};
 
 use super::{
     ApiFormat, AuditEntry, CompletionRequest, CompletionResponse, CostBreakdown, HealthStatus,
     Pagination, StreamChunk, UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
-    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, NewSession, NewUser,
-    PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session, SessionId, User,
-    UserId,
+    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
+    NewSession, NewUser, PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session,
+    SessionId, User, UserId,
 };
 
 /// ---------------------------------------------------------------------------
@@ -519,4 +519,41 @@ pub struct ModelCatalogEntry {
 pub trait ModelCatalogPort: Send + Sync {
     /// Returns the full list of model catalog entries known to the proxy.
     async fn list(&self) -> Vec<ModelCatalogEntry>;
+}
+
+// ---------------------------------------------------------------------------
+// ComboRepositoryPort — persistence for combo fallback chains
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ComboRepositoryError {
+    #[error("combo not found: {0}")]
+    NotFound(ComboId),
+    #[error("combo with name '{0}' already exists")]
+    DuplicateName(String),
+    #[error("validation error: {0}")]
+    Validation(ComboValidationError),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ComboRepositoryPort: Send + Sync {
+    /// List all combos ordered by created_at descending
+    async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError>;
+
+    /// Find a combo by its ID
+    async fn find(&self, id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError>;
+
+    /// Find a combo by its name (case-insensitive)
+    async fn find_by_name(&self, name: &str) -> Result<Option<Combo>, ComboRepositoryError>;
+
+    /// Create a new combo (validates before persisting)
+    async fn create(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
+
+    /// Update an existing combo (validates before persisting, replaces all steps)
+    async fn update(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
+
+    /// Delete a combo by its ID (cascades to steps)
+    async fn delete(&self, id: &ComboId) -> Result<(), ComboRepositoryError>;
 }

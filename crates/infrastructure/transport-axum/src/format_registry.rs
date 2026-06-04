@@ -240,6 +240,7 @@ mod tests {
                 priority: 0,
                 api_key_id: None,
                 requested_tier: None,
+                combo_id: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         };

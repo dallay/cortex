@@ -65,11 +65,44 @@ Domain model and port traits. Completely provider-agnostic.
 
 Application orchestration.
 
-- **`RouteRequest`** — the main orchestrator: cache → select provider → execute → cache response → audit → handle failure
+- **`RouteRequest`** — the main orchestrator: cache → select provider → execute → cache response → audit → handle failure. Supports combo execution for multi-step fallback chains.
 - **`FallbackRouter`** — implements RouterPort with three strategies: Priority, RoundRobin, ModelBased. Includes circuit breaker (3 failures → 30s cooldown).
 - **`ManageProviders`** — enable/disable providers (interface only for now)
 - **`HealthCheck`** — aggregated health status across all providers
 - **`ManageConnections`** — runtime-managed provider connection CRUD/test workflow
+
+### Combos (Multi-step Fallback Chains)
+
+Combos provide automatic failover across multiple provider/model pairs. They are managed as first-class domain entities with:
+
+- **Domain model** (`rook-core`) — `Combo`, `ComboStep`, `ComboStrategy`, validation rules
+- **Repository** (`combo-sqlite`) — SQLite-backed persistence with name/ID uniqueness
+- **API** (`transport-axum/combo_routes`) — CRUD endpoints at `/api/combos`
+- **Execution** (`RouteRequest::execute_combo`) — priority-ordered step execution with timeouts, circuit breaker integration, and comprehensive audit/usage tracking
+- **Configuration** (`apps/rook/config`) — TOML-based combo definitions seeded at startup
+
+**Execution Flow:**
+
+```
+Request with X-Rook-Combo header or default_combo
+  → Load combo from repository
+  → Sort steps by priority (ascending)
+  → For each step:
+      → Check circuit breaker (skip if open)
+      → Check provider availability (skip if not registered)
+      → Execute with 10s timeout
+      → On success: return immediately
+      → On 4xx (except 429): stop, return error
+      → On 429/5xx/network: continue to next step
+  → If all steps fail: AllProvidersExhausted error
+```
+
+**Timeouts:**
+- Per-step timeout: 10 seconds
+- Overall combo timeout: 60 seconds
+
+**Streaming Limitation:**
+Combos only apply before streaming starts. Once the first chunk is sent, no fallback occurs.
 
 ### `transport-axum`
 
