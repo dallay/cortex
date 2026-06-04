@@ -1,7 +1,7 @@
 // providers-ollama — Ollama local API provider adapter
 
 use async_trait::async_trait;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -177,46 +177,90 @@ impl ProviderPort for OllamaProvider {
 
         let request_id = req.id.clone();
 
-        let stream = resp
-            .bytes_stream()
-            .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
-            .and_then(move |bytes| {
-                let request_id = request_id.clone();
+        // Line-buffered SSE stream: accumulate bytes into lines, parse each complete line.
+        // Uses unfold to maintain line_buffer state across stream items.
+        let stream = futures::stream::unfold(
+            (resp.bytes_stream(), String::new()),
+            move |(mut byte_stream, mut line_buffer)| {
+                let value = request_id.clone();
                 async move {
-                    let text = String::from_utf8(bytes.to_vec())
-                        .map_err(|e| CortexError::provider(format!("invalid utf-8: {e}")))?;
+                    let request_id = value.clone();
+                    // Read next byte chunk
+                    let bytes = match byte_stream.next().await {
+                        Some(Ok(b)) => b,
+                        Some(Err(e)) => {
+                            return Some((
+                                Err(CortexError::provider(format!("stream read failed: {e}"))),
+                                (byte_stream, line_buffer),
+                            ));
+                        }
+                        None => return None,
+                    };
 
-                    let parsed: OllamaChatResponse = serde_json::from_str(&text)
-                        .map_err(|e| CortexError::provider(format!("json parse failed: {e}")))?;
+                    // Convert to UTF-8 string and append to line buffer
+                    let text = match String::from_utf8(bytes.to_vec()) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            return Some((
+                                Err(CortexError::provider(format!("invalid utf-8: {e}"))),
+                                (byte_stream, line_buffer),
+                            ));
+                        }
+                    };
+                    line_buffer.push_str(&text);
 
-                    let prompt_tokens = parsed.prompt_eval_count.unwrap_or(0);
-                    let completion_tokens = parsed.eval_count.unwrap_or(0);
+                    // Extract all complete lines
+                    let mut complete_lines = Vec::new();
+                    while let Some(newline_pos) = line_buffer.find('\n') {
+                        let line = line_buffer[..newline_pos].to_string();
+                        line_buffer = line_buffer[newline_pos + 1..].to_string();
+                        if !line.trim().is_empty() {
+                            complete_lines.push(line);
+                        }
+                    }
 
-                    Ok(StreamChunk {
-                        id: request_id.clone(),
-                        model: ModelId::new(parsed.model.clone()),
-                        delta: parsed.message.content,
-                        finish_reason: if parsed.done {
-                            Some(rook_core::FinishReason::Stop)
-                        } else {
-                            None
-                        },
-                        usage: if parsed.done {
-                            Some(TokenUsage {
-                                prompt_tokens,
-                                completion_tokens,
-                                total_tokens: prompt_tokens.saturating_add(completion_tokens),
-                                cache_read_tokens: None,
-                                cache_creation_tokens: None,
-                                reasoning_tokens: None,
-                                estimated_cost_usd: None,
-                            })
-                        } else {
-                            None
-                        },
-                    })
+                    // Parse each line into StreamChunk
+                    let chunks: Vec<Result<StreamChunk, CortexError>> = complete_lines
+                        .into_iter()
+                        .filter_map(|line| {
+                            let parsed: OllamaChatResponse = serde_json::from_str(&line).ok()?;
+                            let prompt_tokens = parsed.prompt_eval_count.unwrap_or(0);
+                            let completion_tokens = parsed.eval_count.unwrap_or(0);
+                            Some(Ok(StreamChunk {
+                                id: request_id.clone(),
+                                model: ModelId::new(parsed.model.clone()),
+                                delta: parsed.message.content,
+                                finish_reason: if parsed.done {
+                                    Some(rook_core::FinishReason::Stop)
+                                } else {
+                                    None
+                                },
+                                usage: if parsed.done {
+                                    Some(TokenUsage {
+                                        prompt_tokens,
+                                        completion_tokens,
+                                        total_tokens: prompt_tokens
+                                            .saturating_add(completion_tokens),
+                                        cache_read_tokens: None,
+                                        cache_creation_tokens: None,
+                                        reasoning_tokens: None,
+                                        estimated_cost_usd: None,
+                                    })
+                                } else {
+                                    None
+                                },
+                            }))
+                        })
+                        .collect();
+
+                    Some((
+                        Ok(futures::stream::iter(chunks)),
+                        (byte_stream, line_buffer),
+                    ))
                 }
-            });
+            },
+        )
+        .try_flatten();
 
         Ok(Box::pin(stream))
     }

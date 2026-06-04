@@ -6,7 +6,6 @@
 //
 // The actual SQLite delete logic is tested in audit-sqlite tests.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,9 +14,16 @@ use rook::usage_retention::{
 };
 use tokio::time::sleep;
 
-// Helper to create an in-memory usage repo
+// Helper to create a file-based usage repo (not :memory: — migrations need schema)
 fn usage_repo() -> audit_sqlite::SqliteUsageRepository {
-    audit_sqlite::SqliteUsageRepository::new(Path::new(":memory:"))
+    static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let db_path = format!("/tmp/rook_usage_retention_test_{}.db", n);
+    let _ = std::fs::remove_file(&db_path);
+    db_migration::run_migrations(&db_path).expect("migrations");
+    // Leak a clone of the path string to keep the file alive for the test's duration.
+    Box::leak(db_path.clone().into_boxed_str());
+    audit_sqlite::SqliteUsageRepository::new(std::path::Path::new(&db_path))
         .expect("usage repo should be creatable")
 }
 

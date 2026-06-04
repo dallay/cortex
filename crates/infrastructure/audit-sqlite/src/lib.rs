@@ -116,35 +116,10 @@ impl SqliteUsageRepository {
     pub fn new(db_path: &Path) -> CortexResult<Self> {
         let conn = Connection::open(db_path)
             .map_err(|e| CortexError::provider(format!("sqlite open failed: {e}")))?;
-        conn.execute_batch(
-            "PRAGMA foreign_keys = ON;
-            CREATE TABLE IF NOT EXISTS usage_history (
-                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-                request_id              TEXT NOT NULL,
-                provider                TEXT NOT NULL,
-                model                   TEXT NOT NULL,
-                status                  TEXT NOT NULL,
-                requested_tier          TEXT,
-                api_key_id              TEXT,
-                connection_id           TEXT,
-                tokens_prompt           INTEGER,
-                tokens_completion       INTEGER,
-                tokens_cache_read       INTEGER,
-                tokens_cache_creation   INTEGER,
-                tokens_reasoning        INTEGER,
-                ttft_ms                 INTEGER,
-                latency_ms              INTEGER NOT NULL,
-                cost_usd                REAL,
-                timestamp               TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_usage_history_request_id ON usage_history(request_id);
-            CREATE INDEX IF NOT EXISTS idx_usage_history_provider ON usage_history(provider);
-            CREATE INDEX IF NOT EXISTS idx_usage_history_model ON usage_history(model);
-            CREATE INDEX IF NOT EXISTS idx_usage_history_timestamp ON usage_history(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_usage_history_api_key_id ON usage_history(api_key_id);
-            CREATE INDEX IF NOT EXISTS idx_usage_history_connection_id ON usage_history(connection_id);",
-        )
-        .map_err(|e| CortexError::provider(format!("sqlite schema init failed: {e}")))?;
+        // Schema (usage_history table and indexes) is managed by db-migration/V2__usage_history.sql.
+        // Calling code must run run_startup_migrations() before using the repository.
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(|e| CortexError::provider(format!("sqlite pragma setup failed: {e}")))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -152,13 +127,46 @@ impl SqliteUsageRepository {
 
     pub async fn delete_older_than(&self, retention_days: u32) -> CortexResult<u64> {
         let conn = self.conn.lock().await;
-        let rows = conn
-            .execute(
-                "DELETE FROM usage_history WHERE timestamp < datetime('now', '-' || ?1 || ' days')",
-                params![retention_days],
-            )
-            .map_err(|e| CortexError::provider(format!("sqlite delete failed: {e}")))?;
-        Ok(rows as u64)
+        let mut total_deleted: u64 = 0;
+
+        loop {
+            let cutoff = format!("datetime('now', '-' || {} || ' days')", retention_days);
+            let batch: Vec<i64> = conn
+                .prepare(&format!(
+                    "SELECT rowid FROM usage_history WHERE timestamp < {} LIMIT 1000",
+                    cutoff
+                ))
+                .map_err(|e| CortexError::provider(format!("sqlite prepare failed: {e}")))?
+                .query_map([], |row| row.get::<_, i64>(0))
+                .map_err(|e| CortexError::provider(format!("sqlite select failed: {e}")))?
+                .filter_map(|row| row.ok())
+                .collect();
+
+            if batch.is_empty() {
+                break;
+            }
+
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| CortexError::provider(format!("sqlite transaction failed: {e}")))?;
+            let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let deleted = tx
+                .execute(
+                    &format!("DELETE FROM usage_history WHERE rowid IN ({placeholders})",),
+                    rusqlite::params_from_iter(batch.iter()),
+                )
+                .map_err(|e| CortexError::provider(format!("sqlite delete failed: {e}")))?;
+            tx.commit()
+                .map_err(|e| CortexError::provider(format!("sqlite commit failed: {e}")))?;
+
+            total_deleted += deleted as u64;
+
+            if deleted < 1000 {
+                break;
+            }
+        }
+
+        Ok(total_deleted)
     }
 }
 
@@ -495,7 +503,17 @@ mod usage_tests {
     }
 
     fn usage_repo() -> SqliteUsageRepository {
-        SqliteUsageRepository::new(Path::new(":memory:")).expect("usage repo")
+        static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let db_path = format!("/tmp/audit_sqlite_test_{}.db", n);
+        // Remove any stale file from a previous run — ignore errors if it doesn't exist
+        let _ = std::fs::remove_file(&db_path);
+        db_migration::run_migrations(&db_path).expect("migrations");
+        let repo = SqliteUsageRepository::new(std::path::Path::new(&db_path)).expect("usage repo");
+        // Leak the path so the file persists for the duration of the test process.
+        // This avoids the NamedTempFile auto-delete-on-drop issue.
+        Box::leak(db_path.into_boxed_str());
+        repo
     }
 
     fn timestamp(day: u32) -> chrono::DateTime<Utc> {

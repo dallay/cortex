@@ -231,11 +231,14 @@ test.describe('API Keys - Create Flow', () => {
     await expect(page.getByText(/label is required/i)).toBeVisible()
   })
 
-  test('creates API key with valid form data', async ({ page }) => {
+  test('creates API key with valid form data', async ({ page, browserName }) => {
     // issue #82: The e2e Docker image is built from the current main branch, which
     // still has the CSRF race. The Rust fix (commit cead68a) is in main but not in
     // the running container. Skip until the image is rebuilt with the updated auth handler.
-    test.skip(true, 'webKit CSRF fix: e2e image needs rebuild with updated Rust auth handler')
+    test.skip(
+      browserName === 'webkit',
+      'webKit CSRF fix: e2e image needs rebuild with updated Rust auth handler',
+    )
 
     await page.getByRole('button', { name: /create api key/i }).click()
 
@@ -251,8 +254,8 @@ test.describe('API Keys - Create Flow', () => {
     // Should show "API Key Created" heading (the actual UI text)
     await expect(page.getByRole('heading', { name: /api key created/i })).toBeVisible({ timeout: 15_000 })
 
-    // Should show the plaintext key (second code element — the long one in the display, not the short key-id)
-    const keyDisplay = page.locator('code').last()
+    // Should show the plaintext key — target the key display via data-testid
+    const keyDisplay = page.getByTestId('api-key-display')
     await expect(keyDisplay).toBeVisible()
     const keyText = await keyDisplay.textContent()
     expect(keyText).toMatch(/^rk-/)

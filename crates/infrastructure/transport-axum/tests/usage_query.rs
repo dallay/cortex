@@ -97,10 +97,6 @@ fn limit_clamps_to_maximum() {
         panic!("expected Ok");
     };
 
-    eprintln!(
-        "DEBUG: limit_clamps_to_maximum got limit={}",
-        pagination.limit
-    );
     assert_eq!(
         pagination.limit,
         Pagination::MAX_LIMIT,

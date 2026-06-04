@@ -902,6 +902,7 @@ mod tests {
                     completion_per_million: 2.0,
                     cache_read_per_million: None,
                     cache_creation_per_million: None,
+                    reasoning_per_million: None,
                 },
             )]),
         );
@@ -1156,6 +1157,7 @@ mod tests {
                     completion_per_million: 2.0,
                     cache_read_per_million: None,
                     cache_creation_per_million: None,
+                    reasoning_per_million: None,
                 },
             )]),
         );

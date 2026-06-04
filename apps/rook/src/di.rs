@@ -554,7 +554,7 @@ pub fn build_provider_from_connection(
             let config = providers_gemini::GeminiProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
-                base_url: None,
+                base_url: base_url_override,
                 models: Vec::new(),
                 timeout_secs: 60,
             };

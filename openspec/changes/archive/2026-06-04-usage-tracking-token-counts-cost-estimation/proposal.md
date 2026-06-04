@@ -39,7 +39,7 @@ Replace the current basic `audit` log — a single SQLite table with only `promp
 
 ### Modified Capabilities
 
-- **`audit-log`**: Unchanged for writes. Existing rows are preserved; new writes go to `usage_history`. `AuditPort` remains but is considered deprecated. Fire-and-forget call sites getwarn-level instrumentation to detect silent drops.
+- **`audit-log`**: Unchanged for writes. Existing rows are preserved; new writes go to `usage_history`. `AuditPort` remains but is considered deprecated. Fire-and-forget call sites get warn-level instrumentation to detect silent drops.
 
 ---
 

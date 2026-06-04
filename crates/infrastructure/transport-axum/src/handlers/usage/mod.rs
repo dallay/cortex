@@ -97,7 +97,7 @@ pub fn query_to_filters_and_pagination(
             .map_err(|_| HttpError {
                 status: axum::http::StatusCode::BAD_REQUEST,
                 code: "INVALID_DATE",
-                message: "Invalid end date format (use RFC 3339, e.g. 2026-30T23:59:59Z)"
+                message: "Invalid end date format (use RFC 3339, e.g. 2026-03-30T23:59:59Z)"
                     .to_string(),
             })?,
         // status: parse via serde, accepting snake_case
@@ -114,17 +114,45 @@ pub fn query_to_filters_and_pagination(
             })?,
     };
 
-    let pagination = Pagination {
-        offset: offset
-            .as_ref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0),
-        limit: limit
-            .as_ref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(Pagination::DEFAULT_LIMIT),
+    // Reject inverted date ranges (start > end)
+    if let (Some(start), Some(end)) = (filters.start, filters.end) {
+        if start > end {
+            return Err(HttpError {
+                status: axum::http::StatusCode::BAD_REQUEST,
+                code: "INVALID_DATE_RANGE",
+                message: "start must be before or equal to end".to_string(),
+            });
+        }
     }
-    .clamped();
+
+    let pagination = {
+        // When offset/limit is present, it must parse successfully; return 400 on invalid input.
+        let offset_val = if let Some(ref s) = offset {
+            s.parse::<u64>().map_err(|_| HttpError {
+                status: axum::http::StatusCode::BAD_REQUEST,
+                code: "INVALID_OFFSET",
+                message: "offset must be a non-negative integer".to_string(),
+            })?
+        } else {
+            0
+        };
+
+        let limit_val = if let Some(ref s) = limit {
+            s.parse::<u64>().map_err(|_| HttpError {
+                status: axum::http::StatusCode::BAD_REQUEST,
+                code: "INVALID_LIMIT",
+                message: "limit must be a non-negative integer".to_string(),
+            })?
+        } else {
+            Pagination::DEFAULT_LIMIT
+        };
+
+        Pagination {
+            offset: offset_val,
+            limit: limit_val,
+        }
+        .clamped()
+    };
 
     Ok((filters, pagination))
 }

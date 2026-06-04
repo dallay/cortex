@@ -36,8 +36,11 @@ pub fn spawn_periodic_usage_retention_sweep(
     sweep_interval_hours: u32,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let interval = Duration::from_secs(sweep_interval_hours as u64 * 3600);
-        let mut ticker = time::interval(interval);
+        let interval_secs = sweep_interval_hours.max(1) as u64 * 3600;
+        let mut ticker = time::interval(Duration::from_secs(interval_secs));
+
+        // Run immediately on startup (skip the initial tick delay)
+        ticker.tick().await;
 
         loop {
             ticker.tick().await;

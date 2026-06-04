@@ -11,6 +11,7 @@ fn pricing_config() -> PricingConfig {
             completion_per_million: 10.00,
             cache_read_per_million: Some(1.25),
             cache_creation_per_million: Some(3.75),
+            reasoning_per_million: None,
         },
     );
 
@@ -44,33 +45,60 @@ fn estimate_cost_prices_prompt_completion_cache_read_and_cache_creation() {
     let expected = (1_000.0 * 2.50 / 1_000_000.0)
         + (2_000.0 * 10.00 / 1_000_000.0)
         + (3_000.0 * 1.25 / 1_000_000.0)
-        + (4_000.0 * 3.75 / 1_000_000.0);
+        + (4_000.0 * 3.75 / 1_000_000.0)
+        + (99_000.0 * 10.00 / 1_000_000.0); // reasoning (falls back to completion price)
 
     assert!((cost - expected).abs() < f64::EPSILON);
 }
 
 #[test]
-fn estimate_cost_ignores_reasoning_tokens_for_approved_formula() {
-    let mut with_reasoning = usage();
-    with_reasoning.reasoning_tokens = Some(999_999_999);
-
-    let mut without_reasoning = usage();
-    without_reasoning.reasoning_tokens = None;
-
-    let with_reasoning_cost = estimate_cost_usd(
+fn estimate_cost_charges_reasoning_tokens_using_completion_price_as_fallback() {
+    // reasoning_per_million is None in pricing_config, so reasoning tokens use
+    // completion_per_million (10.00) as fallback.
+    let cost = estimate_cost_usd(
         &pricing_config(),
         &ProviderId::new("openai"),
         &ModelId::new("gpt-4o"),
-        Some(&with_reasoning),
-    );
-    let without_reasoning_cost = estimate_cost_usd(
-        &pricing_config(),
+        Some(&usage()),
+    )
+    .expect("pricing entry exists");
+
+    // reasoning_tokens = 99_000, falls back to completion_per_million = 10.00
+    // reasoning_charge = 99_000 * 10.00 / 1_000_000 = 0.99
+    let expected = (1_000.0 * 2.50 / 1_000_000.0) // prompt
+        + (2_000.0 * 10.00 / 1_000_000.0)        // completion
+        + (3_000.0 * 1.25 / 1_000_000.0)         // cache_read
+        + (4_000.0 * 3.75 / 1_000_000.0)         // cache_creation
+        + (99_000.0 * 10.00 / 1_000_000.0); // reasoning (fallback to completion)
+
+    assert!((cost - expected).abs() < f64::EPSILON);
+}
+
+#[test]
+fn estimate_cost_uses_explicit_reasoning_price_when_provided() {
+    let mut config = pricing_config();
+    let entry = config
+        .providers
+        .get_mut("openai")
+        .and_then(|models| models.get_mut("gpt-4o"))
+        .expect("entry exists");
+    entry.reasoning_per_million = Some(2.00); // explicit reasoning price
+
+    let cost = estimate_cost_usd(
+        &config,
         &ProviderId::new("openai"),
         &ModelId::new("gpt-4o"),
-        Some(&without_reasoning),
-    );
+        Some(&usage()),
+    )
+    .expect("pricing entry exists");
 
-    assert_eq!(with_reasoning_cost, without_reasoning_cost);
+    let expected = (1_000.0 * 2.50 / 1_000_000.0) // prompt
+        + (2_000.0 * 10.00 / 1_000_000.0)        // completion
+        + (3_000.0 * 1.25 / 1_000_000.0)         // cache_read
+        + (4_000.0 * 3.75 / 1_000_000.0)         // cache_creation
+        + (99_000.0 * 2.00 / 1_000_000.0); // reasoning (explicit price)
+
+    assert!((cost - expected).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -95,7 +123,8 @@ fn estimate_cost_uses_prompt_price_for_missing_cache_prices() {
     let expected = (1_000.0 * 2.50 / 1_000_000.0)
         + (2_000.0 * 10.00 / 1_000_000.0)
         + (3_000.0 * 2.50 / 1_000_000.0)
-        + (4_000.0 * 2.50 / 1_000_000.0);
+        + (4_000.0 * 2.50 / 1_000_000.0)
+        + (99_000.0 * 10.00 / 1_000_000.0); // reasoning uses completion fallback
 
     assert!((cost - expected).abs() < f64::EPSILON);
 }

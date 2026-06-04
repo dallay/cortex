@@ -1,7 +1,7 @@
 // providers-groq — Groq API provider adapter
 
 use async_trait::async_trait;
-use futures::TryStreamExt;
+use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -9,6 +9,7 @@ use rook_core::{
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use sse_stream::SseBuffer;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
@@ -248,59 +249,68 @@ impl ProviderPort for GroqProvider {
         }
 
         let request_id = req.id.clone();
+        let mut sse_buffer = SseBuffer::new();
 
-        Ok(Box::pin(
-            resp.bytes_stream()
-                .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
-                .and_then(move |bytes| {
-                    let request_id = request_id.clone();
-                    async move {
-                        let text = String::from_utf8(bytes.to_vec())
-                            .map_err(|e| CortexError::provider(format!("invalid utf-8: {e}")))?;
-                        let mut chunks = Vec::new();
-                        for line in text.lines() {
-                            let data = line.trim_start_matches("data: ").trim();
-                            if data.is_empty() || data == "[DONE]" {
-                                continue;
-                            }
-                            if let Ok(parsed) = serde_json::from_str::<GroqStreamResponse>(data) {
-                                let choice = parsed.choices.first();
-                                let usage = parsed.usage.as_ref().map(|u| TokenUsage {
-                                    prompt_tokens: u.prompt_tokens,
-                                    completion_tokens: u.completion_tokens,
-                                    total_tokens: u.total_tokens,
-                                    cache_read_tokens: None,
-                                    cache_creation_tokens: None,
-                                    reasoning_tokens: None,
-                                    estimated_cost_usd: None,
-                                });
-                                chunks.push(Ok(StreamChunk {
-                                    id: request_id.clone(),
-                                    model: ModelId::new(parsed.model),
-                                    delta: choice
-                                        .and_then(|c| c.delta.content.clone())
-                                        .unwrap_or_default(),
-                                    finish_reason: choice
-                                        .and_then(|c| c.finish_reason.as_deref())
-                                        .and_then(|s| match s {
-                                            "stop" => Some(rook_core::FinishReason::Stop),
-                                            "length" => Some(rook_core::FinishReason::Length),
-                                            "content_filter" => {
-                                                Some(rook_core::FinishReason::ContentFilter)
-                                            }
-                                            "tool_calls" => {
-                                                Some(rook_core::FinishReason::ToolCalls)
-                                            }
-                                            _ => None,
-                                        }),
-                                    usage,
-                                }));
-                            }
-                        }
-                        Ok(futures::stream::iter(chunks))
+        fn process_bytes(
+            request_id: &shared_kernel::RequestId,
+            sse_buffer: &mut SseBuffer,
+            bytes: &[u8],
+        ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
+            let events = sse_buffer.push(bytes);
+            let mut chunks = Vec::new();
+
+            for event_text in events {
+                for data_line in event_text.lines().filter_map(|l| l.strip_prefix("data: ")) {
+                    if data_line.trim().is_empty() || data_line.trim() == "[DONE]" {
+                        continue;
                     }
-                })
-                .try_flatten(),
-        ))
+
+                    let parsed: GroqStreamResponse = match serde_json::from_str(data_line) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+
+                    let choice = parsed.choices.first();
+                    let usage = parsed.usage.as_ref().map(|u| TokenUsage {
+                        prompt_tokens: u.prompt_tokens,
+                        completion_tokens: u.completion_tokens,
+                        total_tokens: u.total_tokens,
+                        cache_read_tokens: None,
+                        cache_creation_tokens: None,
+                        reasoning_tokens: None,
+                        estimated_cost_usd: None,
+                    });
+                    chunks.push(StreamChunk {
+                        id: request_id.clone(),
+                        model: ModelId::new(parsed.model),
+                        delta: choice
+                            .and_then(|c| c.delta.content.clone())
+                            .unwrap_or_default(),
+                        finish_reason: choice.and_then(|c| c.finish_reason.as_deref()).and_then(
+                            |s| match s {
+                                "stop" => Some(rook_core::FinishReason::Stop),
+                                "length" => Some(rook_core::FinishReason::Length),
+                                "content_filter" => Some(rook_core::FinishReason::ContentFilter),
+                                "tool_calls" => Some(rook_core::FinishReason::ToolCalls),
+                                _ => None,
+                            },
+                        ),
+                        usage,
+                    });
+                }
+            }
+            futures::stream::iter(chunks.into_iter().map(Ok))
+        }
+
+        let stream = resp
+            .bytes_stream()
+            .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
+            .and_then(move |bytes| {
+                let request_id = request_id.clone();
+                futures::future::ok(process_bytes(&request_id, &mut sse_buffer, &bytes))
+            })
+            .try_flatten();
+
+        Ok(Box::pin(stream))
     }
 }

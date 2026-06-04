@@ -17,6 +17,8 @@ pub struct PricingEntry {
     pub cache_read_per_million: Option<f64>,
     #[serde(default)]
     pub cache_creation_per_million: Option<f64>,
+    #[serde(default)]
+    pub reasoning_per_million: Option<f64>,
 }
 
 impl PricingConfig {
@@ -62,6 +64,11 @@ pub fn estimate_cost_usd(
             .cache_creation_per_million
             .unwrap_or(price.prompt_per_million)
         / per_million;
+    let reasoning = usage.reasoning_tokens.unwrap_or(0) as f64
+        * price
+            .reasoning_per_million
+            .unwrap_or(price.completion_per_million)
+        / per_million;
 
-    Some(prompt + completion + cache_read + cache_creation)
+    Some(prompt + completion + cache_read + cache_creation + reasoning)
 }

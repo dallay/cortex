@@ -105,25 +105,41 @@ impl ProviderPort for GeminiProvider {
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
         let model = req.model.to_string();
+
+        // Collect system/developer messages into a single systemInstruction string.
+        // Gemini expects system-level instructions in systemInstruction field, not contents.
+        let mut system_instruction = String::new();
         let contents: Vec<serde_json::Value> = req
             .messages
             .iter()
-            .map(|m| {
-                let role = match m.role {
-                    rook_core::Role::System | rook_core::Role::Developer => "system",
-                    rook_core::Role::User => "user",
-                    rook_core::Role::Assistant => "model",
-                };
-                serde_json::json!({
-                    "role": role,
+            .filter_map(|m| match m.role {
+                rook_core::Role::System | rook_core::Role::Developer => {
+                    if !system_instruction.is_empty() {
+                        system_instruction.push('\n');
+                    }
+                    system_instruction.push_str(m.content.as_text());
+                    None
+                }
+                rook_core::Role::User => Some(serde_json::json!({
+                    "role": "user",
                     "parts": [{ "text": m.content.as_text() }]
-                })
+                })),
+                rook_core::Role::Assistant => Some(serde_json::json!({
+                    "role": "model",
+                    "parts": [{ "text": m.content.as_text() }]
+                })),
             })
             .collect();
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "contents": contents
         });
+        // Add systemInstruction only when we have system/developer content
+        if !system_instruction.is_empty() {
+            body["systemInstruction"] = serde_json::json!({
+                "parts": [{ "text": system_instruction }]
+            });
+        }
 
         let start = std::time::Instant::now();
         let url = format!("{}/v1beta/models/{}:generateContent", self.base_url(), model);
@@ -158,21 +174,27 @@ impl ProviderPort for GeminiProvider {
             .and_then(|p| p.text.clone())
             .unwrap_or_default();
 
-        let prompt_tokens = parsed
-            .usage_metadata
-            .as_ref()
-            .and_then(|u| u.prompt_token_count)
-            .unwrap_or(0);
-        let completion_tokens = parsed
-            .usage_metadata
-            .as_ref()
-            .and_then(|u| u.candidates_token_count)
-            .unwrap_or(0);
-        let total_tokens = parsed
-            .usage_metadata
-            .as_ref()
-            .and_then(|u| u.total_token_count)
-            .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
+        let (prompt_tokens, completion_tokens, total_tokens) =
+            if let Some(ref metadata) = parsed.usage_metadata {
+                (
+                    metadata.prompt_token_count.unwrap_or(0),
+                    metadata.candidates_token_count.unwrap_or(0),
+                    metadata.total_token_count.unwrap_or_else(|| {
+                        metadata
+                            .prompt_token_count
+                            .unwrap_or(0)
+                            .saturating_add(metadata.candidates_token_count.unwrap_or(0))
+                    }),
+                )
+            } else {
+                tracing::warn!(
+                    provider = %self.config.id,
+                    model = %model,
+                    request_id = %req.id,
+                    "Gemini usage_metadata missing from response"
+                );
+                (0, 0, 0)
+            };
 
         Ok(CompletionResponse {
             id: req.id.clone(),
