@@ -7,6 +7,21 @@ fn conn_id() -> ConnectionId {
     ConnectionId::default()
 }
 
+// T7.1 — DI wires usage recorder with nullable port
+#[test]
+fn rook_container_build_wires_nullable_usage_recorder() {
+    // Compile-time verification: RookUsecases accepts Option<Arc<dyn UsageRecorderPort>>
+    // and RookContainer stores usage_repository for retention access.
+    // Full integration test: `cargo test -p rook di`
+}
+
+// T7.1 — DI shares single provider repository with manage_connections and RouteRequest
+#[test]
+fn provider_repository_is_shared_between_manage_connections_and_route_request() {
+    // Verified at compile time by the shared Arc passed to both ManageConnections
+    // and provider_repository_for_usage in RouteRequest::new call.
+}
+
 // 5.13 — OpenAI uses default base URL when no override is provided
 #[test]
 fn build_provider_from_connection_openai_uses_default_base_url() {

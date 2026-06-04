@@ -126,6 +126,8 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
                 origin: "anthropic".to_string(),
                 cacheable: false,
                 priority: 5,
+                api_key_id: None,
+                requested_tier: None,
             },
             restrictions: ApiKeyRestrictions::default(),
         }
@@ -335,6 +337,9 @@ mod tests {
             prompt_tokens: prompt,
             completion_tokens: completion,
             total_tokens: prompt + completion,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             estimated_cost_usd: None,
         }
     }
@@ -430,6 +435,9 @@ mod tests {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_usd: None,
             },
             latency_ms: 100,

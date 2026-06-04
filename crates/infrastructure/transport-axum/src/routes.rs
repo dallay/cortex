@@ -74,6 +74,9 @@ pub fn router(
     // RookUsecases), so the route is always mounted.
     router = router.merge(crate::models_routes::router(usecases.clone()));
 
+    // Usage history routes — always mounted, returns 503 if usage recorder is unavailable
+    router = router.merge(usage_routes(usecases.clone()));
+
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
         router = router.merge(rate_limits_routes(store));
@@ -391,6 +394,20 @@ async fn chat_completions(
     let mut req = CompletionRequest::from(body);
     req.restrictions = restrictions_from_headers(&headers)?;
 
+    // Populate request metadata from trusted auth headers.
+    if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
+        req.metadata.api_key_id = Some(api_key_id);
+    }
+    // Extract requested_tier from trusted header if present.
+    if let Some(tier) = headers
+        .get("x-authz-requested-tier")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        req.metadata.requested_tier = Some(tier.to_string());
+    }
+
     if req.stream {
         return chat_completions_stream(usecases, req).await;
     }
@@ -581,6 +598,20 @@ async fn anthropic_messages(
     let mut req = CompletionRequest::from(body);
     req.restrictions = restrictions_from_headers(&headers)?;
 
+    // Populate request metadata from trusted auth headers.
+    if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
+        req.metadata.api_key_id = Some(api_key_id);
+    }
+    // Extract requested_tier from trusted header if present.
+    if let Some(tier) = headers
+        .get("x-authz-requested-tier")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        req.metadata.requested_tier = Some(tier.to_string());
+    }
+
     if req.stream {
         return anthropic_messages_stream(usecases, req).await;
     }
@@ -731,4 +762,12 @@ fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Route
             get(handlers::rate_limits::get_status),
         )
         .with_state(store)
+}
+
+fn usage_routes(usecases: Usecases) -> Router {
+    Router::new()
+        .route("/api/usage", get(handlers::usage::list_usage))
+        .route("/api/usage/summary", get(handlers::usage::usage_summary))
+        .route("/api/usage/cost", get(handlers::usage::usage_cost))
+        .with_state(usecases)
 }

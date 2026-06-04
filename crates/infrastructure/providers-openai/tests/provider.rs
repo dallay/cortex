@@ -95,6 +95,8 @@ async fn complete_returns_response_on_success() {
             origin: "test".to_string(),
             cacheable: true,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -145,6 +147,8 @@ async fn stream_returns_chunks_on_openai_sse_success() {
             origin: "test".to_string(),
             cacheable: true,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -174,4 +178,140 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         chunks.last().unwrap().usage.as_ref().unwrap().total_tokens,
         12
     );
+}
+
+#[tokio::test]
+async fn complete_parses_cached_tokens_and_reasoning_tokens() {
+    // T5.1: OpenAI extended usage parses prompt_tokens_details.cached_tokens
+    // and completion_tokens_details.reasoning_tokens.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-123",
+                "model": "gpt-4o",
+                "choices": [{
+                    "message": { "role": "assistant", "content": "Hi" },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 500,
+                    "completion_tokens": 150,
+                    "total_tokens": 650,
+                    "prompt_tokens_details": {
+                        "cached_tokens": 400
+                    },
+                    "completion_tokens_details": {
+                        "reasoning_tokens": 120
+                    }
+                }
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4o")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4o"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let result = provider.complete(&req).await;
+    assert!(result.is_ok());
+    let resp = result.unwrap();
+    // Verify cache_read_tokens (cached prompt) is parsed
+    assert_eq!(resp.usage.cache_read_tokens, Some(400));
+    // Verify reasoning_tokens is parsed
+    assert_eq!(resp.usage.reasoning_tokens, Some(120));
+    // cache_creation_tokens is not available from OpenAI response
+    assert_eq!(resp.usage.cache_creation_tokens, None);
+}
+
+#[tokio::test]
+async fn stream_request_includes_include_usage_option() {
+    // T5.1: Streaming requests set stream_options.include_usage: true
+    // so the final chunk carries usage data.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string(
+                "data: {\"id\":\"chatcmpl-123\",\"model\":\"gpt-4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\ndata: [DONE]\n",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: true,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let chunks = provider
+        .stream(&req)
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    // Verify the final chunk has usage from the SSE event
+    let final_usage = chunks.last().unwrap().usage.as_ref();
+    assert!(final_usage.is_some());
+    assert_eq!(final_usage.unwrap().prompt_tokens, 5);
+    assert_eq!(final_usage.unwrap().completion_tokens, 2);
 }

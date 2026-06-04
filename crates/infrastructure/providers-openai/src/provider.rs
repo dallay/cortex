@@ -125,6 +125,13 @@ struct OpenAIRequest {
     tools: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OpenAIStreamOptions>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OpenAIStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -161,6 +168,22 @@ struct OpenAIUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     total_tokens: u32,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAIPromptTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<OpenAICompletionTokensDetails>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAICompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<u64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -259,6 +282,7 @@ impl ProviderPort for OpenAIProvider {
             temperature: req.temperature,
             tools: req.tools.clone(),
             tool_choice: req.tool_choice.clone(),
+            stream_options: None,
         };
 
         let start = std::time::Instant::now();
@@ -297,7 +321,18 @@ impl ProviderPort for OpenAIProvider {
                 prompt_tokens: openai_resp.usage.prompt_tokens,
                 completion_tokens: openai_resp.usage.completion_tokens,
                 total_tokens: openai_resp.usage.total_tokens,
-                estimated_cost_usd: None, // TODO: calculate from model pricing
+                cache_read_tokens: openai_resp
+                    .usage
+                    .prompt_tokens_details
+                    .as_ref()
+                    .and_then(|d| d.cached_tokens),
+                cache_creation_tokens: None,
+                reasoning_tokens: openai_resp
+                    .usage
+                    .completion_tokens_details
+                    .as_ref()
+                    .and_then(|d| d.reasoning_tokens),
+                estimated_cost_usd: None, // Cost calculated in usecase layer
             },
             latency_ms: start.elapsed().as_millis() as u64,
         })
@@ -328,6 +363,9 @@ impl ProviderPort for OpenAIProvider {
             temperature: req.temperature,
             tools: req.tools.clone(),
             tool_choice: req.tool_choice.clone(),
+            stream_options: Some(OpenAIStreamOptions {
+                include_usage: true,
+            }),
         };
 
         let resp = self
@@ -371,6 +409,15 @@ impl ProviderPort for OpenAIProvider {
                         prompt_tokens: usage.prompt_tokens,
                         completion_tokens: usage.completion_tokens,
                         total_tokens: usage.total_tokens,
+                        cache_read_tokens: usage
+                            .prompt_tokens_details
+                            .as_ref()
+                            .and_then(|d| d.cached_tokens),
+                        cache_creation_tokens: None,
+                        reasoning_tokens: usage
+                            .completion_tokens_details
+                            .as_ref()
+                            .and_then(|d| d.reasoning_tokens),
                         estimated_cost_usd: None,
                     });
 

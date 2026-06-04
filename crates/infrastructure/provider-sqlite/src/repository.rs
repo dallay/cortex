@@ -64,6 +64,29 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
         .map_err(db_error)
     }
 
+    async fn find_connection_id_by_runtime(
+        &self,
+        provider: &ProviderId,
+    ) -> Result<Option<ConnectionId>, RepositoryError> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id
+             FROM provider_connections
+             WHERE provider_runtime_id = ?1 AND is_active = 1
+             ORDER BY priority ASC, created_at DESC
+             LIMIT 1",
+            params![provider.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(db_error)?
+        .map(|id| {
+            ConnectionId::parse_str(&id)
+                .map_err(|error| RepositoryError::Database(error.to_string()))
+        })
+        .transpose()
+    }
+
     async fn create(&self, conn_model: &ProviderConnection) -> Result<(), RepositoryError> {
         validate_credential_shape(conn_model)?;
 
@@ -651,6 +674,49 @@ mod tests {
                 result,
                 Err(RepositoryError::DuplicateConnection(_))
             ));
+        });
+    }
+
+    #[test]
+    fn find_connection_id_by_runtime_returns_highest_priority_active_connection() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let runtime_id = ProviderId::new("openai-primary");
+            let mut inactive_high =
+                connection("inactive-high", 1, timestamp("2026-01-04T00:00:00Z"));
+            inactive_high.provider_runtime_id = runtime_id.clone();
+            inactive_high.is_active = false;
+            let mut low = connection("low", 2, timestamp("2026-01-01T00:00:00Z"));
+            low.provider_runtime_id = runtime_id.clone();
+            let mut old_high = connection("old-high", 1, timestamp("2026-01-02T00:00:00Z"));
+            old_high.provider_runtime_id = runtime_id.clone();
+            let mut new_high = connection("new-high", 1, timestamp("2026-01-03T00:00:00Z"));
+            new_high.provider_runtime_id = runtime_id.clone();
+            let expected = new_high.id;
+
+            repo.create(&inactive_high).await.expect("inactive");
+            repo.create(&low).await.expect("low");
+            repo.create(&old_high).await.expect("old");
+            repo.create(&new_high).await.expect("new");
+
+            let result = repo
+                .find_connection_id_by_runtime(&runtime_id)
+                .await
+                .expect("find runtime");
+
+            assert_eq!(result, Some(expected));
+        });
+    }
+
+    #[test]
+    fn find_connection_id_by_runtime_returns_none_for_unknown_or_toml_provider() {
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(":memory:").expect("repo");
+            let result = repo
+                .find_connection_id_by_runtime(&ProviderId::new("ollama-local"))
+                .await
+                .expect("find runtime");
+            assert_eq!(result, None);
         });
     }
 

@@ -3,10 +3,14 @@
 // These types are the canonical internal representation.
 // Translation to/from provider-specific wire formats happens in `infrastructure/transport-axum`.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared_kernel::{CacheKey, ModelId, ProviderId, RequestId};
+use shared_kernel::{CacheKey, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
+
+use crate::ApiKeyId;
 
 // ============================================================================
 // User — admin user for MANAGEMENT routes
@@ -169,6 +173,10 @@ pub struct RequestMetadata {
     pub cacheable: bool,
     /// Priority tier — lower = higher priority
     pub priority: u8,
+    /// Authenticated client API key identifier, if the request used one.
+    pub api_key_id: Option<ApiKeyId>,
+    /// Requested service tier from the client request, if present.
+    pub requested_tier: Option<String>,
 }
 
 /// The content of a message in the provider-agnostic domain model.
@@ -288,6 +296,9 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
     /// Estimated cost in USD — calculated by the provider adapter
     pub estimated_cost_usd: Option<f64>,
 }
@@ -367,6 +378,84 @@ pub struct AuditEntry {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageEntry {
+    pub request_id: RequestId,
+    pub provider: ProviderId,
+    pub model: ModelId,
+    pub status: RequestStatus,
+    pub requested_tier: Option<String>,
+    pub api_key_id: Option<ApiKeyId>,
+    pub connection_id: Option<ConnectionId>,
+    pub tokens_prompt: Option<u64>,
+    pub tokens_completion: Option<u64>,
+    pub tokens_cache_read: Option<u64>,
+    pub tokens_cache_creation: Option<u64>,
+    pub tokens_reasoning: Option<u64>,
+    pub ttft_ms: Option<u64>,
+    pub latency_ms: u64,
+    pub cost_usd: Option<f64>,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageFilters {
+    pub provider: Option<ProviderId>,
+    pub model: Option<ModelId>,
+    pub api_key_id: Option<ApiKeyId>,
+    pub connection_id: Option<ConnectionId>,
+    pub start: Option<DateTime<Utc>>,
+    pub end: Option<DateTime<Utc>>,
+    pub status: Option<RequestStatus>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Pagination {
+    pub offset: u64,
+    pub limit: u64,
+}
+
+impl Default for Pagination {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            limit: Self::DEFAULT_LIMIT,
+        }
+    }
+}
+
+impl Pagination {
+    pub const DEFAULT_LIMIT: u64 = 100;
+    pub const MAX_LIMIT: u64 = 1000;
+
+    pub fn clamped(self) -> Self {
+        Self {
+            offset: self.offset,
+            limit: self.limit.min(Self::MAX_LIMIT),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageSummary {
+    pub total_requests: u64,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_reasoning_tokens: u64,
+    pub avg_ttft_ms: Option<f64>,
+    pub avg_latency_ms: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CostBreakdown {
+    pub total_cost_usd: f64,
+    pub by_provider: HashMap<ProviderId, f64>,
+    pub by_model: HashMap<ModelId, f64>,
+    pub by_api_key: HashMap<ApiKeyId, f64>,
+}
+
 impl AuditEntry {
     pub fn success(
         request_id: &RequestId,
@@ -402,6 +491,82 @@ impl AuditEntry {
             latency_ms,
             timestamp: Utc::now(),
         }
+    }
+}
+
+#[cfg(test)]
+mod usage_domain_tests {
+    use super::*;
+
+    #[test]
+    fn pagination_defaults_to_100_and_clamps_to_1000() {
+        let default_pagination = Pagination::default();
+        assert_eq!(default_pagination.offset, 0);
+        assert_eq!(default_pagination.limit, 100);
+
+        let clamped = Pagination {
+            offset: 25,
+            limit: 5000,
+        }
+        .clamped();
+        assert_eq!(clamped.offset, 25);
+        assert_eq!(clamped.limit, 1000);
+    }
+
+    #[test]
+    fn usage_entry_serializes_nullable_dimensions_and_identifiers() {
+        let entry = UsageEntry {
+            request_id: RequestId::new(),
+            provider: ProviderId::new("openai"),
+            model: ModelId::new("gpt-4o"),
+            status: RequestStatus::Success,
+            requested_tier: Some("premium".to_string()),
+            api_key_id: Some(ApiKeyId::new("key_abc123")),
+            connection_id: Some(ConnectionId::new()),
+            tokens_prompt: Some(10),
+            tokens_completion: Some(20),
+            tokens_cache_read: None,
+            tokens_cache_creation: Some(5),
+            tokens_reasoning: None,
+            ttft_ms: Some(150),
+            latency_ms: 250,
+            cost_usd: Some(0.001),
+            timestamp: Utc::now(),
+        };
+
+        let value = serde_json::to_value(&entry).expect("serialize usage entry");
+
+        assert_eq!(value["provider"], "openai");
+        assert_eq!(value["model"], "gpt-4o");
+        assert_eq!(value["status"], "success");
+        assert_eq!(value["api_key_id"], "key_abc123");
+        assert!(value["tokens_cache_read"].is_null());
+        assert_eq!(value["tokens_cache_creation"], 5);
+        assert!(value["tokens_reasoning"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod token_usage_tests {
+    use super::*;
+
+    #[test]
+    fn token_usage_serializes_optional_cache_and_reasoning_dimensions() {
+        let usage = TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+            cache_read_tokens: Some(4),
+            cache_creation_tokens: None,
+            reasoning_tokens: Some(6),
+            estimated_cost_usd: Some(0.00042),
+        };
+
+        let value = serde_json::to_value(&usage).expect("serialize token usage");
+
+        assert_eq!(value["cache_read_tokens"], 4);
+        assert!(value["cache_creation_tokens"].is_null());
+        assert_eq!(value["reasoning_tokens"], 6);
     }
 }
 

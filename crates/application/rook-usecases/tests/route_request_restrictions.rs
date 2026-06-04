@@ -11,7 +11,7 @@ use rook_core::{
     MessageContent, ModelId, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort,
     StreamChunk, TokenUsage,
 };
-use rook_usecases::RouteRequest;
+use rook_usecases::{PricingConfig, RouteRequest};
 use shared_kernel::{CacheKey, RequestId};
 
 // --- Fake Implementations ---
@@ -67,6 +67,9 @@ impl ProviderPort for FakeProvider {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_usd: None,
             },
             latency_ms: 10,
@@ -178,7 +181,15 @@ async fn allowed_models_contains_requested_model_passes() {
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
     let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
 
-    let route_request = RouteRequest::new(router, cache, audit, translator);
+    let route_request = RouteRequest::new(
+        router,
+        cache,
+        audit,
+        None,
+        None,
+        Arc::new(PricingConfig::default()),
+        translator,
+    );
 
     let req = CompletionRequest {
         id: RequestId::new(),
@@ -196,6 +207,8 @@ async fn allowed_models_contains_requested_model_passes() {
             origin: "test".to_string(),
             cacheable: false,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("gpt-3.5-turbo")],
@@ -217,7 +230,15 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
     let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
 
-    let route_request = RouteRequest::new(router, cache, audit, translator);
+    let route_request = RouteRequest::new(
+        router,
+        cache,
+        audit,
+        None,
+        None,
+        Arc::new(PricingConfig::default()),
+        translator,
+    );
 
     let req = CompletionRequest {
         id: RequestId::new(),
@@ -235,6 +256,8 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
             origin: "test".to_string(),
             cacheable: false,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4")],
@@ -260,7 +283,15 @@ async fn allowed_providers_contains_selected_provider_passes() {
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
     let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
 
-    let route_request = RouteRequest::new(router, cache, audit, translator);
+    let route_request = RouteRequest::new(
+        router,
+        cache,
+        audit,
+        None,
+        None,
+        Arc::new(PricingConfig::default()),
+        translator,
+    );
 
     let req = CompletionRequest {
         id: RequestId::new(),
@@ -278,6 +309,8 @@ async fn allowed_providers_contains_selected_provider_passes() {
             origin: "test".to_string(),
             cacheable: false,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],
@@ -299,7 +332,15 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
     let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
 
-    let route_request = RouteRequest::new(router, cache, audit, translator);
+    let route_request = RouteRequest::new(
+        router,
+        cache,
+        audit,
+        None,
+        None,
+        Arc::new(PricingConfig::default()),
+        translator,
+    );
 
     let req = CompletionRequest {
         id: RequestId::new(),
@@ -317,6 +358,8 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
             origin: "test".to_string(),
             cacheable: false,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],

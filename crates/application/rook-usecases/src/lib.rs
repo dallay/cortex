@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod auth;
+pub mod cost_estimation;
 pub mod route_request;
 pub mod router_impl;
 
@@ -19,6 +20,7 @@ pub use auth::{
     SetAdminPasswordInput, ValidateSession, ValidateSessionError, ValidatedSession,
 };
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
+pub use cost_estimation::{estimate_cost_usd, PricingConfig, PricingEntry};
 pub use health_check::HealthCheck;
 pub use manage_api_keys::{
     CreateApiKeyRequest, ManageApiKeys, ManageApiKeysError, UpdateApiKeyRequest,
@@ -27,7 +29,7 @@ pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
 pub use manage_providers::ManageProviders;
-pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort};
+pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort, UsageRecorderPort};
 pub use route_request::RouteRequest;
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 
@@ -45,6 +47,7 @@ pub struct RookUsecases {
     pub authenticate_client_api: Option<AuthenticateClientApi>,
     pub manage_connections: Option<ManageConnections>,
     pub manage_api_keys: Option<ManageApiKeys>,
+    pub usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
     pub bootstrap_status: BootstrapStatus,
     pub ensure_admin_user: EnsureAdminUser,
     pub set_admin_password: SetAdminPassword,
@@ -67,6 +70,7 @@ impl RookUsecases {
         authenticate_client_api: Option<AuthenticateClientApi>,
         manage_connections: Option<ManageConnections>,
         manage_api_keys: Option<ManageApiKeys>,
+        usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
         bootstrap_status: BootstrapStatus,
         ensure_admin_user: EnsureAdminUser,
         set_admin_password: SetAdminPassword,
@@ -83,6 +87,7 @@ impl RookUsecases {
             authenticate_client_api,
             manage_connections,
             manage_api_keys,
+            usage_recorder,
             bootstrap_status,
             ensure_admin_user,
             set_admin_password,

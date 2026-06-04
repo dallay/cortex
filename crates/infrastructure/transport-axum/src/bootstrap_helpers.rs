@@ -48,6 +48,9 @@ pub fn make_test_bootstrap_usecases(
         fallback_router.clone() as Arc<dyn RouterPort>,
         cache,
         audit,
+        None,
+        None,
+        Arc::new(rook_usecases::PricingConfig::default()),
         format_translator,
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
@@ -64,6 +67,7 @@ pub fn make_test_bootstrap_usecases(
             "test-hmac-secret",
             fallback_router.clone(),
         )),
+        None,
         bootstrap_status,
         rook_usecases::EnsureAdminUser::new(user_repo.clone()),
         set_admin_password,

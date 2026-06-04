@@ -33,6 +33,9 @@ fn mock_completion_response(content: &str) -> CompletionResponse {
             prompt_tokens: 10,
             completion_tokens: 5,
             total_tokens: 15,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             estimated_cost_usd: None,
         },
         latency_ms: 42,
@@ -262,6 +265,9 @@ impl ProviderPort for RegistryTestProvider {
                 prompt_tokens: 3,
                 completion_tokens: 5,
                 total_tokens: 8,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_usd: None,
             },
             latency_ms: 7,
@@ -365,6 +371,9 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
         Arc::new(RegistryTestRouter { provider }),
         Arc::new(NoopCache),
         Arc::new(NoopAudit),
+        None,
+        None,
+        Arc::new(rook_usecases::PricingConfig::default()),
         registry_with_openai_anthropic_pairs(),
     )
 }
@@ -386,6 +395,8 @@ fn registry_domain_request() -> CompletionRequest {
             origin: "registry-test".to_string(),
             cacheable: false,
             priority: 1,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     }

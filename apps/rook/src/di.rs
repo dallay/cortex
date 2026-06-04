@@ -2,10 +2,11 @@
 //
 // This is the ONLY place where all crates are assembled.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use audit_sqlite::SqliteAudit;
+use audit_sqlite::{SqliteAudit, SqliteUsageRepository};
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
@@ -16,7 +17,7 @@ use providers_ollama::OllamaProvider;
 use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, ConnectionId, DecryptedCredentials, PasswordHasher,
     ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
-    RouterPort, SessionRepositoryPort,
+    RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -55,6 +56,10 @@ pub struct RookContainer {
     /// Format registry for provider wire-format lookup — used in Phase 2 routing.
     #[allow(dead_code)]
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
+    /// Concrete usage repository — used for retention sweep task.
+    pub usage_repository: Arc<SqliteUsageRepository>,
+    /// Usage config — retention_days and sweep_interval_hours for retention sweep.
+    pub usage_config: crate::config::UsageConfig,
 }
 
 impl RookContainer {
@@ -116,7 +121,18 @@ impl RookContainer {
             (None, None)
         };
 
-        // 7. ManageConnections (provider CRUD) — built here so it can be used in join!
+        // 7. Build shared provider repository for manage_connections AND usage/connection lookup
+        // Single shared instance — NOT duplicated for RouteRequest.
+        let provider_repo: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
+        let provider_repository_for_usage: Option<Arc<dyn ProviderRepositoryPort>> =
+            if config.provider_crud.enabled {
+                Some(provider_repo.clone())
+            } else {
+                None
+            };
+
+        // 7a. ManageConnections (provider CRUD) — uses shared provider_repo
         let manage_connections = if config.provider_crud.enabled {
             let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
             let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
@@ -124,8 +140,7 @@ impl RookContainer {
                 AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
                     .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
             );
-            let repo: Arc<dyn ProviderRepositoryPort> =
-                Arc::new(SqliteProviderRepository::new(&config.database.db_path)?);
+            let repo = provider_repo.clone();
             let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
             Some(ManageConnections::new(
                 repo,
@@ -136,6 +151,13 @@ impl RookContainer {
         } else {
             None
         };
+
+        // 7b. Usage repository — concrete SqliteUsageRepository stored on container for retention
+        let sqlite_usage: Arc<SqliteUsageRepository> = Arc::new(
+            SqliteUsageRepository::new(Path::new(&config.database.db_path))
+                .map_err(|e| anyhow::anyhow!("failed to create usage repository: {e}"))?,
+        );
+        let usage_recorder: Option<Arc<dyn UsageRecorderPort>> = Some(sqlite_usage.clone());
 
         // 8. Run async initialization tasks concurrently:
         // - registry refresh (if provider_crud enabled)
@@ -181,6 +203,9 @@ impl RookContainer {
                     router.clone(),
                     cache.clone(),
                     audit.clone(),
+                    usage_recorder.clone(),
+                    provider_repository_for_usage,
+                    Arc::new(config.pricing.clone()),
                     format_registry.clone(),
                 ),
                 ManageProviders::new(router.clone()),
@@ -188,6 +213,7 @@ impl RookContainer {
                 authenticate_client_api.clone(),
                 manage_connections,
                 manage_api_keys,
+                None,
                 bootstrap_status.clone(),
                 ensure_admin_user,
                 set_admin_password,
@@ -248,6 +274,8 @@ impl RookContainer {
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
             rate_limit_store,
             format_registry,
+            usage_repository: sqlite_usage,
+            usage_config: config.usage.clone(),
         })
     }
 }
@@ -526,6 +554,7 @@ pub fn build_provider_from_connection(
             let config = providers_gemini::GeminiProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
+                base_url: base_url_override,
                 models: Vec::new(),
                 timeout_secs: 60,
             };
@@ -536,6 +565,7 @@ pub fn build_provider_from_connection(
             let config = providers_groq::GroqProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
+                base_url: None,
                 models: Vec::new(),
                 timeout_secs: 60,
             };

@@ -77,6 +77,8 @@ async fn complete_returns_valid_response_from_mock_server() {
             origin: "test".to_string(),
             cacheable: true,
             priority: 0,
+            api_key_id: None,
+            requested_tier: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -93,4 +95,71 @@ async fn complete_returns_valid_response_from_mock_server() {
     assert_eq!(resp.usage.prompt_tokens, 10);
     assert_eq!(resp.usage.completion_tokens, 5);
     assert_eq!(resp.usage.total_tokens, 15);
+}
+
+#[tokio::test]
+async fn complete_parses_cache_tokens() {
+    // T5.2: Anthropic non-streaming response parses cache_creation_input_tokens
+    // and cache_read_input_tokens.
+    let mock_server = MockServer::start().await;
+
+    let response_body = serde_json::json!({
+        "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Hi"}],
+        "model": "claude-3-5-sonnet-20241022",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+            "input_tokens": 500,
+            "output_tokens": 150,
+            "cache_creation_input_tokens": 300,
+            "cache_read_input_tokens": 200
+        }
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+        .mount(&mock_server)
+        .await;
+
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: mock_server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet-20241022")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("claude-3-5-sonnet-20241022"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: MessageContent::Text("Hi".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let result = provider.complete(&req).await;
+    assert!(result.is_ok());
+    let resp = result.unwrap();
+    assert_eq!(resp.usage.cache_creation_tokens, Some(300));
+    assert_eq!(resp.usage.cache_read_tokens, Some(200));
+    assert_eq!(resp.usage.reasoning_tokens, None); // Not supported by Anthropic
 }

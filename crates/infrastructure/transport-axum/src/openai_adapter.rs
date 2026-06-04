@@ -128,6 +128,8 @@ impl From<OpenAIChatRequest> for CompletionRequest {
                 origin: "openai".to_string(),
                 cacheable: true,
                 priority: 5,
+                api_key_id: None,
+                requested_tier: None,
             },
             restrictions: ApiKeyRestrictions::default(),
         }
@@ -355,6 +357,9 @@ mod openai_adapter_tests {
                 prompt_tokens: 1,
                 completion_tokens: 2,
                 total_tokens: 3,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_usd: None,
             },
             latency_ms: 1,
