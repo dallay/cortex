@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { AlertCircle } from '@lucide/vue'
 import CopyButton from '@/components/CopyButton.vue'
 
@@ -9,6 +10,7 @@ defineProps<{
   title?: string
   description?: string
   warning?: string
+  onDone?: () => void
 }>()
 </script>
 
@@ -32,5 +34,8 @@ defineProps<{
         <CopyButton :value="apiKey" />
       </div>
     </CardContent>
+    <CardFooter v-if="onDone" class="justify-end">
+      <Button @click="onDone">Done</Button>
+    </CardFooter>
   </Card>
 </template>
