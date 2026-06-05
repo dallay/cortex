@@ -121,45 +121,17 @@ impl RouteRequest {
         }
 
         // 0a. Resolve model alias if enabled (BEFORE restrictions check)
-        if self.alias_config.enabled {
-            match self.alias_repository.find_by_alias(&req.model, None).await {
-                Ok(Some(alias_entry)) => {
-                    tracing::debug!(
-                        alias = %req.model,
-                        canonical = %alias_entry.canonical,
-                        "Resolved model alias"
-                    );
-                    req.model = alias_entry.canonical;
-                }
-                Ok(None) => {
-                    // No alias found, proceed with original model
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        model = %req.model,
-                        "Alias resolution failed, using original model"
-                    );
-                }
-            }
-        }
+        self.resolve_model_alias(&mut req).await;
 
         let cache_key = req.cache_key();
         let start = Instant::now();
 
         // 0b. Model restriction check (AFTER alias resolution)
-        if !req.restrictions.allowed_models.is_empty()
-            && !req.restrictions.allowed_models.contains(&req.model)
-        {
-            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
-        }
+        self.check_model_restriction(&req)?;
 
         // 1. Cache hit?
-        if req.metadata.cacheable {
-            if let Some(cached) = self.cache.get(&cache_key).await? {
-                tracing::debug!(request_id = %req.id, "cache hit");
-                return Ok(cached);
-            }
+        if let Some(cached) = self.try_get_cached(&req, &cache_key).await? {
+            return Ok(cached);
         }
 
         // 2. Select provider
@@ -168,11 +140,7 @@ impl RouteRequest {
         let connection_id = self.resolve_connection_id(&provider_id).await;
 
         // 2a. Provider restriction check (after selection, before execution)
-        if !req.restrictions.allowed_providers.is_empty()
-            && !req.restrictions.allowed_providers.contains(&provider_id)
-        {
-            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
-        }
+        self.check_provider_restriction(&req, &provider_id)?;
 
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(
@@ -187,73 +155,174 @@ impl RouteRequest {
 
         match result {
             Ok(provider_resp) => {
-                let resp = self.format_translator.translate_response(
+                self.handle_success(
+                    req,
+                    provider_resp,
+                    provider_id,
+                    connection_id,
                     provider_format,
                     client_format,
-                    provider_resp,
-                )?;
-                // 4. Cache if eligible
-                if req.metadata.cacheable {
-                    if let Err(e) = self.cache.set(&cache_key, &resp, DEFAULT_CACHE_TTL).await {
-                        tracing::warn!(error = %e, "failed to cache response");
-                    }
-                }
-
-                // 5. Audit success
-                let entry = AuditEntry::success(
-                    &req.id,
-                    &provider_id,
-                    &req.model,
-                    Some(resp.usage.clone()),
+                    cache_key,
                     latency_ms,
-                );
-                if let Err(e) = self.audit.record(entry).await {
-                    tracing::warn!(error = %e, "failed to record audit entry");
-                }
-
-                self.record_usage(
-                    &req,
-                    &provider_id,
-                    connection_id,
-                    UsageMetrics {
-                        status: RequestStatus::Success,
-                        usage: Some(&resp.usage),
-                        ttft_ms: Some(latency_ms),
-                        latency_ms,
-                    },
                 )
-                .await;
-
-                // 6. Record telemetry
-                if let Some(telemetry) = &self.telemetry {
-                    telemetry.record_observation(
-                        provider_id.clone(),
-                        latency_ms,
-                        None, // Non-streaming requests don't have TTFT
-                        ObservationStatus::Success,
-                    );
-                }
-
-                Ok(resp)
+                .await
             }
             Err(e) => {
-                let final_latency = start.elapsed().as_millis() as u64;
-                self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
-                    .await;
-
-                // Record telemetry failure
-                if let Some(telemetry) = &self.telemetry {
-                    let status = if e.is_rate_limited() {
-                        ObservationStatus::RateLimited
-                    } else {
-                        ObservationStatus::Failure
-                    };
-                    telemetry.record_observation(provider_id.clone(), final_latency, None, status);
-                }
-
-                Err(e)
+                self.handle_failure(req, provider_id, connection_id, start, e)
+                    .await
             }
         }
+    }
+
+    async fn resolve_model_alias(&self, req: &mut CompletionRequest) {
+        if !self.alias_config.enabled {
+            return;
+        }
+
+        match self.alias_repository.find_by_alias(&req.model, None).await {
+            Ok(Some(alias_entry)) => {
+                tracing::debug!(
+                    alias = %req.model,
+                    canonical = %alias_entry.canonical,
+                    "Resolved model alias"
+                );
+                req.model = alias_entry.canonical;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    model = %req.model,
+                    "Alias resolution failed, using original model"
+                );
+            }
+        }
+    }
+
+    fn check_model_restriction(&self, req: &CompletionRequest) -> Result<(), CortexError> {
+        if !req.restrictions.allowed_models.is_empty()
+            && !req.restrictions.allowed_models.contains(&req.model)
+        {
+            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
+        }
+        Ok(())
+    }
+
+    fn check_provider_restriction(
+        &self,
+        req: &CompletionRequest,
+        provider_id: &ProviderId,
+    ) -> Result<(), CortexError> {
+        if !req.restrictions.allowed_providers.is_empty()
+            && !req.restrictions.allowed_providers.contains(provider_id)
+        {
+            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
+        }
+        Ok(())
+    }
+
+    async fn try_get_cached(
+        &self,
+        req: &CompletionRequest,
+        cache_key: &rook_core::CacheKey,
+    ) -> Result<Option<CompletionResponse>, CortexError> {
+        if !req.metadata.cacheable {
+            return Ok(None);
+        }
+
+        if let Some(cached) = self.cache.get(cache_key).await? {
+            tracing::debug!(request_id = %req.id, "cache hit");
+            return Ok(Some(cached));
+        }
+
+        Ok(None)
+    }
+
+    async fn handle_success(
+        &self,
+        req: CompletionRequest,
+        provider_resp: CompletionResponse,
+        provider_id: ProviderId,
+        connection_id: Option<ConnectionId>,
+        provider_format: ApiFormat,
+        client_format: ApiFormat,
+        cache_key: rook_core::CacheKey,
+        latency_ms: u64,
+    ) -> Result<CompletionResponse, CortexError> {
+        let resp = self.format_translator.translate_response(
+            provider_format,
+            client_format,
+            provider_resp,
+        )?;
+
+        // Cache if eligible
+        if req.metadata.cacheable {
+            if let Err(e) = self.cache.set(&cache_key, &resp, DEFAULT_CACHE_TTL).await {
+                tracing::warn!(error = %e, "failed to cache response");
+            }
+        }
+
+        // Audit success
+        let entry = AuditEntry::success(
+            &req.id,
+            &provider_id,
+            &req.model,
+            Some(resp.usage.clone()),
+            latency_ms,
+        );
+        if let Err(e) = self.audit.record(entry).await {
+            tracing::warn!(error = %e, "failed to record audit entry");
+        }
+
+        self.record_usage(
+            &req,
+            &provider_id,
+            connection_id,
+            UsageMetrics {
+                status: RequestStatus::Success,
+                usage: Some(&resp.usage),
+                ttft_ms: Some(latency_ms),
+                latency_ms,
+            },
+        )
+        .await;
+
+        // Record telemetry
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.record_observation(
+                provider_id,
+                latency_ms,
+                None,
+                ObservationStatus::Success,
+            );
+        }
+
+        Ok(resp)
+    }
+
+    async fn handle_failure(
+        &self,
+        req: CompletionRequest,
+        provider_id: ProviderId,
+        connection_id: Option<ConnectionId>,
+        start: Instant,
+        e: CortexError,
+    ) -> Result<CompletionResponse, CortexError> {
+        let final_latency = start.elapsed().as_millis() as u64;
+        self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
+            .await;
+
+        // Record telemetry failure
+        if let Some(telemetry) = &self.telemetry {
+            let status = if e.is_rate_limited() {
+                ObservationStatus::RateLimited
+            } else {
+                ObservationStatus::Failure
+            };
+            telemetry.record_observation(provider_id, final_latency, None, status);
+        }
+
+        Err(e)
     }
 
     pub async fn execute_stream(
