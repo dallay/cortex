@@ -240,6 +240,17 @@ impl RookContainer {
         );
         let format_registry = Arc::new(format_registry);
 
+        // Create telemetry tracker and spawn cleanup task if enabled
+        let telemetry_tracker = if config.telemetry.enabled {
+            let telemetry_config: observability::TelemetryConfig = config.telemetry.clone().into();
+            let tracker = Arc::new(observability::TelemetryTracker::new(telemetry_config));
+            // Spawn background cleanup task
+            let _cleanup_task = tracker.clone().start_cleanup_task();
+            Some(tracker)
+        } else {
+            None
+        };
+
         // Create HealthCheck and spawn background task
         let health_check = Arc::new(HealthCheck::new(registry));
         let health_check_interval =
@@ -260,7 +271,7 @@ impl RookContainer {
                     format_registry.clone(),
                     alias_repo.clone(), // model_alias_repository - wired in Phase 3
                     config.model_aliases.clone().into(),
-                    None, // telemetry - TODO: wire in PR 2
+                    telemetry_tracker, // telemetry tracker from config
                 ),
                 ManageProviders::new(router.clone()),
                 health_check,

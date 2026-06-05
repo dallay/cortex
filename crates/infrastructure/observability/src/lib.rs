@@ -5,5 +5,7 @@ pub mod telemetry;
 pub mod tracing_;
 
 pub use metrics::init_metrics;
-pub use telemetry::{ObservationStatus, PercentileStats, TelemetryConfig, TelemetryTracker};
+pub use telemetry::{
+    ObservationStatus, PercentileStats, ProviderSummary, TelemetryConfig, TelemetryTracker,
+};
 pub use tracing_::init_tracing;
