@@ -75,7 +75,6 @@ jobs:
         run: pnpm install
       - name: Build dashboard
         run: pnpm --filter @dallay/rook-dashboard run build
-        working-directory: apps/rook/dashboard
       - name: Upload dashboard dist
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -321,6 +320,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: changes
+    # Gitleaks scans git history for secrets - runs on all PRs regardless of path changes
+    # to catch accidental commits of credentials in any file type
     permissions:
       contents: read
       security-events: write
@@ -377,10 +378,11 @@ jobs:
             --output reports/semgrep/semgrep-pr.sarif
       - name: Fail on findings
         run: |
-          if grep -q '"results":\[\]' reports/semgrep/semgrep-pr.sarif; then
+          FINDINGS_COUNT=$(jq '[.runs[].results[]] | length' reports/semgrep/semgrep-pr.sarif)
+          if [ "$FINDINGS_COUNT" -eq 0 ]; then
             echo "No high-severity findings"
           else
-            echo "High-severity Semgrep findings detected"
+            echo "High-severity Semgrep findings detected: $FINDINGS_COUNT finding(s)"
             exit 1
           fi
       - name: Upload Semgrep SARIF
@@ -591,6 +593,8 @@ jobs:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+        with:
+          components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run tests
