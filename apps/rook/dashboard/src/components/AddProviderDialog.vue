@@ -103,7 +103,7 @@ async function handleSave() {
 function buildCreateRequest(): CreateProviderRequest {
   // Generate a unique runtime ID for this provider instance
   const timestamp = Date.now()
-  const randomSuffix = Math.random().toString(36).substring(2, 8)
+  const randomSuffix = crypto.randomUUID().substring(0, 8)
   const runtimeId = `ollama-${timestamp}-${randomSuffix}`
   
   return {
