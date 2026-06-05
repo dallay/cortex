@@ -22,7 +22,7 @@ export default defineConfig({
      E2E tests hit many endpoints (login, CSRF, auth, API calls) in quick succession
      and the backend's rate limiting can trigger if workers > 1 with low limits.
      CI runs use PLAYWRIGHT_WORKERS from env; local/dev uses 1 to be safe. */
-  workers: parseInt(process.env.PLAYWRIGHT_WORKERS ?? '1', 10),
+  workers: Number.parseInt(process.env.PLAYWRIGHT_WORKERS ?? '1', 10),
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
