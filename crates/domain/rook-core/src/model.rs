@@ -156,11 +156,41 @@ pub struct CompletionRequest {
 
 impl CompletionRequest {
     /// Derives the cache key from this request.
-    /// Currently just the request ID; extend to include model + message hash
-    /// for semantic (content-aware) caching.
+    /// Uses SHA-256 hash of semantic fields: model, messages, max_tokens, temperature, tools, tool_choice.
+    /// Excludes ephemeral fields: id, stream, metadata, restrictions.
     pub fn cache_key(&self) -> CacheKey {
+        use sha2::{Digest, Sha256};
+        use std::collections::BTreeMap;
+
+        // Build canonical representation with sorted keys
+        let mut canonical = BTreeMap::new();
+        canonical.insert("model", serde_json::to_value(&self.model).unwrap());
+        canonical.insert("messages", serde_json::to_value(&self.messages).unwrap());
+        canonical.insert("max_tokens", serde_json::to_value(self.max_tokens).unwrap());
+        canonical.insert(
+            "temperature",
+            serde_json::to_value(self.temperature).unwrap(),
+        );
+        canonical.insert("tools", serde_json::to_value(&self.tools).unwrap());
+        canonical.insert(
+            "tool_choice",
+            serde_json::to_value(&self.tool_choice).unwrap(),
+        );
+
+        // Serialize to JSON bytes
+        let json_bytes = serde_json::to_vec(&canonical).unwrap();
+
+        // Compute SHA-256
+        let mut hasher = Sha256::new();
+        hasher.update(&json_bytes);
+        let digest = hasher.finalize();
+
+        // Hex-encode to 64-char string
+        let signature = hex::encode(digest);
+
         CacheKey {
             request_id: self.id.clone(),
+            signature,
         }
     }
 }
@@ -815,6 +845,43 @@ mod message_content_tests {
     }
 }
 
+// ============================================================================
+// Cache Statistics
+// ============================================================================
+
+/// Statistics snapshot for cache operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub entries: u64,
+    pub max_entries: u64,
+}
+
+impl CacheStats {
+    /// Calculate hit rate as hits / (hits + misses)
+    /// Returns 0.0 if no requests have been made
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
+    }
+
+    /// Calculate cache utilization as entries / max_entries
+    /// Returns None if max_entries is 0 (unlimited)
+    pub fn utilization(&self) -> Option<f64> {
+        if self.max_entries == 0 {
+            None
+        } else {
+            Some(self.entries as f64 / self.max_entries as f64)
+        }
+    }
+}
+
 #[cfg(test)]
 mod combo_tests {
     use super::*;
@@ -1050,5 +1117,175 @@ mod combo_tests {
     fn combo_strategy_deserializes_from_lowercase() {
         let strategy: ComboStrategy = serde_json::from_str(r#""priority""#).expect("deserialize");
         assert_eq!(strategy, ComboStrategy::Priority);
+    }
+}
+
+#[cfg(test)]
+mod cache_key_tests {
+    use super::*;
+
+    fn make_request() -> CompletionRequest {
+        CompletionRequest {
+            id: RequestId::new(),
+            model: ModelId::new("gpt-4o"),
+            messages: vec![Message {
+                role: Role::User,
+                content: MessageContent::Text("hello".to_string()),
+            }],
+            stream: false,
+            max_tokens: Some(100),
+            temperature: Some(0.7),
+            tools: None,
+            tool_choice: None,
+            metadata: RequestMetadata {
+                origin: "test".to_string(),
+                cacheable: true,
+                priority: 1,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: ApiKeyRestrictions::default(),
+        }
+    }
+
+    #[test]
+    fn cache_key_determinism() {
+        let req = make_request();
+        let signatures: Vec<String> = (0..100).map(|_| req.cache_key().signature).collect();
+
+        // All signatures should be identical
+        let first = &signatures[0];
+        assert!(signatures.iter().all(|s| s == first));
+    }
+
+    #[test]
+    fn cache_key_excludes_ephemeral_fields() {
+        let mut req1 = make_request();
+        let mut req2 = make_request();
+
+        // Changing id, stream, metadata should NOT change signature
+        req1.id = RequestId::new();
+        req2.id = RequestId::new();
+        req1.stream = false;
+        req2.stream = true;
+        req1.metadata.origin = "origin1".to_string();
+        req2.metadata.origin = "origin2".to_string();
+
+        assert_eq!(req1.cache_key().signature, req2.cache_key().signature);
+    }
+
+    #[test]
+    fn cache_key_includes_semantic_fields() {
+        let req1 = make_request();
+        let mut req2 = make_request();
+
+        // Changing model should change signature
+        req2.model = ModelId::new("claude-opus-4");
+        assert_ne!(req1.cache_key().signature, req2.cache_key().signature);
+
+        // Changing messages should change signature
+        let mut req3 = make_request();
+        req3.messages = vec![Message {
+            role: Role::User,
+            content: MessageContent::Text("goodbye".to_string()),
+        }];
+        assert_ne!(req1.cache_key().signature, req3.cache_key().signature);
+    }
+
+    #[test]
+    fn cache_key_signature_is_64_hex_chars() {
+        let req = make_request();
+        let key = req.cache_key();
+
+        assert_eq!(key.signature.len(), 64);
+        assert!(key.signature.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cache_key_display_shows_first_8_chars() {
+        let key = CacheKey::test_key(
+            RequestId::new(),
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
+        );
+        let display = format!("{}", key);
+        assert!(display.contains("abcdef12"));
+    }
+}
+
+#[cfg(test)]
+mod cache_stats_tests {
+    use super::*;
+
+    #[test]
+    fn hit_rate_with_zero_requests() {
+        let stats = CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            entries: 0,
+            max_entries: 100,
+        };
+        assert_eq!(stats.hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn hit_rate_with_only_hits() {
+        let stats = CacheStats {
+            hits: 10,
+            misses: 0,
+            evictions: 0,
+            entries: 5,
+            max_entries: 100,
+        };
+        assert_eq!(stats.hit_rate(), 1.0);
+    }
+
+    #[test]
+    fn hit_rate_with_mixed_hits_and_misses() {
+        let stats = CacheStats {
+            hits: 7,
+            misses: 3,
+            evictions: 0,
+            entries: 5,
+            max_entries: 100,
+        };
+        assert_eq!(stats.hit_rate(), 0.7);
+    }
+
+    #[test]
+    fn utilization_with_no_limit() {
+        let stats = CacheStats {
+            hits: 10,
+            misses: 5,
+            evictions: 0,
+            entries: 50,
+            max_entries: 0,
+        };
+        assert_eq!(stats.utilization(), None);
+    }
+
+    #[test]
+    fn utilization_with_limit() {
+        let stats = CacheStats {
+            hits: 10,
+            misses: 5,
+            evictions: 0,
+            entries: 50,
+            max_entries: 100,
+        };
+        assert_eq!(stats.utilization(), Some(0.5));
+    }
+
+    #[test]
+    fn utilization_at_capacity() {
+        let stats = CacheStats {
+            hits: 10,
+            misses: 5,
+            evictions: 2,
+            entries: 100,
+            max_entries: 100,
+        };
+        assert_eq!(stats.utilization(), Some(1.0));
     }
 }

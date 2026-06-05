@@ -1,0 +1,10 @@
+change: read-cache
+current_phase: tasks
+completed:
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+next: apply
+updated: 2026-06-04T21:28:52Z

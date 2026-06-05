@@ -72,7 +72,7 @@ impl RookContainer {
 
         // 1. Cache
         let cache: Arc<dyn CachePort> = if config.cache.enabled {
-            Arc::new(InMemoryCache::new(config.cache.ttl()))
+            Arc::new(InMemoryCache::new(config.cache.ttl(), None))
         } else {
             Arc::new(NoOpCache)
         };
