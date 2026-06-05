@@ -972,10 +972,10 @@ fn cache_routes(usecases: Usecases) -> Router {
             get(handlers::cache::list_signatures),
         )
         .route(
-            "/api/cache/signature/:sig",
+            "/api/cache/signature/{sig}",
             get(handlers::cache::get_signature),
         )
-        // DELETE /api/cache/:signature — delete by signature (must be after /api/cache/signature/:sig)
+        // DELETE /api/cache/:signature — delete by signature (must be after /api/cache/signature/{sig})
         .route(
             "/api/cache/{signature}",
             delete(handlers::cache::delete_cache_entry),
