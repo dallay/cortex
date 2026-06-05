@@ -279,7 +279,9 @@ pub struct CacheConfig {
     #[serde(default)]
     pub signature_cache: SignatureCacheConfig,
     /// Layer 2: provider-side token caching.
+    /// Fields will be used in WU-2 (Phase 4-5: provider integration).
     #[serde(default)]
+    #[allow(dead_code)]
     pub token_cache: TokenCacheConfig,
 }
 
@@ -294,7 +296,9 @@ pub struct SignatureCacheConfig {
 }
 
 /// Configuration for Layer 2 token cache (provider-side token caching).
+/// Fields will be used in WU-2 (Phase 4-5: provider integration).
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct TokenCacheConfig {
     /// Cache mode: auto (known providers only), always (all providers), never (disabled).
     #[serde(default = "default_cache_mode")]
