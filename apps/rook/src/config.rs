@@ -60,9 +60,19 @@ fn default_allow_env_fallback() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderCrudConfig {
     pub enabled: bool,
+    pub db_path: String,
+}
+
+impl Default for ProviderCrudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            db_path: "~/.local/share/cortex/rook/providers.db".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -125,10 +135,20 @@ impl RookConfig {
         let content = std::fs::read_to_string(path)?;
         let mut config: RookConfig = toml::from_str(&content)?;
 
+        // Expand ~ in database.db_path
         if config.database.db_path.starts_with('~') {
             let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
             config.database.db_path = config
                 .database
+                .db_path
+                .replace('~', home.to_str().unwrap_or(""));
+        }
+
+        // Expand ~ in provider_crud.db_path
+        if config.provider_crud.db_path.starts_with('~') {
+            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;
+            config.provider_crud.db_path = config
+                .provider_crud
                 .db_path
                 .replace('~', home.to_str().unwrap_or(""));
         }
