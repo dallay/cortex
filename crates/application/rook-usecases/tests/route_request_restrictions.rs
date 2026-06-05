@@ -245,6 +245,7 @@ async fn allowed_models_contains_requested_model_passes() {
         translator,
         alias_repo,
         alias_config,
+        None, // telemetry
     );
 
     let req = CompletionRequest {
@@ -300,6 +301,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         translator,
         alias_repo,
         alias_config,
+        None, // telemetry
     );
 
     let req = CompletionRequest {
@@ -359,6 +361,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
         translator,
         alias_repo,
         alias_config,
+        None, // telemetry
     );
 
     let req = CompletionRequest {
@@ -414,6 +417,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         translator,
         alias_repo,
         alias_config,
+        None, // telemetry
     );
 
     let req = CompletionRequest {

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use futures::StreamExt;
+use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
     CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
@@ -45,6 +46,7 @@ pub struct RouteRequest {
     format_translator: Arc<dyn FormatTranslatorPort>,
     alias_repository: Arc<dyn ModelAliasRepositoryPort>,
     alias_config: ModelAliasesConfig,
+    telemetry: Option<Arc<TelemetryTracker>>,
 }
 
 /// Configuration for model alias resolution
@@ -67,6 +69,7 @@ impl RouteRequest {
         format_translator: Arc<dyn FormatTranslatorPort>,
         alias_repository: Arc<dyn ModelAliasRepositoryPort>,
         alias_config: ModelAliasesConfig,
+        telemetry: Option<Arc<TelemetryTracker>>,
     ) -> Self {
         Self {
             router,
@@ -79,6 +82,7 @@ impl RouteRequest {
             format_translator,
             alias_repository,
             alias_config,
+            telemetry,
         }
     }
 
@@ -95,6 +99,11 @@ impl RouteRequest {
     /// Get alias repository reference (for HTTP layer wiring)
     pub fn alias_repository(&self) -> Arc<dyn ModelAliasRepositoryPort> {
         self.alias_repository.clone()
+    }
+
+    /// Get telemetry tracker reference (for HTTP layer wiring)
+    pub fn telemetry(&self) -> Option<Arc<TelemetryTracker>> {
+        self.telemetry.clone()
     }
 
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
@@ -215,17 +224,33 @@ impl RouteRequest {
                 )
                 .await;
 
+                // 6. Record telemetry
+                if let Some(telemetry) = &self.telemetry {
+                    telemetry.record_observation(
+                        provider_id.clone(),
+                        latency_ms,
+                        None, // Non-streaming requests don't have TTFT
+                        ObservationStatus::Success,
+                    );
+                }
+
                 Ok(resp)
             }
             Err(e) => {
-                self.record_failure(
-                    &req,
-                    &provider_id,
-                    connection_id,
-                    start.elapsed().as_millis() as u64,
-                    &e,
-                )
-                .await;
+                let final_latency = start.elapsed().as_millis() as u64;
+                self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
+                    .await;
+
+                // Record telemetry failure
+                if let Some(telemetry) = &self.telemetry {
+                    let status = if e.is_rate_limited() {
+                        ObservationStatus::RateLimited
+                    } else {
+                        ObservationStatus::Failure
+                    };
+                    telemetry.record_observation(provider_id.clone(), final_latency, None, status);
+                }
+
                 Err(e)
             }
         }
@@ -299,6 +324,7 @@ impl RouteRequest {
         let audit = self.audit.clone();
         let router = self.router.clone();
         let usage_recorder = self.usage_recorder.clone();
+        let telemetry = self.telemetry.clone();
         let pricing = self.pricing.clone();
         let request_id = req.id.clone();
         let model = req.model.clone();
@@ -372,6 +398,21 @@ impl RouteRequest {
                             }
                         }
 
+                        // Record telemetry failure
+                        if let Some(tracker) = telemetry.as_ref() {
+                            let obs_status = if status == RequestStatus::RateLimited {
+                                ObservationStatus::RateLimited
+                            } else {
+                                ObservationStatus::Failure
+                            };
+                            tracker.record_observation(
+                                provider_id.clone(),
+                                latency_ms,
+                                ttft_ms,
+                                obs_status,
+                            );
+                        }
+
                         Err(error)?;
                     }
                 }
@@ -420,6 +461,16 @@ impl RouteRequest {
                     );
                     metrics::counter!("usage_record_failed_total").increment(1);
                 }
+            }
+
+            // Record telemetry success
+            if let Some(tracker) = telemetry.as_ref() {
+                tracker.record_observation(
+                    provider_id.clone(),
+                    latency_ms,
+                    ttft_ms,
+                    ObservationStatus::Success,
+                );
             }
         };
 
@@ -1329,6 +1380,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let mut stream = usecase
@@ -1380,6 +1432,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         )
     }
 
@@ -1406,6 +1459,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -1460,6 +1514,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
@@ -1513,6 +1568,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
         let req = request();
 
@@ -1559,6 +1615,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -1596,6 +1653,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -1727,6 +1785,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
@@ -1833,6 +1892,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let mut stream = usecase
@@ -1883,6 +1943,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
+            None, // telemetry
         );
 
         let stream = usecase

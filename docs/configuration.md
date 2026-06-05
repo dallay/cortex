@@ -319,6 +319,24 @@ When `enabled = true`, both environment variables are required and must be non-e
 | `ENCRYPTION_PASSPHRASE` | Passphrase used to derive the credential key     |
 | `ENCRYPTION_SALT`       | Base64url-no-pad encoded 16-byte derivation salt |
 
+**Generating the encryption salt:**
+
+```bash
+# Generate a cryptographically secure 16-byte salt encoded as base64url without padding
+openssl rand -base64 16 | tr -d '=' | tr '+/' '-_'
+```
+
+Example output: `Z3G83UBdTUkfGGWr-QDnQg`
+
+**Environment variable setup:**
+
+```bash
+export ENCRYPTION_PASSPHRASE="your-secure-passphrase-min-12-chars"
+export ENCRYPTION_SALT="Z3G83UBdTUkfGGWr-QDnQg"  # Use the generated value above
+```
+
+⚠️ **Important**: These environment variables must be set **before** starting Rook. Without them, `ManageConnections` will not initialize and the provider CRUD API will return 404 for all `/api/providers/*` routes.
+
 Rollback: setting `enabled = false` unmounts the provider CRUD routes. It does not delete the SQLite database or stored connection rows.
 
 ### Dynamic Provider Registry
@@ -326,6 +344,45 @@ Rollback: setting `enabled = false` unmounts the provider CRUD routes. It does n
 When `provider_crud.enabled = true`, the provider registry starts empty and is populated by calling `refresh_registry()` at startup — this reads all active connections from the database, decrypts credentials, and builds providers. The registry is also refreshed after each create, update, or delete operation.
 
 If the initial refresh fails (e.g., encrypted connections with an incorrect key), Rook logs a warning and starts with an empty registry. Connections can be re-created or the server restarted once the correct key is available.
+
+### Provider Management Dashboard
+
+The Rook dashboard provides a web UI for managing provider connections at `http://localhost:8080/providers` (or your configured host/port).
+
+**Features:**
+- View all configured providers with status, latency, and priority
+- Add new providers via dialog form (supports Ollama Cloud initially)
+- Test provider connections before saving
+- Configure advanced settings: max concurrent requests, default model, custom base URL
+- View provider quotes and pricing information
+
+**Adding a provider via UI:**
+
+1. Navigate to `/providers` in the dashboard
+2. Click "Add Provider"
+3. Fill in the required fields:
+   - **Name**: Descriptive name (e.g., "Ollama Production")
+   - **API Key**: Your provider API key (from provider's dashboard)
+   - **Base URL**: Provider endpoint (default provided)
+   - **Priority**: Lower numbers = higher priority (0-255)
+   - **Active**: Toggle to enable/disable without deletion
+4. Optionally expand "Advanced Configuration" to set:
+   - Max concurrent requests
+   - Default model ID
+5. Click "Test Connection" to verify credentials (optional)
+6. Click "Save"
+
+The provider will appear in the list immediately and be available for routing.
+
+**Supported providers:**
+- Ollama Cloud (API Key) — initial implementation
+- OpenAI (API Key / OAuth) — planned
+- Anthropic (API Key / OAuth) — planned
+- Gemini (API Key / OAuth) — planned
+
+**Multi-account support:**
+
+You can add multiple connections for the same provider kind (e.g., "OpenAI Production" and "OpenAI Backup" with different API keys). Each connection gets a unique runtime ID and can have different priority, models, and configuration.
 
 ### Supported Provider Kinds
 
