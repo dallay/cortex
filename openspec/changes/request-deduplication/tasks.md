@@ -133,9 +133,9 @@ Chain strategy: pending
 **Critical Path**: Phase 1 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7
 
 **Next Step**:  
-User must choose a chain strategy:
-- **stacked-to-main**: PR 1 (Phases 1-3) merges to main, PR 2 (Phases 4-7) stacks on PR 1 and merges to main
-- **feature-branch-chain**: Create `feature/request-deduplication` tracker branch; PR 1 targets tracker, PR 2 targets PR 1 branch, tracker merges to main after both reviews pass
-- **size:exception**: Keep as single PR with maintainer approval (not recommended due to 600-800 line estimate)
+WU-1 (Phases 1-3) is complete and merged in PR #121.
+- Current lifecycle state: `apply` → `verify` (see `state.yaml`)
+- Next action: Begin **WU-2 (Phases 4-7)** - provider detection, header injection, x-cache parsing, E2E testing
+- Chain strategy chosen: **stacked-to-main** - WU-2 will target `main` after WU-1 merge
 
 Once strategy is chosen, proceed to `sdd-apply` with Phase 1 tasks.

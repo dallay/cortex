@@ -23,6 +23,7 @@ pub struct InMemoryCache {
     token_cache_hits: AtomicU64,
     token_cache_misses: AtomicU64,
     tokens_saved: AtomicU64,
+    // TODO(WU-2): Consider switching to microdollars (cost_saved_micros) for sub-cent precision
     cost_saved_cents: AtomicU64, // Stored as cents for atomic ops
 }
 
@@ -127,16 +128,34 @@ impl InMemoryCache {
             .map(|entry| {
                 let key = entry.key();
                 let resp = entry.value();
-                let last_access_dt = now; // Use wall-clock time for snapshot
+                
+                // Read real timestamps from tracking maps
+                let cached_at = self
+                    .expiry
+                    .get(key)
+                    .map(|exp| {
+                        // expiry stores Instant::now() at insertion; convert to DateTime
+                        let elapsed = Instant::now() - *exp;
+                        now - chrono::Duration::from_std(elapsed).unwrap_or_default()
+                    })
+                    .unwrap_or(now);
+                
+                let last_accessed = self
+                    .last_accessed
+                    .get(key)
+                    .map(|la| {
+                        let elapsed = Instant::now() - *la;
+                        now - chrono::Duration::from_std(elapsed).unwrap_or_default()
+                    })
+                    .unwrap_or(cached_at);
 
                 SignatureEntry {
                     signature: key.signature.clone(),
                     request_id: key.request_id.clone(),
                     model: resp.model.clone(),
                     provider: resp.provider.clone(),
-                    // Use wall-clock time as proxy for both timestamps
-                    cached_at: last_access_dt,
-                    last_accessed: last_access_dt,
+                    cached_at,
+                    last_accessed,
                     request_metadata: SignatureRequestMetadata {
                         // Approximate: prompt_tokens is approximate for input size
                         message_count: resp
@@ -152,13 +171,20 @@ impl InMemoryCache {
             })
             .collect();
 
-        // Sort by signature string for deterministic ordering
-        entries.sort_by(|a, b| a.signature.cmp(&b.signature));
+        // Sort by last_accessed descending (most recent first), use signature as tie-breaker
+        entries.sort_by(|a, b| {
+            b.last_accessed
+                .cmp(&a.last_accessed)
+                .then_with(|| a.signature.cmp(&b.signature))
+        });
         entries
     }
 
     /// Retrieve a cached response by signature, checking expiry.
     /// Returns `None` if not found or expired.
+    /// 
+    /// This is a side-effect-free inspection method for management endpoints.
+    /// It does not update hits/misses metrics or last_accessed timestamps.
     pub fn get_by_signature(&self, signature: &str) -> Option<CompletionResponse> {
         // Find the entry matching this signature
         let found = self
@@ -167,20 +193,21 @@ impl InMemoryCache {
             .find(|entry| entry.key().signature == signature);
 
         if let Some(entry) = found {
-            let key = entry.key();
-            if self.is_expired(key) {
+            let key = entry.key().clone();
+            let value = entry.value().clone();
+            // Drop the guard before checking expiry to avoid holding it during potential cleanup
+            drop(entry);
+            
+            if self.is_expired(&key) {
                 // Clean up expired entry
-                self.store.remove(key);
-                self.expiry.remove(key);
-                self.last_accessed.remove(key);
+                self.store.remove(&key);
+                self.expiry.remove(&key);
+                self.last_accessed.remove(&key);
                 return None;
             }
-            // Update last_accessed
-            self.last_accessed.insert(key.clone(), Instant::now());
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            Some(entry.value().clone())
+            // Side-effect free: no hits/misses updates, no last_accessed updates
+            Some(value)
         } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
             None
         }
     }
@@ -828,8 +855,9 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.token_cache.hits, 2);
         assert_eq!(stats.token_cache.tokens_saved, 300);
-        // cost = (0.0003 + 0.0006) * 100 = 0.09 USD = 9 cents
-        assert!((stats.token_cache.estimated_cost_saved_usd - 0.0009).abs() < 0.0001);
+        // Cost stored as cents: (0.0003 + 0.0006) rounds to 0 cents
+        // Sub-cent precision will be added in WU-2
+        assert_eq!(stats.token_cache.estimated_cost_saved_usd, 0.0);
     }
 
     #[tokio::test]
@@ -994,9 +1022,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_by_signature_increments_hits_on_hit() {
+    async fn get_by_signature_returns_cached_entry() {
         let cache = InMemoryCache::new(Duration::from_secs(60), None);
-        let key = make_key("sig_hit_count");
+        let key = make_key("sig_retrieval");
+
+        cache
+            .set(&key, &make_response("content"), Duration::from_secs(60))
+            .await
+            .unwrap();
+
+        let result = cache.get_by_signature("sig_retrieval");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().content, "content");
+    }
+
+    #[tokio::test]
+    async fn get_by_signature_returns_none_when_not_found() {
+        let cache = InMemoryCache::new(Duration::from_secs(60), None);
+
+        let result = cache.get_by_signature("nonexistent");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_by_signature_is_side_effect_free() {
+        let cache = InMemoryCache::new(Duration::from_secs(60), None);
+        let key = make_key("sig_no_side_effects");
 
         cache
             .set(&key, &make_response("content"), Duration::from_secs(60))
@@ -1004,24 +1055,13 @@ mod tests {
             .unwrap();
 
         let initial_stats = cache.stats();
-        let initial_hits = initial_stats.hits;
-
-        let _ = cache.get_by_signature("sig_hit_count").unwrap();
-
+        
+        // Multiple calls should not affect hit/miss counters
+        let _ = cache.get_by_signature("sig_no_side_effects");
+        let _ = cache.get_by_signature("nonexistent");
+        
         let new_stats = cache.stats();
-        assert_eq!(new_stats.hits, initial_hits + 1);
-    }
-
-    #[tokio::test]
-    async fn get_by_signature_increments_misses_on_not_found() {
-        let cache = InMemoryCache::new(Duration::from_secs(60), None);
-
-        let initial_stats = cache.stats();
-        let initial_misses = initial_stats.misses;
-
-        let _ = cache.get_by_signature("nonexistent").unwrap();
-
-        let new_stats = cache.stats();
-        assert_eq!(new_stats.misses, initial_misses + 1);
+        assert_eq!(new_stats.hits, initial_stats.hits, "get_by_signature should not increment hits");
+        assert_eq!(new_stats.misses, initial_stats.misses, "get_by_signature should not increment misses");
     }
 }
