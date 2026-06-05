@@ -1,5 +1,6 @@
 // handlers — HTTP endpoint handlers
 
+pub mod aliases;
 pub mod api_key;
 pub mod auth;
 pub mod bootstrap;

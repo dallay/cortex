@@ -88,3 +88,75 @@ completion_per_million = 2.40
     assert_eq!(price.cache_read_per_million, None);
     assert_eq!(price.cache_creation_per_million, None);
 }
+
+#[test]
+fn config_model_aliases_defaults_to_enabled_and_auto_seed() {
+    let config: RookConfig = toml::from_str(&minimal_config_toml("")).expect("config parses");
+
+    assert!(config.model_aliases.enabled);
+    assert!(config.model_aliases.auto_seed);
+}
+
+#[test]
+fn config_model_aliases_can_be_disabled() {
+    let config: RookConfig = toml::from_str(&minimal_config_toml(
+        r#"
+[model_aliases]
+enabled = false
+auto_seed = false
+"#,
+    ))
+    .expect("config parses");
+
+    assert!(!config.model_aliases.enabled);
+    assert!(!config.model_aliases.auto_seed);
+}
+
+#[test]
+fn config_model_aliases_deserializes_from_toml() {
+    let config: RookConfig = toml::from_str(&minimal_config_toml(
+        r#"
+[model_aliases]
+enabled = true
+auto_seed = false
+"#,
+    ))
+    .expect("config parses");
+
+    assert!(config.model_aliases.enabled);
+    assert!(!config.model_aliases.auto_seed);
+}
+
+#[test]
+fn config_model_aliases_enabled_only() {
+    let config: RookConfig = toml::from_str(&minimal_config_toml(
+        r#"
+[model_aliases]
+enabled = true
+"#,
+    ))
+    .expect("config parses");
+
+    assert!(config.model_aliases.enabled);
+    assert!(
+        config.model_aliases.auto_seed,
+        "auto_seed should default to true"
+    );
+}
+
+#[test]
+fn config_model_aliases_auto_seed_only() {
+    let config: RookConfig = toml::from_str(&minimal_config_toml(
+        r#"
+[model_aliases]
+auto_seed = false
+"#,
+    ))
+    .expect("config parses");
+
+    assert!(
+        config.model_aliases.enabled,
+        "enabled should default to true"
+    );
+    assert!(!config.model_aliases.auto_seed);
+}
