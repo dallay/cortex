@@ -51,7 +51,7 @@ Chain strategy: pending
 ## Phase 4: Configuration
 
 - [ ] 4.1 **Add `max_entries` field to `CacheConfig`** — `apps/rook/src/config.rs` — Add `pub max_entries: Option<usize>` with default `None` — Dependencies: none — Complexity: simple
-- [ ] 4.2 **Implement `CacheConfig::validate()`** — `apps/rook/src/config.rs` — Return error if `ttl_secs > 86400`; validate `max_entries` is reasonable if set — Dependencies: none — Complexity: simple
+- [ ] 4.2 **Implement `CacheConfig::validate()`** — `apps/rook/src/config.rs` — Return error if `ttl_secs > 86400`; if `max_entries.is_some()` validate it is `> 0`, reject `Some(0)`; allow `None` (unlimited) — Dependencies: none — Complexity: simple
 - [ ] 4.3 **Call `validate()` at startup** — `apps/rook/src/main.rs` or config loading — Fail fast if config invalid — Dependencies: 4.2 — Complexity: simple
 - [ ] 4.4 **Pass `max_entries` to `InMemoryCache::new()`** — `apps/rook/src/main.rs` or DI setup — Wire config value to cache constructor — Dependencies: 2.3, 4.1 — Complexity: simple
 

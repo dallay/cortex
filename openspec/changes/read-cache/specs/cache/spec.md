@@ -183,15 +183,21 @@ The system MUST validate cache configuration at startup and reject invalid value
 - WHEN the configuration is loaded
 - THEN the system MUST start successfully
 
-#### Scenario: Reject zero or negative max_entries
+#### Scenario: Reject zero max_entries
 
-- GIVEN a CacheConfig with max_entries = 0
+- GIVEN a CacheConfig with max_entries = Some(0)
 - WHEN the configuration is loaded
-- THEN the system MUST fail to start with a clear error message
+- THEN the system MUST fail to start with a clear error message indicating max_entries must be greater than zero
+
+#### Scenario: Accept None for unlimited capacity
+
+- GIVEN a CacheConfig with max_entries = None
+- WHEN the configuration is loaded
+- THEN the system MUST start successfully with unlimited cache capacity
 
 #### Scenario: Accept valid max_entries
 
-- GIVEN a CacheConfig with max_entries = 1000
+- GIVEN a CacheConfig with max_entries = Some(1000)
 - WHEN the configuration is loaded
 - THEN the system MUST start successfully
 

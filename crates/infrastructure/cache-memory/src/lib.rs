@@ -49,7 +49,14 @@ impl InMemoryCache {
         }
     }
 
-    /// Evict the least recently used entry if cache is at capacity
+    /// Evict the least recently used entry if cache is at capacity.
+    ///
+    /// **Note on concurrency**: LRU eviction is approximate under concurrent access.
+    /// This method iterates `last_accessed` to find the oldest entry, but another
+    /// thread may access or modify an entry between selection and removal. Therefore,
+    /// strict LRU ordering is not guaranteed without heavier locking. This trade-off
+    /// is acceptable for performance; the eviction counter (`evictions`) tracks
+    /// actual evictions regardless of ordering precision.
     fn evict_if_needed(&self) {
         if let Some(max) = self.max_entries {
             if self.store.len() >= max {
@@ -99,8 +106,10 @@ impl CachePort for InMemoryCache {
         value: &CompletionResponse,
         ttl: Duration,
     ) -> CortexResult<()> {
-        // Evict oldest entry if at capacity
-        self.evict_if_needed();
+        // Only evict if inserting a new key (not when overwriting)
+        if !self.store.contains_key(key) {
+            self.evict_if_needed();
+        }
 
         self.store.insert(key.clone(), value.clone());
         self.expiry.insert(
@@ -547,6 +556,49 @@ mod tests {
         assert_eq!(stats.misses, 0);
         assert_eq!(stats.evictions, 0);
         assert_eq!(stats.entries, 0);
+    }
+
+    #[tokio::test]
+    async fn lru_no_eviction_on_overwrite() {
+        let cache = InMemoryCache::new(Duration::from_secs(60), Some(3));
+
+        // Fill cache to capacity
+        let key1 = make_key("key1");
+        let key2 = make_key("key2");
+        let key3 = make_key("key3");
+
+        cache
+            .set(&key1, &make_response("value1"), Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set(&key2, &make_response("value2"), Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set(&key3, &make_response("value3"), Duration::from_secs(60))
+            .await
+            .unwrap();
+
+        assert_eq!(cache.store.len(), 3);
+        assert_eq!(cache.stats().evictions, 0);
+
+        // Overwrite key1 — should NOT trigger eviction
+        cache
+            .set(
+                &key1,
+                &make_response("value1_updated"),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(cache.store.len(), 3);
+        assert_eq!(cache.stats().evictions, 0, "Overwriting should not evict");
+
+        // Verify key1 was updated
+        let result = cache.get(&key1).await.unwrap().unwrap();
+        assert_eq!(result.content, "value1_updated");
     }
 
     // -------------------------------------------------------------------------
