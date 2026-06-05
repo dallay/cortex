@@ -49,6 +49,32 @@ impl InMemoryCache {
         }
     }
 
+    /// Delete all entries matching the given signature.
+    /// Returns the number of entries deleted.
+    pub fn delete_by_signature(&self, signature: &str) -> usize {
+        let mut deleted = 0;
+        // Collect keys matching the signature
+        let keys_to_delete: Vec<CacheKey> = self
+            .store
+            .iter()
+            .filter(|entry| entry.key().signature == signature)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        // Delete all matching keys
+        for key in keys_to_delete {
+            // Only increment deleted if an entry was actually removed
+            if self.store.remove(&key).is_some() {
+                deleted += 1;
+            }
+            // Clean up associated metadata regardless
+            self.expiry.remove(&key);
+            self.last_accessed.remove(&key);
+        }
+
+        deleted
+    }
+
     /// Evict the least recently used entry if cache is at capacity.
     ///
     /// **Note on concurrency**: LRU eviction is approximate under concurrent access.
@@ -67,11 +93,14 @@ impl InMemoryCache {
                     .min_by_key(|entry| *entry.value())
                     .map(|entry| entry.key().clone())
                 {
-                    // Remove from all maps
-                    self.store.remove(&oldest);
-                    self.expiry.remove(&oldest);
-                    self.last_accessed.remove(&oldest);
-                    self.evictions.fetch_add(1, Ordering::Relaxed);
+                    // Only evict if the entry still exists (check store.remove result)
+                    if self.store.remove(&oldest).is_some() {
+                        self.expiry.remove(&oldest);
+                        self.last_accessed.remove(&oldest);
+                        self.evictions.fetch_add(1, Ordering::Relaxed);
+                        // Emit Prometheus metric
+                        metrics::counter!("rook_cache_evictions").increment(1);
+                    }
                 }
             }
         }
@@ -135,6 +164,14 @@ impl CachePort for InMemoryCache {
         self.misses.store(0, Ordering::Relaxed);
         self.evictions.store(0, Ordering::Relaxed);
         Ok(())
+    }
+
+    async fn stats(&self) -> CortexResult<CacheStats> {
+        Ok(self.stats())
+    }
+
+    async fn delete_by_signature(&self, signature: &str) -> CortexResult<usize> {
+        Ok(self.delete_by_signature(signature))
     }
 }
 

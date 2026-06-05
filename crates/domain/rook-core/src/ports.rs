@@ -111,6 +111,9 @@ pub trait CachePort: Send + Sync {
     ) -> CortexResult<()>;
     async fn delete(&self, key: &CacheKey) -> CortexResult<()>;
     async fn clear(&self) -> CortexResult<()>;
+    async fn stats(&self) -> CortexResult<super::CacheStats>;
+    /// Delete all entries matching the given signature. Returns number of entries deleted.
+    async fn delete_by_signature(&self, signature: &str) -> CortexResult<usize>;
 }
 
 // ---------------------------------------------------------------------------

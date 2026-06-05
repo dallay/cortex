@@ -88,3 +88,155 @@ completion_per_million = 2.40
     assert_eq!(price.cache_read_per_million, None);
     assert_eq!(price.cache_creation_per_million, None);
 }
+
+#[test]
+fn cache_config_validation_rejects_ttl_exceeding_24_hours() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 86401
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_err());
+    assert!(validation_result
+        .unwrap_err()
+        .contains("exceeds 24h maximum"));
+}
+
+#[test]
+fn cache_config_validation_accepts_valid_ttl() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 3600
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}
+
+#[test]
+fn cache_config_validation_rejects_max_entries_zero() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+max_entries = 0
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_err());
+    assert!(validation_result
+        .unwrap_err()
+        .contains("cache.max_entries must be greater than 0"));
+}
+
+#[test]
+fn cache_config_validation_rejects_invalid_config_on_load() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Create a temporary config file with invalid cache settings
+    let mut temp_file = NamedTempFile::new().expect("failed to create temp file");
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 86401
+"#;
+    temp_file
+        .write_all(config_str.as_bytes())
+        .expect("failed to write temp file");
+    temp_file.flush().expect("failed to flush temp file");
+
+    // Call RookConfig::load (the startup path)
+    let result = RookConfig::load(temp_file.path());
+
+    // Should fail with error containing validation message
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("invalid cache config") || err_msg.contains("exceeds 24h maximum"),
+        "Expected validation error message, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn cache_config_validation_accepts_none_max_entries() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    assert_eq!(config.cache.max_entries, None);
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}
+
+#[test]
+fn cache_config_validation_accepts_valid_max_entries() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+max_entries = 1000
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    assert_eq!(config.cache.max_entries, Some(1000));
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}

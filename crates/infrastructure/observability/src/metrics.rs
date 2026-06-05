@@ -17,4 +17,5 @@ pub fn init_metrics() {
     metrics::describe_counter!("rook_provider_errors", "Total provider errors");
     metrics::describe_counter!("rook_cache_hits", "Cache hits");
     metrics::describe_counter!("rook_cache_misses", "Cache misses");
+    metrics::describe_counter!("rook_cache_evictions", "Cache evictions (LRU)");
 }

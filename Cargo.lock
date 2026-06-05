@@ -431,6 +431,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "dashmap",
+ "metrics",
  "rook-core",
  "serde",
  "shared-kernel",
@@ -3526,6 +3527,7 @@ dependencies = [
  "axum",
  "axum-test",
  "base64",
+ "cache-memory",
  "chrono",
  "dashmap",
  "encryption-inmemory",

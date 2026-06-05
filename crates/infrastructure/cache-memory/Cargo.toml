@@ -18,6 +18,9 @@ serde = { version = "1", features = ["derive"] }
 dashmap = "6"
 ttl_cache = "0.5"
 
+# Observability
+metrics = "0.24"
+
 # Logging
 tracing = "0.1"
 

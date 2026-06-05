@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rook_core::{
-    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CachePort, CompletionRequest,
+    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CachePort, CacheStats, CompletionRequest,
     CompletionResponse, CortexError, CortexResult, FormatTranslatorPort, HealthStatus, Message,
     MessageContent, ModelId, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort,
     StreamChunk, TokenUsage,
@@ -137,6 +137,20 @@ impl CachePort for NoOpCache {
 
     async fn clear(&self) -> CortexResult<()> {
         Ok(())
+    }
+
+    async fn stats(&self) -> CortexResult<CacheStats> {
+        Ok(CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            entries: 0,
+            max_entries: 0,
+        })
+    }
+
+    async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
+        Ok(0)
     }
 }
 

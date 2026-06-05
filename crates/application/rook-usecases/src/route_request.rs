@@ -73,6 +73,11 @@ impl RouteRequest {
         self.combo_repository.clone()
     }
 
+    /// Get cache reference (for HTTP management API)
+    pub fn cache(&self) -> Arc<dyn CachePort> {
+        self.cache.clone()
+    }
+
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
         self.execute_with_format(req, ApiFormat::OpenAI).await
     }
@@ -833,9 +838,9 @@ mod tests {
     use async_trait::async_trait;
     use futures::{stream, StreamExt};
     use rook_core::{
-        ApiKeyId, CostBreakdown, HealthStatus, Message, ModelId, Pagination, ProviderId,
-        ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, StreamChunk, TokenUsage,
-        UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
+        ApiKeyId, CacheStats, CostBreakdown, HealthStatus, Message, ModelId, Pagination,
+        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, StreamChunk,
+        TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
@@ -971,6 +976,20 @@ mod tests {
 
         async fn clear(&self) -> CortexResult<()> {
             Ok(())
+        }
+
+        async fn stats(&self) -> CortexResult<CacheStats> {
+            Ok(CacheStats {
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+                entries: 0,
+                max_entries: 0,
+            })
+        }
+
+        async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
+            Ok(0)
         }
     }
 

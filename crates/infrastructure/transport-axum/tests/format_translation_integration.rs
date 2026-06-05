@@ -331,6 +331,20 @@ impl CachePort for NoopCache {
     async fn clear(&self) -> shared_kernel::CortexResult<()> {
         Ok(())
     }
+
+    async fn stats(&self) -> shared_kernel::CortexResult<rook_core::CacheStats> {
+        Ok(rook_core::CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            entries: 0,
+            max_entries: 0,
+        })
+    }
+
+    async fn delete_by_signature(&self, _signature: &str) -> shared_kernel::CortexResult<usize> {
+        Ok(0)
+    }
 }
 
 struct NoopAudit;
