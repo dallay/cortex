@@ -4,7 +4,7 @@
  * Rook launcher - finds the platform-specific binary and executes it
  */
 
-const { execSync } = require('node:child_process');
+const { execSync, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const os = require('node:os');
 
@@ -27,14 +27,17 @@ function getPlatform() {
 }
 
 function findBinary() {
+  const osPlatform = os.platform();
+  const exeSuffix = osPlatform === 'win32' ? '.exe' : '';
+  
   // Try platform-specific optional dependency first
   const platformPkg = `${PKG}-${getPlatform()}`;
   try {
-    const binaryPath = require.resolve(`${platformPkg}/bin/rook${os.platform() === 'win32' ? '.exe' : ''}`);
+    const binaryPath = require.resolve(`${platformPkg}/bin/rook${exeSuffix}`);
     return binaryPath;
   } catch {
     // Fall back to PATH lookup
-    const binaryName = `rook${os.platform() === 'win32' ? '.exe' : ''}`;
+    const binaryName = `rook${exeSuffix}`;
     try {
       const globalPath = execSync(`npm root -g`, { encoding: 'utf8' }).trim();
       const globalBinary = path.join(globalPath, platformPkg, 'bin', binaryName);
@@ -50,16 +53,30 @@ function findBinary() {
       }
     }
   }
-  return null;
 }
 
 try {
   const binaryPath = findBinary();
   const args = process.argv.slice(2);
-  execSync(`"${binaryPath}" ${args.join(' ')}`, {
+  const result = spawnSync(binaryPath, args, {
     stdio: 'inherit',
     cwd: process.cwd()
   });
+  
+  if (result.error) {
+    throw result.error;
+  }
+  
+  // Handle signal termination: if status is null, the child was killed by a signal
+  if (result.status !== null) {
+    process.exit(result.status);
+  } else if (result.signal) {
+    // Exit with non-zero code to reflect signal termination
+    // Convention: 128 + signal number, but we don't have the signal number here
+    process.exit(1);
+  } else {
+    process.exit(0);
+  }
 } catch (error) {
   console.error('Rook error:', error.message);
   process.exit(1);
