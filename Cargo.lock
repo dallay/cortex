@@ -59,6 +59,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "alias-sqlite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "db-migration",
+ "rook-core",
+ "rusqlite",
+ "shared-kernel",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2632,6 +2648,7 @@ dependencies = [
 name = "rook"
 version = "0.0.1"
 dependencies = [
+ "alias-sqlite",
  "anyhow",
  "async-trait",
  "audit-sqlite",

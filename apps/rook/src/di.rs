@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use alias_sqlite::SqliteModelAliasRepository;
 use audit_sqlite::{SqliteAudit, SqliteUsageRepository};
 use auth_sqlite::{SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository};
 use cache_memory::InMemoryCache;
@@ -17,9 +18,9 @@ use provider_sqlite::SqliteProviderRepository;
 use providers_ollama::OllamaProvider;
 use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
-    ComboStrategy, ConnectionId, DecryptedCredentials, PasswordHasher, ProviderId, ProviderKind,
-    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
-    UsageRecorderPort,
+    ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, PasswordHasher,
+    ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
+    RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -172,6 +173,32 @@ impl RookContainer {
         let combo_repo: Arc<dyn ComboRepositoryPort> =
             Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
 
+        // 7d. Model alias repository — SQLite-backed alias storage
+        let alias_repo: Arc<dyn ModelAliasRepositoryPort> =
+            Arc::new(SqliteModelAliasRepository::new(&config.database.db_path)?);
+
+        // 7e. Seed built-in aliases if enabled
+        if config.model_aliases.auto_seed {
+            let builtin_aliases = alias_sqlite::builtin::DEFAULT_ALIASES
+                .iter()
+                .map(|(alias, canonical, provider_id)| rook_core::ModelAlias {
+                    alias: shared_kernel::ModelId::new(*alias),
+                    canonical: shared_kernel::ModelId::new(*canonical),
+                    provider_id: provider_id.map(shared_kernel::ProviderId::new),
+                    created_at: shared_kernel::Utc::now(),
+                })
+                .collect::<Vec<_>>();
+
+            match alias_repo.seed(builtin_aliases).await {
+                Ok(count) => {
+                    tracing::info!(count, "Seeded default model aliases");
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "Failed to seed model aliases");
+                }
+            }
+        }
+
         // 8. Run async initialization tasks concurrently:
         // - registry refresh (if provider_crud enabled)
         // - ensure admin user exists
@@ -231,6 +258,8 @@ impl RookContainer {
                     Some(combo_repo.clone()), // combo_repository - wired in Phase 4
                     Arc::new(config.pricing.clone()),
                     format_registry.clone(),
+                    alias_repo.clone(), // model_alias_repository - wired in Phase 3
+                    config.model_aliases.clone().into(),
                 ),
                 ManageProviders::new(router.clone()),
                 health_check,

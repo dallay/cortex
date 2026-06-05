@@ -560,3 +560,43 @@ pub trait ComboRepositoryPort: Send + Sync {
     /// Delete a combo by its ID (cascades to steps)
     async fn delete(&self, id: &ComboId) -> Result<(), ComboRepositoryError>;
 }
+
+// ---------------------------------------------------------------------------
+// ModelAliasRepositoryPort — persistence for model alias mappings
+// ---------------------------------------------------------------------------
+
+use crate::ModelAlias;
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ModelAliasRepositoryError {
+    #[error("alias not found: {0}")]
+    NotFound(ModelId),
+    #[error("alias already exists: {0}")]
+    AlreadyExists(ModelId),
+    #[error("invalid alias: {0}")]
+    InvalidAlias(String),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ModelAliasRepositoryPort: Send + Sync {
+    /// Resolve alias to canonical model. Returns None if not found.
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+        provider_id: Option<&ProviderId>,
+    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError>;
+
+    /// List all aliases ordered by alias name
+    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError>;
+
+    /// Create new alias. Returns AlreadyExists if duplicate.
+    async fn create(&self, alias: ModelAlias) -> Result<(), ModelAliasRepositoryError>;
+
+    /// Delete alias by name. Returns true if deleted, false if not found.
+    async fn delete(&self, alias: &ModelId) -> Result<bool, ModelAliasRepositoryError>;
+
+    /// Seed aliases idempotently. Returns count of new aliases inserted.
+    async fn seed(&self, aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError>;
+}

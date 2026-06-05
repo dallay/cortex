@@ -3,6 +3,7 @@
 // Translates between provider wire formats (OpenAI, Anthropic) and the
 // internal domain model. All format-specific logic lives here.
 
+pub mod alias_routes;
 pub mod anthropic_adapter;
 pub mod api_key_dto;
 pub mod authz;

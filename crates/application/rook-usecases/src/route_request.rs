@@ -15,8 +15,9 @@ use chrono::Utc;
 use futures::StreamExt;
 use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
-    CompletionResponse, CortexError, FormatTranslatorPort, ProviderRepositoryPort, RequestStatus,
-    RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
+    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
+    ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry,
+    UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
@@ -42,6 +43,15 @@ pub struct RouteRequest {
     combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
     pricing: Arc<PricingConfig>,
     format_translator: Arc<dyn FormatTranslatorPort>,
+    alias_repository: Arc<dyn ModelAliasRepositoryPort>,
+    alias_config: ModelAliasesConfig,
+}
+
+/// Configuration for model alias resolution
+#[derive(Debug, Clone)]
+pub struct ModelAliasesConfig {
+    pub enabled: bool,
+    pub auto_seed: bool,
 }
 
 impl RouteRequest {
@@ -55,6 +65,8 @@ impl RouteRequest {
         combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
         pricing: Arc<PricingConfig>,
         format_translator: Arc<dyn FormatTranslatorPort>,
+        alias_repository: Arc<dyn ModelAliasRepositoryPort>,
+        alias_config: ModelAliasesConfig,
     ) -> Self {
         Self {
             router,
@@ -65,6 +77,8 @@ impl RouteRequest {
             combo_repository,
             pricing,
             format_translator,
+            alias_repository,
+            alias_config,
         }
     }
 
@@ -78,13 +92,18 @@ impl RouteRequest {
         self.cache.clone()
     }
 
+    /// Get alias repository reference (for HTTP layer wiring)
+    pub fn alias_repository(&self) -> Arc<dyn ModelAliasRepositoryPort> {
+        self.alias_repository.clone()
+    }
+
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
         self.execute_with_format(req, ApiFormat::OpenAI).await
     }
 
     pub async fn execute_with_format(
         &self,
-        req: CompletionRequest,
+        mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         // 0. Check if combo execution is requested
@@ -92,10 +111,34 @@ impl RouteRequest {
             return self.execute_combo(&combo_id, req, client_format).await;
         }
 
+        // 0a. Resolve model alias if enabled (BEFORE restrictions check)
+        if self.alias_config.enabled {
+            match self.alias_repository.find_by_alias(&req.model, None).await {
+                Ok(Some(alias_entry)) => {
+                    tracing::debug!(
+                        alias = %req.model,
+                        canonical = %alias_entry.canonical,
+                        "Resolved model alias"
+                    );
+                    req.model = alias_entry.canonical;
+                }
+                Ok(None) => {
+                    // No alias found, proceed with original model
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = ?e,
+                        model = %req.model,
+                        "Alias resolution failed, using original model"
+                    );
+                }
+            }
+        }
+
         let cache_key = req.cache_key();
         let start = Instant::now();
 
-        // 0. Model restriction check (before any provider interaction)
+        // 0b. Model restriction check (AFTER alias resolution)
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
@@ -199,13 +242,37 @@ impl RouteRequest {
 
     pub async fn execute_stream_with_format(
         &self,
-        req: CompletionRequest,
+        mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
         let start = Instant::now();
 
-        // 0. Model restriction check
+        // 0. Resolve model alias if enabled (BEFORE restrictions check)
+        if self.alias_config.enabled {
+            match self.alias_repository.find_by_alias(&req.model, None).await {
+                Ok(Some(alias_entry)) => {
+                    tracing::debug!(
+                        alias = %req.model,
+                        canonical = %alias_entry.canonical,
+                        "Resolved model alias"
+                    );
+                    req.model = alias_entry.canonical;
+                }
+                Ok(None) => {
+                    // No alias found, proceed with original model
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = ?e,
+                        model = %req.model,
+                        "Alias resolution failed, using original model"
+                    );
+                }
+            }
+        }
+
+        // 0a. Model restriction check (AFTER alias resolution)
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
@@ -1094,6 +1161,54 @@ mod tests {
         }
     }
 
+    /// Test stub for ModelAliasRepositoryPort — returns no aliases
+    struct TestAliasRepository;
+
+    #[async_trait]
+    impl ModelAliasRepositoryPort for TestAliasRepository {
+        async fn find_by_alias(
+            &self,
+            _alias: &shared_kernel::ModelId,
+            _provider_id: Option<&ProviderId>,
+        ) -> Result<Option<rook_core::ModelAlias>, rook_core::ModelAliasRepositoryError> {
+            Ok(None) // No aliases in tests by default
+        }
+
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ModelAlias>, rook_core::ModelAliasRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn create(
+            &self,
+            _alias: rook_core::ModelAlias,
+        ) -> Result<(), rook_core::ModelAliasRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _alias: &shared_kernel::ModelId,
+        ) -> Result<bool, rook_core::ModelAliasRepositoryError> {
+            Ok(false)
+        }
+
+        async fn seed(
+            &self,
+            _aliases: Vec<rook_core::ModelAlias>,
+        ) -> Result<usize, rook_core::ModelAliasRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    fn test_alias_config() -> ModelAliasesConfig {
+        ModelAliasesConfig {
+            enabled: false, // Disabled by default in tests
+            auto_seed: false,
+        }
+    }
+
     struct FailingProviderRepository;
 
     #[async_trait]
@@ -1212,6 +1327,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let mut stream = usecase
@@ -1261,6 +1378,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         )
     }
 
@@ -1285,6 +1404,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let result = usecase.execute(request()).await;
@@ -1337,6 +1458,8 @@ mod tests {
             None,
             Arc::new(pricing),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
@@ -1388,6 +1511,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
         let req = request();
 
@@ -1432,6 +1557,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let result = usecase.execute(request()).await;
@@ -1467,6 +1594,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let result = usecase.execute(request()).await;
@@ -1596,6 +1725,8 @@ mod tests {
             None,
             Arc::new(pricing),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
@@ -1700,6 +1831,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let mut stream = usecase
@@ -1748,6 +1881,8 @@ mod tests {
             None,
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
         );
 
         let stream = usecase

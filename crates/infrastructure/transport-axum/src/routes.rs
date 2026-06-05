@@ -18,8 +18,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
 
 use super::{
-    anthropic_adapter::*, authz, combo_routes, handlers, middleware::csrf_guard, openai_adapter::*,
-    provider_routes, HttpError,
+    alias_routes, anthropic_adapter::*, authz, combo_routes, handlers, middleware::csrf_guard,
+    openai_adapter::*, provider_routes, HttpError,
 };
 use crate::middleware::{ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter};
 
@@ -82,6 +82,12 @@ pub fn router(
             usecases.route_request.combo_repository().unwrap(),
         ));
     }
+
+    // Alias routes (model alias repository is always available)
+    router = router.nest(
+        "/api/models/aliases",
+        alias_routes::router(usecases.route_request.alias_repository()),
+    );
 
     // Model catalog is always available (the catalog port is mandatory on
     // RookUsecases), so the route is always mounted.
