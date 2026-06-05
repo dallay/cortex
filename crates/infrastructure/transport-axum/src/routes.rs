@@ -874,7 +874,7 @@ fn cache_routes(usecases: Usecases) -> Router {
         .route("/api/cache/stats", get(handlers::cache::get_cache_stats))
         .route("/api/cache", delete(handlers::cache::clear_cache))
         .route(
-            "/api/cache/:signature",
+            "/api/cache/{signature}",
             delete(handlers::cache::delete_cache_entry),
         )
         .layer(axum::extract::Extension(cache))

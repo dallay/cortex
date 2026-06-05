@@ -64,7 +64,7 @@ Chain strategy: pending
 - [x] 6.1 **Create `transport-axum/src/handlers/cache.rs`** — New file with handler stubs — Dependencies: none — Complexity: simple
 - [x] 6.2 **Implement `get_cache_stats` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Arc<dyn CachePort>`, call `cache.stats()`, return `Json<CacheStats>` or 500 — Dependencies: 3.1, 6.1 — Complexity: medium
 - [x] 6.3 **Implement `clear_cache` handler** — `transport-axum/src/handlers/cache.rs` — Extract cache port, call `cache.clear()`, return 204 or 500 — Dependencies: 6.1 — Complexity: simple
-- [x] 6.4 **Implement `delete_cache_entry` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Path(signature)`, construct `CacheKey`, call `cache.delete()`, return 204 (deleted) or 404 (not found) — Dependencies: 1.1, 6.1 — Complexity: medium
+- [x] 6.4 **Implement `delete_cache_entry` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Path(signature)`, call `cache.delete_by_signature(&str)` (idempotent), return 204 for both present and missing signatures — Dependencies: 1.1, 6.1 — Complexity: medium
 - [x] 6.5 **Wire cache routes** — `transport-axum/src/routes.rs` — Add `GET /api/cache/stats`, `DELETE /api/cache`, `DELETE /api/cache/:signature` — Dependencies: 6.2, 6.3, 6.4 — Complexity: simple
 - [x] 6.6 **Extend `/health` with cache stats** — `transport-axum/src/handlers/health.rs` — Add `cache_entries`, `cache_hit_rate`, `cache_utilization` fields to health response — Dependencies: 3.1 — Complexity: medium
 
@@ -96,7 +96,7 @@ Chain strategy: pending
 
 ## Phase 10: Verification
 
-- [x] 10.1 **Run `cargo test`** — All unit + integration tests pass — Dependencies: 8.*, 9.* — Complexity: simple
+- [x] 10.1 **Run `cargo test`** — All unit + integration tests pass — Dependencies: 8.*, 9.1–9.4 — Complexity: simple
 - [x] 10.2 **Run `cargo clippy`** — No warnings — Dependencies: all code tasks — Complexity: simple
 - [x] 10.3 **Run `cargo fmt --check`** — Code formatted — Dependencies: all code tasks — Complexity: simple
 - [ ] 10.4 **Run `just ci-local`** — Full CI pipeline passes locally — Dependencies: 10.1, 10.2, 10.3 — Complexity: simple

@@ -13,6 +13,7 @@ use shared_kernel::{CacheKey, RequestId};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
+use transport_axum::authz::{classify_route, AuthTier};
 use transport_axum::handlers::cache::{clear_cache, delete_cache_entry, get_cache_stats};
 
 /// Helper: build a test CompletionResponse
@@ -258,4 +259,27 @@ async fn cache_stats_reflect_hits_and_misses() {
     assert_eq!(stats.hits, 1);
     assert_eq!(stats.misses, 1);
     assert_eq!(stats.hit_rate(), 0.5);
+}
+
+#[test]
+fn cache_routes_require_management_auth() {
+    use axum::http::Method;
+
+    // Verify that cache management routes are classified as Management tier
+    // which requires session authentication (not API key or anonymous)
+    assert_eq!(
+        classify_route(&Method::GET, "/api/cache/stats"),
+        AuthTier::Management,
+        "/api/cache/stats should require Management auth"
+    );
+    assert_eq!(
+        classify_route(&Method::DELETE, "/api/cache"),
+        AuthTier::Management,
+        "/api/cache DELETE should require Management auth"
+    );
+    assert_eq!(
+        classify_route(&Method::DELETE, "/api/cache/somesignature"),
+        AuthTier::Management,
+        "/api/cache/{{signature}} DELETE should require Management auth"
+    );
 }

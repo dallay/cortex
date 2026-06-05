@@ -63,10 +63,13 @@ impl InMemoryCache {
 
         // Delete all matching keys
         for key in keys_to_delete {
-            self.store.remove(&key);
+            // Only increment deleted if an entry was actually removed
+            if self.store.remove(&key).is_some() {
+                deleted += 1;
+            }
+            // Clean up associated metadata regardless
             self.expiry.remove(&key);
             self.last_accessed.remove(&key);
-            deleted += 1;
         }
 
         deleted
@@ -90,13 +93,14 @@ impl InMemoryCache {
                     .min_by_key(|entry| *entry.value())
                     .map(|entry| entry.key().clone())
                 {
-                    // Remove from all maps
-                    self.store.remove(&oldest);
-                    self.expiry.remove(&oldest);
-                    self.last_accessed.remove(&oldest);
-                    self.evictions.fetch_add(1, Ordering::Relaxed);
-                    // Emit Prometheus metric
-                    metrics::counter!("rook_cache_evictions").increment(1);
+                    // Only evict if the entry still exists (check store.remove result)
+                    if self.store.remove(&oldest).is_some() {
+                        self.expiry.remove(&oldest);
+                        self.last_accessed.remove(&oldest);
+                        self.evictions.fetch_add(1, Ordering::Relaxed);
+                        // Emit Prometheus metric
+                        metrics::counter!("rook_cache_evictions").increment(1);
+                    }
                 }
             }
         }
