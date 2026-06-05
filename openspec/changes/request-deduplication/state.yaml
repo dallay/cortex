@@ -1,0 +1,25 @@
+change: request-deduplication
+current_phase: tasks
+completed:
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+next: apply
+chain_strategy: stacked-to-main
+work_units:
+  - id: wu-1
+    name: "Foundation + Layer 1"
+    phases: [1, 2, 3]
+    target_branch: main
+    estimated_lines: 300-350
+    status: pending
+  - id: wu-2
+    name: "Layer 2 + Integration"
+    phases: [4, 5, 6, 7, 8, 9]
+    target_branch: main
+    depends_on: wu-1
+    estimated_lines: 300-450
+    status: pending
+updated: 2026-06-05T10:37:53.274Z
