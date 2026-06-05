@@ -32,8 +32,15 @@ export API_PORT=8081
 export API_TARGET="http://127.0.0.1:${API_PORT}"
 export API_BASE_URL="${API_TARGET}"
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
-# Read admin password from environment or generate a random one
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16)}"
+# Read admin password from environment or generate a strong random one
+# Password must satisfy is_strong_password() requirements:
+# - At least 12 characters
+# - At least one uppercase letter, lowercase letter, digit, and special character
+if [ -z "$ADMIN_PASSWORD" ]; then
+    # Generate: "Admin" + 8 random hex chars + "!"
+    # This guarantees: uppercase (A), lowercase (d,m,i,n + hex a-f), digits (hex 0-9), symbol (!)
+    ADMIN_PASSWORD="Admin$(openssl rand -hex 8)!"
+fi
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
 
 # Colors
@@ -94,7 +101,12 @@ for i in {1..30}; do
 done
 
 log_info "Seeding admin password..."
-docker exec "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.toml "$ADMIN_PASSWORD" > /dev/null 2>&1
+if ! docker exec "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.toml "$ADMIN_PASSWORD"; then
+    log_error "Failed to seed admin password"
+    docker logs "$CONTAINER_NAME" | tail -20
+    cleanup
+    exit 1
+fi
 
 log_info "Container ready!"
 log_info "  API: http://localhost:$API_PORT"
