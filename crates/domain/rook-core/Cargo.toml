@@ -27,3 +27,7 @@ anyhow = "1"
 
 # Logging
 tracing = "0.1"
+
+# Hashing (for cache keys)
+sha2 = "0.10"
+hex = "0.4"
