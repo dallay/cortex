@@ -289,12 +289,7 @@ impl RouteRequest {
 
         // Record telemetry
         if let Some(telemetry) = &self.telemetry {
-            telemetry.record_observation(
-                provider_id,
-                latency_ms,
-                None,
-                ObservationStatus::Success,
-            );
+            telemetry.record_observation(provider_id, latency_ms, None, ObservationStatus::Success);
         }
 
         Ok(resp)

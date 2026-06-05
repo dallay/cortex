@@ -19,9 +19,7 @@ use tracing::error;
 
 use super::{
     alias_routes,
-    anthropic_adapter::{
-        AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicSseEvent,
-    },
+    anthropic_adapter::{AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicSseEvent},
     authz, combo_routes, handlers,
     middleware::csrf_guard,
     openai_adapter::{
