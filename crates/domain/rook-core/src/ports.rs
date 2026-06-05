@@ -14,7 +14,7 @@ use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, Prov
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, SignatureEntry, StreamChunk, TokenCacheStats, UsageEntry,
+    HealthStatus, Pagination, SignatureEntry, StreamChunk, UsageEntry,
     UsageFilters, UsageSummary,
 };
 use super::{

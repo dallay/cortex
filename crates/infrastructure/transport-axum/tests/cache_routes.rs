@@ -7,14 +7,17 @@ use axum::{
 };
 use cache_memory::InMemoryCache;
 use rook_core::{
-    CachePort, CacheStats, CompletionResponse, MessageContent, ModelId, ProviderId, SignatureEntry, TokenUsage,
+    CachePort, CacheStats, CompletionResponse, MessageContent, ModelId, ProviderId, SignatureEntry,
+    TokenUsage,
 };
 use shared_kernel::{CacheKey, RequestId};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 use transport_axum::authz::{classify_route, AuthTier};
-use transport_axum::handlers::cache::{clear_cache, delete_cache_entry, get_cache_stats, list_signatures, get_signature};
+use transport_axum::handlers::cache::{
+    clear_cache, delete_cache_entry, get_cache_stats, get_signature, list_signatures,
+};
 
 /// Helper: build a test CompletionResponse
 fn make_response(content: &str) -> CompletionResponse {
@@ -397,7 +400,10 @@ async fn get_signature_returns_200_with_cached_response() {
         .unwrap();
 
     let app = axum::Router::new()
-        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .route(
+            "/api/cache/signature/{sig}",
+            axum::routing::get(get_signature),
+        )
         .layer(Extension(cache));
 
     let response = app
@@ -427,7 +433,10 @@ async fn get_signature_returns_404_when_signature_not_found() {
     let signature = "d".repeat(64);
 
     let app = axum::Router::new()
-        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .route(
+            "/api/cache/signature/{sig}",
+            axum::routing::get(get_signature),
+        )
         .layer(Extension(cache));
 
     let response = app
@@ -448,7 +457,10 @@ async fn get_signature_returns_400_for_invalid_signature_format() {
     let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
 
     let app = axum::Router::new()
-        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .route(
+            "/api/cache/signature/{sig}",
+            axum::routing::get(get_signature),
+        )
         .layer(Extension(cache.clone()));
 
     // Test 1: Too short
@@ -494,4 +506,3 @@ async fn get_signature_returns_400_for_invalid_signature_format() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
-

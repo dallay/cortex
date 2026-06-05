@@ -15,10 +15,10 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, CacheStats, ComboRepositoryPort,
+    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort,
     CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
-    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, SignatureEntry,
-    StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageRecorderPort,
+    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort,
+    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
@@ -1116,11 +1116,18 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn get_by_signature(&self, _signature: &str) -> CortexResult<Option<CompletionResponse>> {
+        async fn get_by_signature(
+            &self,
+            _signature: &str,
+        ) -> CortexResult<Option<CompletionResponse>> {
             Ok(None)
         }
 
-        async fn increment_token_cache_hit(&self, _tokens: u64, _cost_usd: f64) -> CortexResult<()> {
+        async fn increment_token_cache_hit(
+            &self,
+            _tokens: u64,
+            _cost_usd: f64,
+        ) -> CortexResult<()> {
             Ok(())
         }
 

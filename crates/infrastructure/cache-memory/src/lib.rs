@@ -1,8 +1,8 @@
 // cache-memory — in-memory implementation of CachePort
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use chrono::Utc;
+use dashmap::DashMap;
 use rook_core::{
     CacheKey, CachePort, CacheStats, CompletionResponse, CortexResult, SignatureEntry,
     SignatureRequestMetadata, TokenCacheStats,
@@ -63,7 +63,8 @@ impl InMemoryCache {
                 hits: self.token_cache_hits.load(Ordering::Relaxed),
                 misses: self.token_cache_misses.load(Ordering::Relaxed),
                 tokens_saved: self.tokens_saved.load(Ordering::Relaxed),
-                estimated_cost_saved_usd: self.cost_saved_cents.load(Ordering::Relaxed) as f64 / 100.0,
+                estimated_cost_saved_usd: self.cost_saved_cents.load(Ordering::Relaxed) as f64
+                    / 100.0,
             },
         }
     }
@@ -141,7 +142,8 @@ impl InMemoryCache {
                         message_count: resp
                             .usage
                             .prompt_tokens
-                            .saturating_sub(resp.usage.completion_tokens) as usize,
+                            .saturating_sub(resp.usage.completion_tokens)
+                            as usize,
                         has_tools: false,
                         max_tokens: None,
                         temperature: None,
@@ -159,7 +161,10 @@ impl InMemoryCache {
     /// Returns `None` if not found or expired.
     pub fn get_by_signature(&self, signature: &str) -> Option<CompletionResponse> {
         // Find the entry matching this signature
-        let found = self.store.iter().find(|entry| entry.key().signature == signature);
+        let found = self
+            .store
+            .iter()
+            .find(|entry| entry.key().signature == signature);
 
         if let Some(entry) = found {
             let key = entry.key();
@@ -905,7 +910,11 @@ mod tests {
         let key = make_key("sig_expired");
 
         cache
-            .set(&key, &make_response("expired content"), Duration::from_secs(0))
+            .set(
+                &key,
+                &make_response("expired content"),
+                Duration::from_secs(0),
+            )
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -950,7 +959,11 @@ mod tests {
         let key = make_key("sig_get_1");
 
         cache
-            .set(&key, &make_response("cached content"), Duration::from_secs(60))
+            .set(
+                &key,
+                &make_response("cached content"),
+                Duration::from_secs(60),
+            )
             .await
             .unwrap();
 

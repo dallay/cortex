@@ -940,7 +940,10 @@ mod tests {
         "#;
 
         let result: Result<RookConfig, _> = toml::from_str(toml);
-        assert!(result.is_err(), "Expected TOML parsing to reject invalid CacheMode");
+        assert!(
+            result.is_err(),
+            "Expected TOML parsing to reject invalid CacheMode"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("unknown variant") || err_msg.contains("invalid_mode"));
     }

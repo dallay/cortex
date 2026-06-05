@@ -686,7 +686,10 @@ impl CachePort for NoOpCache {
     async fn list_signatures(&self) -> CortexResult<Vec<rook_core::SignatureEntry>> {
         Ok(Vec::new())
     }
-    async fn get_by_signature(&self, _: &str) -> CortexResult<Option<rook_core::CompletionResponse>> {
+    async fn get_by_signature(
+        &self,
+        _: &str,
+    ) -> CortexResult<Option<rook_core::CompletionResponse>> {
         Ok(None)
     }
     async fn increment_token_cache_hit(&self, _: u64, _: f64) -> CortexResult<()> {
