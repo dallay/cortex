@@ -150,7 +150,7 @@ The system MUST expose HTTP endpoints for cache inspection and management follow
 
 - GIVEN a cache without an entry matching signature "invalid999"
 - WHEN a DELETE request is made to /api/cache/invalid999
-- THEN the response status SHOULD be 404 Not Found OR 204 No Content (idempotent delete, document choice)
+- THEN the response status MUST be 204 No Content (idempotent delete - always succeeds)
 
 #### Scenario: DELETE /api/cache/:signature with malformed signature
 
@@ -273,7 +273,7 @@ impl CacheStats {
 pub struct CacheConfig {
     pub enabled: bool,
     pub ttl: Duration,
-    pub max_entries: usize, // NEW field
+    pub max_entries: Option<usize>, // None = unlimited, Some(n) = capacity limit
 }
 ```
 
