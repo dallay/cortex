@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, shallowMount } from '@vue/test-utils'
+import { shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import AddProviderDialog from './AddProviderDialog.vue'
 import en from '../locales/en.json'
