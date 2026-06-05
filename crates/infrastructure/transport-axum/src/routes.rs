@@ -48,9 +48,9 @@ pub fn router(
         .route("/health", get(health_check))
         // Telemetry endpoints
         .route("/api/telemetry/summary", get(telemetry_summary))
-        .route("/api/telemetry/:provider", get(telemetry_provider))
+        .route("/api/telemetry/{provider}", get(telemetry_provider))
         .route(
-            "/api/telemetry/:provider/latency",
+            "/api/telemetry/{provider}/latency",
             get(telemetry_latency_distribution),
         )
         // First-run bootstrap endpoints
