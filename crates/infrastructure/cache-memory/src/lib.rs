@@ -128,7 +128,7 @@ impl InMemoryCache {
             .map(|entry| {
                 let key = entry.key();
                 let resp = entry.value();
-                
+
                 // Read real timestamps from tracking maps
                 let cached_at = self
                     .expiry
@@ -139,7 +139,7 @@ impl InMemoryCache {
                         now - chrono::Duration::from_std(elapsed).unwrap_or_default()
                     })
                     .unwrap_or(now);
-                
+
                 let last_accessed = self
                     .last_accessed
                     .get(key)
@@ -182,7 +182,7 @@ impl InMemoryCache {
 
     /// Retrieve a cached response by signature, checking expiry.
     /// Returns `None` if not found or expired.
-    /// 
+    ///
     /// This is a side-effect-free inspection method for management endpoints.
     /// It does not update hits/misses metrics or last_accessed timestamps.
     pub fn get_by_signature(&self, signature: &str) -> Option<CompletionResponse> {
@@ -197,7 +197,7 @@ impl InMemoryCache {
             let value = entry.value().clone();
             // Drop the guard before checking expiry to avoid holding it during potential cleanup
             drop(entry);
-            
+
             if self.is_expired(&key) {
                 // Clean up expired entry
                 self.store.remove(&key);
@@ -1055,13 +1055,19 @@ mod tests {
             .unwrap();
 
         let initial_stats = cache.stats();
-        
+
         // Multiple calls should not affect hit/miss counters
         let _ = cache.get_by_signature("sig_no_side_effects");
         let _ = cache.get_by_signature("nonexistent");
-        
+
         let new_stats = cache.stats();
-        assert_eq!(new_stats.hits, initial_stats.hits, "get_by_signature should not increment hits");
-        assert_eq!(new_stats.misses, initial_stats.misses, "get_by_signature should not increment misses");
+        assert_eq!(
+            new_stats.hits, initial_stats.hits,
+            "get_by_signature should not increment hits"
+        );
+        assert_eq!(
+            new_stats.misses, initial_stats.misses,
+            "get_by_signature should not increment misses"
+        );
     }
 }
