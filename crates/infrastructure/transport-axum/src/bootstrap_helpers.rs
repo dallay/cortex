@@ -10,14 +10,15 @@ use std::sync::Arc;
 use models_catalog::StaticModelCatalog;
 use rook_core::{
     ApiFormat, ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionRequest,
-    CompletionResponse, CortexResult, FormatTranslatorPort, NewSession, PasswordHasher, RouterPort,
-    Session, SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
+    CompletionResponse, CortexResult, FormatTranslatorPort, ModelAlias, ModelAliasRepositoryError,
+    ModelAliasRepositoryPort, NewSession, PasswordHasher, RouterPort, Session, SessionId,
+    SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
 };
 use rook_usecases::{
     BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
     RoutingStrategy, SetAdminPassword,
 };
-use shared_kernel::CacheKey;
+use shared_kernel::{CacheKey, ModelId, ProviderId};
 use std::time::Duration;
 use tokio::sync::RwLock;
 
@@ -43,6 +44,11 @@ pub fn make_test_bootstrap_usecases(
     let format_translator: Arc<dyn FormatTranslatorPort> = Arc::new(StubFormatTranslator);
     let cache: Arc<dyn CachePort> = Arc::new(StubCache);
     let audit: Arc<dyn AuditPort> = Arc::new(StubAudit);
+    let alias_repo: Arc<dyn ModelAliasRepositoryPort> = Arc::new(StubAliasRepo);
+    let alias_config = rook_usecases::route_request::ModelAliasesConfig {
+        enabled: false,
+        auto_seed: false,
+    };
 
     let route_request = RouteRequest::new(
         fallback_router.clone() as Arc<dyn RouterPort>,
@@ -53,6 +59,8 @@ pub fn make_test_bootstrap_usecases(
         None,
         Arc::new(rook_usecases::PricingConfig::default()),
         format_translator,
+        alias_repo,
+        alias_config,
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
     let health_check = Arc::new(HealthCheck::new(fallback_router.clone()));
@@ -175,5 +183,35 @@ impl SessionRepositoryPort for StubSessionRepo {
     }
     async fn delete_expired(&self) -> Result<u64, SessionRepositoryError> {
         Ok(0)
+    }
+}
+
+/// Stub alias repository — never called by bootstrap tests
+struct StubAliasRepo;
+
+#[async_trait]
+impl ModelAliasRepositoryPort for StubAliasRepo {
+    async fn find_by_alias(
+        &self,
+        _alias: &ModelId,
+        _provider_id: Option<&ProviderId>,
+    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+        unreachable!("alias_repo not called by bootstrap tests")
+    }
+
+    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+        unreachable!("alias_repo not called by bootstrap tests")
+    }
+
+    async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+        unreachable!("alias_repo not called by bootstrap tests")
+    }
+
+    async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+        unreachable!("alias_repo not called by bootstrap tests")
+    }
+
+    async fn seed(&self, _aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError> {
+        unreachable!("alias_repo not called by bootstrap tests")
     }
 }

@@ -11,8 +11,16 @@
 //   SC-05 + SC-10: Anthropic round-trip (content[0].type == "text", stop_reason == "end_turn")
 //   SC-01 + SC-02: No parse error on requests that include `tools` or `stream_options` fields
 
-use rook_core::{CompletionResponse, MessageContent, ModelId, Role, TokenUsage};
-use shared_kernel::{ProviderId, RequestId};
+use async_trait::async_trait;
+use rook_core::{
+    ApiFormat, AuditEntry, AuditPort, CachePort, CompletionRequest, CompletionResponse,
+    HealthStatus, MessageContent, ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort,
+    ModelId, ProviderPort, RequestMetadata, Role, RouterPort, StreamChunk, TokenUsage,
+};
+use rook_usecases::{route_request::ModelAliasesConfig, RouteRequest};
+use shared_kernel::{CacheKey, ProviderId, RequestId};
+use std::sync::Arc;
+use std::time::Duration;
 use transport_axum::{
     anthropic_adapter::{AnthropicMessagesRequest, AnthropicMessagesResponse},
     openai_adapter::{OpenAIChatRequest, OpenAIChatResponse},
@@ -210,14 +218,8 @@ fn anthropic_response_has_correct_structure() {
 // Registry-routed multi-format use case integration
 // ---------------------------------------------------------------------------
 
-use async_trait::async_trait;
 use futures::stream;
-use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CacheKey, CachePort, CompletionRequest, FormatTranslatorPort,
-    HealthStatus, ProviderPort, RequestMetadata, RouterPort, StreamChunk,
-};
-use rook_usecases::RouteRequest;
-use std::{sync::Arc, time::Duration};
+use rook_core::FormatTranslatorPort;
 use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 struct RegistryTestProvider {
@@ -356,6 +358,36 @@ impl AuditPort for NoopAudit {
     }
 }
 
+/// Test stub for ModelAliasRepositoryPort
+struct NoopAliasRepository;
+
+#[async_trait]
+impl ModelAliasRepositoryPort for NoopAliasRepository {
+    async fn find_by_alias(
+        &self,
+        _alias: &ModelId,
+        _provider_id: Option<&ProviderId>,
+    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+        Ok(None)
+    }
+
+    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+        Ok(())
+    }
+
+    async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+        Ok(false)
+    }
+
+    async fn seed(&self, _aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError> {
+        Ok(0)
+    }
+}
+
 static REGISTRY_TEST_MODEL: std::sync::LazyLock<ModelId> =
     std::sync::LazyLock::new(|| ModelId::new("registry-test-model"));
 
@@ -390,6 +422,11 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
         None, // combo_repository
         Arc::new(rook_usecases::PricingConfig::default()),
         registry_with_openai_anthropic_pairs(),
+        Arc::new(NoopAliasRepository),
+        ModelAliasesConfig {
+            enabled: false,
+            auto_seed: false,
+        },
     )
 }
 
