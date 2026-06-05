@@ -32,7 +32,8 @@ export API_PORT=8081
 export API_TARGET="http://127.0.0.1:${API_PORT}"
 export API_BASE_URL="${API_TARGET}"
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
-ADMIN_PASSWORD="Admin123!234"
+# Read admin password from environment or generate a random one
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16)}"
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
 
 # Colors
@@ -97,7 +98,7 @@ docker exec "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.
 
 log_info "Container ready!"
 log_info "  API: http://localhost:$API_PORT"
-log_info "  Admin: admin / $ADMIN_PASSWORD"
+log_info "  Admin credentials configured (use ADMIN_PASSWORD env var to override)"
 log_info ""
 
 if [ "$MODE" = "--test" ]; then

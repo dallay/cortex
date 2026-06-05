@@ -67,7 +67,16 @@ try {
     throw result.error;
   }
   
-  process.exit(result.status || 0);
+  // Handle signal termination: if status is null, the child was killed by a signal
+  if (result.status !== null) {
+    process.exit(result.status);
+  } else if (result.signal) {
+    // Exit with non-zero code to reflect signal termination
+    // Convention: 128 + signal number, but we don't have the signal number here
+    process.exit(1);
+  } else {
+    process.exit(0);
+  }
 } catch (error) {
   console.error('Rook error:', error.message);
   process.exit(1);
