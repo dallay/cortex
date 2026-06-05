@@ -1,4 +1,9 @@
 # Cortex — AI Proxy & Router
+[![CI](https://github.com/dallay/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
+[![Rust 1.89](https://img.shields.io/badge/rust-1.89-orange.svg)](https://www.rust-lang.org)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=alert_status&token=fefb3503ebdc74104af9a848d3444ba86008c9b0)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
+[![Quality gate](https://sonarcloud.io/api/project_badges/quality_gate?project=dallay_cortex&token=fefb3503ebdc74104af9a848d3444ba86008c9b0)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
+[![codecov](https://codecov.io/gh/dallay/cortex/graph/badge.svg?token=X2A75Y1676)](https://codecov.io/gh/dallay/cortex)
 
 **Cortex** is a Rust monorepo for AI infrastructure. Currently includes **Rook** — an AI proxy/router that routes LLM requests to multiple providers with fallback, caching, and audit logging.
 
