@@ -28,7 +28,7 @@ fn main() {
     } else {
         let profile = std::env::var("PROFILE").unwrap_or_default();
         let dist_dir = dashboard_dir.join("dist");
-        
+
         // In release mode, fail only if vite is missing AND dist/ doesn't exist
         // This allows CI to use pre-built dashboard artifacts
         if profile == "release" && !dist_dir.exists() {
@@ -36,7 +36,7 @@ fn main() {
             eprintln!("hint: run `pnpm install` in the repo root before building release");
             std::process::exit(1);
         }
-        
+
         if dist_dir.exists() {
             println!(
                 "cargo:warning=using pre-built dashboard from dist/ (vite not found, skipping build)"
