@@ -27,16 +27,27 @@ fn main() {
         }
     } else {
         let profile = std::env::var("PROFILE").unwrap_or_default();
-        if profile == "release" {
+        let dist_dir = dashboard_dir.join("dist");
+        
+        // In release mode, fail only if vite is missing AND dist/ doesn't exist
+        // This allows CI to use pre-built dashboard artifacts
+        if profile == "release" && !dist_dir.exists() {
             eprintln!("error: dashboard/node_modules/.bin/vite not found in release mode");
             eprintln!("hint: run `pnpm install` in the repo root before building release");
             std::process::exit(1);
         }
-        println!(
-            "cargo:warning=dashboard/node_modules/.bin/vite not found, skipping dashboard build"
-        );
-        println!(
-            "cargo:warning=hint: run `pnpm install` in the repo root to enable dashboard embedding"
-        );
+        
+        if dist_dir.exists() {
+            println!(
+                "cargo:warning=using pre-built dashboard from dist/ (vite not found, skipping build)"
+            );
+        } else {
+            println!(
+                "cargo:warning=dashboard/node_modules/.bin/vite not found, skipping dashboard build"
+            );
+            println!(
+                "cargo:warning=hint: run `pnpm install` in the repo root to enable dashboard embedding"
+            );
+        }
     }
 }
