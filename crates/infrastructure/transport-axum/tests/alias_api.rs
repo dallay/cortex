@@ -126,9 +126,7 @@ async fn make_request(
 }
 
 /// Helper to deserialize response body as JSON
-async fn json_body<T: serde::de::DeserializeOwned>(
-    response: axum::response::Response,
-) -> T {
+async fn json_body<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
