@@ -186,7 +186,8 @@ The system MUST support independent enable/disable control for signature cache (
 - GIVEN token_cache.providers is empty
 - AND token_cache.mode is Auto
 - WHEN the configuration is loaded
-- THEN the system MUST default to providers [Anthropic, DeepSeek, Qwen, ZAI]
+- THEN the system MUST default to providers [Anthropic, DeepSeek, Qwen]
+NOTE: "Claude" is a model family, not a separate provider. All Claude models route to ProviderId::Anthropic.
 
 ### Requirement: Provider Detection Logic
 
@@ -429,6 +430,11 @@ pub struct RequestMetadata {
 - [ ] Integration test: GET /api/cache/signature/:sig returns 200 with cached response for valid signature
 - [ ] Integration test: GET /api/cache/signature/:sig returns 404 for non-existent signature
 - [ ] Integration test: GET /api/cache/signature/:sig returns 400 for malformed signature
+- [ ] Integration test: DELETE /api/cache returns 204 and clears all cache entries (idempotent)
+- [ ] Integration test: DELETE /api/cache/:signature returns 204 for valid signature (idempotent)
+- [ ] Integration test: DELETE /api/cache/:signature returns 204 for non-existent signature (idempotent)
+- [ ] Integration test: DELETE endpoints require management authentication (401 for unauthenticated)
+- [ ] Integration test: GET /health includes cache_stats with signature_cache and token_cache sections
 - [ ] Unit test: Anthropic requests get cache-control header when token_cache.mode=Auto
 - [ ] Unit test: OpenAI requests do not get cache-control header when token_cache.mode=Auto
 - [ ] Unit test: All requests get cache-control header when token_cache.mode=Always

@@ -393,10 +393,15 @@ providers = ["anthropic", "claude", "deepseek", "qwen", "zai"]
 When token cache hit is detected (`x-cache: hit` from provider):
 
 1. Extract `usage.prompt_tokens_cached` from response (Anthropic-specific field for cached prompt tokens)
-2. If not available, fall back to `usage.prompt_tokens` (conservative estimate — assumes all prompt tokens were cached)
+2. If not available, fall back to `usage.prompt_tokens` with conservative multiplier (0.5) — see limitation below
 3. Calculate: `cost_saved_usd = cached_tokens * pricing.prompt_rate_per_million / 1_000_000`
 4. Accumulate in `cost_saved_cents: AtomicU64` (stored as cents for atomic precision)
 5. Convert to USD when serving stats: `cost_saved_usd = cost_saved_cents / 100.0`
+
+**Limitation**: When provider-specific cached-token fields are missing (e.g., `usage.prompt_tokens_cached` for Anthropic, `prompt_tokens_details.cached_tokens` for OpenAI), the fallback to `usage.prompt_tokens` can overestimate savings for partial cache hits. To mitigate:
+- Apply a conservative multiplier (0.5) when using `usage.prompt_tokens` as fallback
+- Affected metrics: `usage.prompt_tokens`, `usage.prompt_tokens_cached`, `prompt_tokens_details.cached_tokens`, `cost_saved_cents`, `cost_saved_usd`
+- Future enhancement: require provider-specific fields before counting savings
 
 ### Default Pricing (Hardcoded MVP)
 

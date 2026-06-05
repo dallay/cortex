@@ -27,7 +27,7 @@ Chain strategy: pending
 
 ## Phase 1: Configuration & Domain Model (Foundation)
 
-- [ ] 1.1 Add `CacheControl` struct to `crates/domain/rook-core/src/model.rs` with `mode: CacheMode` enum (Auto/Always/Never) and `providers: Vec<String>`
+- [ ] 1.1 Add `TokenCacheConfig` struct to `crates/domain/rook-core/src/model.rs` with `mode: CacheMode` enum (Auto/Always/Never) and `providers: Vec<String>`
 - [ ] 1.2 Add `cache_hit: Option<bool>` field to `CompletionResponse` struct in `crates/domain/rook-core/src/model.rs`
 - [ ] 1.3 Extend `CacheStats` struct in `crates/domain/rook-core/src/model.rs` with `token_cache: TokenCacheStats` field
 - [ ] 1.4 Add `TokenCacheStats` struct with `hits`, `misses`, `tokens_saved`, `estimated_cost_saved_usd` fields
@@ -117,7 +117,7 @@ Chain strategy: pending
 
 ---
 
-**Total Tasks**: 47  
+**Total Tasks**: 63  
 **Estimated Effort**: ~11-15 hours  
 **Complexity**: Medium-High (multi-layer architecture, provider integration, metrics aggregation)
 

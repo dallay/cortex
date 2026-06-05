@@ -75,7 +75,7 @@ pub struct CacheConfig {
     },
     pub token_cache: TokenCacheConfig {
         pub mode: CacheMode,         // auto | always | never
-        pub providers: Vec<ProviderId>,
+        pub providers: Vec<String>, // e.g., ["anthropic", "deepseek", "qwen"]
     },
 }
 
@@ -88,30 +88,27 @@ pub enum CacheMode {
 
 ### Metrics Tracking
 
-Unified `/api/cache/stats` response:
+The existing `CacheStats` struct is extended with new fields rather than creating a separate `UnifiedCacheStats` type. This preserves the `CachePort::stats()` → `CortexResult<CacheStats>` contract.
+
+Extended `CacheStats` JSON response from `GET /api/cache/stats`:
 
 ```json
 {
-  "signature_cache": {
-    "hits": 42,
-    "misses": 158,
-    "hit_rate": 0.21,
-    "entries": 87,
-    "evictions": 13
-  },
+  "hits": 42,
+  "misses": 158,
+  "evictions": 13,
+  "entries": 87,
+  "max_entries": 1000,
   "token_cache": {
     "hits": 215,
     "misses": 45,
     "tokens_saved": 128000,
     "estimated_cost_saved_usd": 0.64
-  },
-  "combined": {
-    "total_requests": 300,
-    "cached_requests": 257,
-    "cache_rate": 0.86
   }
 }
 ```
+
+Note: `signature_cache` and `combined` sections are NOT separate top-level objects. Instead, the signature cache metrics (hits, misses, evictions, entries) remain at the top level of `CacheStats`, and `token_cache` is embedded as a nested section. Callers can compute combined metrics as: `total_requests = signature_hits + signature_misses`, `cached_requests = signature_hits + token_hits`.
 
 ## Affected Areas
 
