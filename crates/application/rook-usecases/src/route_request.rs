@@ -15,10 +15,10 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort,
-    CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
-    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort,
-    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
+    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
+    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
+    ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry,
+    UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
@@ -957,8 +957,9 @@ mod tests {
     use futures::{stream, StreamExt};
     use rook_core::{
         ApiKeyId, CacheStats, CostBreakdown, HealthStatus, Message, ModelId, Pagination,
-        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, StreamChunk,
-        TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
+        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry,
+        StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort,
+        UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
