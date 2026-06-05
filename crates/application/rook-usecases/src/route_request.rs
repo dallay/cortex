@@ -242,13 +242,37 @@ impl RouteRequest {
 
     pub async fn execute_stream_with_format(
         &self,
-        req: CompletionRequest,
+        mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
         let start = Instant::now();
 
-        // 0. Model restriction check
+        // 0. Resolve model alias if enabled (BEFORE restrictions check)
+        if self.alias_config.enabled {
+            match self.alias_repository.find_by_alias(&req.model, None).await {
+                Ok(Some(alias_entry)) => {
+                    tracing::debug!(
+                        alias = %req.model,
+                        canonical = %alias_entry.canonical,
+                        "Resolved model alias"
+                    );
+                    req.model = alias_entry.canonical;
+                }
+                Ok(None) => {
+                    // No alias found, proceed with original model
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = ?e,
+                        model = %req.model,
+                        "Alias resolution failed, using original model"
+                    );
+                }
+            }
+        }
+
+        // 0a. Model restriction check (AFTER alias resolution)
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {

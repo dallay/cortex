@@ -185,7 +185,7 @@ impl RookContainer {
                     alias: shared_kernel::ModelId::new(*alias),
                     canonical: shared_kernel::ModelId::new(*canonical),
                     provider_id: provider_id.map(shared_kernel::ProviderId::new),
-                    created_at: shared_kernel::Utc::now().to_rfc3339(),
+                    created_at: shared_kernel::Utc::now(),
                 })
                 .collect::<Vec<_>>();
 

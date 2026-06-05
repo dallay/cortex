@@ -1,6 +1,7 @@
 use alias_sqlite::{repository::builtin_aliases, SqliteModelAliasRepository};
 use rook_core::ports::ModelAliasRepositoryPort;
 use rook_core::{ModelAlias, ModelId};
+use shared_kernel::Utc;
 use std::sync::Arc;
 
 /// Test that alias resolution works end-to-end in routing
@@ -17,7 +18,7 @@ async fn test_alias_resolves_before_routing() {
         alias: ModelId::new("gpt-4o-latest"),
         canonical: ModelId::new("gpt-4o-2024-05-13"),
         provider_id: None,
-        created_at: "2026-06-05T07:10:00Z".to_string(),
+        created_at: Utc::now(),
     };
     repo.create(alias.clone()).await.expect("create alias");
 
@@ -55,7 +56,7 @@ async fn test_canonical_model_passes_through() {
         alias: ModelId::new("gpt-4-turbo"),
         canonical: ModelId::new("gpt-4-turbo-2024-04-09"),
         provider_id: None,
-        created_at: "2026-06-05T07:10:00Z".to_string(),
+        created_at: Utc::now(),
     };
     repo.create(alias).await.expect("create alias");
 
@@ -182,7 +183,7 @@ async fn test_repository_handles_concurrent_access() {
                 alias: ModelId::new(format!("test-alias-{}", i)),
                 canonical: ModelId::new(format!("test-canonical-{}", i)),
                 provider_id: None,
-                created_at: "2026-06-05T07:10:00Z".to_string(),
+                created_at: Utc::now(),
             };
             repo_clone.create(alias).await
         });

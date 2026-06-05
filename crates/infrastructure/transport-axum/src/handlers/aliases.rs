@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use rook_core::{ModelAlias, ModelAliasRepositoryPort};
+use rook_core::{ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ModelId, ProviderId};
 
@@ -45,7 +45,7 @@ impl From<&ModelAlias> for AliasResponse {
             alias: alias.alias.to_string(),
             canonical: alias.canonical.to_string(),
             provider_id: alias.provider_id.as_ref().map(|p| p.to_string()),
-            created_at: alias.created_at.clone(),
+            created_at: alias.created_at.to_rfc3339(),
         }
     }
 }
@@ -92,7 +92,11 @@ pub async fn create_alias(
 
     // Check if canonical is itself an alias (cycle prevention)
     let canonical_model_id = ModelId::new(req.canonical.clone());
-    match repo.find_by_alias(&canonical_model_id, None).await {
+    let provider_scope = req.provider_id.as_ref().map(ProviderId::new);
+    match repo
+        .find_by_alias(&canonical_model_id, provider_scope.as_ref())
+        .await
+    {
         Ok(Some(_)) => {
             return Err(HttpError {
                 status: StatusCode::BAD_REQUEST,
@@ -117,7 +121,7 @@ pub async fn create_alias(
         alias: ModelId::new(req.alias.clone()),
         canonical: canonical_model_id,
         provider_id: req.provider_id.map(ProviderId::new),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: chrono::Utc::now(),
     };
 
     let alias_str = alias.alias.to_string();
@@ -133,7 +137,7 @@ pub async fn create_alias(
             );
             Ok(StatusCode::CREATED)
         }
-        Err(e) if e.to_string().contains("already exists") => Err(HttpError {
+        Err(ModelAliasRepositoryError::AlreadyExists(_)) => Err(HttpError {
             status: StatusCode::BAD_REQUEST,
             code: "ALIAS_ALREADY_EXISTS",
             message: format!("Alias '{}' already exists", alias_str),

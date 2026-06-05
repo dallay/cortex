@@ -1,7 +1,7 @@
 //! Built-in model aliases — seeded at startup when table is empty
 
 /// Built-in aliases: (alias, canonical, provider_id)
-/// Provider ID is None for global aliases
+/// All aliases are provider-scoped (provider_id is always Some)
 pub const DEFAULT_ALIASES: &[(&str, &str, Option<&str>)] = &[
     // OpenAI
     ("gpt-4o-latest", "gpt-4o-2024-05-13", Some("openai")),

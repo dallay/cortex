@@ -3,6 +3,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use db_migration;
 use rook_core::ports::{ModelAliasRepositoryError, ModelAliasRepositoryPort};
 use rook_core::ModelAlias;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -66,7 +67,12 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
                         provider_id: row
                             .get::<_, Option<String>>(2)?
                             .map(|s| ProviderId::new(&s)),
-                        created_at: row.get(3)?,
+                        created_at: row
+                            .get::<_, String>(3)
+                            .ok()
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .unwrap_or_else(chrono::Utc::now),
                     })
                 },
             )
@@ -87,7 +93,12 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
                         provider_id: row
                             .get::<_, Option<String>>(2)?
                             .map(|s| ProviderId::new(&s)),
-                        created_at: row.get(3)?,
+                        created_at: row
+                            .get::<_, String>(3)
+                            .ok()
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .unwrap_or_else(chrono::Utc::now),
                     })
                 },
             )
@@ -114,10 +125,13 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
                 Ok(ModelAlias {
                     alias: ModelId::new(row.get::<_, String>(0)?),
                     canonical: ModelId::new(row.get::<_, String>(1)?),
-                    provider_id: row
-                        .get::<_, Option<String>>(2)?
-                        .map(|s| ProviderId::new(&s)),
-                    created_at: row.get(3)?,
+                    provider_id: row.get::<_, Option<String>>(2)?.map(ProviderId::new),
+                    created_at: row
+                        .get::<_, String>(3)
+                        .ok()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(chrono::Utc::now),
                 })
             })
             .map_err(|e| ModelAliasRepositoryError::Database(e.to_string()))?
@@ -130,15 +144,23 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
     async fn create(&self, alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
         let conn = self.lock()?;
 
-        // Check if canonical is itself an alias (prevent cycles)
-        let canonical_is_alias = conn
-            .query_row(
-                "SELECT 1 FROM model_aliases WHERE alias = ?1 LIMIT 1",
+        // Check if canonical is itself an alias (prevent direct canonical-as-alias, depth-1 only)
+        // Provider-scoped: check within the same provider scope
+        let canonical_is_alias = if let Some(ref provider_id) = alias.provider_id {
+            conn.query_row(
+                "SELECT 1 FROM model_aliases WHERE alias = ?1 AND provider_id = ?2 LIMIT 1",
+                params![alias.canonical.as_str(), provider_id.as_str()],
+                |_| Ok(()),
+            )
+        } else {
+            conn.query_row(
+                "SELECT 1 FROM model_aliases WHERE alias = ?1 AND provider_id IS NULL LIMIT 1",
                 params![alias.canonical.as_str()],
                 |_| Ok(()),
             )
-            .optional()
-            .map_err(|e| ModelAliasRepositoryError::Database(e.to_string()))?;
+        }
+        .optional()
+        .map_err(|e| ModelAliasRepositoryError::Database(e.to_string()))?;
 
         if canonical_is_alias.is_some() {
             return Err(ModelAliasRepositoryError::InvalidAlias(
@@ -154,7 +176,7 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
                 alias.alias.as_str(),
                 alias.canonical.as_str(),
                 alias.provider_id.as_ref().map(|p| p.as_str()),
-                alias.created_at,
+                alias.created_at.to_rfc3339(),
             ],
         );
 
@@ -198,7 +220,7 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
                     alias.alias.as_str(),
                     alias.canonical.as_str(),
                     alias.provider_id.as_ref().map(|p| p.as_str()),
-                    alias.created_at,
+                    alias.created_at.to_rfc3339(),
                 ],
             );
 
@@ -219,8 +241,6 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
 
 /// Helper function to create built-in aliases from constants
 pub fn builtin_aliases() -> Vec<ModelAlias> {
-    let now = Utc::now().to_rfc3339();
-
     DEFAULT_ALIASES
         .iter()
         .map(|(alias_str, canonical_str, provider_id_str)| {
@@ -229,7 +249,7 @@ pub fn builtin_aliases() -> Vec<ModelAlias> {
                 alias: ModelId::new(alias_str.to_string()),
                 canonical: ModelId::new(canonical_str.to_string()),
                 provider_id,
-                created_at: now.clone(),
+                created_at: Utc::now(),
             }
         })
         .collect()
@@ -248,7 +268,7 @@ mod tests {
             alias: ModelId::new(alias),
             canonical: ModelId::new(canonical),
             provider_id: None,
-            created_at: Utc::now().to_rfc3339(),
+            created_at: Utc::now(),
         }
     }
 

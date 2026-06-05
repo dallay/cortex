@@ -7,7 +7,7 @@ use axum::{
 };
 use rook_core::{ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort};
 use serde_json::json;
-use shared_kernel::{ModelId, ProviderId};
+use shared_kernel::{ModelId, ProviderId, Utc};
 use std::sync::Arc;
 use tower::ServiceExt;
 use transport_axum::alias_routes;
@@ -35,13 +35,13 @@ impl InMemoryAliasRepo {
                 alias: ModelId::new("gpt-4o-latest"),
                 canonical: ModelId::new("gpt-4o-2024-05-13"),
                 provider_id: Some(ProviderId::new("openai")),
-                created_at: "2024-01-15T10:30:00Z".to_string(),
+                created_at: Utc::now(),
             },
             ModelAlias {
                 alias: ModelId::new("claude-opus"),
                 canonical: ModelId::new("claude-opus-4-5"),
                 provider_id: Some(ProviderId::new("anthropic")),
-                created_at: "2024-01-15T10:30:00Z".to_string(),
+                created_at: Utc::now(),
             },
         ];
 

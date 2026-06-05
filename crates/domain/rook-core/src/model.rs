@@ -586,8 +586,8 @@ pub struct ModelAlias {
     pub canonical: ModelId,
     /// Optional provider scope (null = global)
     pub provider_id: Option<ProviderId>,
-    /// Creation timestamp (ISO 8601)
-    pub created_at: String,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// A multi-step fallback chain aggregate
