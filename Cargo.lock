@@ -1880,11 +1880,13 @@ name = "observability"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dashmap",
  "metrics",
  "metrics-exporter-prometheus",
  "opentelemetry",
  "opentelemetry-otlp",
  "rook-core",
+ "serde",
  "shared-kernel",
  "tokio",
  "tracing",
@@ -2724,6 +2726,7 @@ dependencies = [
  "futures",
  "hex",
  "metrics",
+ "observability",
  "parking_lot",
  "rand 0.10.1",
  "ring",

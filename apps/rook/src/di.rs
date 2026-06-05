@@ -260,6 +260,7 @@ impl RookContainer {
                     format_registry.clone(),
                     alias_repo.clone(), // model_alias_repository - wired in Phase 3
                     config.model_aliases.clone().into(),
+                    None, // telemetry - TODO: wire in PR 2
                 ),
                 ManageProviders::new(router.clone()),
                 health_check,

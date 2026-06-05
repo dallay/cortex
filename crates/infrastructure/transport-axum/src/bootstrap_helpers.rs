@@ -61,6 +61,7 @@ pub fn make_test_bootstrap_usecases(
         format_translator,
         alias_repo,
         alias_config,
+        None, // telemetry (will be configured in main.rs for production)
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
     let health_check = Arc::new(HealthCheck::new(fallback_router.clone()));
