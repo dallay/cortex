@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorBanner from '@/components/ErrorBanner.vue'
 import LoadingState from '@/components/LoadingState.vue'
+import AddProviderDialog from '@/components/AddProviderDialog.vue'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const { t } = useI18n()
@@ -86,7 +87,7 @@ async function handleTest(id: string) {
         :description="t('providers.emptyDescription')"
         :icon="Globe"
       >
-        <Button>{{ t('providers.add') }}</Button>
+        <AddProviderDialog />
       </EmptyState>
 
       <!-- Provider List -->
