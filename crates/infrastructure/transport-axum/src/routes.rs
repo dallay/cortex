@@ -46,6 +46,13 @@ pub fn router(
         .route("/v1/messages", post(anthropic_messages))
         // Health
         .route("/health", get(health_check))
+        // Telemetry endpoints
+        .route("/api/telemetry/summary", get(telemetry_summary))
+        .route("/api/telemetry/:provider", get(telemetry_provider))
+        .route(
+            "/api/telemetry/:provider/latency",
+            get(telemetry_latency_distribution),
+        )
         // First-run bootstrap endpoints
         .route(
             "/api/bootstrap/status",
@@ -816,6 +823,14 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
                 provider_json["cooldown_until"] = serde_json::json!(state.cooldown_until);
             }
 
+            // Add telemetry latency fields if telemetry is enabled
+            if let Some(telemetry) = usecases.route_request.telemetry() {
+                if let Some(latency_stats) = telemetry.compute_latency_percentiles(provider_id) {
+                    provider_json["latency_p95_ms"] = serde_json::json!(latency_stats.p95);
+                    provider_json["latency_avg_ms"] = serde_json::json!(latency_stats.avg);
+                }
+            }
+
             provider_json
         }).collect::<Vec<_>>(),
         "cache_stats": {
@@ -828,6 +843,77 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
             "utilization": cache_stats.utilization(),
         }
     }))
+}
+
+/// GET /api/telemetry/summary — returns telemetry for all providers
+async fn telemetry_summary(State(usecases): State<Usecases>) -> impl IntoResponse {
+    let telemetry = match usecases.route_request.telemetry() {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({"error": "Telemetry not enabled"})),
+            )
+                .into_response()
+        }
+    };
+
+    let summaries = telemetry.get_all_summaries();
+    Json(serde_json::json!({ "providers": summaries })).into_response()
+}
+
+/// GET /api/telemetry/:provider — returns telemetry for a specific provider
+async fn telemetry_provider(
+    State(usecases): State<Usecases>,
+    axum::extract::Path(provider_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let telemetry = match usecases.route_request.telemetry() {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({"error": "Telemetry not enabled"})),
+            )
+                .into_response()
+        }
+    };
+
+    let provider_id = ProviderId::new(provider_id);
+    match telemetry.get_provider_summary(&provider_id) {
+        Some(summary) => Json(summary).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Provider not found or no observations"})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/telemetry/:provider/latency — returns latency distribution for a provider
+async fn telemetry_latency_distribution(
+    State(usecases): State<Usecases>,
+    axum::extract::Path(provider_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let telemetry = match usecases.route_request.telemetry() {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({"error": "Telemetry not enabled"})),
+            )
+                .into_response()
+        }
+    };
+
+    let provider_id = ProviderId::new(provider_id);
+    match telemetry.compute_latency_percentiles(&provider_id) {
+        Some(stats) => Json(stats).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Provider not found or no observations"})),
+        )
+            .into_response(),
+    }
 }
 
 fn api_key_routes(usecases: Usecases) -> Router {

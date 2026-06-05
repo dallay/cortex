@@ -110,6 +110,20 @@ pub struct PercentileStats {
     pub count: usize,
 }
 
+/// Provider summary for HTTP API responses
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderSummary {
+    pub provider_id: ProviderId,
+    pub total_requests: u64,
+    pub success_count: u64,
+    pub failure_count: u64,
+    pub rate_limited_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_stats: Option<PercentileStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_stats: Option<PercentileStats>,
+}
+
 /// Telemetry tracker for request-level metrics
 pub struct TelemetryTracker {
     metrics: Arc<DashMap<ProviderId, ProviderMetrics>>,
@@ -227,6 +241,36 @@ impl TelemetryTracker {
                 self.cleanup_old_observations();
             }
         })
+    }
+
+    /// Get summary for a single provider
+    pub fn get_provider_summary(&self, provider_id: &ProviderId) -> Option<ProviderSummary> {
+        let entry = self.metrics.get(provider_id)?;
+        let latency_stats = self.compute_latency_percentiles(provider_id);
+        let ttft_stats = self.compute_ttft_percentiles(provider_id);
+
+        Some(ProviderSummary {
+            provider_id: provider_id.clone(),
+            total_requests: entry.total_requests,
+            success_count: entry.success_count,
+            failure_count: entry.failure_count,
+            rate_limited_count: entry.rate_limited_count,
+            latency_stats,
+            ttft_stats,
+        })
+    }
+
+    /// Get summaries for all providers
+    pub fn get_all_summaries(&self) -> Vec<ProviderSummary> {
+        self.metrics
+            .iter()
+            .filter_map(|entry| self.get_provider_summary(entry.key()))
+            .collect()
+    }
+
+    /// Get the configuration (for reading max_age_seconds)
+    pub fn config(&self) -> &TelemetryConfig {
+        &self.config
     }
 }
 

@@ -33,6 +33,9 @@ pub struct RookConfig {
     /// Model aliases configuration
     #[serde(default)]
     pub model_aliases: ModelAliasesConfig,
+    /// Telemetry configuration
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -103,6 +106,52 @@ impl From<ModelAliasesConfig> for rook_usecases::route_request::ModelAliasesConf
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TelemetryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_telemetry_max_observations")]
+    pub max_observations: usize,
+    #[serde(default = "default_telemetry_max_age_seconds")]
+    pub max_age_seconds: u64,
+    #[serde(default = "default_telemetry_cleanup_interval_seconds")]
+    pub cleanup_interval_seconds: u64,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_observations: default_telemetry_max_observations(),
+            max_age_seconds: default_telemetry_max_age_seconds(),
+            cleanup_interval_seconds: default_telemetry_cleanup_interval_seconds(),
+        }
+    }
+}
+
+fn default_telemetry_max_observations() -> usize {
+    1000
+}
+
+fn default_telemetry_max_age_seconds() -> u64 {
+    3600
+}
+
+fn default_telemetry_cleanup_interval_seconds() -> u64 {
+    60
+}
+
+impl From<TelemetryConfig> for observability::TelemetryConfig {
+    fn from(cfg: TelemetryConfig) -> Self {
+        use std::time::Duration;
+        Self {
+            max_observations: cfg.max_observations,
+            max_age: Duration::from_secs(cfg.max_age_seconds),
+            cleanup_interval: Duration::from_secs(cfg.cleanup_interval_seconds),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
