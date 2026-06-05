@@ -18,12 +18,14 @@ use tokio::time::sleep;
 fn usage_repo() -> audit_sqlite::SqliteUsageRepository {
     static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let db_path = format!("/tmp/rook_usage_retention_test_{}.db", n);
+    let db_name = format!("rook_usage_retention_test_{}.db", n);
+    let db_path = std::env::temp_dir().join(&db_name);
+    let db_path_str = db_path.to_string_lossy().into_owned();
     let _ = std::fs::remove_file(&db_path);
-    db_migration::run_migrations(&db_path).expect("migrations");
+    db_migration::run_migrations(&db_path_str).expect("migrations");
     // Leak a clone of the path string to keep the file alive for the test's duration.
-    Box::leak(db_path.clone().into_boxed_str());
-    audit_sqlite::SqliteUsageRepository::new(std::path::Path::new(&db_path))
+    Box::leak(db_path_str.clone().into_boxed_str());
+    audit_sqlite::SqliteUsageRepository::new(std::path::Path::new(&db_path_str))
         .expect("usage repo should be creatable")
 }
 
