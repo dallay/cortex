@@ -677,10 +677,23 @@ impl CachePort for NoOpCache {
             evictions: 0,
             entries: 0,
             max_entries: 0,
+            token_cache: rook_core::TokenCacheStats::default(),
         })
     }
     async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
         Ok(0)
+    }
+    async fn list_signatures(&self) -> CortexResult<Vec<rook_core::SignatureEntry>> {
+        Ok(Vec::new())
+    }
+    async fn get_by_signature(&self, _: &str) -> CortexResult<Option<rook_core::CompletionResponse>> {
+        Ok(None)
+    }
+    async fn increment_token_cache_hit(&self, _: u64, _: f64) -> CortexResult<()> {
+        Ok(())
+    }
+    async fn increment_token_cache_miss(&self) -> CortexResult<()> {
+        Ok(())
     }
 }
 

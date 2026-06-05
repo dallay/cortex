@@ -134,6 +134,7 @@ impl ProviderPort for OllamaProvider {
                 estimated_cost_usd: None, // Local model — no cost
             },
             latency_ms: start.elapsed().as_millis() as u64,
+            cache_hit: None,
         })
     }
 

@@ -442,6 +442,7 @@ mod tests {
                 estimated_cost_usd: None,
             },
             latency_ms: 100,
+            cache_hit: None,
         };
 
         let anthropic_resp = AnthropicMessagesResponse::from(&resp);
@@ -546,6 +547,7 @@ mod tests {
             }],
             usage: make_token_usage(1, 2),
             latency_ms: 1,
+            cache_hit: None,
         };
 
         let anthropic_resp = AnthropicMessagesResponse::from(&resp);

@@ -364,6 +364,7 @@ mod openai_adapter_tests {
                 estimated_cost_usd: None,
             },
             latency_ms: 1,
+            cache_hit: None,
         };
 
         let openai_resp = OpenAIChatResponse::from(&resp);

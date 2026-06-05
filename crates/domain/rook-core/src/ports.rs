@@ -13,8 +13,9 @@ use chrono::{DateTime, Utc};
 use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, ProviderId};
 
 use super::{
-    ApiFormat, AuditEntry, CompletionRequest, CompletionResponse, CostBreakdown, HealthStatus,
-    Pagination, StreamChunk, UsageEntry, UsageFilters, UsageSummary,
+    ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
+    HealthStatus, Pagination, SignatureEntry, StreamChunk, TokenCacheStats, UsageEntry,
+    UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
@@ -111,9 +112,30 @@ pub trait CachePort: Send + Sync {
     ) -> CortexResult<()>;
     async fn delete(&self, key: &CacheKey) -> CortexResult<()>;
     async fn clear(&self) -> CortexResult<()>;
-    async fn stats(&self) -> CortexResult<super::CacheStats>;
+    async fn stats(&self) -> CortexResult<CacheStats>;
     /// Delete all entries matching the given signature. Returns number of entries deleted.
     async fn delete_by_signature(&self, signature: &str) -> CortexResult<usize>;
+
+    // -------------------------------------------------------------------------
+    // Signature inspection (Layer 1)
+    // -------------------------------------------------------------------------
+
+    /// List all cached signature entries with metadata.
+    async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>>;
+
+    /// Retrieve a cached response by its signature.
+    /// Returns the cached response if found and not expired.
+    async fn get_by_signature(&self, signature: &str) -> CortexResult<Option<CompletionResponse>>;
+
+    // -------------------------------------------------------------------------
+    // Token cache metrics (Layer 2)
+    // -------------------------------------------------------------------------
+
+    /// Record a provider-level token cache hit.
+    async fn increment_token_cache_hit(&self, tokens: u64, cost_usd: f64) -> CortexResult<()>;
+
+    /// Record a provider-level token cache miss.
+    async fn increment_token_cache_miss(&self) -> CortexResult<()>;
 }
 
 // ---------------------------------------------------------------------------

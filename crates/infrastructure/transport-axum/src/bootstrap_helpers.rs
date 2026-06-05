@@ -127,6 +127,18 @@ impl CachePort for StubCache {
     async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
         unreachable!("cache not called by bootstrap tests")
     }
+    async fn list_signatures(&self) -> CortexResult<Vec<rook_core::SignatureEntry>> {
+        unreachable!("cache not called by bootstrap tests")
+    }
+    async fn get_by_signature(&self, _: &str) -> CortexResult<Option<CompletionResponse>> {
+        unreachable!("cache not called by bootstrap tests")
+    }
+    async fn increment_token_cache_hit(&self, _: u64, _: f64) -> CortexResult<()> {
+        unreachable!("cache not called by bootstrap tests")
+    }
+    async fn increment_token_cache_miss(&self) -> CortexResult<()> {
+        unreachable!("cache not called by bootstrap tests")
+    }
 }
 
 struct StubAudit;

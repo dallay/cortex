@@ -7,14 +7,14 @@ use axum::{
 };
 use cache_memory::InMemoryCache;
 use rook_core::{
-    CachePort, CacheStats, CompletionResponse, MessageContent, ModelId, ProviderId, TokenUsage,
+    CachePort, CacheStats, CompletionResponse, MessageContent, ModelId, ProviderId, SignatureEntry, TokenUsage,
 };
 use shared_kernel::{CacheKey, RequestId};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 use transport_axum::authz::{classify_route, AuthTier};
-use transport_axum::handlers::cache::{clear_cache, delete_cache_entry, get_cache_stats};
+use transport_axum::handlers::cache::{clear_cache, delete_cache_entry, get_cache_stats, list_signatures, get_signature};
 
 /// Helper: build a test CompletionResponse
 fn make_response(content: &str) -> CompletionResponse {
@@ -34,6 +34,7 @@ fn make_response(content: &str) -> CompletionResponse {
             estimated_cost_usd: None,
         },
         latency_ms: 100,
+        cache_hit: None,
     }
 }
 
@@ -282,4 +283,215 @@ fn cache_routes_require_management_auth() {
         AuthTier::Management,
         "/api/cache/{{signature}} DELETE should require Management auth"
     );
+    // Signature inspection endpoints
+    assert_eq!(
+        classify_route(&Method::GET, "/api/cache/signatures"),
+        AuthTier::Management,
+        "/api/cache/signatures should require Management auth"
+    );
+    assert_eq!(
+        classify_route(&Method::GET, "/api/cache/signature/somesig"),
+        AuthTier::Management,
+        "/api/cache/signature/{{sig}} should require Management auth"
+    );
 }
+
+// ============================================================================
+// Signature Inspection Endpoints (Phase 2, Task 2.8)
+// ============================================================================
+
+#[tokio::test]
+async fn list_signatures_returns_200_with_empty_list_when_cache_empty() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+
+    let app = axum::Router::new()
+        .route("/api/cache/signatures", axum::routing::get(list_signatures))
+        .layer(Extension(cache));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cache/signatures")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let entries: Vec<SignatureEntry> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(entries.len(), 0);
+}
+
+#[tokio::test]
+async fn list_signatures_returns_200_with_signature_entries() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+
+    // Populate cache with entries
+    let sig1 = "a".repeat(64);
+    let sig2 = "b".repeat(64);
+    let key1 = CacheKey {
+        request_id: RequestId::new(),
+        signature: sig1.clone(),
+    };
+    let key2 = CacheKey {
+        request_id: RequestId::new(),
+        signature: sig2.clone(),
+    };
+
+    cache
+        .set(&key1, &make_response("response1"), Duration::from_secs(300))
+        .await
+        .unwrap();
+    cache
+        .set(&key2, &make_response("response2"), Duration::from_secs(300))
+        .await
+        .unwrap();
+
+    let app = axum::Router::new()
+        .route("/api/cache/signatures", axum::routing::get(list_signatures))
+        .layer(Extension(cache));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cache/signatures")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let entries: Vec<SignatureEntry> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(entries.len(), 2);
+
+    // Verify entries contain correct signatures
+    let signatures: Vec<&str> = entries.iter().map(|e| e.signature.as_str()).collect();
+    assert!(signatures.contains(&sig1.as_str()));
+    assert!(signatures.contains(&sig2.as_str()));
+}
+
+#[tokio::test]
+async fn get_signature_returns_200_with_cached_response() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+
+    let signature = "c".repeat(64);
+    let key = CacheKey {
+        request_id: RequestId::new(),
+        signature: signature.clone(),
+    };
+    let expected_response = make_response("cached content");
+
+    cache
+        .set(&key, &expected_response, Duration::from_secs(300))
+        .await
+        .unwrap();
+
+    let app = axum::Router::new()
+        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .layer(Extension(cache));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/cache/signature/{}", signature))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let cached_response: CompletionResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(cached_response.content, "cached content");
+    assert_eq!(cached_response.model, expected_response.model);
+}
+
+#[tokio::test]
+async fn get_signature_returns_404_when_signature_not_found() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+
+    let signature = "d".repeat(64);
+
+    let app = axum::Router::new()
+        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .layer(Extension(cache));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/cache/signature/{}", signature))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn get_signature_returns_400_for_invalid_signature_format() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+
+    let app = axum::Router::new()
+        .route("/api/cache/signature/{sig}", axum::routing::get(get_signature))
+        .layer(Extension(cache.clone()));
+
+    // Test 1: Too short
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/cache/signature/short")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Test 2: Non-hex characters (65 chars, contains 'z')
+    let invalid_sig = "z".repeat(64);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/cache/signature/{}", invalid_sig))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Test 3: Correct length but contains non-hex chars
+    let invalid_sig = format!("{}xyz", "a".repeat(61));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/cache/signature/{}", invalid_sig))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+

@@ -15,10 +15,10 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
-    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
-    ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry,
-    UsageRecorderPort,
+    ApiFormat, AuditEntry, AuditPort, CachePort, CacheStats, ComboRepositoryPort,
+    CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
+    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, SignatureEntry,
+    StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
@@ -1015,6 +1015,7 @@ mod tests {
                     estimated_cost_usd: None,
                 },
                 latency_ms: 1,
+                cache_hit: Some(true),
             })
         }
 
@@ -1103,11 +1104,28 @@ mod tests {
                 evictions: 0,
                 entries: 0,
                 max_entries: 0,
+                token_cache: TokenCacheStats::default(),
             })
         }
 
         async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
             Ok(0)
+        }
+
+        async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_by_signature(&self, _signature: &str) -> CortexResult<Option<CompletionResponse>> {
+            Ok(None)
+        }
+
+        async fn increment_token_cache_hit(&self, _tokens: u64, _cost_usd: f64) -> CortexResult<()> {
+            Ok(())
+        }
+
+        async fn increment_token_cache_miss(&self) -> CortexResult<()> {
+            Ok(())
         }
     }
 

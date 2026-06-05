@@ -47,6 +47,7 @@ fn mock_completion_response(content: &str) -> CompletionResponse {
             estimated_cost_usd: None,
         },
         latency_ms: 42,
+        cache_hit: None,
     }
 }
 
@@ -273,6 +274,7 @@ impl ProviderPort for RegistryTestProvider {
                 estimated_cost_usd: None,
             },
             latency_ms: 7,
+            cache_hit: None,
         })
     }
 
@@ -341,11 +343,35 @@ impl CachePort for NoopCache {
             evictions: 0,
             entries: 0,
             max_entries: 0,
+            token_cache: rook_core::TokenCacheStats::default(),
         })
     }
 
     async fn delete_by_signature(&self, _signature: &str) -> shared_kernel::CortexResult<usize> {
         Ok(0)
+    }
+
+    async fn list_signatures(&self) -> shared_kernel::CortexResult<Vec<rook_core::SignatureEntry>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_by_signature(
+        &self,
+        _signature: &str,
+    ) -> shared_kernel::CortexResult<Option<rook_core::CompletionResponse>> {
+        Ok(None)
+    }
+
+    async fn increment_token_cache_hit(
+        &self,
+        _tokens: u64,
+        _cost_usd: f64,
+    ) -> shared_kernel::CortexResult<()> {
+        Ok(())
+    }
+
+    async fn increment_token_cache_miss(&self) -> shared_kernel::CortexResult<()> {
+        Ok(())
     }
 }
 
