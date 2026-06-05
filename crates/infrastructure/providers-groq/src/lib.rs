@@ -202,6 +202,7 @@ impl ProviderPort for GroqProvider {
                 estimated_cost_usd: None,
             },
             latency_ms: start.elapsed().as_millis() as u64,
+            cache_hit: None,
         })
     }
 

@@ -2,7 +2,7 @@
 
 use rook_core::ApiKeyTier;
 use rook_usecases::{PricingConfig, RoutingStrategy};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
@@ -275,6 +275,71 @@ pub struct CacheConfig {
     pub ttl_secs: u64,
     #[serde(default)]
     pub max_entries: Option<usize>,
+    /// Layer 1: signature-based request deduplication.
+    #[serde(default)]
+    pub signature_cache: SignatureCacheConfig,
+    /// Layer 2: provider-side token caching.
+    /// Fields will be used in WU-2 (Phase 4-5: provider integration).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub token_cache: TokenCacheConfig,
+}
+
+/// Configuration for Layer 1 signature cache (request deduplication).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignatureCacheConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Enable GET /api/cache/signatures and GET /api/cache/signature/:sig endpoints.
+    #[serde(default = "default_true")]
+    pub inspection_endpoints: bool,
+}
+
+/// Configuration for Layer 2 token cache (provider-side token caching).
+/// Fields will be used in WU-2 (Phase 4-5: provider integration).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct TokenCacheConfig {
+    /// Cache mode: auto (known providers only), always (all providers), never (disabled).
+    #[serde(default = "default_cache_mode")]
+    pub mode: CacheMode,
+    /// List of provider IDs that support token caching. Empty defaults to known supporting providers.
+    #[serde(default)]
+    pub providers: Vec<String>,
+}
+
+/// Token cache mode — controls when cache-control headers are injected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheMode {
+    /// Inject cache-control only for known supporting providers (Anthropic, DeepSeek, Qwen, ZAI).
+    Auto,
+    /// Always inject cache-control header regardless of provider.
+    Always,
+    /// Never inject cache-control header (token caching disabled).
+    Never,
+}
+
+impl Default for SignatureCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            inspection_endpoints: true,
+        }
+    }
+}
+
+impl Default for TokenCacheConfig {
+    fn default() -> Self {
+        Self {
+            mode: CacheMode::Never,
+            providers: Vec::new(),
+        }
+    }
+}
+
+fn default_cache_mode() -> CacheMode {
+    CacheMode::Never
 }
 
 impl CacheConfig {
@@ -296,6 +361,14 @@ impl CacheConfig {
         if let Some(0) = self.max_entries {
             return Err(
                 "cache.max_entries must be greater than 0 or None for unlimited".to_string(),
+            );
+        }
+
+        // Validate signature_cache (currently just structural checks)
+        if !self.signature_cache.enabled && self.signature_cache.inspection_endpoints {
+            tracing::warn!(
+                "cache.signature_cache.inspection_endpoints=true but enabled=false; \
+                 inspection endpoints will not return any data"
             );
         }
 
@@ -620,5 +693,283 @@ mod tests {
 
         let config: RookConfig = toml::from_str(toml).expect("parse config");
         assert_eq!(config.combos[0].strategy, "priority");
+    }
+
+    // -------------------------------------------------------------------------
+    // Dual-Layer Cache Config Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_cache_signature_cache_defaults_to_enabled() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert!(config.cache.signature_cache.enabled);
+        assert!(config.cache.signature_cache.inspection_endpoints);
+    }
+
+    #[test]
+    fn test_cache_token_cache_defaults_to_never() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.cache.token_cache.mode, CacheMode::Never);
+        assert!(config.cache.token_cache.providers.is_empty());
+    }
+
+    #[test]
+    fn test_cache_token_cache_mode_parses_auto() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.token_cache]
+            mode = "auto"
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.cache.token_cache.mode, CacheMode::Auto);
+    }
+
+    #[test]
+    fn test_cache_token_cache_mode_parses_always() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.token_cache]
+            mode = "always"
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.cache.token_cache.mode, CacheMode::Always);
+    }
+
+    #[test]
+    fn test_cache_token_cache_mode_parses_never() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.token_cache]
+            mode = "never"
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(config.cache.token_cache.mode, CacheMode::Never);
+    }
+
+    #[test]
+    fn test_cache_token_cache_providers_parses_list() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.token_cache]
+            mode = "auto"
+            providers = ["anthropic", "deepseek", "qwen"]
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert_eq!(
+            config.cache.token_cache.providers,
+            vec!["anthropic", "deepseek", "qwen"]
+        );
+    }
+
+    #[test]
+    fn test_cache_signature_cache_can_be_disabled() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.signature_cache]
+            enabled = false
+            inspection_endpoints = false
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert!(!config.cache.signature_cache.enabled);
+        assert!(!config.cache.signature_cache.inspection_endpoints);
+    }
+
+    #[test]
+    fn test_cache_validate_accepts_valid_config() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+            max_entries = 1000
+
+            [cache.signature_cache]
+            enabled = true
+            inspection_endpoints = true
+
+            [cache.token_cache]
+            mode = "auto"
+            providers = ["anthropic"]
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        assert!(config.cache.validate().is_ok());
+    }
+
+    #[test]
+    fn test_cache_validate_rejects_ttl_over_24h() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 86401
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        let err = config.cache.validate().unwrap_err();
+        assert!(err.contains("86401"));
+        assert!(err.contains("24h"));
+    }
+
+    #[test]
+    fn test_cache_validate_rejects_zero_max_entries() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+            max_entries = 0
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        let err = config.cache.validate().unwrap_err();
+        assert!(err.contains("max_entries"));
+    }
+
+    #[test]
+    fn test_cache_token_cache_invalid_mode_rejected_by_toml_parser() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+
+            [cache.token_cache]
+            mode = "invalid_mode"
+        "#;
+
+        let result: Result<RookConfig, _> = toml::from_str(toml);
+        assert!(
+            result.is_err(),
+            "Expected TOML parsing to reject invalid CacheMode"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("unknown variant") || err_msg.contains("invalid_mode"));
+    }
+
+    #[test]
+    fn test_cache_token_cache_empty_defaults() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "priority"
+
+            [cache]
+            enabled = true
+            ttl_secs = 300
+        "#;
+
+        let config: RookConfig = toml::from_str(toml).expect("parse config");
+        // When not specified, token_cache defaults to CacheMode::Never and empty providers list
+        assert_eq!(config.cache.token_cache.mode, CacheMode::Never);
+        assert!(config.cache.token_cache.providers.is_empty());
     }
 }

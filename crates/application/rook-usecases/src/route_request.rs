@@ -957,8 +957,9 @@ mod tests {
     use futures::{stream, StreamExt};
     use rook_core::{
         ApiKeyId, CacheStats, CostBreakdown, HealthStatus, Message, ModelId, Pagination,
-        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, StreamChunk,
-        TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
+        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry,
+        StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort,
+        UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
@@ -1015,6 +1016,7 @@ mod tests {
                     estimated_cost_usd: None,
                 },
                 latency_ms: 1,
+                cache_hit: Some(true),
             })
         }
 
@@ -1103,11 +1105,35 @@ mod tests {
                 evictions: 0,
                 entries: 0,
                 max_entries: 0,
+                token_cache: TokenCacheStats::default(),
             })
         }
 
         async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
             Ok(0)
+        }
+
+        async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_by_signature(
+            &self,
+            _signature: &str,
+        ) -> CortexResult<Option<CompletionResponse>> {
+            Ok(None)
+        }
+
+        async fn increment_token_cache_hit(
+            &self,
+            _tokens: u64,
+            _cost_usd: f64,
+        ) -> CortexResult<()> {
+            Ok(())
+        }
+
+        async fn increment_token_cache_miss(&self) -> CortexResult<()> {
+            Ok(())
         }
     }
 

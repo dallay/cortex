@@ -27,36 +27,36 @@ Chain strategy: pending
 
 ## Phase 1: Configuration & Domain Model (Foundation)
 
-- [ ] 1.1 Add `TokenCacheConfig` struct to `crates/domain/rook-core/src/model.rs` with `mode: CacheMode` enum (Auto/Always/Never) and `providers: Vec<String>`
-- [ ] 1.2 Add `cache_hit: Option<bool>` field to `CompletionResponse` struct in `crates/domain/rook-core/src/model.rs`
-- [ ] 1.3 Extend `CacheStats` struct in `crates/domain/rook-core/src/model.rs` with `token_cache: TokenCacheStats` field
-- [ ] 1.4 Add `TokenCacheStats` struct with `hits`, `misses`, `tokens_saved`, `estimated_cost_saved_usd` fields
-- [ ] 1.5 Add `SignatureEntry` and `RequestMetadata` structs for inspection endpoints
-- [ ] 1.6 Extend `CacheConfig` in `apps/rook/src/config.rs` with `signature_cache: SignatureCacheConfig` and `token_cache: TokenCacheConfig` nested structs
-- [ ] 1.7 Add config validation for `CacheMode` enum and provider list at startup
-- [ ] 1.8 Write unit tests for config parsing and validation (invalid mode, invalid provider, empty defaults)
+- [x] 1.1 Add `TokenCacheConfig` struct to `crates/domain/rook-core/src/model.rs` with `mode: CacheMode` enum (Auto/Always/Never) and `providers: Vec<String>`
+- [x] 1.2 Add `cache_hit: Option<bool>` field to `CompletionResponse` struct in `crates/domain/rook-core/src/model.rs`
+- [x] 1.3 Extend `CacheStats` struct in `crates/domain/rook-core/src/model.rs` with `token_cache: TokenCacheStats` field
+- [x] 1.4 Add `TokenCacheStats` struct with `hits`, `misses`, `tokens_saved`, `estimated_cost_saved_usd` fields
+- [x] 1.5 Add `SignatureEntry` and `RequestMetadata` structs for inspection endpoints
+- [x] 1.6 Extend `CacheConfig` in `apps/rook/src/config.rs` with `signature_cache: SignatureCacheConfig` and `token_cache: TokenCacheConfig` nested structs
+- [x] 1.7 Add config validation for `CacheMode` enum and provider list at startup
+- [x] 1.8 Write unit tests for config parsing and validation (invalid mode, invalid provider, empty defaults)
 
 ## Phase 2: Signature Cache Enhancement (Layer 1)
 
-- [ ] 2.1 Add `list_signatures() -> Vec<SignatureEntry>` method to `CachePort` trait in `crates/domain/rook-core/src/ports.rs`
-- [ ] 2.2 Add `get_by_signature(signature: &str) -> Option<CompletionResponse>` method to `CachePort` trait
-- [ ] 2.3 Implement `list_signatures()` in `InMemoryCache` (`crates/infrastructure/cache-memory/src/lib.rs`) - iterate `DashMap`, return signature metadata
-- [ ] 2.4 Implement `get_by_signature()` in `InMemoryCache` - lookup by signature, return cached response
-- [ ] 2.5 Add `GET /api/cache/signatures` handler in `crates/infrastructure/transport-axum/src/handlers/cache.rs`
-- [ ] 2.6 Add `GET /api/cache/signature/:sig` handler with signature validation (64 hex chars)
-- [ ] 2.7 Wire new routes in `crates/infrastructure/transport-axum/src/routes.rs`
-- [ ] 2.8 Write integration tests for signature inspection endpoints (200, 404, 400 scenarios)
+- [x] 2.1 Add `list_signatures() -> Vec<SignatureEntry>` method to `CachePort` trait in `crates/domain/rook-core/src/ports.rs`
+- [x] 2.2 Add `get_by_signature(signature: &str) -> Option<CompletionResponse>` method to `CachePort` trait
+- [x] 2.3 Implement `list_signatures()` in `InMemoryCache` (`crates/infrastructure/cache-memory/src/lib.rs`) - iterate `DashMap`, return signature metadata
+- [x] 2.4 Implement `get_by_signature()` in `InMemoryCache` - lookup by signature, return cached response
+- [x] 2.5 Add `GET /api/cache/signatures` handler in `crates/infrastructure/transport-axum/src/handlers/cache.rs`
+- [x] 2.6 Add `GET /api/cache/signature/:sig` handler with signature validation (64 hex chars)
+- [x] 2.7 Wire new routes in `crates/infrastructure/transport-axum/src/routes.rs`
+- [x] 2.8 Write integration tests for signature inspection endpoints (200, 404, 400 scenarios)
 
 ## Phase 3: Token Cache Metrics Infrastructure (Layer 2 Foundation)
 
-- [ ] 3.1 Add `token_cache_hits: AtomicU64` field to `InMemoryCache` struct in `cache-memory/src/lib.rs`
-- [ ] 3.2 Add `token_cache_misses: AtomicU64` field to `InMemoryCache`
-- [ ] 3.3 Add `tokens_saved: AtomicU64` field to `InMemoryCache`
-- [ ] 3.4 Add `cost_saved_cents: AtomicU64` field (store as cents for atomic ops, convert to USD in stats)
-- [ ] 3.5 Implement `increment_token_cache_hit(tokens: u64, cost_usd: f64)` method in `InMemoryCache`
-- [ ] 3.6 Implement `increment_token_cache_miss()` method in `InMemoryCache`
-- [ ] 3.7 Update `stats()` method to return unified `CacheStats` with both signature and token cache sections
-- [ ] 3.8 Write unit tests for token cache metric increments and atomic operations
+- [x] 3.1 Add `token_cache_hits: AtomicU64` field to `InMemoryCache` struct in `cache-memory/src/lib.rs`
+- [x] 3.2 Add `token_cache_misses: AtomicU64` field to `InMemoryCache`
+- [x] 3.3 Add `tokens_saved: AtomicU64` field to `InMemoryCache`
+- [x] 3.4 Add `cost_saved_cents: AtomicU64` field (store as cents for atomic ops, convert to USD in stats)
+- [x] 3.5 Implement `increment_token_cache_hit(tokens: u64, cost_usd: f64)` method in `InMemoryCache`
+- [x] 3.6 Implement `increment_token_cache_miss()` method in `InMemoryCache`
+- [x] 3.7 Update `stats()` method to return unified `CacheStats` with both signature and token cache sections
+- [x] 3.8 Write unit tests for token cache metric increments and atomic operations
 
 ## Phase 4: Provider Detection & Header Injection
 
@@ -133,9 +133,9 @@ Chain strategy: pending
 **Critical Path**: Phase 1 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7
 
 **Next Step**:  
-User must choose a chain strategy:
-- **stacked-to-main**: PR 1 (Phases 1-3) merges to main, PR 2 (Phases 4-7) stacks on PR 1 and merges to main
-- **feature-branch-chain**: Create `feature/request-deduplication` tracker branch; PR 1 targets tracker, PR 2 targets PR 1 branch, tracker merges to main after both reviews pass
-- **size:exception**: Keep as single PR with maintainer approval (not recommended due to 600-800 line estimate)
+WU-1 (Phases 1-3) is complete and merged in PR #121.
+- Current lifecycle state: `apply` → `verify` (see `state.yaml`)
+- Next action: Begin **WU-2 (Phases 4-7)** - provider detection, header injection, x-cache parsing, E2E testing
+- Chain strategy chosen: **stacked-to-main** - WU-2 will target `main` after WU-1 merge
 
 Once strategy is chosen, proceed to `sdd-apply` with Phase 1 tasks.

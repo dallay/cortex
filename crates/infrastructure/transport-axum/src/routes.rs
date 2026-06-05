@@ -797,6 +797,7 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
                 evictions: 0,
                 entries: 0,
                 max_entries: 0,
+                token_cache: rook_core::TokenCacheStats::default(),
             });
 
     Json(serde_json::json!({
@@ -965,6 +966,16 @@ fn cache_routes(usecases: Usecases) -> Router {
     Router::new()
         .route("/api/cache/stats", get(handlers::cache::get_cache_stats))
         .route("/api/cache", delete(handlers::cache::clear_cache))
+        // Signature inspection endpoints (Layer 1)
+        .route(
+            "/api/cache/signatures",
+            get(handlers::cache::list_signatures),
+        )
+        .route(
+            "/api/cache/signature/{sig}",
+            get(handlers::cache::get_signature),
+        )
+        // DELETE /api/cache/:signature — delete by signature (must be after /api/cache/signature/{sig})
         .route(
             "/api/cache/{signature}",
             delete(handlers::cache::delete_cache_entry),

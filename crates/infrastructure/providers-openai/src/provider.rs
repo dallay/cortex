@@ -335,6 +335,7 @@ impl ProviderPort for OpenAIProvider {
                 estimated_cost_usd: None, // Cost calculated in usecase layer
             },
             latency_ms: start.elapsed().as_millis() as u64,
+            cache_hit: None,
         })
     }
 

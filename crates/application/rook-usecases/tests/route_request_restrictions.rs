@@ -9,7 +9,8 @@ use rook_core::{
     ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CachePort, CacheStats, CompletionRequest,
     CompletionResponse, CortexError, CortexResult, FormatTranslatorPort, HealthStatus, Message,
     MessageContent, ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort, ModelId,
-    ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, StreamChunk, TokenUsage,
+    ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, SignatureEntry, StreamChunk,
+    TokenCacheStats, TokenUsage,
 };
 use rook_usecases::{route_request::ModelAliasesConfig, PricingConfig, RouteRequest};
 use shared_kernel::{CacheKey, RequestId};
@@ -73,6 +74,7 @@ impl ProviderPort for FakeProvider {
                 estimated_cost_usd: None,
             },
             latency_ms: 10,
+            cache_hit: None,
         })
     }
 
@@ -146,11 +148,28 @@ impl CachePort for NoOpCache {
             evictions: 0,
             entries: 0,
             max_entries: 0,
+            token_cache: TokenCacheStats::default(),
         })
     }
 
     async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
         Ok(0)
+    }
+
+    async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_by_signature(&self, _signature: &str) -> CortexResult<Option<CompletionResponse>> {
+        Ok(None)
+    }
+
+    async fn increment_token_cache_hit(&self, _tokens: u64, _cost_usd: f64) -> CortexResult<()> {
+        Ok(())
+    }
+
+    async fn increment_token_cache_miss(&self) -> CortexResult<()> {
+        Ok(())
     }
 }
 

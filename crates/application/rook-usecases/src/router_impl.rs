@@ -389,6 +389,7 @@ mod tests {
                     estimated_cost_usd: None,
                 },
                 latency_ms: 1,
+                cache_hit: None,
             })
         }
 
@@ -499,6 +500,7 @@ mod tests {
                     estimated_cost_usd: None,
                 },
                 latency_ms: 1,
+                cache_hit: None,
             })
         }
         async fn stream(

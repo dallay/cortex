@@ -234,12 +234,12 @@ pub trait CachePort: Send + Sync {
     async fn increment_token_cache_miss(&self) -> CortexResult<()>;
     
     // NEW: Signature inspection (Layer 1)
-    async fn list_signatures(&self) -> CortexResult<Vec<CachedSignature>>;
+    async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>>;
     async fn get_by_signature(&self, signature: &str) -> CortexResult<Option<CompletionResponse>>;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct CachedSignature {
+pub struct SignatureEntry {
     pub signature: String,
     pub request_id: RequestId,
     pub model: ModelId,

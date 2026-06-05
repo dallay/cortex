@@ -52,6 +52,7 @@ fn test_response(content: &str) -> CompletionResponse {
             estimated_cost_usd: Some(0.001),
         },
         latency_ms: 50,
+        cache_hit: None,
     }
 }
 

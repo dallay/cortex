@@ -287,6 +287,10 @@ pub struct CompletionResponse {
     pub content_blocks: Vec<MessageContent>,
     pub usage: TokenUsage,
     pub latency_ms: u64,
+    /// Provider-level cache hit indicator (parsed from x-cache header).
+    /// Some(true) = provider cache hit, Some(false) = provider cache miss, None = not applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_hit: Option<bool>,
 }
 
 /// ---------------------------------------------------------------------------
@@ -874,6 +878,53 @@ pub struct CacheStats {
     pub evictions: u64,
     pub entries: u64,
     pub max_entries: u64,
+    /// Token cache (Layer 2) metrics — provider-side token caching.
+    #[serde(default, skip_serializing_if = "TokenCacheStats::is_zero")]
+    pub token_cache: TokenCacheStats,
+}
+
+/// Token cache statistics for provider-side token caching (Layer 2).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub tokens_saved: u64,
+    pub estimated_cost_saved_usd: f64,
+}
+
+impl TokenCacheStats {
+    /// Returns true if all fields are zero (used for skip_serializing_if).
+    pub fn is_zero(&self) -> bool {
+        self.hits == 0
+            && self.misses == 0
+            && self.tokens_saved == 0
+            && self.estimated_cost_saved_usd == 0.0
+    }
+}
+
+/// A cached signature entry returned by inspection endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureEntry {
+    /// SHA-256 signature (64 hex characters)
+    pub signature: String,
+    pub request_id: RequestId,
+    pub model: ModelId,
+    pub provider: ProviderId,
+    /// When this entry was first cached
+    pub cached_at: DateTime<Utc>,
+    /// When this entry was last accessed
+    pub last_accessed: DateTime<Utc>,
+    /// Metadata derived from the original request
+    pub request_metadata: SignatureRequestMetadata,
+}
+
+/// Request metadata derived from a cached completion request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureRequestMetadata {
+    pub message_count: usize,
+    pub has_tools: bool,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
 }
 
 impl CacheStats {
@@ -1242,6 +1293,7 @@ mod cache_stats_tests {
             evictions: 0,
             entries: 0,
             max_entries: 100,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.hit_rate(), 0.0);
     }
@@ -1254,6 +1306,7 @@ mod cache_stats_tests {
             evictions: 0,
             entries: 5,
             max_entries: 100,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.hit_rate(), 1.0);
     }
@@ -1266,6 +1319,7 @@ mod cache_stats_tests {
             evictions: 0,
             entries: 5,
             max_entries: 100,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.hit_rate(), 0.7);
     }
@@ -1278,6 +1332,7 @@ mod cache_stats_tests {
             evictions: 0,
             entries: 50,
             max_entries: 0,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.utilization(), None);
     }
@@ -1290,6 +1345,7 @@ mod cache_stats_tests {
             evictions: 0,
             entries: 50,
             max_entries: 100,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.utilization(), Some(0.5));
     }
@@ -1302,6 +1358,7 @@ mod cache_stats_tests {
             evictions: 2,
             entries: 100,
             max_entries: 100,
+            token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.utilization(), Some(1.0));
     }

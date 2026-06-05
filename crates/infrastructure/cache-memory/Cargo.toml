@@ -21,6 +21,9 @@ ttl_cache = "0.5"
 # Observability
 metrics = "0.24"
 
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
 # Logging
 tracing = "0.1"
 
