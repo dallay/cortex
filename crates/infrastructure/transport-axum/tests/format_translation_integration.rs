@@ -427,6 +427,7 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
             enabled: false,
             auto_seed: false,
         },
+        None, // telemetry
     )
 }
 
