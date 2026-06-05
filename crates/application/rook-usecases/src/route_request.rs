@@ -87,15 +87,14 @@ impl RouteRequest {
         self.combo_repository.clone()
     }
 
-<<<<<<< HEAD
     /// Get cache reference (for HTTP management API)
     pub fn cache(&self) -> Arc<dyn CachePort> {
         self.cache.clone()
-=======
+    }
+
     /// Get alias repository reference (for HTTP layer wiring)
     pub fn alias_repository(&self) -> Arc<dyn ModelAliasRepositoryPort> {
         self.alias_repository.clone()
->>>>>>> 7a397b2 (feat: add model alias resolution and HTTP API (#111))
     }
 
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
