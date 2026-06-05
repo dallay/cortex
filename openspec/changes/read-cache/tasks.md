@@ -45,33 +45,33 @@ Chain strategy: pending
 
 ## Phase 3: Ports (Interface Extension)
 
-- [ ] 3.1 **Add `stats()` method to `CachePort` trait** — `rook-core/src/ports.rs` — Signature: `async fn stats(&self) -> CortexResult<CacheStats>;` — Dependencies: 1.3 — Complexity: simple
-- [ ] 3.2 **Implement `CachePort::stats()` for `InMemoryCache`** — `cache-memory/src/lib.rs` — Delegate to internal `stats()` method, wrap in `Ok()` — Dependencies: 2.7, 3.1 — Complexity: simple
+- [x] 3.1 **Add `stats()` method to `CachePort` trait** — `rook-core/src/ports.rs` — Signature: `async fn stats(&self) -> CortexResult<CacheStats>;` — Dependencies: 1.3 — Complexity: simple
+- [x] 3.2 **Implement `CachePort::stats()` for `InMemoryCache`** — `cache-memory/src/lib.rs` — Delegate to internal `stats()` method, wrap in `Ok()` — Dependencies: 2.7, 3.1 — Complexity: simple
 
 ## Phase 4: Configuration
 
-- [ ] 4.1 **Add `max_entries` field to `CacheConfig`** — `apps/rook/src/config.rs` — Add `pub max_entries: Option<usize>` with default `None` — Dependencies: none — Complexity: simple
-- [ ] 4.2 **Implement `CacheConfig::validate()`** — `apps/rook/src/config.rs` — Return error if `ttl_secs > 86400`; if `max_entries.is_some()` validate it is `> 0`, reject `Some(0)`; allow `None` (unlimited) — Dependencies: none — Complexity: simple
-- [ ] 4.3 **Call `validate()` at startup** — `apps/rook/src/main.rs` or config loading — Fail fast if config invalid — Dependencies: 4.2 — Complexity: simple
-- [ ] 4.4 **Pass `max_entries` to `InMemoryCache::new()`** — `apps/rook/src/main.rs` or DI setup — Wire config value to cache constructor — Dependencies: 2.3, 4.1 — Complexity: simple
+- [x] 4.1 **Add `max_entries` field to `CacheConfig`** — `apps/rook/src/config.rs` — Add `pub max_entries: Option<usize>` with default `None` — Dependencies: none — Complexity: simple
+- [x] 4.2 **Implement `CacheConfig::validate()`** — `apps/rook/src/config.rs` — Return error if `ttl_secs > 86400`; if `max_entries.is_some()` validate it is `> 0`, reject `Some(0)`; allow `None` (unlimited) — Dependencies: none — Complexity: simple
+- [x] 4.3 **Call `validate()` at startup** — `apps/rook/src/main.rs` or config loading — Fail fast if config invalid — Dependencies: 4.2 — Complexity: simple
+- [x] 4.4 **Pass `max_entries` to `InMemoryCache::new()`** — `apps/rook/src/main.rs` or DI setup — Wire config value to cache constructor — Dependencies: 2.3, 4.1 — Complexity: simple
 
 ## Phase 5: Application Layer
 
-- [ ] 5.1 **Update `RouteRequest` to increment stats** — `rook-usecases/src/route_request.rs` — On cache hit: already incremented in `get()`; on cache miss: already incremented in `get()` — verify existing logic or add explicit stats tracking — Dependencies: 2.5 — Complexity: simple
+- [x] 5.1 **Update `RouteRequest` to increment stats** — `rook-usecases/src/route_request.rs` — On cache hit: already incremented in `get()`; on cache miss: already incremented in `get()` — verify existing logic or add explicit stats tracking — Dependencies: 2.5 — Complexity: simple
 
 ## Phase 6: Transport Layer (HTTP)
 
-- [ ] 6.1 **Create `transport-axum/src/handlers/cache.rs`** — New file with handler stubs — Dependencies: none — Complexity: simple
-- [ ] 6.2 **Implement `get_cache_stats` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Arc<dyn CachePort>`, call `cache.stats()`, return `Json<CacheStats>` or 500 — Dependencies: 3.1, 6.1 — Complexity: medium
-- [ ] 6.3 **Implement `clear_cache` handler** — `transport-axum/src/handlers/cache.rs` — Extract cache port, call `cache.clear()`, return 204 or 500 — Dependencies: 6.1 — Complexity: simple
-- [ ] 6.4 **Implement `delete_cache_entry` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Path(signature)`, construct `CacheKey`, call `cache.delete()`, return 204 (deleted) or 404 (not found) — Dependencies: 1.1, 6.1 — Complexity: medium
-- [ ] 6.5 **Wire cache routes** — `transport-axum/src/routes.rs` — Add `GET /api/cache/stats`, `DELETE /api/cache`, `DELETE /api/cache/:signature` — Dependencies: 6.2, 6.3, 6.4 — Complexity: simple
-- [ ] 6.6 **Extend `/health` with cache stats** — `transport-axum/src/handlers/health.rs` — Add `cache_entries`, `cache_hit_rate`, `cache_utilization` fields to health response — Dependencies: 3.1 — Complexity: medium
+- [x] 6.1 **Create `transport-axum/src/handlers/cache.rs`** — New file with handler stubs — Dependencies: none — Complexity: simple
+- [x] 6.2 **Implement `get_cache_stats` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Arc<dyn CachePort>`, call `cache.stats()`, return `Json<CacheStats>` or 500 — Dependencies: 3.1, 6.1 — Complexity: medium
+- [x] 6.3 **Implement `clear_cache` handler** — `transport-axum/src/handlers/cache.rs` — Extract cache port, call `cache.clear()`, return 204 or 500 — Dependencies: 6.1 — Complexity: simple
+- [x] 6.4 **Implement `delete_cache_entry` handler** — `transport-axum/src/handlers/cache.rs` — Extract `Path(signature)`, construct `CacheKey`, call `cache.delete()`, return 204 (deleted) or 404 (not found) — Dependencies: 1.1, 6.1 — Complexity: medium
+- [x] 6.5 **Wire cache routes** — `transport-axum/src/routes.rs` — Add `GET /api/cache/stats`, `DELETE /api/cache`, `DELETE /api/cache/:signature` — Dependencies: 6.2, 6.3, 6.4 — Complexity: simple
+- [x] 6.6 **Extend `/health` with cache stats** — `transport-axum/src/handlers/health.rs` — Add `cache_entries`, `cache_hit_rate`, `cache_utilization` fields to health response — Dependencies: 3.1 — Complexity: medium
 
 ## Phase 7: Observability
 
-- [ ] 7.1 **Add `rook_cache_evictions` counter** — `observability/src/metrics.rs` — Prometheus counter for evictions — Dependencies: none — Complexity: simple
-- [ ] 7.2 **Emit eviction metric in `InMemoryCache::set()`** — `cache-memory/src/lib.rs` — Increment Prometheus counter when eviction occurs — Dependencies: 2.4, 7.1 — Complexity: simple
+- [x] 7.1 **Add `rook_cache_evictions` counter** — `observability/src/metrics.rs` — Prometheus counter for evictions — Dependencies: none — Complexity: simple
+- [x] 7.2 **Emit eviction metric in `InMemoryCache::set()`** — `cache-memory/src/lib.rs` — Increment Prometheus counter when eviction occurs — Dependencies: 2.4, 7.1 — Complexity: simple
 
 ## Phase 8: Unit Tests
 
@@ -82,23 +82,23 @@ Chain strategy: pending
 - [x] 8.5 **Test concurrent access** — `cache-memory/src/lib.rs` — 100 threads performing get/set/clear → no panics, final state consistent — Dependencies: 2.4, 2.5 — Complexity: complex
 - [x] 8.6 **Test `CacheStats::hit_rate()`** — `rook-core/src/model.rs` — Zero requests → 0.0, hits only → 1.0, mixed → correct ratio — Dependencies: 1.3 — Complexity: simple
 - [x] 8.7 **Test `CacheStats::utilization()`** — `rook-core/src/model.rs` — No limit → None, partial → correct fraction, full → 1.0 — Dependencies: 1.3 — Complexity: simple
-- [ ] 8.8 **Test `CacheConfig::validate()`** — `apps/rook/src/config.rs` — `ttl_secs > 86400` → error, valid config → Ok — Dependencies: 4.2 — Complexity: simple
+- [x] 8.8 **Test `CacheConfig::validate()`** — `apps/rook/src/config.rs` — `ttl_secs > 86400` → error, valid config → Ok — Dependencies: 4.2 — Complexity: simple
 
 ## Phase 9: Integration Tests
 
-- [ ] 9.1 **Test `GET /api/cache/stats` endpoint** — `transport-axum/tests/` — Empty cache → entries=0, after operations → correct counts — Dependencies: 6.2, 6.5 — Complexity: medium
-- [ ] 9.2 **Test `DELETE /api/cache` endpoint** — `transport-axum/tests/` — Populate cache, clear, verify stats show entries=0 — Dependencies: 6.3, 6.5 — Complexity: simple
-- [ ] 9.3 **Test `DELETE /api/cache/:signature` endpoint** — `transport-axum/tests/` — Delete existing → 204, delete missing → 404 — Dependencies: 6.4, 6.5 — Complexity: medium
-- [ ] 9.4 **Test `/health` includes cache stats** — `transport-axum/tests/` — Verify cache fields present in JSON response — Dependencies: 6.6 — Complexity: simple
+- [x] 9.1 **Test `GET /api/cache/stats` endpoint** — `transport-axum/tests/` — Empty cache → entries=0, after operations → correct counts — Dependencies: 6.2, 6.5 — Complexity: medium
+- [x] 9.2 **Test `DELETE /api/cache` endpoint** — `transport-axum/tests/` — Populate cache, clear, verify stats show entries=0 — Dependencies: 6.3, 6.5 — Complexity: simple
+- [x] 9.3 **Test `DELETE /api/cache/:signature` endpoint** — `transport-axum/tests/` — Delete existing → 204, delete missing → 404 — Dependencies: 6.4, 6.5 — Complexity: medium
+- [x] 9.4 **Test `/health` includes cache stats** — `transport-axum/tests/` — Verify cache fields present in JSON response — Dependencies: 6.6 — Complexity: simple
 - [ ] 9.5 **Test end-to-end cache hit flow** — `apps/rook/tests/` — Same request twice → second returns cached response, stats show hit — Dependencies: 2.5, 5.1 — Complexity: complex
 - [ ] 9.6 **Test end-to-end cache miss flow** — `apps/rook/tests/` — Unique request → routed to provider, cached for next time — Dependencies: 2.5, 5.1 — Complexity: complex
 - [ ] 9.7 **Test LRU eviction in full system** — `apps/rook/tests/` — Fill cache to limit, trigger eviction, verify oldest gone — Dependencies: 2.4, 4.4 — Complexity: complex
 
 ## Phase 10: Verification
 
-- [ ] 10.1 **Run `cargo test`** — All unit + integration tests pass — Dependencies: 8.*, 9.* — Complexity: simple
-- [ ] 10.2 **Run `cargo clippy`** — No warnings — Dependencies: all code tasks — Complexity: simple
-- [ ] 10.3 **Run `cargo fmt --check`** — Code formatted — Dependencies: all code tasks — Complexity: simple
+- [x] 10.1 **Run `cargo test`** — All unit + integration tests pass — Dependencies: 8.*, 9.* — Complexity: simple
+- [x] 10.2 **Run `cargo clippy`** — No warnings — Dependencies: all code tasks — Complexity: simple
+- [x] 10.3 **Run `cargo fmt --check`** — Code formatted — Dependencies: all code tasks — Complexity: simple
 - [ ] 10.4 **Run `just ci-local`** — Full CI pipeline passes locally — Dependencies: 10.1, 10.2, 10.3 — Complexity: simple
 - [ ] 10.5 **Manual smoke test** — Start server, hit `/api/cache/stats`, verify response, perform cache operations, verify stats update — Dependencies: all implementation tasks — Complexity: medium
 

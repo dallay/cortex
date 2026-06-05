@@ -191,11 +191,33 @@ pub struct CacheConfig {
     pub enabled: bool,
     #[serde(rename = "ttl_secs")]
     pub ttl_secs: u64,
+    #[serde(default)]
+    pub max_entries: Option<usize>,
 }
 
 impl CacheConfig {
     pub fn ttl(&self) -> Duration {
         Duration::from_secs(self.ttl_secs)
+    }
+
+    /// Validate cache configuration at startup
+    pub fn validate(&self) -> Result<(), String> {
+        // Reject TTL > 24 hours (86400 seconds)
+        if self.ttl_secs > 86400 {
+            return Err(format!(
+                "cache.ttl_secs ({}) exceeds 24h maximum (86400)",
+                self.ttl_secs
+            ));
+        }
+
+        // Reject max_entries = Some(0)
+        if let Some(0) = self.max_entries {
+            return Err(
+                "cache.max_entries must be greater than 0 or None for unlimited".to_string(),
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -289,6 +311,12 @@ impl RookConfig {
 
         // Validate combo configurations
         Self::validate_combos(&config.combos);
+
+        // Validate cache configuration
+        config
+            .cache
+            .validate()
+            .map_err(|e| anyhow::anyhow!("invalid cache config: {}", e))?;
 
         Ok(config)
     }

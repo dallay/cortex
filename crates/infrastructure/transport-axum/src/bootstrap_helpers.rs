@@ -112,6 +112,12 @@ impl CachePort for StubCache {
     async fn clear(&self) -> CortexResult<()> {
         unreachable!("cache not called by bootstrap tests")
     }
+    async fn stats(&self) -> CortexResult<rook_core::CacheStats> {
+        unreachable!("cache not called by bootstrap tests")
+    }
+    async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
+        unreachable!("cache not called by bootstrap tests")
+    }
 }
 
 struct StubAudit;

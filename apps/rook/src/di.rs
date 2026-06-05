@@ -72,7 +72,10 @@ impl RookContainer {
 
         // 1. Cache
         let cache: Arc<dyn CachePort> = if config.cache.enabled {
-            Arc::new(InMemoryCache::new(config.cache.ttl(), None))
+            Arc::new(InMemoryCache::new(
+                config.cache.ttl(),
+                config.cache.max_entries,
+            ))
         } else {
             Arc::new(NoOpCache)
         };
@@ -625,6 +628,18 @@ impl CachePort for NoOpCache {
     }
     async fn clear(&self) -> CortexResult<()> {
         Ok(())
+    }
+    async fn stats(&self) -> CortexResult<rook_core::CacheStats> {
+        Ok(rook_core::CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            entries: 0,
+            max_entries: 0,
+        })
+    }
+    async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
+        Ok(0)
     }
 }
 

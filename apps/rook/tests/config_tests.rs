@@ -88,3 +88,118 @@ completion_per_million = 2.40
     assert_eq!(price.cache_read_per_million, None);
     assert_eq!(price.cache_creation_per_million, None);
 }
+
+#[test]
+fn cache_config_validation_rejects_ttl_exceeding_24_hours() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 86401
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_err());
+    assert!(validation_result
+        .unwrap_err()
+        .contains("exceeds 24h maximum"));
+}
+
+#[test]
+fn cache_config_validation_accepts_valid_ttl() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 3600
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}
+
+#[test]
+fn cache_config_validation_rejects_max_entries_zero() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+max_entries = 0
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_err());
+    assert!(validation_result
+        .unwrap_err()
+        .contains("must be greater than 0"));
+}
+
+#[test]
+fn cache_config_validation_accepts_none_max_entries() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    assert_eq!(config.cache.max_entries, None);
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}
+
+#[test]
+fn cache_config_validation_accepts_valid_max_entries() {
+    let config_str = r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = true
+ttl_secs = 300
+max_entries = 1000
+"#;
+
+    let config: RookConfig = toml::from_str(config_str).expect("config parses");
+    assert_eq!(config.cache.max_entries, Some(1000));
+    let validation_result = config.cache.validate();
+
+    assert!(validation_result.is_ok());
+}

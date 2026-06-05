@@ -90,6 +90,9 @@ pub fn router(
     // Usage history routes — always mounted, returns 503 if usage recorder is unavailable
     router = router.merge(usage_routes(usecases.clone()));
 
+    // Cache management routes — always mounted
+    router = router.merge(cache_routes(usecases.clone()));
+
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
         router = router.merge(rate_limits_routes(store));
@@ -768,6 +771,21 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
     use std::collections::HashMap;
     let circuit_map: HashMap<_, _> = circuit_states.into_iter().collect();
 
+    // Get cache stats
+    let cache_stats =
+        usecases
+            .route_request
+            .cache()
+            .stats()
+            .await
+            .unwrap_or(rook_core::CacheStats {
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+                entries: 0,
+                max_entries: 0,
+            });
+
     Json(serde_json::json!({
         "status": status,
         "providers": statuses.iter().map(|s| {
@@ -793,7 +811,16 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
             }
 
             provider_json
-        }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        "cache_stats": {
+            "hits": cache_stats.hits,
+            "misses": cache_stats.misses,
+            "evictions": cache_stats.evictions,
+            "entries": cache_stats.entries,
+            "max_entries": cache_stats.max_entries,
+            "hit_rate": cache_stats.hit_rate(),
+            "utilization": cache_stats.utilization(),
+        }
     }))
 }
 
@@ -839,4 +866,16 @@ fn usage_routes(usecases: Usecases) -> Router {
         .route("/api/usage/summary", get(handlers::usage::usage_summary))
         .route("/api/usage/cost", get(handlers::usage::usage_cost))
         .with_state(usecases)
+}
+
+fn cache_routes(usecases: Usecases) -> Router {
+    let cache = usecases.route_request.cache();
+    Router::new()
+        .route("/api/cache/stats", get(handlers::cache::get_cache_stats))
+        .route("/api/cache", delete(handlers::cache::clear_cache))
+        .route(
+            "/api/cache/:signature",
+            delete(handlers::cache::delete_cache_entry),
+        )
+        .layer(axum::extract::Extension(cache))
 }

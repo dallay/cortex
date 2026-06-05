@@ -49,6 +49,29 @@ impl InMemoryCache {
         }
     }
 
+    /// Delete all entries matching the given signature.
+    /// Returns the number of entries deleted.
+    pub fn delete_by_signature(&self, signature: &str) -> usize {
+        let mut deleted = 0;
+        // Collect keys matching the signature
+        let keys_to_delete: Vec<CacheKey> = self
+            .store
+            .iter()
+            .filter(|entry| entry.key().signature == signature)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        // Delete all matching keys
+        for key in keys_to_delete {
+            self.store.remove(&key);
+            self.expiry.remove(&key);
+            self.last_accessed.remove(&key);
+            deleted += 1;
+        }
+
+        deleted
+    }
+
     /// Evict the least recently used entry if cache is at capacity.
     ///
     /// **Note on concurrency**: LRU eviction is approximate under concurrent access.
@@ -72,6 +95,8 @@ impl InMemoryCache {
                     self.expiry.remove(&oldest);
                     self.last_accessed.remove(&oldest);
                     self.evictions.fetch_add(1, Ordering::Relaxed);
+                    // Emit Prometheus metric
+                    metrics::counter!("rook_cache_evictions").increment(1);
                 }
             }
         }
@@ -135,6 +160,14 @@ impl CachePort for InMemoryCache {
         self.misses.store(0, Ordering::Relaxed);
         self.evictions.store(0, Ordering::Relaxed);
         Ok(())
+    }
+
+    async fn stats(&self) -> CortexResult<CacheStats> {
+        Ok(self.stats())
+    }
+
+    async fn delete_by_signature(&self, signature: &str) -> CortexResult<usize> {
+        Ok(self.delete_by_signature(signature))
     }
 }
 
