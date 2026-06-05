@@ -2,13 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '@/i18n'
 import type { AcceptableValue } from 'reka-ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const { locale } = useI18n()
 

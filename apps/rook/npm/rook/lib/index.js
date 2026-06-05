@@ -12,14 +12,17 @@ const PKG = '@dallay/rook';
 
 function getPlatform() {
   const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+  const osPlatform = os.platform();
+  
   let platform;
-  if (os.platform() === 'win32') {
+  if (osPlatform === 'win32') {
     platform = 'windows';
-  } else if (os.platform() === 'darwin') {
+  } else if (osPlatform === 'darwin') {
     platform = 'darwin';
   } else {
     platform = 'linux';
   }
+  
   return `${platform}-${arch}`;
 }
 
