@@ -505,14 +505,16 @@ mod usage_tests {
     fn usage_repo() -> SqliteUsageRepository {
         static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let db_path = format!("/tmp/audit_sqlite_test_{}.db", n);
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!("audit_sqlite_test_{}.db", n));
         // Remove any stale file from a previous run — ignore errors if it doesn't exist
         let _ = std::fs::remove_file(&db_path);
-        db_migration::run_migrations(&db_path).expect("migrations");
-        let repo = SqliteUsageRepository::new(std::path::Path::new(&db_path)).expect("usage repo");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        db_migration::run_migrations(&db_path_str).expect("migrations");
+        let repo = SqliteUsageRepository::new(&db_path).expect("usage repo");
         // Leak the path so the file persists for the duration of the test process.
         // This avoids the NamedTempFile auto-delete-on-drop issue.
-        Box::leak(db_path.into_boxed_str());
+        Box::leak(db_path_str.into_boxed_str());
         repo
     }
 
