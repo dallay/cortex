@@ -543,6 +543,23 @@ impl std::fmt::Display for ComboValidationError {
 
 impl std::error::Error for ComboValidationError {}
 
+// ============================================================================
+// ModelAlias — model alias mapping for stable model names
+// ============================================================================
+
+/// Model alias mapping — resolves friendly alias names to canonical model IDs
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelAlias {
+    /// The alias name (e.g., "gpt-4o-latest")
+    pub alias: ModelId,
+    /// The canonical model ID (e.g., "gpt-4o-2024-05-13")
+    pub canonical: ModelId,
+    /// Optional provider scope (null = global)
+    pub provider_id: Option<ProviderId>,
+    /// Creation timestamp (ISO 8601)
+    pub created_at: String,
+}
+
 /// A multi-step fallback chain aggregate
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Combo {
