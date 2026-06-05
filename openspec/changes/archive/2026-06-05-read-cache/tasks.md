@@ -90,17 +90,17 @@ Chain strategy: pending
 - [x] 9.2 **Test `DELETE /api/cache` endpoint** — `transport-axum/tests/` — Populate cache, clear, verify stats show entries=0 — Dependencies: 6.3, 6.5 — Complexity: simple
 - [x] 9.3 **Test `DELETE /api/cache/:signature` endpoint** — `transport-axum/tests/` — Delete existing → 204, delete missing → 404 — Dependencies: 6.4, 6.5 — Complexity: medium
 - [x] 9.4 **Test `/health` includes cache stats** — `transport-axum/tests/` — Verify cache fields present in JSON response — Dependencies: 6.6 — Complexity: simple
-- [ ] 9.5 **Test end-to-end cache hit flow** — `apps/rook/tests/` — Same request twice → second returns cached response, stats show hit — Dependencies: 2.5, 5.1 — Complexity: complex
-- [ ] 9.6 **Test end-to-end cache miss flow** — `apps/rook/tests/` — Unique request → routed to provider, cached for next time — Dependencies: 2.5, 5.1 — Complexity: complex
-- [ ] 9.7 **Test LRU eviction in full system** — `apps/rook/tests/` — Fill cache to limit, trigger eviction, verify oldest gone — Dependencies: 2.4, 4.4 — Complexity: complex
+- [x] 9.5 **Test end-to-end cache hit flow** — `apps/rook/tests/` — Same request twice → second returns cached response, stats show hit — Dependencies: 2.5, 5.1 — Complexity: complex
+- [x] 9.6 **Test end-to-end cache miss flow** — `apps/rook/tests/` — Unique request → routed to provider, cached for next time — Dependencies: 2.5, 5.1 — Complexity: complex
+- [x] 9.7 **Test LRU eviction in full system** — `apps/rook/tests/` — Fill cache to limit, trigger eviction, verify oldest gone — Dependencies: 2.4, 4.4 — Complexity: complex
 
 ## Phase 10: Verification
 
 - [x] 10.1 **Run `cargo test`** — All unit + integration tests pass — Dependencies: 8.*, 9.1–9.4 — Complexity: simple
 - [x] 10.2 **Run `cargo clippy`** — No warnings — Dependencies: all code tasks — Complexity: simple
 - [x] 10.3 **Run `cargo fmt --check`** — Code formatted — Dependencies: all code tasks — Complexity: simple
-- [ ] 10.4 **Run `just ci-local`** — Full CI pipeline passes locally — Dependencies: 10.1, 10.2, 10.3 — Complexity: simple
-- [ ] 10.5 **Manual smoke test** — Start server, hit `/api/cache/stats`, verify response, perform cache operations, verify stats update — Dependencies: all implementation tasks — Complexity: medium
+- [x] 10.4 **Run `just ci-local`** — Full CI pipeline passes locally — Dependencies: 10.1, 10.2, 10.3 — Complexity: simple
+- [x] 10.5 **Manual smoke test** — Start server, hit `/api/cache/stats`, verify response, perform cache operations, verify stats update — Dependencies: all implementation tasks — Complexity: medium
 
 ---
 
