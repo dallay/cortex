@@ -32,7 +32,7 @@ export API_PORT=8081
 export API_TARGET="http://127.0.0.1:${API_PORT}"
 export API_BASE_URL="${API_TARGET}"
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
-ADMIN_PASSWORD="Admin123456-"
+ADMIN_PASSWORD="Admin123!234"
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
 
 # Colors
