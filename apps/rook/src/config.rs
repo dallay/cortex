@@ -30,6 +30,9 @@ pub struct RookConfig {
     /// Combo (multi-step fallback chain) definitions
     #[serde(default)]
     pub combos: Vec<ComboConfig>,
+    /// Model aliases configuration
+    #[serde(default)]
+    pub model_aliases: ModelAliasesConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +72,36 @@ impl Default for ApiKeysAuthConfig {
 }
 
 fn default_allow_env_fallback() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelAliasesConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_seed: bool,
+}
+
+impl Default for ModelAliasesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_seed: true,
+        }
+    }
+}
+
+impl From<ModelAliasesConfig> for rook_usecases::route_request::ModelAliasesConfig {
+    fn from(cfg: ModelAliasesConfig) -> Self {
+        Self {
+            enabled: cfg.enabled,
+            auto_seed: cfg.auto_seed,
+        }
+    }
+}
+
+fn default_true() -> bool {
     true
 }
 
