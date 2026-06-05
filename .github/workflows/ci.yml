@@ -225,7 +225,7 @@ jobs:
         run: pnpm install --filter @dallay/rook-dashboard
       - name: Install Playwright browsers
         working-directory: apps/rook/dashboard
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps
       - name: Build E2E Docker image
         run: docker build -f Dockerfile.dev -t rook:e2e-api-keys .
       - name: Run E2E tests
