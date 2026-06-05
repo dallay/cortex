@@ -24,6 +24,18 @@ use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
 use crate::PricingConfig;
 
+/// Grouped parameters for success handling to avoid excessive parameter count
+struct SuccessContext {
+    req: CompletionRequest,
+    provider_resp: CompletionResponse,
+    provider_id: ProviderId,
+    connection_id: Option<ConnectionId>,
+    provider_format: ApiFormat,
+    client_format: ApiFormat,
+    cache_key: rook_core::CacheKey,
+    latency_ms: u64,
+}
+
 /// Grouped metrics for usage recording to avoid excessive parameter count
 struct UsageMetrics<'a> {
     status: RequestStatus,
@@ -155,7 +167,7 @@ impl RouteRequest {
 
         match result {
             Ok(provider_resp) => {
-                self.handle_success(
+                self.handle_success(SuccessContext {
                     req,
                     provider_resp,
                     provider_id,
@@ -164,7 +176,7 @@ impl RouteRequest {
                     client_format,
                     cache_key,
                     latency_ms,
-                )
+                })
                 .await
             }
             Err(e) => {
@@ -238,58 +250,57 @@ impl RouteRequest {
         Ok(None)
     }
 
-    async fn handle_success(
-        &self,
-        req: CompletionRequest,
-        provider_resp: CompletionResponse,
-        provider_id: ProviderId,
-        connection_id: Option<ConnectionId>,
-        provider_format: ApiFormat,
-        client_format: ApiFormat,
-        cache_key: rook_core::CacheKey,
-        latency_ms: u64,
-    ) -> Result<CompletionResponse, CortexError> {
+    async fn handle_success(&self, ctx: SuccessContext) -> Result<CompletionResponse, CortexError> {
         let resp = self.format_translator.translate_response(
-            provider_format,
-            client_format,
-            provider_resp,
+            ctx.provider_format,
+            ctx.client_format,
+            ctx.provider_resp,
         )?;
 
         // Cache if eligible
-        if req.metadata.cacheable {
-            if let Err(e) = self.cache.set(&cache_key, &resp, DEFAULT_CACHE_TTL).await {
+        if ctx.req.metadata.cacheable {
+            if let Err(e) = self
+                .cache
+                .set(&ctx.cache_key, &resp, DEFAULT_CACHE_TTL)
+                .await
+            {
                 tracing::warn!(error = %e, "failed to cache response");
             }
         }
 
         // Audit success
         let entry = AuditEntry::success(
-            &req.id,
-            &provider_id,
-            &req.model,
+            &ctx.req.id,
+            &ctx.provider_id,
+            &ctx.req.model,
             Some(resp.usage.clone()),
-            latency_ms,
+            ctx.latency_ms,
         );
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record audit entry");
         }
 
         self.record_usage(
-            &req,
-            &provider_id,
-            connection_id,
+            &ctx.req,
+            &ctx.provider_id,
+            ctx.connection_id,
             UsageMetrics {
                 status: RequestStatus::Success,
                 usage: Some(&resp.usage),
-                ttft_ms: Some(latency_ms),
-                latency_ms,
+                ttft_ms: Some(ctx.latency_ms),
+                latency_ms: ctx.latency_ms,
             },
         )
         .await;
 
         // Record telemetry
         if let Some(telemetry) = &self.telemetry {
-            telemetry.record_observation(provider_id, latency_ms, None, ObservationStatus::Success);
+            telemetry.record_observation(
+                ctx.provider_id,
+                ctx.latency_ms,
+                None,
+                ObservationStatus::Success,
+            );
         }
 
         Ok(resp)
