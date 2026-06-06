@@ -1,0 +1,50 @@
+change: coverage-and-bundle-analysis
+current_phase: verify
+completed:
+  - init
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+next: null
+chain_strategy: feature-branch-chain
+chain:
+  - branch: feat/providers-core
+    name: "providers-core crate creation"
+    phases: [1]
+    depends_on: null
+  - branch: feat/openai-migration
+    name: "OpenAI provider migration + tests"
+    phases: [2-openai]
+    depends_on: feat/providers-core
+  - branch: feat/anthropic-migration
+    name: "Anthropic provider migration + tests"
+    phases: [2-anthropic]
+    depends_on: feat/openai-migration
+  - branch: feat/groq-ollama-migration
+    name: "Groq + Ollama migration + tests"
+    phases: [2-groq, 2-ollama]
+    depends_on: feat/anthropic-migration
+  - branch: feat/codecov-bundle
+    name: "Dashboard Codecov bundle analysis"
+    phases: [3]
+    depends_on: null
+  - branch: main
+    name: "Final verification + merge"
+    phases: [4]
+    depends_on: feat/groq-ollama-migration, feat/codecov-bundle
+verification_summary:
+  tests: 735 passed
+  clippy: FAIL (2 errors in providers-core)
+  fmt: FAIL (13 formatting issues)
+  sonarcloud: FAIL (coverage 0.0%, duplication 3.9%, reliability 3, security 3)
+  dashboard_build: PASS
+  verdict: FAIL
+issues:
+  - critical: "Clippy: sse.rs:53 match→?, validation.rs:67 map_or simplification"
+  - critical: "Format: 13 files need formatting"
+  - critical: "SonarCloud: coverage 0.0% (threshold 80%), duplication 3.9% (threshold 3%)"
+  - warning: "SonarCloud analysis may not have run on feature branch yet"
+updated: "2026-06-06T00:00:00Z"

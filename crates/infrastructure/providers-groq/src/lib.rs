@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
+use providers_core::role_to_string;
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -99,13 +100,7 @@ impl GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
+                    role: role_to_string(m.role).to_string(),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
@@ -249,13 +244,7 @@ impl ProviderPort for GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
+                    role: role_to_string(m.role).to_string(),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),

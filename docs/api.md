@@ -622,6 +622,128 @@ Get current rate limit status for a specific target.
 
 ---
 
+## Cache Management
+
+### GET /api/cache/stats
+
+Get unified cache statistics covering both signature cache (Layer 1) and token cache (Layer 2).
+
+**Response:**
+
+```json
+{
+  "signature_cache": {
+    "hits": 1247,
+    "misses": 356,
+    "hit_rate": 0.7779,
+    "entries": 142,
+    "evictions": 23
+  },
+  "token_cache": {
+    "hits": 89,
+    "misses": 267,
+    "tokens_saved": 1456789,
+    "estimated_cost_saved_usd": 2.91
+  },
+  "combined": {
+    "total_requests": 1603,
+    "cached_requests": 1336,
+    "cache_rate": 0.8334
+  }
+}
+```
+
+**Schema:**
+
+| Field                                    | Type   | Description                                                |
+|------------------------------------------|--------|------------------------------------------------------------|
+| `signature_cache.hits`                   | u64    | Number of requests served from signature cache             |
+| `signature_cache.misses`                 | u64    | Number of requests that missed signature cache             |
+| `signature_cache.hit_rate`               | f64    | Signature cache hit rate (hits / total)                    |
+| `signature_cache.entries`                | usize  | Current number of cached entries                           |
+| `signature_cache.evictions`              | u64    | Number of entries evicted due to TTL or capacity           |
+| `token_cache.hits`                       | u64    | Number of provider-side token cache hits                   |
+| `token_cache.misses`                     | u64    | Number of provider-side token cache misses                 |
+| `token_cache.tokens_saved`               | u64    | Total input tokens saved via provider-side caching         |
+| `token_cache.estimated_cost_saved_usd`   | f64    | Estimated cost savings in USD                              |
+| `combined.total_requests`                | u64    | Total requests (signature hits + misses)                   |
+| `combined.cached_requests`               | u64    | Total cached responses (signature hits + token hits)       |
+| `combined.cache_rate`                    | f64    | Overall cache effectiveness (cached / total)               |
+
+**Cost Calculation Methodology:**
+
+Token cache cost savings are estimated using average provider pricing:
+- Input tokens saved are tracked from `x-cache: hit` responses
+- Cost per token is estimated at **$0.002 per 1K tokens** (average across Anthropic, DeepSeek, etc.)
+- Formula: `cost_saved_usd = (tokens_saved / 1000.0) * 0.002`
+
+This is a conservative estimate. Actual savings vary by model tier and provider.
+
+### GET /api/cache/signatures
+
+List all cached signature entries with metadata (requires `cache.signature_cache.inspection_endpoints = true`).
+
+**Response:**
+
+```json
+[
+  {
+    "signature": "a3f5b8c9d2e1f4a7b6c5d8e3f2a1b9c4d7e6f5a8b3c2d1e4f7a6b9c8d5e2f1a4",
+    "model": "gpt-4o",
+    "provider": "openai-primary",
+    "created_at": "2026-06-05T21:15:30Z",
+    "expires_at": "2026-06-05T21:20:30Z",
+    "hit_count": 12
+  }
+]
+```
+
+**Schema:**
+
+| Field        | Type   | Description                                          |
+|--------------|--------|------------------------------------------------------|
+| `signature`  | string | SHA-256 signature (64 hex chars)                     |
+| `model`      | string | Model ID used for this cached response               |
+| `provider`   | string | Provider ID that served the original response        |
+| `created_at` | string | ISO 8601 timestamp when entry was cached             |
+| `expires_at` | string | ISO 8601 timestamp when entry expires                |
+| `hit_count`  | u32    | Number of times this cached entry was served         |
+
+### GET /api/cache/signature/:sig
+
+Retrieve a cached response by signature (requires `cache.signature_cache.inspection_endpoints = true`).
+
+**Path Parameters:**
+- `:sig` — SHA-256 signature (64 hex characters)
+
+**Response:** `200 OK` with cached `CompletionResponse` if found and not expired.
+
+**Errors:**
+- `400 Bad Request` — Invalid signature format (not 64 hex chars)
+- `404 Not Found` — Signature not found or expired
+- `500 Internal Server Error` — Cache lookup failed
+
+### DELETE /api/cache
+
+Clear the entire cache (both signature and token cache metrics reset).
+
+**Response:** `204 No Content`
+
+### DELETE /api/cache/:signature
+
+Delete a specific cache entry by signature.
+
+**Path Parameters:**
+- `:signature` — SHA-256 signature (64 hex characters)
+
+**Response:** `204 No Content` (idempotent — always 204 regardless of whether entry existed)
+
+**Errors:**
+- `400 Bad Request` — Invalid signature format
+- `500 Internal Server Error` — Cache deletion failed
+
+---
+
 ## Rate Limit Headers
 
 All API responses include rate limit metadata headers:

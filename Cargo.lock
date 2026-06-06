@@ -2199,6 +2199,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2212,12 +2213,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "providers-core"
+version = "0.1.0"
+dependencies = [
+ "rook-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "providers-gemini"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2237,6 +2248,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2256,6 +2268,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2275,6 +2288,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",

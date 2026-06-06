@@ -165,6 +165,110 @@ setup:
     rustup show
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
+# === Dev Setup Verification ===
+# Verifies all development prerequisites are installed and configured.
+# Idempotent — safe to run multiple times.
+
+dev-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    G="{{GREEN}}" Y="{{YELLOW}}" R="{{RED}}" N="{{RESET}}"
+    FAILED=0
+
+    echo ""
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo "${Y}  Dev Environment Verification${N}"
+    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo ""
+
+    # 1. Check pnpm
+    echo -n "  Checking pnpm... "
+    if command -v pnpm &>/dev/null && pnpm --version &>/dev/null; then
+        echo "${G}✓$(pnpm --version)${N}"
+    else
+        echo "${R}✗ pnpm not found${N}"
+        echo "    Install: npm install -g pnpm@11.5.1"
+        FAILED=1
+    fi
+
+    # 2. Check Node.js
+    echo -n "  Checking Node.js... "
+    if command -v node &>/dev/null && node --version &>/dev/null; then
+        echo "${G}✓$(node --version)${N}"
+    else
+        echo "${R}✗ Node.js not found${N}"
+        FAILED=1
+    fi
+
+    # 3. Install root Node deps
+    echo -n "  Installing root Node dependencies... "
+    if pnpm install&>/dev/null; then
+        echo "${G}✓${N}"
+    else
+        echo "${R}✗ pnpm install failed${N}"
+        FAILED=1
+    fi
+
+    # 4. Install lefthook hooks
+    echo -n "  Installing lefthook git hooks... "
+    if pnpm exec lefthook install &>/dev/null; then
+        echo "${G}✓${N}"
+    else
+        echo "${R}✗ lefthook install failed${N}"
+        FAILED=1
+    fi
+
+    # 5. Verify Rust toolchain
+    echo -n "  Verifying Rust toolchain... "
+    if command -v rustup &>/dev/null && rustup show &>/dev/null; then
+        CHANNEL=$(rustup show | grep "^name:" | awk '{print $2}' | head -1)
+        echo "${G}✓${CHANNEL}${N}"
+    else
+        echo "${R}✗ rustup not found or toolchain error${N}"
+        FAILED=1
+    fi
+
+    # 6. Check Rust components (rustfmt, clippy)
+    echo -n "  Checking Rust components (rustfmt, clippy)... "
+    if rustup component list --installed 2>/dev/null | grep -q "rustfmt" && \
+       rustup component list --installed 2>/dev/null | grep -q "clippy"; then
+        echo "${G}✓${N}"
+    else
+        echo "${R}✗ missing rustfmt or clippy${N}"
+        echo "    Run: rustup component add rustfmt clippy"
+        FAILED=1
+    fi
+
+    # 7. Run agentsync
+    echo -n "  Running agentsync... "
+    if pnpm agents:sync &>/dev/null; then
+        echo "${G}✓${N}"
+    else
+        echo "${Y}⚠ agentsync skipped (optional)${N}"
+    fi
+
+    # 8. Verify dashboard deps
+    echo -n "  Checking dashboard dependencies... "
+    if [ -d "apps/rook/dashboard/node_modules" ]; then
+        echo "${G}✓${N}"
+    else
+        echo "${Y}⚠ dashboard deps not installed (run: just dashboard-install)${N}"
+    fi
+
+    echo ""
+    if [ $FAILED -eq 0 ]; then
+        echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo "${G}  ✓ Dev environment ready${N}"
+        echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo ""
+    else
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo "${R}  ✗ Dev environment incomplete${N}"
+        echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+        echo ""
+        exit 1
+    fi
+
 # === Quality ===
 
 audit:

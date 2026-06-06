@@ -11,7 +11,7 @@
 
 - **Multi-provider routing** — OpenAI, Anthropic, Ollama, Gemini, Groq
 - **Fallback chains** — automatic failover when a provider fails
-- **Response caching** — TTL-based in-memory cache
+- **Dual-layer caching** — request deduplication + provider-side token caching
 - **Audit logging** — SQLite-backed request/response logging
 - **Encryption** — AES-256-GCM with Argon2id key derivation
 - **OpenAI-compatible API** — drop-in replacement for existing clients
