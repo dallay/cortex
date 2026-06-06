@@ -93,6 +93,7 @@ async fn complete_returns_response_with_token_counts() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
+            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -153,6 +154,7 @@ async fn complete_handles_missing_eval_counts() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
+            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };

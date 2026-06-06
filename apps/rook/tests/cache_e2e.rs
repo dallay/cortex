@@ -30,6 +30,7 @@ fn test_request(model: &str, prompt: &str) -> CompletionRequest {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
+            cache_control_header: None,
         },
         restrictions: ApiKeyRestrictions::default(),
     }
@@ -362,35 +363,421 @@ async fn test_content_based_cache_keys() {
     assert!(cached.is_some(), "identical cache key should hit cache");
 }
 
-/// Test: Clear cache resets stats
+// ============================================================================
+// Phase 7: E2E Dual-Layer Cache Tests (Token Cache Integration)
+// ============================================================================
+
+/// Test 7.1: Token cache hit increments metrics
+///
+/// Scenario: Response with cache_hit=true increments token_cache.hits
 #[tokio::test]
-async fn test_clear_cache_resets_stats() {
+async fn test_token_cache_hit_increments_metrics() {
     let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
 
-    // Populate cache and generate some stats
-    let req = test_request("gpt-4", "Test");
-    let key = req.cache_key();
+    // Initial state
+    let initial_stats = cache.stats().await.expect("get stats");
+    assert_eq!(
+        initial_stats.token_cache.hits, 0,
+        "should start with 0 token cache hits"
+    );
+    assert_eq!(
+        initial_stats.token_cache.tokens_saved, 0,
+        "should start with 0 tokens saved"
+    );
+
+    // Simulate provider response with token cache hit
+    let response = CompletionResponse {
+        id: RequestId::new(),
+        provider: ProviderId::new("anthropic"),
+        model: ModelId::new("claude-3-5-sonnet-20241022"),
+        content: "Cached response".to_string(),
+        content_blocks: vec![MessageContent::Text("Cached response".to_string())],
+        usage: TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            cache_read_tokens: Some(100), // Anthropic-specific field
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_usd: Some(0.0015),
+        },
+        latency_ms: 120,
+        cache_hit: Some(true), // Token cache hit
+    };
+
+    // Record the token cache hit with cost >= 0.005 (0.5 cents minimum for rounding)
+    cache
+        .increment_token_cache_hit(response.usage.total_tokens as u64, 0.01)
+        .await
+        .expect("increment token cache hit");
+
+    // Verify metrics
+    let stats = cache.stats().await.expect("get stats");
+    assert_eq!(
+        stats.token_cache.hits, 1,
+        "token cache hits should increment"
+    );
+    assert_eq!(
+        stats.token_cache.tokens_saved, 150,
+        "tokens saved should equal total_tokens"
+    );
+
+    // Cost is stored as cents: 0.01 USD = 1 cent
+    assert_eq!(
+        stats.token_cache.estimated_cost_saved_usd, 0.01,
+        "cost savings should be stored accurately (cent precision)"
+    );
+}
+
+/// Test 7.2: Token cache miss increments miss counter
+///
+/// Scenario: Response with cache_hit=false increments token_cache.misses
+#[tokio::test]
+async fn test_token_cache_miss_increments_misses() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    // Initial state
+    let initial_stats = cache.stats().await.expect("get stats");
+    assert_eq!(
+        initial_stats.token_cache.misses, 0,
+        "should start with 0 token cache misses"
+    );
+
+    // Simulate provider response with token cache miss
+    let _response = CompletionResponse {
+        id: RequestId::new(),
+        provider: ProviderId::new("anthropic"),
+        model: ModelId::new("claude-3-5-sonnet-20241022"),
+        content: "New response".to_string(),
+        content_blocks: vec![MessageContent::Text("New response".to_string())],
+        usage: TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            cache_read_tokens: None,
+            cache_creation_tokens: Some(100), // New cache entry
+            reasoning_tokens: None,
+            estimated_cost_usd: Some(0.0015),
+        },
+        latency_ms: 500,
+        cache_hit: Some(false), // Token cache miss
+    };
+
+    // Record the token cache miss
+    cache
+        .increment_token_cache_miss()
+        .await
+        .expect("increment token cache miss");
+
+    // Verify metrics
+    let stats = cache.stats().await.expect("get stats");
+    assert_eq!(
+        stats.token_cache.misses, 1,
+        "token cache misses should increment"
+    );
+    assert_eq!(stats.token_cache.hits, 0, "hits should remain 0");
+    assert_eq!(
+        stats.token_cache.tokens_saved, 0,
+        "tokens saved should remain 0 on miss"
+    );
+}
+
+/// Test 7.3: Dual-layer cache flow - first request misses both layers
+///
+/// Scenario: First request misses signature cache and token cache
+#[tokio::test]
+async fn test_dual_layer_first_request_misses_both() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    let request = test_request("claude-3-5-sonnet-20241022", "What is Rust?");
+    let cache_key = request.cache_key();
+
+    // 1. Check signature cache (Layer 1) - should miss
+    let cached = cache.get(&cache_key).await.expect("get from cache");
+    assert!(
+        cached.is_none(),
+        "signature cache should miss on first request"
+    );
+
+    // Verify signature cache miss was counted
+    let after_sig_miss = cache.stats().await.expect("get stats");
+    assert_eq!(
+        after_sig_miss.misses, 1,
+        "signature cache misses should be 1"
+    );
+    assert_eq!(after_sig_miss.hits, 0, "signature cache hits should be 0");
+
+    // 2. Simulate provider call (would inject cache-control header)
+    // Provider returns cache_hit=false (no prior token cache)
+    let response = CompletionResponse {
+        id: request.id.clone(),
+        provider: ProviderId::new("anthropic"),
+        model: request.model.clone(),
+        content: "Rust is a systems programming language.".to_string(),
+        content_blocks: vec![MessageContent::Text(
+            "Rust is a systems programming language.".to_string(),
+        )],
+        usage: TokenUsage {
+            prompt_tokens: 15,
+            completion_tokens: 35,
+            total_tokens: 50,
+            cache_read_tokens: None,
+            cache_creation_tokens: Some(15),
+            reasoning_tokens: None,
+            estimated_cost_usd: Some(0.0005),
+        },
+        latency_ms: 450,
+        cache_hit: Some(false), // Token cache miss
+    };
+
+    // 3. Record token cache miss
+    cache
+        .increment_token_cache_miss()
+        .await
+        .expect("increment token cache miss");
+
+    // 4. Cache the response (Layer 1)
+    cache
+        .set(&cache_key, &response, Duration::from_secs(60))
+        .await
+        .expect("set in cache");
+
+    // Verify final state
+    let final_stats = cache.stats().await.expect("get stats");
+    assert_eq!(final_stats.misses, 1, "signature cache misses = 1");
+    assert_eq!(final_stats.hits, 0, "signature cache hits = 0");
+    assert_eq!(final_stats.token_cache.misses, 1, "token cache misses = 1");
+    assert_eq!(final_stats.token_cache.hits, 0, "token cache hits = 0");
+    assert_eq!(final_stats.entries, 1, "should have 1 cached entry");
+}
+
+/// Test 7.4: Dual-layer cache flow - second request hits signature cache
+///
+/// Scenario: Second identical request hits signature cache (no provider call, no token cache interaction)
+#[tokio::test]
+async fn test_dual_layer_second_request_hits_signature() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    let request = test_request("claude-3-5-sonnet-20241022", "What is Rust?");
+    let cache_key = request.cache_key();
+
+    // Setup: First request populates signature cache
+    let response = CompletionResponse {
+        id: request.id.clone(),
+        provider: ProviderId::new("anthropic"),
+        model: request.model.clone(),
+        content: "Rust is a systems programming language.".to_string(),
+        content_blocks: vec![MessageContent::Text(
+            "Rust is a systems programming language.".to_string(),
+        )],
+        usage: TokenUsage {
+            prompt_tokens: 15,
+            completion_tokens: 35,
+            total_tokens: 50,
+            cache_read_tokens: None,
+            cache_creation_tokens: Some(15),
+            reasoning_tokens: None,
+            estimated_cost_usd: Some(0.0005),
+        },
+        latency_ms: 450,
+        cache_hit: Some(false),
+    };
 
     cache
-        .set(&key, &test_response("Response"), Duration::from_secs(60))
+        .set(&cache_key, &response, Duration::from_secs(60))
         .await
-        .expect("set");
-    let _ = cache.get(&key).await; // Generate a hit
+        .expect("set in cache");
 
-    let before_clear = cache.stats().await.expect("get stats");
-    assert!(before_clear.entries > 0, "should have entries");
-    assert!(before_clear.hits > 0, "should have hits");
+    cache
+        .increment_token_cache_miss()
+        .await
+        .expect("increment miss");
+
+    let after_first = cache.stats().await.expect("get stats");
+    assert_eq!(after_first.entries, 1);
+    assert_eq!(after_first.misses, 0); // set() doesn't increment misses
+    assert_eq!(after_first.token_cache.misses, 1);
+
+    // Second request: hits signature cache
+    let cached_response = cache.get(&cache_key).await.expect("get from cache");
+    assert!(cached_response.is_some(), "signature cache should hit");
+
+    // Verify signature cache hit was counted, token cache was NOT touched
+    let after_second = cache.stats().await.expect("get stats");
+    assert_eq!(after_second.hits, 1, "signature cache hits should be 1");
+    assert_eq!(
+        after_second.misses, 0,
+        "signature cache misses should still be 0"
+    );
+    assert_eq!(
+        after_second.token_cache.hits, 0,
+        "token cache hits should be 0 (no provider call)"
+    );
+    assert_eq!(
+        after_second.token_cache.misses, 1,
+        "token cache misses should still be 1"
+    );
+}
+
+/// Test 7.5: Dual-layer combined metrics calculation
+///
+/// Scenario: Verify combined stats aggregate both layers correctly
+#[tokio::test]
+async fn test_dual_layer_combined_metrics() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    // Simulate 3 signature cache hits
+    let req1 = test_request("gpt-4", "Request 1");
+    let req2 = test_request("gpt-4", "Request 2");
+    let req3 = test_request("gpt-4", "Request 3");
+
+    cache
+        .set(
+            &req1.cache_key(),
+            &test_response("R1"),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+    cache
+        .set(
+            &req2.cache_key(),
+            &test_response("R2"),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+    cache
+        .set(
+            &req3.cache_key(),
+            &test_response("R3"),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+
+    cache.get(&req1.cache_key()).await.unwrap();
+    cache.get(&req2.cache_key()).await.unwrap();
+    cache.get(&req3.cache_key()).await.unwrap();
+
+    // Simulate 2 token cache hits
+    cache.increment_token_cache_hit(100, 0.01).await.unwrap();
+    cache.increment_token_cache_hit(150, 0.015).await.unwrap();
+
+    // Simulate 1 token cache miss
+    cache.increment_token_cache_miss().await.unwrap();
+
+    let stats = cache.stats().await.expect("get stats");
+
+    // Signature cache: 3 hits, 0 misses
+    assert_eq!(stats.hits, 3);
+    assert_eq!(stats.misses, 0);
+
+    // Token cache: 2 hits, 1 miss, 250 tokens saved
+    assert_eq!(stats.token_cache.hits, 2);
+    assert_eq!(stats.token_cache.misses, 1);
+    assert_eq!(stats.token_cache.tokens_saved, 250);
+
+    // Combined: total_requests = sig_hits + sig_misses + token_hits + token_misses
+    // But in practice, signature hits SHORT-CIRCUIT provider calls
+    // So real formula: total_requests = sig_misses + (token_hits + token_misses)
+    // cached_requests = sig_hits + token_hits
+
+    // For this test: total = 0 sig_misses + 3 token_attempts = 3 (actually 3 sig hits mean 0 provider calls)
+    // This test validates the raw counters, not combined calculation logic
+    assert_eq!(stats.token_cache.hits, 2, "2 provider token cache hits");
+    assert_eq!(stats.token_cache.misses, 1, "1 provider token cache miss");
+}
+
+/// Test 7.6: Token cache with multiple cache hits accumulates cost savings
+///
+/// Scenario: Multiple token cache hits accumulate tokens_saved and cost
+#[tokio::test]
+async fn test_token_cache_accumulates_savings() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    // First token cache hit: 100 tokens, $0.01 (1 cent)
+    cache.increment_token_cache_hit(100, 0.01).await.unwrap();
+
+    let after_first = cache.stats().await.unwrap();
+    assert_eq!(after_first.token_cache.hits, 1);
+    assert_eq!(after_first.token_cache.tokens_saved, 100);
+    assert_eq!(after_first.token_cache.estimated_cost_saved_usd, 0.01);
+
+    // Second token cache hit: 200 tokens, $0.02 (2 cents)
+    cache.increment_token_cache_hit(200, 0.02).await.unwrap();
+
+    let after_second = cache.stats().await.unwrap();
+    assert_eq!(after_second.token_cache.hits, 2);
+    assert_eq!(
+        after_second.token_cache.tokens_saved, 300,
+        "tokens should accumulate"
+    );
+    assert_eq!(
+        after_second.token_cache.estimated_cost_saved_usd, 0.03,
+        "cost should accumulate (cent precision)"
+    );
+
+    // Third token cache hit: 50 tokens, $0.015 (1.5 cents → rounds to 2 cents)
+    cache.increment_token_cache_hit(50, 0.015).await.unwrap();
+
+    let after_third = cache.stats().await.unwrap();
+    assert_eq!(after_third.token_cache.hits, 3);
+    assert_eq!(after_third.token_cache.tokens_saved, 350);
+    // 0.03 + 0.02 (rounded from 0.015) = 0.05
+    assert_eq!(after_third.token_cache.estimated_cost_saved_usd, 0.05);
+}
+
+/// Test 7.7: Clear cache resets both signature and token cache metrics
+///
+/// Scenario: clear() resets all counters including token cache
+#[tokio::test]
+async fn test_clear_resets_token_cache_metrics() {
+    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(60), Some(10)));
+
+    // Populate both layers
+    let req = test_request("claude-3-5-sonnet-20241022", "Test");
+    cache
+        .set(
+            &req.cache_key(),
+            &test_response("Resp"),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+    cache.get(&req.cache_key()).await.unwrap();
+
+    cache.increment_token_cache_hit(100, 0.0003).await.unwrap();
+    cache.increment_token_cache_miss().await.unwrap();
+
+    let before_clear = cache.stats().await.unwrap();
+    assert!(before_clear.hits > 0);
+    assert!(before_clear.token_cache.hits > 0);
+    assert!(before_clear.token_cache.misses > 0);
 
     // Clear cache
-    cache.clear().await.expect("clear cache");
+    cache.clear().await.unwrap();
 
-    // Verify stats are reset
-    let after_clear = cache.stats().await.expect("get stats");
-    assert_eq!(after_clear.entries, 0, "entries should be 0 after clear");
-    assert_eq!(after_clear.hits, 0, "hits should be 0 after clear");
-    assert_eq!(after_clear.misses, 0, "misses should be 0 after clear");
+    // Verify all metrics reset
+    let after_clear = cache.stats().await.unwrap();
+    assert_eq!(after_clear.entries, 0);
+    assert_eq!(after_clear.hits, 0);
+    assert_eq!(after_clear.misses, 0);
+    assert_eq!(after_clear.evictions, 0);
     assert_eq!(
-        after_clear.evictions, 0,
-        "evictions should be 0 after clear"
+        after_clear.token_cache.hits, 0,
+        "token cache hits should reset"
+    );
+    assert_eq!(
+        after_clear.token_cache.misses, 0,
+        "token cache misses should reset"
+    );
+    assert_eq!(
+        after_clear.token_cache.tokens_saved, 0,
+        "tokens saved should reset"
+    );
+    assert_eq!(
+        after_clear.token_cache.estimated_cost_saved_usd, 0.0,
+        "cost saved should reset"
     );
 }

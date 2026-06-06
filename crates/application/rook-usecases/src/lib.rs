@@ -30,7 +30,7 @@ pub use manage_connections::{
 };
 pub use manage_providers::ManageProviders;
 pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort, UsageRecorderPort};
-pub use route_request::RouteRequest;
+pub use route_request::{CacheMode, RouteRequest, TokenCacheConfig};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 
 pub mod authenticate_client_api;

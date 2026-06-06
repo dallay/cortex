@@ -215,6 +215,41 @@ fn sanitize_body(body: &str) -> String {
     }
 }
 
+/// Parse x-cache header from Anthropic response to detect provider-side cache hits.
+///
+/// **Provider-Side Token Caching:**
+/// Anthropic supports prompt caching, where repeated prompt prefixes are cached
+/// server-side to reduce token usage and latency. When Rook sends `cache-control: max-stale=3600`,
+/// Anthropic returns an `x-cache` header indicating cache status.
+///
+/// **Return Values:**
+/// - `Some(true)`: `x-cache: hit` — provider returned a cached response (tokens saved)
+/// - `Some(false)`: `x-cache: miss` — provider computed a fresh response (no cache benefit)
+/// - `None`: Header missing or malformed (provider doesn't support caching, or header format changed)
+///
+/// **Cost Savings:**
+/// Cache hits reduce input token usage significantly, especially for large context windows.
+/// Rook tracks hits via `InMemoryCache::increment_token_cache_hit()` and estimates cost
+/// savings using average provider pricing.
+///
+/// Phase 5: Tasks 5.1-5.3, 5.7
+fn parse_x_cache_header(resp: &reqwest::Response) -> Option<bool> {
+    let header_value = resp.headers().get("x-cache")?.to_str().ok()?;
+    let trimmed = header_value.trim().to_lowercase();
+
+    match trimmed.as_str() {
+        "hit" => Some(true),
+        "miss" => Some(false),
+        other => {
+            tracing::warn!(
+                x_cache_value = other,
+                "malformed x-cache header value, expected 'hit' or 'miss'"
+            );
+            None
+        }
+    }
+}
+
 impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
@@ -287,12 +322,19 @@ impl ProviderPort for AnthropicProvider {
         };
 
         let start = std::time::Instant::now();
-        let resp = self
+        let mut request_builder = self
             .client
             .post(format!("{}/v1/messages", self.config.base_url))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+
+        // Inject cache-control header if present (Phase 4: Task 4.4)
+        if let Some(cache_control) = &req.metadata.cache_control_header {
+            request_builder = request_builder.header("cache-control", cache_control);
+        }
+
+        let resp = request_builder
             .json(&body)
             .send()
             .await
@@ -301,6 +343,9 @@ impl ProviderPort for AnthropicProvider {
         if !resp.status().is_success() {
             return Err(map_anthropic_http_error(&self.config.id, resp).await);
         }
+
+        // Parse x-cache header for token cache hit detection (Phase 5: Task 5.1-5.3)
+        let cache_hit = parse_x_cache_header(&resp);
 
         let anthropic_resp: AnthropicNonStreamResponse = resp
             .json()
@@ -331,7 +376,7 @@ impl ProviderPort for AnthropicProvider {
                 estimated_cost_usd: None,
             },
             latency_ms: start.elapsed().as_millis() as u64,
-            cache_hit: None,
+            cache_hit,
         })
     }
 
@@ -376,12 +421,19 @@ impl ProviderPort for AnthropicProvider {
             tool_choice: req.tool_choice.clone(),
         };
 
-        let resp = self
+        let mut request_builder = self
             .client
             .post(format!("{}/v1/messages", self.config.base_url))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+
+        // Inject cache-control header if present (Phase 4: Task 4.4)
+        if let Some(cache_control) = &req.metadata.cache_control_header {
+            request_builder = request_builder.header("cache-control", cache_control);
+        }
+
+        let resp = request_builder
             .json(&body)
             .send()
             .await

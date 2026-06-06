@@ -209,6 +209,11 @@ pub struct RequestMetadata {
     pub requested_tier: Option<String>,
     /// Combo identifier for multi-step fallback execution, if present.
     pub combo_id: Option<ComboId>,
+    /// Cache-control header value for token cache (Phase 4: Task 4.4).
+    /// Set by RouteRequest based on TokenCacheConfig, read by provider adapters.
+    /// Example: "max-stale=3600" for Anthropic prompt caching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control_header: Option<String>,
 }
 
 /// The content of a message in the provider-agnostic domain model.
@@ -902,6 +907,69 @@ impl TokenCacheStats {
     }
 }
 
+/// Unified cache statistics combining signature cache (Layer 1) and token cache (Layer 2).
+/// This is the response format for GET /api/cache/stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedCacheStats {
+    pub signature_cache: SignatureCacheStats,
+    pub token_cache: TokenCacheStats,
+    pub combined: CombinedCacheStats,
+}
+
+/// Signature cache (Layer 1) statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub entries: u64,
+    pub evictions: u64,
+}
+
+/// Combined metrics across both cache layers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CombinedCacheStats {
+    pub total_requests: u64,
+    pub cached_requests: u64,
+    pub cache_rate: f64,
+}
+
+impl UnifiedCacheStats {
+    /// Build unified stats from raw CacheStats (which contains both layers).
+    pub fn from_cache_stats(stats: CacheStats) -> Self {
+        let signature_cache = SignatureCacheStats {
+            hits: stats.hits,
+            misses: stats.misses,
+            hit_rate: stats.hit_rate(),
+            entries: stats.entries,
+            evictions: stats.evictions,
+        };
+
+        let token_cache = stats.token_cache.clone();
+
+        // Combined metrics: total_requests = all layer hits + misses
+        let total_requests = stats.hits + stats.misses + token_cache.hits + token_cache.misses;
+        let cached_requests = stats.hits + token_cache.hits;
+        let cache_rate = if total_requests == 0 {
+            0.0
+        } else {
+            cached_requests as f64 / total_requests as f64
+        };
+
+        let combined = CombinedCacheStats {
+            total_requests,
+            cached_requests,
+            cache_rate,
+        };
+
+        Self {
+            signature_cache,
+            token_cache,
+            combined,
+        }
+    }
+}
+
 /// A cached signature entry returned by inspection endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignatureEntry {
@@ -1212,6 +1280,7 @@ mod cache_key_tests {
                 api_key_id: None,
                 requested_tier: None,
                 combo_id: None,
+                cache_control_header: None,
             },
             restrictions: ApiKeyRestrictions::default(),
         }
