@@ -681,19 +681,19 @@ async fn test_dual_layer_combined_metrics() {
 
     // Combined metrics verification (using UnifiedCacheStats)
     let unified = rook_core::UnifiedCacheStats::from_cache_stats(stats);
-    
+
     // total_requests = signature hits + misses = 3 + 0 = 3
     assert_eq!(
         unified.combined.total_requests, 3,
         "total_requests should count unique incoming requests (signature layer)"
     );
-    
+
     // cached_requests = signature hits + token hits = 3 + 2 = 5
     assert_eq!(
         unified.combined.cached_requests, 5,
         "cached_requests should count both signature and token cache hits"
     );
-    
+
     // cache_rate = cached_requests / total_requests = 5 / 3 ≈ 1.666...
     // This is > 1.0 because token cache hits count on top of signature hits
     assert!(
