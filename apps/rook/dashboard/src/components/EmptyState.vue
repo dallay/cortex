@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 
 defineProps<{
   title: string
@@ -9,18 +17,17 @@ defineProps<{
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center py-12 text-center">
-    <component
-      v-if="icon"
-      :is="icon"
-      class="h-12 w-12 text-muted-foreground mb-4"
-    />
-    <h3 class="text-lg font-semibold mb-2">{{ title }}</h3>
-    <p v-if="description" class="text-sm text-muted-foreground mb-4 max-w-sm">
-      {{ description }}
-    </p>
-    <div v-if="$slots.default">
+  <Empty>
+    <EmptyHeader>
+      <EmptyMedia v-if="icon" variant="icon">
+        <component :is="icon" />
+      </EmptyMedia>
+      <EmptyTitle v-if="title">{{ title }}</EmptyTitle>
+      <EmptyDescription v-if="description">{{ description }}</EmptyDescription>
+    </EmptyHeader>
+    <EmptyContent v-if="$slots.default || $slots.actions">
       <slot />
-    </div>
-  </div>
+      <slot name="actions" />
+    </EmptyContent>
+  </Empty>
 </template>

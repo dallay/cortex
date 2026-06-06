@@ -2,6 +2,23 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+/**
+ * Provider kinds — hardcoded mirror of `apps/rook/dashboard/src/config/providerCatalog.ts`.
+ *
+ * We intentionally do NOT import `PROVIDER_KINDS` here: the router is
+ * bootstrap code and must remain self-contained. Adding a new kind
+ * requires updating BOTH the catalog AND this list. Drift would
+ * surface as a 404 instead of a developer-facing error, which is the
+ * expected (visible) failure mode.
+ */
+const VALID_PROVIDER_KINDS: readonly string[] = [
+  'openai',
+  'anthropic',
+  'ollama',
+  'gemini',
+  'groq',
+]
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -35,14 +52,44 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/ApiKeysView.vue'),
       },
       {
+        // Provider section — nested so `route.matched.length === 3` on
+        // detail/quota pages, which the breadcrumb uses to opt into a
+        // 3-level rendering (Home → Providers → <sub-page>).
         path: 'providers',
-        name: 'Providers',
-        component: () => import('../views/ProvidersView.vue'),
-      },
-      {
-        path: 'providers/quotes',
-        name: 'Providers Quotes',
-        component: () => import('../views/ProvidersView.vue'),
+        meta: { title: 'providers.catalog.title' },
+        children: [
+          {
+            path: '',
+            name: 'Providers',
+            component: () => import('../views/ProvidersView.vue'),
+            meta: { title: 'providers.catalog.title' },
+          },
+          {
+            path: ':providerKind',
+            name: 'Provider Details',
+            component: () => import('../views/ProviderDetailsView.vue'),
+            meta: {
+              title: 'providers.details.title',
+              // 3-level breadcrumb opt-in. The sidebar reads this and
+              // resolves the last crumb from the `providerKind` param.
+              breadcrumb: true,
+            },
+            beforeEnter: (to) => {
+              const kind = to.params.providerKind
+              if (typeof kind !== 'string' || !VALID_PROVIDER_KINDS.includes(kind)) {
+                // Invalid kind — bounce back to the catalog so the user
+                // sees a real page rather than a flash of an empty view.
+                return { name: 'Providers' }
+              }
+            },
+          },
+          {
+            path: 'quota',
+            name: 'Providers Quota',
+            component: () => import('../views/ProvidersQuotaView.vue'),
+            meta: { title: 'providers.quota.title' },
+          },
+        ],
       },
       {
         path: 'combos',

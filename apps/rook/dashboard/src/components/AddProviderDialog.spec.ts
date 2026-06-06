@@ -1,141 +1,682 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { defineComponent, h, nextTick } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import en from '@/locales/en.json'
 import AddProviderDialog from './AddProviderDialog.vue'
-import en from '../locales/en.json'
+import type { ProviderConnectionResponse } from '@/lib/api'
 
-// Mock useProviders composable
-vi.mock('../composables/useProviders', () => ({
+// ---------------------------------------------------------------------------
+// useProviders mock — controllable per test
+// ---------------------------------------------------------------------------
+
+type TestResult = { ok: true; latencyMs: number } | { ok: false; error: string }
+type TestFn = (payload: unknown) => Promise<TestResult | undefined>
+
+const mockState = {
+  testCredentialsImpl: vi.fn<() => TestFn>(),
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+  fetch: vi.fn(),
+  providerById: { value: new Map<string, ProviderConnectionResponse>() },
+}
+
+vi.mock('@/composables/useProviders', () => ({
   useProviders: () => ({
-    create: vi.fn().mockResolvedValue({ id: 'test-id', name: 'Test Provider' }),
-    test: vi.fn().mockResolvedValue({ ok: true, latencyMs: 100 }),
-    fetch: vi.fn().mockResolvedValue(undefined),
+    create: (...args: unknown[]) => mockState.create(...args),
+    update: (...args: unknown[]) => mockState.update(...args),
+    remove: (...args: unknown[]) => mockState.remove(...args),
+    testCredentials: (payload: unknown) => {
+      const fn = mockState.testCredentialsImpl()
+      return fn(payload)
+    },
+    fetch: (...args: unknown[]) => mockState.fetch(...args),
+    providerById: mockState.providerById,
   }),
 }))
 
-const i18n = createI18n({
-  legacy: false,
-  locale: 'en',
-  messages: { en },
+// ---------------------------------------------------------------------------
+// shadcn-vue / reka-ui stubs
+//
+// Buttons are rendered as real <button> elements so the native `disabled`
+// attribute can be asserted. Other primitives are passthrough divs that
+// forward data-testid from the parent. This matches the pattern in
+// `ApiKeyForm.spec.ts`.
+// ---------------------------------------------------------------------------
+
+vi.mock('@/components/ui/button', () => ({
+  Button: defineComponent({
+    name: 'Button',
+    props: {
+      type: String,
+      variant: String,
+      disabled: Boolean,
+      dataTestid: String,
+    },
+    emits: ['click'],
+    setup(props, { slots, emit, attrs }) {
+      return () => {
+        // dataTestid is declared as a prop and accepts the kebab-case
+        // form from the parent; fall back to the attribute for legacy callers.
+        const testid =
+          props.dataTestid ??
+          (attrs['data-testid'] as string | undefined) ??
+          'mock-button'
+        return h(
+          'button',
+          {
+            type: (props.type as string) ?? 'button',
+            disabled: props.disabled === true,
+            'data-testid': testid,
+            onClick: () => emit('click'),
+          },
+          slots.default?.(),
+        )
+      }
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/input', () => ({
+  Input: defineComponent({
+    name: 'Input',
+    props: {
+      id: String,
+      type: String,
+      modelValue: { type: [String, Number, null], default: '' },
+      placeholder: String,
+      disabled: Boolean,
+      min: [String, Number],
+      max: [String, Number],
+      required: Boolean,
+    },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () => {
+        const isNumber = props.type === 'number'
+        const cast = (v: string) =>
+          isNumber && v !== '' ? Number(v) : v
+        return h('input', {
+          id: props.id,
+          type: (props.type as string) ?? 'text',
+          value: props.modelValue ?? '',
+          placeholder: props.placeholder,
+          disabled: props.disabled,
+          min: props.min as string | number | undefined,
+          max: props.max as string | number | undefined,
+          'data-testid': props.id ? `input-${props.id}` : 'input',
+          onInput: (e: Event) =>
+            emit('update:modelValue', cast((e.target as HTMLInputElement).value)),
+        })
+      }
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/label', () => ({
+  Label: defineComponent({
+    name: 'Label',
+    props: { for: String },
+    setup(props, { slots }) {
+      return () => h('label', { for: props.for }, slots.default?.())
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/switch', () => ({
+  Switch: defineComponent({
+    name: 'Switch',
+    props: { id: String, checked: Boolean, disabled: Boolean },
+    emits: ['update:checked'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          id: props.id,
+          type: 'checkbox',
+          checked: props.checked === true,
+          disabled: props.disabled,
+          'data-testid': props.id ? `switch-${props.id}` : 'switch',
+          onChange: (e: Event) =>
+            emit('update:checked', (e.target as HTMLInputElement).checked),
+        })
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/toggle-group', () => ({
+  ToggleGroup: defineComponent({
+    name: 'ToggleGroup',
+    props: { modelValue: String, type: String },
+    emits: ['update:modelValue'],
+    setup(props, { slots, emit }) {
+      return () =>
+        h('div', { 'data-testid': 'mock-togglegroup', 'data-value': props.modelValue }, [
+          h('input', {
+            type: 'hidden',
+            value: props.modelValue,
+            'data-testid': 'mock-togglegroup-value',
+          }),
+          slots.default?.(),
+          h(
+            'button',
+            {
+              type: 'button',
+              'data-testid': 'mock-togglegroup-set-oauth',
+              onClick: () => emit('update:modelValue', 'oauth'),
+            },
+            'set-oauth',
+          ),
+        ])
+    },
+  }),
+  ToggleGroupItem: defineComponent({
+    name: 'ToggleGroupItem',
+    props: { value: String, disabled: Boolean, ariaLabel: String, dataTestid: String },
+    setup(props, { slots }) {
+      return () =>
+        h(
+          'button',
+          {
+            type: 'button',
+            disabled: props.disabled === true,
+            'data-testid': props.dataTestid ?? `mock-toggle-${props.value}`,
+            'data-value': props.value,
+            'data-disabled': props.disabled ? 'true' : 'false',
+            'aria-label': props.ariaLabel,
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/select', () => ({
+  Select: defineComponent({
+    name: 'Select',
+    props: { modelValue: String },
+    emits: ['update:modelValue'],
+    setup(props, { slots, emit }) {
+      return () =>
+        h('div', { 'data-testid': 'mock-select' }, [
+          h('input', {
+            type: 'hidden',
+            value: props.modelValue,
+            'data-testid': 'mock-select-value',
+          }),
+          slots.default?.(),
+          h(
+            'button',
+            {
+              type: 'button',
+              'data-testid': 'mock-select-trigger',
+              onClick: () => emit('update:modelValue', 'gemini'),
+            },
+            'open',
+          ),
+        ])
+    },
+  }),
+  SelectTrigger: defineComponent({
+    name: 'SelectTrigger',
+    props: { id: String, dataTestid: String },
+    setup(props, { slots, attrs }) {
+      return () =>
+        h(
+          'div',
+          {
+            id: props.id,
+            'data-testid': props.dataTestid ?? (attrs['data-testid'] as string) ?? 'select-trigger',
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+  SelectValue: defineComponent({
+    name: 'SelectValue',
+    setup(_props, { slots }) {
+      return () => h('span', slots.default?.())
+    },
+  }),
+  SelectContent: defineComponent({
+    name: 'SelectContent',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'select-content' }, slots.default?.())
+    },
+  }),
+  SelectItem: defineComponent({
+    name: 'SelectItem',
+    props: { value: String },
+    setup(props, { slots }) {
+      return () =>
+        h(
+          'div',
+          { 'data-testid': `select-item-${props.value}`, 'data-value': props.value },
+          slots.default?.(),
+        )
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: defineComponent({
+    name: 'Dialog',
+    props: { open: Boolean },
+    emits: ['update:open'],
+    setup(props, { slots }) {
+      return () =>
+        props.open
+          ? h('div', { 'data-testid': 'dialog-root', 'data-open': 'true' }, slots.default?.())
+          : null
+    },
+  }),
+  DialogContent: defineComponent({
+    name: 'DialogContent',
+    setup(_props, { slots, attrs }) {
+      return () =>
+        h(
+          'div',
+          {
+            'data-testid': (attrs['data-testid'] as string) ?? 'mock-dialog-content',
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+  DialogHeader: defineComponent({
+    name: 'DialogHeader',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-dialog-header' }, slots.default?.())
+    },
+  }),
+  DialogTitle: defineComponent({
+    name: 'DialogTitle',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-dialog-title' }, slots.default?.())
+    },
+  }),
+  DialogDescription: defineComponent({
+    name: 'DialogDescription',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-dialog-description' }, slots.default?.())
+    },
+  }),
+  DialogFooter: defineComponent({
+    name: 'DialogFooter',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-dialog-footer' }, slots.default?.())
+    },
+  }),
+}))
+
+vi.mock('@/components/ui/alert-dialog', () => ({
+  AlertDialog: defineComponent({
+    name: 'AlertDialog',
+    props: { open: Boolean },
+    emits: ['update:open'],
+    setup(props, { slots }) {
+      return () =>
+        props.open
+          ? h(
+              'div',
+              { 'data-testid': 'alertdialog-root', 'data-open': 'true' },
+              slots.default?.(),
+            )
+          : null
+    },
+  }),
+  AlertDialogContent: defineComponent({
+    name: 'AlertDialogContent',
+    setup(_props, { slots, attrs }) {
+      return () =>
+        h(
+          'div',
+          {
+            'data-testid': (attrs['data-testid'] as string) ?? 'mock-alertdialog-content',
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+  AlertDialogHeader: defineComponent({
+    name: 'AlertDialogHeader',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-alertdialog-header' }, slots.default?.())
+    },
+  }),
+  AlertDialogTitle: defineComponent({
+    name: 'AlertDialogTitle',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-alertdialog-title' }, slots.default?.())
+    },
+  }),
+  AlertDialogDescription: defineComponent({
+    name: 'AlertDialogDescription',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-alertdialog-description' }, slots.default?.())
+    },
+  }),
+  AlertDialogFooter: defineComponent({
+    name: 'AlertDialogFooter',
+    setup(_props, { slots }) {
+      return () => h('div', { 'data-testid': 'mock-alertdialog-footer' }, slots.default?.())
+    },
+  }),
+  AlertDialogAction: defineComponent({
+    name: 'AlertDialogAction',
+    setup(_props, { slots, emit, attrs }) {
+      return () =>
+        h(
+          'button',
+          {
+            type: 'button',
+            'data-testid': (attrs['data-testid'] as string) ?? 'mock-alertdialog-action',
+            onClick: () => emit('click'),
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+  AlertDialogCancel: defineComponent({
+    name: 'AlertDialogCancel',
+    setup(_props, { slots, attrs }) {
+      return () =>
+        h(
+          'button',
+          {
+            type: 'button',
+            'data-testid': (attrs['data-testid'] as string) ?? 'mock-alertdialog-cancel',
+          },
+          slots.default?.(),
+        )
+    },
+  }),
+}))
+
+vi.mock('@/components/PasswordInput.vue', () => ({
+  default: defineComponent({
+    name: 'PasswordInput',
+    props: {
+      id: String,
+      modelValue: { type: String, default: '' },
+      placeholder: String,
+      disabled: Boolean,
+    },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          id: props.id,
+          type: 'password',
+          value: props.modelValue,
+          placeholder: props.placeholder,
+          disabled: props.disabled,
+          'data-testid': props.id ? `input-${props.id}` : 'password-input',
+          onInput: (e: Event) =>
+            emit('update:modelValue', (e.target as HTMLInputElement).value),
+        })
+    },
+  }),
+}))
+
+vi.mock('@lucide/vue', () => {
+  const icon = defineComponent({
+    name: 'Icon',
+    setup: () => () => h('span', { 'data-testid': 'icon' }),
+  })
+  return {
+    AlertCircle: icon,
+    CheckCircle2: icon,
+    Eye: icon,
+    EyeOff: icon,
+    Loader2: icon,
+    Plus: icon,
+    Trash2: icon,
+  }
 })
 
-describe('AddProviderDialog', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+
+function makeConnection(
+  overrides: Partial<ProviderConnectionResponse> = {},
+): ProviderConnectionResponse {
+  return {
+    id: 'conn-1',
+    providerKind: 'ollama',
+    providerRuntimeId: 'ollama-local',
+    authType: 'apikey',
+    name: 'Local Ollama',
+    priority: 50,
+    isActive: true,
+    config: {
+      maxConcurrent: 1,
+      quotaWindowThresholds: { warning: 0.8, error: 0.95 },
+      defaultModel: 'llama3.1',
+      baseUrl: 'http://localhost:11434',
+    },
+    testStatus: {
+      status: 'active',
+      lastTestAt: '2024-01-01T00:00:00Z',
+      latencyMs: 42,
+      error: null,
+    },
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function mountDialog(props: Record<string, unknown> = {}) {
+  return mount(AddProviderDialog, {
+    props: { open: true, mode: 'create', ...props },
+    global: { plugins: [i18n] },
+    attachTo: document.body,
+  })
+}
+
+async function setInputValue(
+  wrapper: ReturnType<typeof mount>,
+  testid: string,
+  value: string,
+) {
+  const input = wrapper.find<HTMLInputElement>(`[data-testid="${testid}"]`)
+  expect(input.exists(), `input ${testid} should exist`).toBe(true)
+  await input.setValue(value)
+  await nextTick()
+}
+
+beforeEach(() => {
+  mockState.testCredentialsImpl.mockReset()
+  mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+    ok: true as const,
+    latencyMs: 100,
+  }))
+  mockState.create.mockReset()
+  mockState.create.mockResolvedValue(makeConnection())
+  mockState.update.mockReset()
+  mockState.update.mockResolvedValue(makeConnection())
+  mockState.remove.mockReset()
+  mockState.remove.mockResolvedValue(true)
+  mockState.fetch.mockReset()
+  mockState.fetch.mockResolvedValue(undefined)
+  mockState.providerById.value = new Map()
+})
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('AddProviderDialog — create mode', () => {
+  it('renders without a kind selector when providerKind is pre-scoped (ollama)', async () => {
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="kind-select-trigger"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="dialog-root"]').exists()).toBe(true)
   })
 
-  it('renders component', () => {
-    const wrapper = shallowMount(AddProviderDialog, {
-      global: {
-        plugins: [i18n],
-      },
-    })
-
-    expect(wrapper.exists()).toBe(true)
+  it('renders with a kind selector when providerKind is undefined', async () => {
+    const wrapper = mountDialog({ providerKind: undefined })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="kind-select-trigger"]').exists()).toBe(true)
   })
 
-  it('validates form before enabling save button', async () => {
-    const wrapper = shallowMount(AddProviderDialog, {
-      global: {
-        plugins: [i18n],
-      },
-    })
+  it('does NOT show the delete button in create mode', async () => {
+    const wrapper = mountDialog({ mode: 'create' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="delete-button"]').exists()).toBe(false)
+  })
+})
 
-    // Initially, save button should be disabled (form is empty)
-    // This is validated by the isValid computed property
-    expect(wrapper.vm).toBeDefined()
+describe('AddProviderDialog — edit mode', () => {
+  it('shows the delete button and pre-fills the form from the cached connection', async () => {
+    const conn = makeConnection({ name: 'My Local Ollama', priority: 75 })
+    mockState.providerById.value = new Map([[conn.id, conn]])
+
+    const wrapper = mountDialog({ mode: 'edit', connectionId: conn.id })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="delete-button"]').exists()).toBe(true)
+    const nameInput = wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
+    expect(nameInput.element.value).toBe('My Local Ollama')
+    const priorityInput = wrapper.find<HTMLInputElement>('[data-testid="input-priority"]')
+    expect(priorityInput.element.value).toBe('75')
   })
 
-  it('builds correct CreateProviderRequest with ollama provider', async () => {
-    const wrapper = shallowMount(AddProviderDialog, {
-      global: {
-        plugins: [i18n],
-      },
+  it('fetches the provider list when the connection is not in the cache', async () => {
+    const conn = makeConnection()
+    // First fetch call: hydrate the cache
+    mockState.fetch.mockImplementationOnce(async () => {
+      mockState.providerById.value = new Map([[conn.id, conn]])
     })
 
-    // Access the component instance
-    const vm = wrapper.vm as any
+    const wrapper = mountDialog({ mode: 'edit', connectionId: conn.id })
+    await flushPromises()
 
-    // Set form values
-    vm.form.name = 'Test Ollama'
-    vm.form.apiKey = 'test-key-123'
-    vm.form.baseUrl = 'https://api.ollama.com'
-    vm.form.priority = 50
-    vm.form.isActive = true
-    vm.form.maxConcurrent = 5
-    vm.form.defaultModel = 'llama3.1'
-
-    await wrapper.vm.$nextTick()
-
-    // Build the request
-    const request = vm.buildCreateRequest()
-
-    expect(request).toMatchObject({
-      providerKind: 'ollama',
-      authType: 'apiKey',
-      name: 'Test Ollama',
-      priority: 50,
-      isActive: true,
-      credentials: {
-        apiKey: 'test-key-123',
-      },
-      config: {
-        maxConcurrent: 5,
-        quotaWindowThresholds: {
-          warning: 0.8,
-          error: 0.95,
-        },
-        defaultModel: 'llama3.1',
-        baseUrl: 'https://api.ollama.com',
-      },
-    })
-
-    expect(request.providerRuntimeId).toMatch(/^ollama-\d+-[a-z0-9]+$/)
+    expect(mockState.fetch).toHaveBeenCalledTimes(1)
+    const nameInput = wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
+    expect(nameInput.element.value).toBe('Local Ollama')
   })
 
-  it('validates required fields', async () => {
-    const wrapper = shallowMount(AddProviderDialog, {
-      global: {
-        plugins: [i18n],
-      },
-    })
+  it('opens a delete confirmation when the delete button is clicked', async () => {
+    const conn = makeConnection()
+    mockState.providerById.value = new Map([[conn.id, conn]])
 
-    const vm = wrapper.vm as any
+    const wrapper = mountDialog({ mode: 'edit', connectionId: conn.id })
+    await flushPromises()
 
-    // Empty form should be invalid
-    expect(vm.isValid).toBe(false)
+    expect(wrapper.find('[data-testid="alertdialog-root"]').exists()).toBe(false)
 
-    // Only name filled
-    vm.form.name = 'Test'
-    await wrapper.vm.$nextTick()
-    expect(vm.isValid).toBe(false)
+    await wrapper.find('[data-testid="delete-button"]').trigger('click')
+    await nextTick()
 
-    // Both name and apiKey filled
-    vm.form.apiKey = 'test-key'
-    await wrapper.vm.$nextTick()
-    expect(vm.isValid).toBe(true)
+    expect(wrapper.find('[data-testid="alertdialog-root"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-cancel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-confirm-button"]').exists()).toBe(true)
   })
 
-  it('resets form when dialog closes', async () => {
-    const wrapper = shallowMount(AddProviderDialog, {
-      global: {
-        plugins: [i18n],
-      },
-    })
+  it('calls remove and emits deleted when the confirmation is accepted', async () => {
+    const conn = makeConnection()
+    mockState.providerById.value = new Map([[conn.id, conn]])
 
-    const vm = wrapper.vm as any
+    const wrapper = mountDialog({ mode: 'edit', connectionId: conn.id })
+    await flushPromises()
 
-    // Fill form
-    vm.form.name = 'Test'
-    vm.form.apiKey = 'key'
-    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="delete-button"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="delete-confirm-button"]').trigger('click')
+    await flushPromises()
 
-    // Close dialog
-    vm.handleOpenChange(false)
-    await wrapper.vm.$nextTick()
+    expect(mockState.remove).toHaveBeenCalledWith(conn.id)
+    const deleted = wrapper.emitted('deleted')
+    expect(deleted).toBeTruthy()
+    expect(deleted!.at(-1)).toEqual([conn.id])
+  })
+})
 
-    // Form should be reset
-    expect(vm.form.name).toBe('')
-    expect(vm.form.apiKey).toBe('')
+describe('AddProviderDialog — test before save', () => {
+  it('disables the save button when the form has not been tested', async () => {
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    await setInputValue(wrapper, 'input-displayName', 'Local Ollama')
+    await setInputValue(wrapper, 'input-apiKey', 'sk-test')
+
+    const saveButton = wrapper.find<HTMLButtonElement>('[data-testid="save-button"]')
+    expect(saveButton.exists()).toBe(true)
+    expect(saveButton.element.disabled).toBe(true)
+  })
+
+  it('enables the save button after a successful testCredentials call', async () => {
+    mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+      ok: true as const,
+      latencyMs: 87,
+    }))
+
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    await setInputValue(wrapper, 'input-displayName', 'Local Ollama')
+    await setInputValue(wrapper, 'input-apiKey', 'sk-test')
+
+    await wrapper.find('[data-testid="test-button"]').trigger('click')
+    await flushPromises()
+
+    expect(mockState.testCredentialsImpl).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true)
+
+    const saveButton = wrapper.find<HTMLButtonElement>('[data-testid="save-button"]')
+    expect(saveButton.element.disabled).toBe(false)
+  })
+
+  it('keeps the save button disabled after a failed testCredentials call', async () => {
+    mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+      ok: false as const,
+      error: 'invalid api key',
+    }))
+
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    await setInputValue(wrapper, 'input-displayName', 'Local Ollama')
+    await setInputValue(wrapper, 'input-apiKey', 'sk-bad')
+
+    await wrapper.find('[data-testid="test-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true)
+    const saveButton = wrapper.find<HTMLButtonElement>('[data-testid="save-button"]')
+    expect(saveButton.element.disabled).toBe(true)
+  })
+
+  it('disables the test button until displayName and apiKey are filled', async () => {
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    const testButton = wrapper.find<HTMLButtonElement>('[data-testid="test-button"]')
+    expect(testButton.exists()).toBe(true)
+    expect(testButton.element.disabled).toBe(true)
+  })
+})
+
+describe('AddProviderDialog — auth type gating', () => {
+  it('disables the OAuth toggle when the catalog entry only supports apikey (ollama)', async () => {
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    const oauthToggle = wrapper.find<HTMLButtonElement>('[data-testid="auth-type-oauth"]')
+    expect(oauthToggle.exists()).toBe(true)
+    expect(oauthToggle.element.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="oauth-coming-soon"]').exists()).toBe(true)
+  })
+})
+
+describe('AddProviderDialog — open/close', () => {
+  it('hides the dialog when the open prop is set to false', async () => {
+    const wrapper = mountDialog({ providerKind: 'ollama' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dialog-root"]').exists()).toBe(true)
+
+    await wrapper.setProps({ open: false })
+    await nextTick()
+    expect(wrapper.find('[data-testid="dialog-root"]').exists()).toBe(false)
   })
 })

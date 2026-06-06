@@ -50,8 +50,8 @@ export const navigationConfig = {
       url: '/providers',
       icon: 'Globe',
       items: [
-        { titleKey: 'nav.providersList', url: '/providers' },
-        { titleKey: 'nav.providersQuotes', url: '/providers/quotes' },
+        { titleKey: 'nav.providersCatalog', url: '/providers' },
+        { titleKey: 'nav.providersQuota', url: '/providers/quota' },
       ],
     },
     {
