@@ -200,6 +200,53 @@ impl ManageConnections {
         Ok(result)
     }
 
+    /// Test credentials without persisting to database.
+    /// Builds an ephemeral provider and calls health_check().
+    pub async fn test_credentials(
+        &self,
+        req: TestCredentialsRequest,
+    ) -> ManageConnectionsResult<TestConnectionResult> {
+        // Validate and encrypt credentials
+        let encrypted = self.encrypt_credentials(&req.credentials)?;
+        validate_credentials_not_expired(&encrypted)?;
+
+        if !credentials_matches_auth_type(req.auth_type, &encrypted) {
+            return Err(ValidationError::AuthTypeCredentialMismatch.into());
+        }
+
+        // Build ephemeral ProviderConnection (not persisted)
+        let ephemeral_conn = ProviderConnection {
+            id: ConnectionId::new(),
+            provider_kind: req.provider_kind,
+            provider_runtime_id: req.provider_runtime_id,
+            name: "__test__".to_string(), // temporary name
+            priority: 100,
+            is_active: true,
+            auth_type: req.auth_type,
+            credentials: encrypted,
+            config: req.config,
+            test_status: TestStatus::NeverTested,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        // Build provider via ProviderBuilderPort
+        let build_input = ProviderBuildInput {
+            provider_kind: ephemeral_conn.provider_kind,
+            connection_id: ephemeral_conn.id,
+            decrypted_credentials: self.decrypt_credentials(&ephemeral_conn.credentials)?,
+            base_url: ephemeral_conn.config.base_url.clone(),
+            default_model: ephemeral_conn.config.default_model.clone(),
+        };
+
+        let provider = self.builder.build(build_input).await?;
+
+        // Test via health_check
+        let health = provider.health_check().await;
+
+        Ok(TestConnectionResult::from_health(&health))
+    }
+
     fn encrypt_credentials(
         &self,
         input: &CredentialsInput,
@@ -397,6 +444,15 @@ pub struct UpdateConnectionRequest {
     pub is_active: Option<bool>,
     pub credentials: Option<CredentialsInput>,
     pub config: Option<ConnectionConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestCredentialsRequest {
+    pub provider_kind: ProviderKind,
+    pub provider_runtime_id: ProviderId,
+    pub auth_type: AuthType,
+    pub credentials: CredentialsInput,
+    pub config: ConnectionConfig,
 }
 
 #[derive(Debug, Clone)]

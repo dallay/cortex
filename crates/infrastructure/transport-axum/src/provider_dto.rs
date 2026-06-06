@@ -35,6 +35,41 @@ pub struct UpdateProviderRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestCredentialsRequest {
+    pub provider_kind: String,
+    pub provider_runtime_id: String,
+    pub auth_type: String,
+    pub credentials: CredentialsInput,
+    pub config: ConnectionConfigDto,
+}
+
+impl TestCredentialsRequest {
+    pub fn try_into_domain(
+        &self,
+    ) -> Result<rook_usecases::manage_connections::TestCredentialsRequest, String> {
+        use rook_core::ProviderKind;
+        use shared_kernel::ProviderId;
+
+        let provider_kind = ProviderKind::try_from(self.provider_kind.as_str())
+            .map_err(|e| format!("invalid provider kind: {}", e))?;
+
+        let auth_type = parse_auth_type(&self.auth_type)?;
+
+        let credentials = credentials_to_usecase(&self.credentials);
+        let config = config_to_domain(&self.config);
+
+        Ok(rook_usecases::manage_connections::TestCredentialsRequest {
+            provider_kind,
+            provider_runtime_id: ProviderId::new(&self.provider_runtime_id),
+            auth_type,
+            credentials,
+            config,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CredentialsInput {
     ApiKey(ApiKeyCredentialsInput),

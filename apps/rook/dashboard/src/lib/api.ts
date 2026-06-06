@@ -58,6 +58,31 @@ export interface ListApiKeysResponse {
   pagination: PaginationResponse
 }
 
+export interface TestCredentialsPayload {
+  providerKind: string
+  providerRuntimeId: string
+  authType: string
+  credentials: {
+    apiKey?: string
+    email?: string
+    accessToken?: string
+    refreshToken?: string
+    expiresAt?: number
+    scope?: string
+    idToken?: string
+    projectId?: string
+  }
+  config: {
+    maxConcurrent: number
+    quotaWindowThresholds: {
+      warning: number
+      error: number
+    }
+    defaultModel?: string
+    baseUrl?: string
+  }
+}
+
 export interface CreateApiKeyRequest {
   label: string
   scopes: string[]
@@ -435,6 +460,13 @@ function createApiClient() {
     async testProvider(id: string): Promise<TestConnectionResponse> {
       return request<TestConnectionResponse>(`/api/providers/${id}/test`, {
         method: 'POST',
+      })
+    },
+
+    async testCredentials(payload: TestCredentialsPayload): Promise<TestConnectionResponse> {
+      return request<TestConnectionResponse>('/api/providers/test-credentials', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       })
     },
 

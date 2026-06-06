@@ -5,7 +5,7 @@
  * If not authenticated, calls will fail with 401.
  */
 import { ref, computed } from 'vue'
-import { useApi, type ProviderConnectionResponse, type CreateProviderRequest, type UpdateProviderRequest } from '@/lib/api'
+import { useApi, type ProviderConnectionResponse, type CreateProviderRequest, type UpdateProviderRequest, type TestCredentialsPayload, type TestConnectionResponse } from '@/lib/api'
 
 export function useProviders() {
   const api = useApi()
@@ -72,6 +72,17 @@ export function useProviders() {
     }
   }
 
+  async function testCredentials(
+    payload: TestCredentialsPayload
+  ): Promise<TestConnectionResponse | null> {
+    try {
+      return await api.testCredentials(payload)
+    } catch (error) {
+      console.error('Test credentials failed:', error)
+      return null
+    }
+  }
+
   const activeProviders = computed(() =>
     providers.value.filter(p => p.testStatus.status === 'active')
   )
@@ -91,6 +102,7 @@ export function useProviders() {
     update,
     remove,
     test,
+    testCredentials,
     activeProviders,
     providerById,
   }

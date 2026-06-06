@@ -25,7 +25,7 @@ import { useProviders } from '@/composables/useProviders'
 import type { CreateProviderRequest } from '@/lib/api'
 
 const { t } = useI18n()
-const { create, test, fetch } = useProviders()
+const { create, testCredentials, fetch } = useProviders()
 
 const open = ref(false)
 const testing = ref(false)
@@ -55,17 +55,29 @@ async function handleTest() {
   testResult.value = null
 
   try {
-    // Create a temporary provider to test
-    const tempProvider = buildCreateRequest()
-    const created = await create(tempProvider)
+    const timestamp = Date.now()
+    const randomSuffix = crypto.randomUUID().substring(0, 8)
+    const runtimeId = `ollama-test-${timestamp}-${randomSuffix}`
     
-    if (!created) {
-      testResult.value = { ok: false, message: 'Failed to create test connection' }
-      return
+    const payload = {
+      providerKind: 'ollama',
+      providerRuntimeId: runtimeId,
+      authType: 'apiKey',
+      credentials: {
+        apiKey: form.value.apiKey,
+      },
+      config: {
+        maxConcurrent: form.value.maxConcurrent,
+        quotaWindowThresholds: {
+          warning: 0.8,
+          error: 0.95,
+        },
+        defaultModel: form.value.defaultModel || undefined,
+        baseUrl: form.value.baseUrl || undefined,
+      },
     }
-
-    // Test the connection
-    const result = await test(created.id)
+    
+    const result = await testCredentials(payload)
     
     if (result?.ok) {
       testResult.value = { ok: true, message: `Connected successfully (${result.latencyMs}ms)` }
@@ -84,6 +96,15 @@ async function handleTest() {
 
 async function handleSave() {
   if (!isValid.value) return
+
+  // Require successful test before saving
+  if (!testResult.value?.ok) {
+    testResult.value = { 
+      ok: false, 
+      message: 'Please test the connection first' 
+    }
+    return
+  }
 
   saving.value = true
   try {
@@ -198,8 +219,8 @@ function handleOpenChange(value: boolean) {
           <Input
             id="baseUrl"
             v-model="form.baseUrl"
-            placeholder="https://api.ollama.com"
-            :disabled="saving"
+            readonly
+            class="bg-muted"
           />
         </div>
 
@@ -283,8 +304,9 @@ function handleOpenChange(value: boolean) {
           {{ t('providers.testConnection') }}
         </Button>
         <Button
+          type="submit"
+          :disabled="!testResult?.ok || saving"
           @click="handleSave"
-          :disabled="!isValid || saving"
         >
           <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin" />
           {{ t('common.save') }}

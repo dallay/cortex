@@ -12,7 +12,7 @@ use shared_kernel::ConnectionId;
 
 use super::provider_dto::{
     CreateProviderRequest, ProviderConnectionResponse, TestConnectionResponse,
-    UpdateProviderRequest,
+    TestCredentialsRequest, UpdateProviderRequest,
 };
 use super::HttpError;
 
@@ -26,6 +26,7 @@ pub fn router(usecases: Usecases) -> Router {
         .route("/api/providers/{id}", put(update_provider))
         .route("/api/providers/{id}", delete(delete_provider))
         .route("/api/providers/{id}/test", post(test_provider))
+        .route("/api/providers/test-credentials", post(test_credentials))
         .with_state(usecases)
 }
 
@@ -100,6 +101,16 @@ async fn test_provider(
     let mc = manage_connections(&usecases)?;
     let id = parse_connection_id(&id)?;
     let result = mc.test(&id).await.map_err(map_error)?;
+    Ok(Json(TestConnectionResponse::from(&result)))
+}
+
+async fn test_credentials(
+    State(usecases): State<Usecases>,
+    Json(req): Json<TestCredentialsRequest>,
+) -> Result<Json<TestConnectionResponse>, HttpError> {
+    let mc = manage_connections(&usecases)?;
+    let domain_req = req.try_into_domain().map_err(validation_error)?;
+    let result = mc.test_credentials(domain_req).await.map_err(map_error)?;
     Ok(Json(TestConnectionResponse::from(&result)))
 }
 
