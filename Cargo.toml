@@ -10,6 +10,7 @@ members = [
     "crates/infrastructure/audit-sqlite",
     "crates/infrastructure/observability",
     "crates/infrastructure/sse-stream",
+    "crates/infrastructure/providers-core",
     "crates/infrastructure/providers-openai",
     "crates/infrastructure/providers-anthropic",
     "crates/infrastructure/providers-ollama",
