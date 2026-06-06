@@ -887,26 +887,37 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: Option<&HeaderValue>, cor
             "access-control-allow-credentials",
             HeaderValue::from_static("true"),
         );
-        let vary_value = match headers.get_mut(VARY) {
-            Some(vary) => {
-                if let Ok(vary_str) = vary.to_str() {
-                    if vary_str.contains("Origin") {
-                        None
-                    } else {
-                        Some(format!("{}, Origin", vary_str))
-                    }
-                } else {
-                    None
-                }
-            }
-            None => Some("Origin".to_string()),
-        };
-        if let Some(value) = vary_value {
-            if let Ok(hv) = HeaderValue::from_str(&value) {
-                headers.insert(VARY, hv);
-            }
+        update_vary_header(headers);
+    }
+    insert_standard_cors_headers(headers);
+}
+
+fn update_vary_header(headers: &mut HeaderMap) {
+    let vary_value = match headers.get_mut(VARY) {
+        Some(vary) => compute_vary_with_origin(vary),
+        None => Some("Origin".to_string()),
+    };
+
+    if let Some(value) = vary_value {
+        if let Ok(hv) = HeaderValue::from_str(&value) {
+            headers.insert(VARY, hv);
         }
     }
+}
+
+fn compute_vary_with_origin(vary: &HeaderValue) -> Option<String> {
+    if let Ok(vary_str) = vary.to_str() {
+        if vary_str.contains("Origin") {
+            None
+        } else {
+            Some(format!("{}, Origin", vary_str))
+        }
+    } else {
+        None
+    }
+}
+
+fn insert_standard_cors_headers(headers: &mut HeaderMap) {
     headers.insert(
         "access-control-allow-methods",
         HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),

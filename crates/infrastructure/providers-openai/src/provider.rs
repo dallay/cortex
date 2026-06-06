@@ -112,6 +112,99 @@ impl OpenAIProvider {
             .build()?;
         Ok(Self { config, client })
     }
+
+    fn build_stream_request(req: &CompletionRequest) -> OpenAIRequest {
+        OpenAIRequest {
+            model: req.model.to_string(),
+            messages: req
+                .messages
+                .iter()
+                .map(|m| OpenAIMessage {
+                    role: match m.role {
+                        rook_core::Role::System => "system",
+                        rook_core::Role::User => "user",
+                        rook_core::Role::Assistant => "assistant",
+                        rook_core::Role::Developer => "developer",
+                    }
+                    .to_string(),
+                    content: m.content.as_text().to_string(),
+                })
+                .collect(),
+            stream: true,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
+            stream_options: Some(OpenAIStreamOptions {
+                include_usage: true,
+            }),
+        }
+    }
+
+    async fn send_stream_request(&self, body: &OpenAIRequest) -> CortexResult<reqwest::Response> {
+        self.client
+            .post(format!("{}/chat/completions", self.config.base_url))
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))
+    }
+
+    fn process_bytes(
+        request_id: &RequestId,
+        sse_buffer: &mut SseBuffer,
+        bytes: &[u8],
+    ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
+        let events = sse_buffer.push(bytes);
+        let chunks: Vec<StreamChunk> = events
+            .into_iter()
+            .flat_map(|event_text| Self::parse_event_text(&event_text, request_id))
+            .collect();
+
+        futures::stream::iter(chunks.into_iter().map(Ok))
+    }
+
+    fn parse_event_text(event_text: &str, request_id: &RequestId) -> Vec<StreamChunk> {
+        event_text
+            .lines()
+            .filter_map(|l| l.strip_prefix("data: "))
+            .filter(|line| line.trim() != "[DONE]")
+            .filter_map(|data_line| serde_json::from_str::<OpenAIStreamResponse>(data_line).ok())
+            .map(|parsed| Self::response_to_chunk(parsed, request_id))
+            .collect()
+    }
+
+    fn response_to_chunk(parsed: OpenAIStreamResponse, request_id: &RequestId) -> StreamChunk {
+        let choice = parsed.choices.first();
+        let usage = parsed.usage.map(|usage| TokenUsage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            cache_read_tokens: usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            cache_creation_tokens: None,
+            reasoning_tokens: usage
+                .completion_tokens_details
+                .as_ref()
+                .and_then(|d| d.reasoning_tokens),
+            estimated_cost_usd: None,
+        });
+
+        StreamChunk {
+            id: request_id.clone(),
+            model: ModelId::new(parsed.model),
+            delta: choice
+                .and_then(|c| c.delta.content.clone())
+                .unwrap_or_default(),
+            finish_reason: choice
+                .and_then(|c| c.finish_reason.as_deref())
+                .and_then(parse_finish_reason),
+            usage,
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -343,40 +436,8 @@ impl ProviderPort for OpenAIProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        let body = OpenAIRequest {
-            model: req.model.to_string(),
-            messages: req
-                .messages
-                .iter()
-                .map(|m| OpenAIMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
-                    content: m.content.as_text().to_string(),
-                })
-                .collect(),
-            stream: true,
-            max_tokens: req.max_tokens,
-            temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
-            stream_options: Some(OpenAIStreamOptions {
-                include_usage: true,
-            }),
-        };
-
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.config.base_url))
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+        let body = Self::build_stream_request(req);
+        let resp = self.send_stream_request(&body).await?;
 
         if !resp.status().is_success() {
             return Err(map_openai_http_error(&self.config.id, resp).await);
@@ -385,66 +446,12 @@ impl ProviderPort for OpenAIProvider {
         let request_id = req.id.clone();
         let mut sse_buffer = SseBuffer::new();
 
-        fn process_bytes(
-            request_id: &RequestId,
-            sse_buffer: &mut SseBuffer,
-            bytes: &[u8],
-        ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
-            let events = sse_buffer.push(bytes);
-            let mut chunks = Vec::new();
-
-            for event_text in events {
-                for data_line in event_text.lines().filter_map(|l| l.strip_prefix("data: ")) {
-                    if data_line.trim() == "[DONE]" {
-                        continue;
-                    }
-
-                    let parsed: OpenAIStreamResponse = match serde_json::from_str(data_line) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-
-                    let choice = parsed.choices.first();
-
-                    let usage = parsed.usage.map(|usage| TokenUsage {
-                        prompt_tokens: usage.prompt_tokens,
-                        completion_tokens: usage.completion_tokens,
-                        total_tokens: usage.total_tokens,
-                        cache_read_tokens: usage
-                            .prompt_tokens_details
-                            .as_ref()
-                            .and_then(|d| d.cached_tokens),
-                        cache_creation_tokens: None,
-                        reasoning_tokens: usage
-                            .completion_tokens_details
-                            .as_ref()
-                            .and_then(|d| d.reasoning_tokens),
-                        estimated_cost_usd: None,
-                    });
-
-                    chunks.push(StreamChunk {
-                        id: request_id.clone(),
-                        model: ModelId::new(parsed.model),
-                        delta: choice
-                            .and_then(|c| c.delta.content.clone())
-                            .unwrap_or_default(),
-                        finish_reason: choice
-                            .and_then(|c| c.finish_reason.as_deref())
-                            .and_then(parse_finish_reason),
-                        usage,
-                    });
-                }
-            }
-
-            futures::stream::iter(chunks.into_iter().map(Ok))
-        }
-
         let stream = resp
             .bytes_stream()
             .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
             .and_then(move |bytes| {
                 let request_id = request_id.clone();
-                futures::future::ok(process_bytes(&request_id, &mut sse_buffer, &bytes))
+                futures::future::ok(Self::process_bytes(&request_id, &mut sse_buffer, &bytes))
             })
             .try_flatten();
 

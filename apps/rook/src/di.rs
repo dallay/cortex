@@ -516,128 +516,144 @@ async fn seed_combos_from_config(
     let mut failed = 0;
 
     for combo_cfg in combos {
-        // Parse combo ID
-        let combo_id = match ComboId::parse_str(&combo_cfg.id) {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::warn!(
-                    combo_name = %combo_cfg.name,
-                    combo_id = %combo_cfg.id,
-                    error = %e,
-                    "invalid combo ID format - skipping"
-                );
-                failed += 1;
-                continue;
-            }
-        };
+        match process_combo_config(combo_repo, combo_cfg).await {
+            Ok(()) => seeded += 1,
+            Err(_) => failed += 1,
+        }
+    }
 
-        // Parse strategy
-        let strategy = match combo_cfg.strategy.as_str() {
-            "priority" => ComboStrategy::Priority,
-            other => {
-                tracing::warn!(
-                    combo_name = %combo_cfg.name,
-                    strategy = %other,
-                    "unsupported strategy - skipping"
-                );
-                failed += 1;
-                continue;
-            }
-        };
+    if seeded > 0 || failed > 0 {
+        tracing::info!(seeded, failed, "combo seeding from config completed");
+    }
+}
 
-        // Convert steps
-        let steps: Vec<ComboStep> = combo_cfg
-            .steps
-            .iter()
-            .map(|s| ComboStep {
-                provider_id: ProviderId::new(s.provider_id.clone()),
-                model: ModelId::new(s.model.clone()),
-                connection_id: None, // Config-based combos don't specify connection_id
-                priority: s.priority,
-            })
-            .collect();
+async fn process_combo_config(
+    combo_repo: &Arc<dyn ComboRepositoryPort>,
+    combo_cfg: &crate::config::ComboConfig,
+) -> anyhow::Result<()> {
+    let combo_id = parse_combo_id(combo_cfg)?;
+    let strategy = parse_combo_strategy(combo_cfg)?;
+    let steps = build_combo_steps(combo_cfg);
 
-        // Create domain combo
-        let mut combo = Combo::new(combo_cfg.name.clone(), strategy, steps);
-        combo.id = combo_id; // Override generated ID with config ID
+    let mut combo = Combo::new(combo_cfg.name.clone(), strategy, steps);
+    combo.id = combo_id;
 
-        // Validate
-        if let Err(e) = combo.validate() {
+    combo.validate().map_err(|e| {
+        tracing::warn!(
+            combo_name = %combo_cfg.name,
+            error = %e,
+            "combo validation failed - skipping"
+        );
+        anyhow::anyhow!("validation failed")
+    })?;
+
+    upsert_combo(combo_repo, &combo, combo_cfg).await
+}
+
+fn parse_combo_id(combo_cfg: &crate::config::ComboConfig) -> anyhow::Result<ComboId> {
+    ComboId::parse_str(&combo_cfg.id).map_err(|e| {
+        tracing::warn!(
+            combo_name = %combo_cfg.name,
+            combo_id = %combo_cfg.id,
+            error = %e,
+            "invalid combo ID format - skipping"
+        );
+        anyhow::anyhow!("invalid ID")
+    })
+}
+
+fn parse_combo_strategy(combo_cfg: &crate::config::ComboConfig) -> anyhow::Result<ComboStrategy> {
+    match combo_cfg.strategy.as_str() {
+        "priority" => Ok(ComboStrategy::Priority),
+        other => {
+            tracing::warn!(
+                combo_name = %combo_cfg.name,
+                strategy = %other,
+                "unsupported strategy - skipping"
+            );
+            Err(anyhow::anyhow!("unsupported strategy"))
+        }
+    }
+}
+
+fn build_combo_steps(combo_cfg: &crate::config::ComboConfig) -> Vec<ComboStep> {
+    combo_cfg
+        .steps
+        .iter()
+        .map(|s| ComboStep {
+            provider_id: ProviderId::new(s.provider_id.clone()),
+            model: ModelId::new(s.model.clone()),
+            connection_id: None,
+            priority: s.priority,
+        })
+        .collect()
+}
+
+async fn upsert_combo(
+    combo_repo: &Arc<dyn ComboRepositoryPort>,
+    combo: &Combo,
+    combo_cfg: &crate::config::ComboConfig,
+) -> anyhow::Result<()> {
+    match combo_repo.find(&combo.id).await {
+        Ok(Some(existing)) => update_existing_combo(combo_repo, combo, &existing, combo_cfg).await,
+        Ok(None) => create_new_combo(combo_repo, combo, combo_cfg).await,
+        Err(e) => {
             tracing::warn!(
                 combo_name = %combo_cfg.name,
                 error = %e,
-                "combo validation failed - skipping"
+                "failed to check existing combo - skipping"
             );
-            failed += 1;
-            continue;
-        }
-
-        // Upsert: try to find existing, then update or create
-        match combo_repo.find(&combo_id).await {
-            Ok(Some(existing)) => {
-                // Update existing combo
-                combo.created_at = existing.created_at; // Preserve creation time
-                match combo_repo.update(&combo).await {
-                    Ok(()) => {
-                        tracing::debug!(
-                            combo_id = %combo_id,
-                            combo_name = %combo_cfg.name,
-                            "updated combo from config"
-                        );
-                        seeded += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            combo_name = %combo_cfg.name,
-                            error = %e,
-                            "failed to update combo - skipping"
-                        );
-                        failed += 1;
-                    }
-                }
-            }
-            Ok(None) => {
-                // Create new combo
-                match combo_repo.create(&combo).await {
-                    Ok(()) => {
-                        tracing::debug!(
-                            combo_id = %combo_id,
-                            combo_name = %combo_cfg.name,
-                            "created combo from config"
-                        );
-                        seeded += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            combo_name = %combo_cfg.name,
-                            error = %e,
-                            "failed to create combo - skipping"
-                        );
-                        failed += 1;
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    combo_name = %combo_cfg.name,
-                    error = %e,
-                    "failed to check existing combo - skipping"
-                );
-                failed += 1;
-            }
+            Err(anyhow::anyhow!("find failed"))
         }
     }
+}
 
-    if seeded > 0 {
-        tracing::info!(
-            seeded = seeded,
-            failed = failed,
-            "seeded combos from config"
+async fn update_existing_combo(
+    combo_repo: &Arc<dyn ComboRepositoryPort>,
+    combo: &Combo,
+    existing: &Combo,
+    combo_cfg: &crate::config::ComboConfig,
+) -> anyhow::Result<()> {
+    let mut updated = combo.clone();
+    updated.created_at = existing.created_at;
+
+    combo_repo.update(&updated).await.map_err(|e| {
+        tracing::warn!(
+            combo_name = %combo_cfg.name,
+            error = %e,
+            "failed to update combo - skipping"
         );
-    }
-    if failed > 0 {
-        tracing::warn!(failed = failed, "some combos failed to seed from config");
-    }
+        anyhow::anyhow!("update failed")
+    })?;
+
+    tracing::debug!(
+        combo_id = %combo.id,
+        combo_name = %combo_cfg.name,
+        "updated combo from config"
+    );
+    Ok(())
+}
+
+async fn create_new_combo(
+    combo_repo: &Arc<dyn ComboRepositoryPort>,
+    combo: &Combo,
+    combo_cfg: &crate::config::ComboConfig,
+) -> anyhow::Result<()> {
+    combo_repo.create(combo).await.map_err(|e| {
+        tracing::warn!(
+            combo_name = %combo_cfg.name,
+            error = %e,
+            "failed to create combo - skipping"
+        );
+        anyhow::anyhow!("create failed")
+    })?;
+
+    tracing::debug!(
+        combo_id = %combo.id,
+        combo_name = %combo_cfg.name,
+        "created combo from config"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
