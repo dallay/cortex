@@ -9,6 +9,7 @@ use rook_core::{
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use providers_core::role_to_string;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
@@ -51,28 +52,27 @@ impl OllamaProvider {
         Ok(Arc::new(Self { config, client }))
     }
 
-    fn build_stream_request(req: &CompletionRequest) -> serde_json::Value {
+    /// Build the request body JSON for the Ollama chat API.
+    fn build_request_body(req:&CompletionRequest, stream: bool) -> serde_json::Value {
+        let messages: Vec<serde_json::Value> = req
+            .messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "role": role_to_string(m.role),
+                    "content": m.content.as_text(),
+                })
+            })
+            .collect();
         serde_json::json!({
             "model": req.model.to_string(),
-            "messages": req
-                .messages
-                .iter()
-                .map(|m| serde_json::json!({
-                    "role": match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    },
-                    "content": m.content.as_text(),
-                }))
-                .collect::<Vec<_>>(),
-            "stream": true,
+            "messages": messages,
+            "stream": stream,
         })
     }
 
-    async fn send_stream_request(
-        &self,
+    async fn send_request(
+&self,
         body: &serde_json::Value,
     ) -> CortexResult<reqwest::Response> {
         self.client
@@ -81,17 +81,6 @@ impl OllamaProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
-    }
-
-    async fn validate_response(resp: reqwest::Response) -> CortexResult<reqwest::Response> {
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body}"
-            )));
-        }
-        Ok(resp)
     }
 
     fn parse_line_to_chunk(
@@ -163,32 +152,10 @@ impl ProviderPort for OllamaProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        let body = serde_json::json!({
-            "model": req.model.to_string(),
-            "messages": req
-                .messages
-                .iter()
-                .map(|m| serde_json::json!({
-                    "role": match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    },
-                    "content": m.content.as_text(),
-                }))
-                .collect::<Vec<_>>(),
-            "stream": false,
-        });
+        let body = Self::build_request_body(req, false);
 
         let start = std::time::Instant::now();
-        let resp = self
-            .client
-            .post(format!("{}/api/chat", self.config.base_url))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+        let resp = self.send_request(&body).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -227,12 +194,19 @@ impl ProviderPort for OllamaProvider {
     }
 
     async fn stream(
-        &self,
+&self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        let body = Self::build_stream_request(req);
-        let resp = self.send_stream_request(&body).await?;
-        let resp = Self::validate_response(resp).await?;
+        let body = Self::build_request_body(req, true);
+        let resp = self.send_request(&body).await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CortexError::provider(format!(
+                "Ollama error {status}: {body}"
+            )));
+        }
 
         let request_id = req.id.clone();
 

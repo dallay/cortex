@@ -5,12 +5,12 @@
 pub enum SseEvent {
     /// A data line with JSON content.
     Data(String),
-    /// The [DONE] sentinel that marks end of stream.
+    /// The \[DONE\] sentinel that marks end of stream.
     Done,
 }
 
 impl SseEvent {
-    /// Returns true if this is the [DONE] sentinel.
+    /// Returns true if this is the \[DONE\] sentinel.
     pub fn is_done(&self) -> bool {
         matches!(self, SseEvent::Done)
     }

@@ -11,7 +11,7 @@ pub mod sanitize;
 pub mod sse;
 pub mod validation;
 
-pub use role::{Role, RoleExt};
+pub use role::{Role, RoleExt, role_to_string};
 pub use sanitize::{char_safe_truncate, sanitize_body};
 pub use sse::{parse_event_text, process_bytes, SseEvent};
 pub use validation::validate_response;
