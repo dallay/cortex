@@ -9,11 +9,11 @@
 | Chained PRs recommended | Yes |
 | Suggested split | PR 1 (Layer 1 + Foundation) → PR 2 (Layer 2 + Integration) |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Chain strategy | archived |
 
-Decision needed before apply: Yes
+Decision needed before apply: N/A (archived)
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: archived
 400-line budget risk: High
 
 ### Suggested Work Units

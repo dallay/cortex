@@ -406,8 +406,9 @@ async fn test_token_cache_hit_increments_metrics() {
     };
 
     // Record the token cache hit with cost >= 0.005 (0.5 cents minimum for rounding)
+    // Use cache_read_tokens (100) instead of total_tokens (150) since only cached prompt tokens are saved
     cache
-        .increment_token_cache_hit(response.usage.total_tokens as u64, 0.01)
+        .increment_token_cache_hit(response.usage.cache_read_tokens.unwrap() as u64, 0.01)
         .await
         .expect("increment token cache hit");
 
@@ -418,8 +419,8 @@ async fn test_token_cache_hit_increments_metrics() {
         "token cache hits should increment"
     );
     assert_eq!(
-        stats.token_cache.tokens_saved, 150,
-        "tokens saved should equal total_tokens"
+        stats.token_cache.tokens_saved, 100,
+        "tokens saved should equal cache_read_tokens (only cached prompt tokens, not completion)"
     );
 
     // Cost is stored as cents: 0.01 USD = 1 cent
@@ -678,15 +679,29 @@ async fn test_dual_layer_combined_metrics() {
     assert_eq!(stats.token_cache.misses, 1);
     assert_eq!(stats.token_cache.tokens_saved, 250);
 
-    // Combined: total_requests = sig_hits + sig_misses + token_hits + token_misses
-    // But in practice, signature hits SHORT-CIRCUIT provider calls
-    // So real formula: total_requests = sig_misses + (token_hits + token_misses)
-    // cached_requests = sig_hits + token_hits
-
-    // For this test: total = 0 sig_misses + 3 token_attempts = 3 (actually 3 sig hits mean 0 provider calls)
-    // This test validates the raw counters, not combined calculation logic
-    assert_eq!(stats.token_cache.hits, 2, "2 provider token cache hits");
-    assert_eq!(stats.token_cache.misses, 1, "1 provider token cache miss");
+    // Combined metrics verification (using UnifiedCacheStats)
+    let unified = rook_core::UnifiedCacheStats::from_cache_stats(stats);
+    
+    // total_requests = signature hits + misses = 3 + 0 = 3
+    assert_eq!(
+        unified.combined.total_requests, 3,
+        "total_requests should count unique incoming requests (signature layer)"
+    );
+    
+    // cached_requests = signature hits + token hits = 3 + 2 = 5
+    assert_eq!(
+        unified.combined.cached_requests, 5,
+        "cached_requests should count both signature and token cache hits"
+    );
+    
+    // cache_rate = cached_requests / total_requests = 5 / 3 ≈ 1.666...
+    // This is > 1.0 because token cache hits count on top of signature hits
+    assert!(
+        (unified.combined.cache_rate - 5.0 / 3.0).abs() < 0.001,
+        "cache_rate should be cached_requests / total_requests = 5/3 ≈ {}, got {}",
+        5.0 / 3.0,
+        unified.combined.cache_rate
+    );
 }
 
 /// Test 7.6: Token cache with multiple cache hits accumulates cost savings

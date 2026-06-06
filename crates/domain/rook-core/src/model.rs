@@ -951,8 +951,10 @@ impl UnifiedCacheStats {
 
         let token_cache = stats.token_cache.clone();
 
-        // Combined metrics: total_requests = all layer hits + misses
-        let total_requests = stats.hits + stats.misses + token_cache.hits + token_cache.misses;
+        // Combined metrics: total_requests = unique incoming requests (signature cache operations)
+        // Token cache operations (hits/misses) happen on top of signature cache misses
+        // so we count only unique requests: signature_hits + signature_misses
+        let total_requests = stats.hits + stats.misses;
         let cached_requests = stats.hits + token_cache.hits;
         let cache_rate = if total_requests == 0 {
             0.0

@@ -320,8 +320,8 @@ providers = ["anthropic", "deepseek"]  # Explicit provider list
 ### Security
 
 - **Disable inspection endpoints in production**: Set `inspection_endpoints = false` to prevent leaking cached responses.
-- **Authenticate cache management**: DELETE endpoints should require session auth (current implementation is open — TODO).
-- **Audit cache clears**: Log all manual cache clear operations for forensics.
+- **Authenticate cache management**: DELETE endpoints (`DELETE /api/cache`, `DELETE /api/cache/:signature`) require session management authentication and are audited. Inspection GET endpoints are read-only.
+- **Audit cache clears**: All manual cache clear operations are logged for forensics.
 
 ## Appendix: Provider Token Cache Support
 
@@ -336,4 +336,4 @@ providers = ["anthropic", "deepseek"]  # Explicit provider list
 | Groq        | ❌ No               | Not sent                        | N/A              | No native prompt caching     |
 | Ollama      | ❌ No               | Not sent                        | N/A              | Local model, no caching API  |
 
-**Default providers** (when `providers = []` and `mode = "auto"`): `anthropic`, `deepseek`, `qwen`, `zai`
+**Default providers** (when `providers = []` and `mode = "auto"`): `anthropic`, `claude`, `deepseek`, `qwen`, `zai`

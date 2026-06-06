@@ -357,8 +357,11 @@ impl RouteRequest {
         // Update token cache metrics (Phase 5: Task 5.4-5.6)
         if let Some(cache_hit) = resp.cache_hit {
             if cache_hit {
-                // Token cache hit - calculate cost savings
-                let tokens_saved = resp.usage.total_tokens as u64;
+                // Token cache hit - calculate cost savings using cached tokens only
+                // Prefer cache_read_tokens if available, otherwise use prompt_tokens as approximation
+                let tokens_saved = resp.usage.cache_read_tokens.unwrap_or({
+                    (resp.usage.prompt_tokens as f64 * 0.5) as u64
+                });
                 let cost_usd = self.estimate_token_cache_savings(&resp.usage);
 
                 if let Err(e) = self

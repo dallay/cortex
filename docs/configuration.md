@@ -204,7 +204,7 @@ ttl_secs = 300
 
 [cache.token_cache]
 mode = "auto"  # "auto" | "always" | "never"
-providers = []  # Empty = default providers (Anthropic, DeepSeek, Qwen, ZAI)
+providers = []  # Empty = default providers (Anthropic, Claude, DeepSeek, Qwen, ZAI)
 ```
 
 | Field      | Type   | Default  | Description                                                           |
@@ -216,7 +216,7 @@ providers = []  # Empty = default providers (Anthropic, DeepSeek, Qwen, ZAI)
 
 | Mode     | Behavior                                                                          |
 |----------|-----------------------------------------------------------------------------------|
-| `auto`   | Enable only for known providers (Anthropic, DeepSeek, Qwen, ZAI) unless `providers` is specified |
+| `auto`   | Enable only for known providers (Anthropic, Claude, DeepSeek, Qwen, ZAI) unless `providers` is specified |
 | `always` | Inject `cache-control` header for ALL providers                                    |
 | `never`  | Disable provider-side token caching (default)                                      |
 
@@ -233,7 +233,7 @@ providers = ["anthropic"]
 ```toml
 [cache.token_cache]
 mode = "auto"
-providers = ["anthropic", "deepseek", "qwen"]
+providers = ["anthropic", "deepseek", "qwen", "zai"]
 ```
 
 **How it works:**
