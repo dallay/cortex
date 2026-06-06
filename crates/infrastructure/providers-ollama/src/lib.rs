@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
-use providers_core::role_to_string;
+use providers_core::{process_bytes, role_to_string};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -113,6 +113,10 @@ impl OllamaProvider {
         }))
     }
 
+    /// Extract complete lines from the line buffer.
+    ///
+    /// Splits on newlines and returns all non-empty lines.
+    /// The remaining partial line stays in `line_buffer`.
     fn extract_complete_lines(line_buffer: &mut String) -> Vec<String> {
         let mut complete_lines = Vec::new();
         while let Some(newline_pos) = line_buffer.find('\n') {
@@ -225,8 +229,8 @@ impl ProviderPort for OllamaProvider {
                         None => return None,
                     };
 
-                    // Convert to UTF-8 string and append to line buffer
-                    let text = match String::from_utf8(bytes.to_vec()) {
+                    // Convert to UTF-8 string using providers_core::process_bytes
+                    let text = match process_bytes(&bytes) {
                         Ok(t) => t,
                         Err(e) => {
                             return Some((
@@ -256,5 +260,88 @@ impl ProviderPort for OllamaProvider {
         .try_flatten();
 
         Ok(Box::pin(stream))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_complete_lines_single_line() {
+        let mut buffer = "hello world\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["hello world"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_extract_complete_lines_multiple_lines() {
+        let mut buffer = "line1\nline2\nline3\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_extract_complete_lines_empty_lines_filtered() {
+        let mut buffer = "line1\n\nline2\n\n\nline3\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_whitespace_only_filtered() {
+        let mut buffer = "line1\n   \nline2\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_partial_line_kept() {
+        let mut buffer = "line1\npartial".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1"]);
+        assert_eq!(buffer, "partial");
+    }
+
+    #[test]
+    fn test_extract_complete_lines_no_newline() {
+        let mut buffer = "no newline".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert!(lines.is_empty());
+        assert_eq!(buffer, "no newline");
+    }
+
+    #[test]
+    fn test_extract_complete_lines_empty_buffer() {
+        let mut buffer = String::new();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert!(lines.is_empty());
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_role_to_string_system() {
+        assert_eq!(role_to_string(rook_core::Role::System), "system");
+    }
+
+    #[test]
+    fn test_role_to_string_user() {
+        assert_eq!(role_to_string(rook_core::Role::User), "user");
+    }
+
+    #[test]
+    fn test_role_to_string_assistant() {
+        assert_eq!(role_to_string(rook_core::Role::Assistant), "assistant");
+    }
+
+    #[test]
+    fn test_role_to_string_developer() {
+        assert_eq!(role_to_string(rook_core::Role::Developer), "developer");
     }
 }

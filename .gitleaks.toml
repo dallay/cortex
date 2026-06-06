@@ -35,6 +35,7 @@ paths = [
   # Test files — contain fixture values that look like secrets but are not real
   '''apps/rook/tests/.*''',
   '''crates/infrastructure/transport-axum/tests/.*''',
+  '''crates/infrastructure/providers-anthropic/tests/.*''',
   '''dev/e2e/.*''',
   '''apps/rook/dashboard/.*\.spec\.ts''',
   '''apps/rook/dashboard/.*\.test\.ts''',
