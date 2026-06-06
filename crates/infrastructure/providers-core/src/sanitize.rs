@@ -58,21 +58,37 @@ pub fn sanitize_body(body: &str) -> String {
         "headers",
     ];
 
+    /// Recursively redact sensitive keys in a JSON value.
+    fn redact_sensitive_in_value(value: &mut serde_json::Value, sensitive_keys: &[&str]) {
+        match value {
+            serde_json::Value::Object(map) => {
+                let keys_to_redact: Vec<String> = map
+                    .keys()
+                    .filter(|k| {
+                        let lower = k.to_lowercase();
+                        sensitive_keys.iter().any(|s| lower.contains(s))
+                    })
+                    .cloned()
+                    .collect();
+                for key in keys_to_redact {
+                    map.insert(key, serde_json::Value::String("(redacted)".to_string()));
+                }
+                for v in map.values_mut() {
+                    redact_sensitive_in_value(v, sensitive_keys);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    redact_sensitive_in_value(v, sensitive_keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Try to parse as JSON and redact sensitive fields
     if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(obj) = json.as_object_mut() {
-            let keys_to_redact: Vec<String> = obj
-                .keys()
-                .filter(|k| {
-                    let lower = k.to_lowercase();
-                    SENSITIVE_KEYS.iter().any(|s| lower.contains(s))
-                })
-                .cloned()
-                .collect();
-            for key in keys_to_redact {
-                obj.insert(key, serde_json::Value::String("(redacted)".to_string()));
-            }
-        }
+        redact_sensitive_in_value(&mut json, SENSITIVE_KEYS);
         let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
         char_safe_truncate(&sanitized, MAX_LENGTH)
     } else {
@@ -199,8 +215,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_body_nested_json() {
-        // Note: sanitize_body only handles top-level keys, not nested ones
-        // This is consistent with the original provider implementations
+        // sanitize_body now recursively redact sensitive keys at any nesting level
         let json =
             r#"{"error": {"message": "bad request", "token": "secret123"}, "api_key": "sk-12345"}"#;
         let result = sanitize_body(json);
@@ -208,8 +223,9 @@ mod tests {
         assert!(result.contains("(redacted)"));
         // Nested error.message should be preserved
         assert!(result.contains("bad request"));
-        // Nested token should NOT be redacted (only top-level keys are checked)
-        assert!(result.contains("secret123"));
+        // Nested token should now also be redacted (recursive redaction)
+        assert!(!result.contains("secret123"));
+        assert!(result.contains("(redacted)"));
     }
 
     #[test]

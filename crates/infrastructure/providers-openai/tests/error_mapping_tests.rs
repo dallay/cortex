@@ -5,6 +5,50 @@ use rook_core::{
 use shared_kernel::{ProviderId, RequestId};
 
 // ---------------------------------------------------------------------------
+// Test helpers — extracted to reduce duplication and drift
+// ---------------------------------------------------------------------------
+
+fn test_provider(base_url: String) -> OpenAIProvider {
+    test_provider_with_key(base_url, "sk-invalid".to_string())
+}
+
+fn test_provider_with_key(base_url: String, api_key: String) -> OpenAIProvider {
+    OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key,
+        base_url,
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap()
+}
+
+fn base_request(stream: bool) -> CompletionRequest {
+    CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: ApiKeyRestrictions::default(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Error mapping tests — map_openai_http_error via public API
 // ---------------------------------------------------------------------------
 
@@ -20,37 +64,8 @@ async fn complete_returns_auth_error_on_401() {
         .mount(&server)
         .await;
 
-    let provider = OpenAIProvider::new(OpenAIProviderConfig {
-        id: ProviderId::new("openai-test"),
-        api_key: "sk-invalid".to_string(),
-        base_url: server.uri(),
-        models: vec![ModelId::new("gpt-4")],
-        timeout_secs: 10,
-    })
-    .unwrap();
-
-    let req = CompletionRequest {
-        id: RequestId::new(),
-        model: ModelId::new("gpt-4"),
-        messages: vec![rook_core::Message {
-            role: Role::User,
-            content: rook_core::MessageContent::Text("Hi".to_string()),
-        }],
-        stream: false,
-        max_tokens: Some(100),
-        temperature: None,
-        tools: None,
-        tool_choice: None,
-        metadata: RequestMetadata {
-            origin: "test".to_string(),
-            cacheable: true,
-            priority: 0,
-            api_key_id: None,
-            requested_tier: None,
-            combo_id: None,
-        },
-        restrictions: ApiKeyRestrictions::default(),
-    };
+    let provider = test_provider(server.uri());
+    let req = base_request(false);
 
     let result = provider.complete(&req).await;
     assert!(result.is_err());
@@ -76,37 +91,8 @@ async fn complete_returns_rate_limit_error_on_429() {
         .mount(&server)
         .await;
 
-    let provider = OpenAIProvider::new(OpenAIProviderConfig {
-        id: ProviderId::new("openai-test"),
-        api_key: "sk-test".to_string(),
-        base_url: server.uri(),
-        models: vec![ModelId::new("gpt-4")],
-        timeout_secs: 10,
-    })
-    .unwrap();
-
-    let req = CompletionRequest {
-        id: RequestId::new(),
-        model: ModelId::new("gpt-4"),
-        messages: vec![rook_core::Message {
-            role: Role::User,
-            content: rook_core::MessageContent::Text("Hi".to_string()),
-        }],
-        stream: false,
-        max_tokens: Some(100),
-        temperature: None,
-        tools: None,
-        tool_choice: None,
-        metadata: RequestMetadata {
-            origin: "test".to_string(),
-            cacheable: true,
-            priority: 0,
-            api_key_id: None,
-            requested_tier: None,
-            combo_id: None,
-        },
-        restrictions: ApiKeyRestrictions::default(),
-    };
+    let provider = test_provider_with_key(server.uri(), "sk-test".to_string());
+    let req = base_request(false);
 
     let result = provider.complete(&req).await;
     assert!(result.is_err());
@@ -133,37 +119,8 @@ async fn complete_returns_invalid_request_on_400() {
         .mount(&server)
         .await;
 
-    let provider = OpenAIProvider::new(OpenAIProviderConfig {
-        id: ProviderId::new("openai-test"),
-        api_key: "sk-test".to_string(),
-        base_url: server.uri(),
-        models: vec![ModelId::new("gpt-4")],
-        timeout_secs: 10,
-    })
-    .unwrap();
-
-    let req = CompletionRequest {
-        id: RequestId::new(),
-        model: ModelId::new("gpt-4"),
-        messages: vec![rook_core::Message {
-            role: Role::User,
-            content: rook_core::MessageContent::Text("Hi".to_string()),
-        }],
-        stream: false,
-        max_tokens: Some(100),
-        temperature: None,
-        tools: None,
-        tool_choice: None,
-        metadata: RequestMetadata {
-            origin: "test".to_string(),
-            cacheable: true,
-            priority: 0,
-            api_key_id: None,
-            requested_tier: None,
-            combo_id: None,
-        },
-        restrictions: ApiKeyRestrictions::default(),
-    };
+    let provider = test_provider_with_key(server.uri(), "sk-test".to_string());
+    let req = base_request(false);
 
     let result = provider.complete(&req).await;
     assert!(result.is_err());

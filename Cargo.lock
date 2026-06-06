@@ -2216,6 +2216,7 @@ dependencies = [
 name = "providers-core"
 version = "0.1.0"
 dependencies = [
+ "rook-core",
  "serde",
  "serde_json",
 ]
@@ -2227,6 +2228,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",

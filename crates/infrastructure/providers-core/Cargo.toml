@@ -8,3 +8,6 @@ publish = false
 # Serialization — needed for JSON validation and sanitization in provider adapters
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Domain types — needed for Role conversion helpers
+rook-core = { path = "../../domain/rook-core" }
