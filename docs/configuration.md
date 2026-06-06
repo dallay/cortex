@@ -233,7 +233,7 @@ providers = ["anthropic"]
 ```toml
 [cache.token_cache]
 mode = "auto"
-providers = ["anthropic", "deepseek", "qwen", "zai"]
+providers = ["anthropic", "claude", "deepseek", "qwen", "zai"]
 ```
 
 **How it works:**

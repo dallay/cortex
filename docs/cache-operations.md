@@ -328,12 +328,14 @@ providers = ["anthropic", "deepseek"]  # Explicit provider list
 | Provider    | Token Cache Support | Header Sent                     | Response Header  | Notes                        |
 |-------------|---------------------|---------------------------------|------------------|------------------------------|
 | Anthropic   | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Prompt caching (input only) |
+| Claude      | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Alias for Anthropic         |
 | DeepSeek    | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Similar to Anthropic         |
 | Qwen        | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Alibaba Cloud models         |
 | ZAI         | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | ZAI provider                 |
-| OpenAI      | ❌ No               | Not sent                        | N/A              | No native prompt caching     |
+| OpenAI      | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Native prompt caching        |
+| GPT         | ✅ Yes              | `cache-control: max-stale=3600` | `x-cache: hit\|miss` | Alias for OpenAI             |
 | Gemini      | ❌ No               | Not sent                        | N/A              | No native prompt caching     |
 | Groq        | ❌ No               | Not sent                        | N/A              | No native prompt caching     |
 | Ollama      | ❌ No               | Not sent                        | N/A              | Local model, no caching API  |
 
-**Default providers** (when `providers = []` and `mode = "auto"`): `anthropic`, `claude`, `deepseek`, `qwen`, `zai`
+**Default providers** (when `providers = []` and `mode = "auto"`): `anthropic`, `claude`, `deepseek`, `qwen`, `zai`, `openai`, `gpt`

@@ -533,7 +533,7 @@ pub struct SignatureCacheConfig {
 
 pub struct TokenCacheConfig {
     pub mode: CacheMode,
-    pub providers: Vec<String>, // Provider ID string prefixes for matching (e.g., "anthropic", "claude"→"anthropic", "openai", "gpt"). Empty = default to ["anthropic", "deepseek", "qwen", "openai"].
+    pub providers: Vec<String>, // Provider ID string prefixes for matching (e.g., "anthropic", "claude"→"anthropic", "openai", "gpt"). Empty = default to ["anthropic", "claude", "deepseek", "qwen", "zai", "openai", "gpt"].
 }
 
 pub enum CacheMode {
