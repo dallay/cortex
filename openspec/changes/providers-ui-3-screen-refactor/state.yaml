@@ -1,5 +1,5 @@
 change: providers-ui-3-screen-refactor
-current_phase: apply
+current_phase: verify
 completed:
   - init
   - explore
@@ -8,5 +8,6 @@ completed:
   - design
   - tasks
   - apply
-next: verify
+  - verify
+next: archive
 updated: 2026-06-06
