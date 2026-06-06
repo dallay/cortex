@@ -2199,6 +2199,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2209,6 +2210,14 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "providers-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2237,6 +2246,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2256,6 +2266,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
@@ -2275,6 +2286,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "providers-core",
  "reqwest 0.12.28",
  "rook-core",
  "serde",
