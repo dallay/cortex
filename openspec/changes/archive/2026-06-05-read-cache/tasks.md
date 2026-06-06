@@ -2,21 +2,21 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | 450-550 |
-| 400-line budget risk | Medium |
-| Chained PRs recommended | Yes |
-| Suggested split | PR 1: Foundation + Infrastructure → PR 2: Application + Transport + Testing |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Field                   | Value                                                                       |
+|-------------------------|-----------------------------------------------------------------------------|
+| Estimated changed lines | 450-550                                                                     |
+| 400-line budget risk    | Medium                                                                      |
+| Chained PRs recommended | Yes                                                                         |
+| Suggested split         | PR 1: Foundation + Infrastructure → PR 2: Application + Transport + Testing |
+| Delivery strategy       | ask-on-risk                                                                 |
+| Chain strategy          | pending                                                                     |
 
 ### Suggested Work Units
 
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | Foundation: CacheKey signature, hashing, LRU infrastructure, stats tracking | PR 1 | Base branch: main; includes domain + infrastructure changes with unit tests |
-| 2 | Integration: HTTP endpoints, metrics, route handlers, full integration tests | PR 2 | Base branch: PR 1 branch; depends on PR 1; completes feature with transport layer |
+| Unit | Goal                                                                         | Likely PR | Notes                                                                             |
+|------|------------------------------------------------------------------------------|-----------|-----------------------------------------------------------------------------------|
+| 1    | Foundation: CacheKey signature, hashing, LRU infrastructure, stats tracking  | PR 1      | Base branch: main; includes domain + infrastructure changes with unit tests       |
+| 2    | Integration: HTTP endpoints, metrics, route handlers, full integration tests | PR 2      | Base branch: PR 1 branch; depends on PR 1; completes feature with transport layer |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
@@ -106,19 +106,19 @@ Chain strategy: pending
 
 ## Task Summary
 
-| Phase | Tasks | Focus |
-|-------|-------|-------|
-| Phase 1 | 5 | Foundation — CacheKey, hashing, CacheStats |
-| Phase 2 | 7 | Infrastructure — LRU, stats counters, eviction |
-| Phase 3 | 2 | Ports — trait method extension |
-| Phase 4 | 4 | Configuration — validation, wiring |
-| Phase 5 | 1 | Application — stats tracking in use case |
-| Phase 6 | 6 | Transport — HTTP handlers, routes |
-| Phase 7 | 2 | Observability — metrics |
-| Phase 8 | 8 | Unit tests |
-| Phase 9 | 7 | Integration tests |
-| Phase 10 | 5 | Verification — CI checks |
-| **Total** | **47** | |
+| Phase     | Tasks  | Focus                                          |
+|-----------|--------|------------------------------------------------|
+| Phase 1   | 5      | Foundation — CacheKey, hashing, CacheStats     |
+| Phase 2   | 7      | Infrastructure — LRU, stats counters, eviction |
+| Phase 3   | 2      | Ports — trait method extension                 |
+| Phase 4   | 4      | Configuration — validation, wiring             |
+| Phase 5   | 1      | Application — stats tracking in use case       |
+| Phase 6   | 6      | Transport — HTTP handlers, routes              |
+| Phase 7   | 2      | Observability — metrics                        |
+| Phase 8   | 8      | Unit tests                                     |
+| Phase 9   | 7      | Integration tests                              |
+| Phase 10  | 5      | Verification — CI checks                       |
+| **Total** | **47** |                                                |
 
 ## Implementation Order
 

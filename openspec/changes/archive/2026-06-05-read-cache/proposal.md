@@ -5,6 +5,7 @@
 Implement semantic response caching that stores AI model responses keyed by content hash (model + messages + parameters) instead of request identity. This reduces costs and latency for repeated requests with identical parameters. The current cache implementation is minimal: it uses request IDs only and lacks LRU eviction, statistics, and content-based keying.
 
 **Why**: Issue #50 requires:
+
 - Content-based cache keys for semantic caching (not just request identity)
 - LRU eviction when cache reaches capacity limits
 - Statistics tracking (hits, misses, evictions)
@@ -14,6 +15,7 @@ Implement semantic response caching that stores AI model responses keyed by cont
 ## Scope
 
 ### In Scope
+
 - Add `signature: String` field to `CacheKey` (breaking change, acceptable)
 - Implement SHA-256 content hashing in `CompletionRequest.cache_key()` (model + messages + params)
 - Add `CacheStats` struct and `CachePort::stats()` method
@@ -22,12 +24,13 @@ Implement semantic response caching that stores AI model responses keyed by cont
 - Add `max_entries` field to `CacheConfig` with validation (reject TTL > 24h)
 - Increment metrics counters on cache operations
 - Add 3 HTTP endpoints:
-  - `GET /api/cache/stats` — return cache statistics
-  - `DELETE /api/cache` — clear entire cache
-  - `DELETE /api/cache/:signature` — delete specific cache entry
+    - `GET /api/cache/stats` — return cache statistics
+    - `DELETE /api/cache` — clear entire cache
+    - `DELETE /api/cache/:signature` — delete specific cache entry
 - Integrate stats into `GET /health` endpoint
 
 ### Out of Scope
+
 - Persistent cache (filesystem, database) — only in-memory
 - Distributed cache (Redis, etc.) — single-node only
 - Cache warming/preloading
@@ -105,6 +108,7 @@ impl CacheStats {
 ## Phases
 
 ### Phase 1: Domain Model Changes (Foundation)
+
 **Goal**: Add signature field to CacheKey, implement content hashing
 
 1. Add `signature: String` field to `CacheKey` in `shared-kernel/src/lib.rs`
@@ -117,6 +121,7 @@ impl CacheStats {
 **Risk**: Breaking change — all consumers of `CacheKey` must update
 
 ### Phase 2: Cache Infrastructure (Stats + LRU)
+
 **Goal**: Add stats tracking and LRU eviction to InMemoryCache
 
 1. Add `CacheStats` struct in `rook-core/src/model.rs`
@@ -132,6 +137,7 @@ impl CacheStats {
 **Risk**: LRU eviction race conditions with concurrent access
 
 ### Phase 3: Metrics Integration
+
 **Goal**: Increment cache metrics on operations
 
 1. Ensure `rook_cache_hits` and `rook_cache_misses` counters are incremented in `route_request.rs`
@@ -141,16 +147,17 @@ impl CacheStats {
 **Files**: `rook-usecases/src/route_request.rs`, `observability/src/metrics.rs`
 
 ### Phase 4: HTTP Management API
+
 **Goal**: Expose cache control via REST endpoints
 
 1. Create `transport-axum/src/handlers/cache.rs` with handlers:
-   - `get_cache_stats()` — returns JSON CacheStats
-   - `clear_cache()` — clears entire cache, returns 204
-   - `delete_cache_entry(Path(signature): Path<String>)` — deletes by signature, returns 204
+    - `get_cache_stats()` — returns JSON CacheStats
+    - `clear_cache()` — clears entire cache, returns 204
+    - `delete_cache_entry(Path(signature): Path<String>)` — deletes by signature, returns 204
 2. Wire routes into main router:
-   - `GET /api/cache/stats`
-   - `DELETE /api/cache`
-   - `DELETE /api/cache/:signature`
+    - `GET /api/cache/stats`
+    - `DELETE /api/cache`
+    - `DELETE /api/cache/:signature`
 3. Add session auth to write endpoints (DELETE operations)
 4. Integrate stats into `GET /health` response
 5. Add integration tests
@@ -159,28 +166,28 @@ impl CacheStats {
 
 ## Affected Areas
 
-| Area | Impact | Description |
-|------|--------|-------------|
-| `shared-kernel/src/lib.rs` | Modified | CacheKey struct gains `signature` field |
-| `rook-core/src/model.rs` | Modified | CacheStats struct, CompletionRequest.cache_key() hashing |
-| `rook-core/src/ports.rs` | Modified | CachePort::stats() method added |
-| `cache-memory/src/lib.rs` | Modified | Stats counters, LRU tracking, max_entries enforcement |
-| `apps/rook/src/config.rs` | Modified | CacheConfig.max_entries field with validation |
-| `rook-usecases/src/route_request.rs` | Modified | Increment metrics on cache ops |
-| `transport-axum/src/handlers/` | New | cache.rs module with stats/clear/delete handlers |
-| `transport-axum/src/routes.rs` | Modified | Wire new cache endpoints, extend /health |
-| `observability/src/metrics.rs` | Modified | Add evictions counter description |
+| Area                                 | Impact   | Description                                              |
+|--------------------------------------|----------|----------------------------------------------------------|
+| `shared-kernel/src/lib.rs`           | Modified | CacheKey struct gains `signature` field                  |
+| `rook-core/src/model.rs`             | Modified | CacheStats struct, CompletionRequest.cache_key() hashing |
+| `rook-core/src/ports.rs`             | Modified | CachePort::stats() method added                          |
+| `cache-memory/src/lib.rs`            | Modified | Stats counters, LRU tracking, max_entries enforcement    |
+| `apps/rook/src/config.rs`            | Modified | CacheConfig.max_entries field with validation            |
+| `rook-usecases/src/route_request.rs` | Modified | Increment metrics on cache ops                           |
+| `transport-axum/src/handlers/`       | New      | cache.rs module with stats/clear/delete handlers         |
+| `transport-axum/src/routes.rs`       | Modified | Wire new cache endpoints, extend /health                 |
+| `observability/src/metrics.rs`       | Modified | Add evictions counter description                        |
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| Breaking change to `CacheKey` | High (but acceptable) | Provide `CacheKey::from_request_id(id)` for backward compat; update all construction sites |
-| Message hashing complexity | Medium | Recursive `MessageContent` needs stable serialization; use serde_json with sorted keys; add comprehensive tests |
-| LRU eviction race conditions | Medium | Use single writer pattern; lock only during eviction; accept eventual consistency for stats |
-| Config validation timing | Low | Enforce max TTL (24h) at config load, not runtime; add test for invalid config rejection |
-| SHA-256 collision | Negligible | Accept risk; signature + request_id provides uniqueness |
-| Existing cached responses | Low | Clear cache on deploy (no migration needed); documented in rollback plan |
+| Risk                          | Likelihood            | Mitigation                                                                                                      |
+|-------------------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------|
+| Breaking change to `CacheKey` | High (but acceptable) | Provide `CacheKey::from_request_id(id)` for backward compat; update all construction sites                      |
+| Message hashing complexity    | Medium                | Recursive `MessageContent` needs stable serialization; use serde_json with sorted keys; add comprehensive tests |
+| LRU eviction race conditions  | Medium                | Use single writer pattern; lock only during eviction; accept eventual consistency for stats                     |
+| Config validation timing      | Low                   | Enforce max TTL (24h) at config load, not runtime; add test for invalid config rejection                        |
+| SHA-256 collision             | Negligible            | Accept risk; signature + request_id provides uniqueness                                                         |
+| Existing cached responses     | Low                   | Clear cache on deploy (no migration needed); documented in rollback plan                                        |
 
 ## Rollback Plan
 
@@ -204,20 +211,24 @@ If cache causes production issues:
 ### Specific Rollback Steps by Phase
 
 **Phase 1 (CacheKey change)**:
+
 - Revert `signature` field addition
 - Revert `cache_key()` implementation
 - Update all consumers to use old `CacheKey` constructor
 
 **Phase 2 (Stats + LRU)**:
+
 - Revert `CachePort::stats()` trait method
 - Remove `AtomicU64` counters and LRU DashMap
 - Revert `CacheConfig` changes
 
 **Phase 3 (Metrics)**:
+
 - Remove metrics increments from `route_request.rs`
 - Keep counter definitions in metrics.rs (harmless)
 
 **Phase 4 (HTTP API)**:
+
 - Remove route registrations from router
 - Delete `cache.rs` handler module
 - Revert `/health` extension
@@ -225,12 +236,12 @@ If cache causes production issues:
 ## Dependencies
 
 - **Rust crates** (already in workspace):
-  - `sha2` — SHA-256 hashing (used in auth handlers)
-  - `hex` — hex encoding (used in auth handlers)
-  - `dashmap` — already used in InMemoryCache
-  - `serde` + `serde_json` — already available
-  - `tokio` — async runtime (already used)
-  - `axum` — HTTP framework (already used)
+    - `sha2` — SHA-256 hashing (used in auth handlers)
+    - `hex` — hex encoding (used in auth handlers)
+    - `dashmap` — already used in InMemoryCache
+    - `serde` + `serde_json` — already available
+    - `tokio` — async runtime (already used)
+    - `axum` — HTTP framework (already used)
 
 - **No external dependencies required** — all needed crates are already in the dependency tree
 
@@ -250,11 +261,11 @@ If cache causes production issues:
 - [ ] `cargo clippy --workspace` passes with no warnings
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] Unit tests cover:
-  - Content hashing determinism
-  - LRU eviction behavior
-  - Stats accuracy
-  - Config validation
+    - Content hashing determinism
+    - LRU eviction behavior
+    - Stats accuracy
+    - Config validation
 - [ ] Integration tests cover:
-  - HTTP endpoints
-  - Cache hit/miss flow
-  - Metrics increment
+    - HTTP endpoints
+    - Cache hit/miss flow
+    - Metrics increment

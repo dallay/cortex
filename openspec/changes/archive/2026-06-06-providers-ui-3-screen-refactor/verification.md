@@ -7,17 +7,17 @@
 
 ## 0. Remediation Summary
 
-| Original finding | Severity | Status after commit `616d1d5` |
-|---|---|---|
-| C1 — i18n parity broken (13 keys missing in `es.json.providers`) | **CRITICAL** | **RESOLVED** — 13 keys mirrored; `en.json` == `es.json` (267 lines each, identical key trees) |
-| W1 — Stale keys (`nav.providersList`, `nav.providersQuotes`, `breadcrumb.providersQuotes`) not removed | WARNING | **RESOLVED** — all 3 removed from both files; `rg` confirms 0 references |
-| W2 — `lib/api.ts` `providerKind`/`authType` stayed as `string` | WARNING | **RESOLVED** — added `WireAuthType = 'apiKey' \| 'oauth'`; narrowed 8 fields to `ProviderKind` / `WireAuthType` |
-| W3 — Components in `src/components/providers/` subdir (design said flat) | WARNING | **RESOLVED** — `git mv` flattened 4 files into `components/*.vue`; subdir no longer exists; 3 imports updated |
-| S1 — `tasks.md` checkbox discrepancy (21 `[x]` / 28 `[ ]`) | SUGGESTION | **RESOLVED** — all 28 marked `[x]`; 10.2–10.10 (manual browser QA) correctly left `[ ]` with explanatory note |
-| S2 — 5 lucide icons handled via local map, not `useNavigation` registry | SUGGESTION | **RESOLVED** — `design.md` §2 row updated to "NOT MODIFIED" with note about local icon map in `ProviderCatalogCard.vue` |
-| I1 — 2 pre-existing `vue-tsc` errors | INFO | **PERSISTS** — 1 remains (`ChartContainer.vue:38`); the other (`i18n/index.ts:25`) is GONE because the schema drift was fixed |
-| I2 — Rolldown warnings from `@vueuse/core@14.3.0` | INFO | **PERSISTS** — pre-existing, third-party |
-| I3 — Spec scenario count prompt said 22, actual is 20 | INFO | **PERSISTS** — accounting note only |
+| Original finding                                                                                       | Severity     | Status after commit `616d1d5`                                                                                                 |
+|--------------------------------------------------------------------------------------------------------|--------------|-------------------------------------------------------------------------------------------------------------------------------|
+| C1 — i18n parity broken (13 keys missing in `es.json.providers`)                                       | **CRITICAL** | **RESOLVED** — 13 keys mirrored; `en.json` == `es.json` (267 lines each, identical key trees)                                 |
+| W1 — Stale keys (`nav.providersList`, `nav.providersQuotes`, `breadcrumb.providersQuotes`) not removed | WARNING      | **RESOLVED** — all 3 removed from both files; `rg` confirms 0 references                                                      |
+| W2 — `lib/api.ts` `providerKind`/`authType` stayed as `string`                                         | WARNING      | **RESOLVED** — added `WireAuthType = 'apiKey' \| 'oauth'`; narrowed 8 fields to `ProviderKind` / `WireAuthType`               |
+| W3 — Components in `src/components/providers/` subdir (design said flat)                               | WARNING      | **RESOLVED** — `git mv` flattened 4 files into `components/*.vue`; subdir no longer exists; 3 imports updated                 |
+| S1 — `tasks.md` checkbox discrepancy (21 `[x]` / 28 `[ ]`)                                             | SUGGESTION   | **RESOLVED** — all 28 marked `[x]`; 10.2–10.10 (manual browser QA) correctly left `[ ]` with explanatory note                 |
+| S2 — 5 lucide icons handled via local map, not `useNavigation` registry                                | SUGGESTION   | **RESOLVED** — `design.md` §2 row updated to "NOT MODIFIED" with note about local icon map in `ProviderCatalogCard.vue`       |
+| I1 — 2 pre-existing `vue-tsc` errors                                                                   | INFO         | **PERSISTS** — 1 remains (`ChartContainer.vue:38`); the other (`i18n/index.ts:25`) is GONE because the schema drift was fixed |
+| I2 — Rolldown warnings from `@vueuse/core@14.3.0`                                                      | INFO         | **PERSISTS** — pre-existing, third-party                                                                                      |
+| I3 — Spec scenario count prompt said 22, actual is 20                                                  | INFO         | **PERSISTS** — accounting note only                                                                                           |
 
 **Net result: 1 CRITICAL + 3 WARNING + 2 SUGGESTION → 0 CRITICAL + 0 WARNING (functional) + 1 SUGGESTION + 2 INFO.**
 Two new INFO items found in the post-remediation audit; both are style-level (see §6).
@@ -128,6 +128,7 @@ src/components/AddProviderDialog.vue:381:  kind = v as ProviderKind
 
 Two casts remain, **both at framework boundaries** (not from the original
 findings' hot spots in `useProviderCatalog.ts:70,89` or `AddProviderDialog.vue:221-222`).
+
 - `ProviderDetailsView.vue:44` — `route.params.providerKind` is typed by Vue
   Router as `string | string[]`; the cast is required to satisfy the
   `ProviderKind` union. Router's `beforeEnter` already validates membership in
@@ -144,34 +145,34 @@ These are **legitimate boundary casts** and a non-issue. See §5 S1.
 Identical structure to the original report (§2), but re-validated against the
 post-remediation code paths.
 
-| # | Requirement / Scenario | Evidence | Status |
-|---|---|---|---|
-| **REQ-1** | **Providers Catalog** | `views/ProvidersView.vue`, `composables/useProviderCatalog.ts`, `components/Provider{CatalogCard,CategorySection,CatalogFilter}.vue` | PASS |
-| 1.1 | Empty catalog | `useProviderCatalog.items` always returns 5 entries; `connectionCount` defaults to 0 | PASS (visual) |
-| 1.2 | Catalog with connections | `useProviderCatalog` joins live `useProviders().providers` (cast removed; field now `ProviderKind`) | PASS (visual) |
-| 1.3 | Filter by category | `ProviderCatalogFilter` emits `update:activeCategory`; `ProvidersView` v-models it | PASS (visual) |
-| 1.4 | Search the catalog | `useProviderCatalog` filters by `name.toLowerCase().includes(q.toLowerCase())` | PASS (visual) |
-| 1.5 | Navigate to details | `ProviderCatalogCard` is a `<RouterLink to="/providers/${kind}">` | PASS (visual) |
-| **REQ-2** | **Provider Details** | `views/ProviderDetailsView.vue` | PASS |
-| 2.1 | Details with connections | Filters `useProviders().providers` by `route.params.providerKind` | PASS (visual) |
-| 2.2 | Empty details state | Shows `EmptyState` with "Add your first …" CTA | PASS (visual) |
-| 2.3 | Test all connections | Sequential `testCredentials()` calls per connection | PASS (visual) |
-| 2.4 | Add from details | Opens `AddProviderDialog` with `providerKind` prop pre-scoped | PASS (covered by AddProviderDialog test) |
-| 2.5 | Navigate back to catalog | Breadcrumb `Providers` + `← Back to providers` link | PASS (visual) |
-| **REQ-3** | **Connection Modal** | `components/AddProviderDialog.vue` + 13 spec tests | PASS |
-| 3.1 | Open in create mode | `AddProviderDialog.spec.ts:514, 521` | PASS (test) |
-| 3.2 | Test credentials | `AddProviderDialog.spec.ts:612, 633` (success enables, failure keeps disabled) | PASS (test) |
-| 3.3 | Save a new connection | `AddProviderDialog.spec.ts:612` | PASS (test) |
-| 3.4 | Edit existing connection | `AddProviderDialog.spec.ts:535, 549` (prefill + cache-miss fetch) — fixture updated to `authType: 'apiKey'` | PASS (test) |
-| 3.5 | Cancel without saving | `AddProviderDialog.spec.ts:673` | PASS (test) |
-| **REQ-4** | **Providers Quota Placeholder** | `views/ProvidersQuotaView.vue` | PASS |
-| 4.1 | Navigate to quota | `/providers/quota` route, banner with `followUpIssue` link to #132 | PASS (visual) |
-| **REQ-5** | **EmptyState Component** | `components/EmptyState.vue` | PASS |
-| 5.1 | Backward-compatible callsites | Wraps shadcn-vue `Empty`; public API `{title, description, icon}` unchanged | PASS (code) |
-| 5.2 | New shadcn-vue features | Default slot passthrough; sub-component composition supported | PASS (code) |
-| **REQ-6** | **Catalog Metadata Source** | `config/providerCatalog.ts` + `useProviderCatalog` | PASS |
-| 6.1 | Display kind metadata | All metadata fields read from `PROVIDER_KINDS`; counts derived from `useProviders` (typed `providerKind: ProviderKind`, cast removed) | PASS (code) |
-| 6.2 | Adding a new kind | `PROVIDER_KINDS` flows through automatically; `router/index.ts:55-65` `beforeEnter` catches drift | PASS (code + risk) |
+| #         | Requirement / Scenario          | Evidence                                                                                                                              | Status                                   |
+|-----------|---------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------|
+| **REQ-1** | **Providers Catalog**           | `views/ProvidersView.vue`, `composables/useProviderCatalog.ts`, `components/Provider{CatalogCard,CategorySection,CatalogFilter}.vue`  | PASS                                     |
+| 1.1       | Empty catalog                   | `useProviderCatalog.items` always returns 5 entries; `connectionCount` defaults to 0                                                  | PASS (visual)                            |
+| 1.2       | Catalog with connections        | `useProviderCatalog` joins live `useProviders().providers` (cast removed; field now `ProviderKind`)                                   | PASS (visual)                            |
+| 1.3       | Filter by category              | `ProviderCatalogFilter` emits `update:activeCategory`; `ProvidersView` v-models it                                                    | PASS (visual)                            |
+| 1.4       | Search the catalog              | `useProviderCatalog` filters by `name.toLowerCase().includes(q.toLowerCase())`                                                        | PASS (visual)                            |
+| 1.5       | Navigate to details             | `ProviderCatalogCard` is a `<RouterLink to="/providers/${kind}">`                                                                     | PASS (visual)                            |
+| **REQ-2** | **Provider Details**            | `views/ProviderDetailsView.vue`                                                                                                       | PASS                                     |
+| 2.1       | Details with connections        | Filters `useProviders().providers` by `route.params.providerKind`                                                                     | PASS (visual)                            |
+| 2.2       | Empty details state             | Shows `EmptyState` with "Add your first …" CTA                                                                                        | PASS (visual)                            |
+| 2.3       | Test all connections            | Sequential `testCredentials()` calls per connection                                                                                   | PASS (visual)                            |
+| 2.4       | Add from details                | Opens `AddProviderDialog` with `providerKind` prop pre-scoped                                                                         | PASS (covered by AddProviderDialog test) |
+| 2.5       | Navigate back to catalog        | Breadcrumb `Providers` + `← Back to providers` link                                                                                   | PASS (visual)                            |
+| **REQ-3** | **Connection Modal**            | `components/AddProviderDialog.vue` + 13 spec tests                                                                                    | PASS                                     |
+| 3.1       | Open in create mode             | `AddProviderDialog.spec.ts:514, 521`                                                                                                  | PASS (test)                              |
+| 3.2       | Test credentials                | `AddProviderDialog.spec.ts:612, 633` (success enables, failure keeps disabled)                                                        | PASS (test)                              |
+| 3.3       | Save a new connection           | `AddProviderDialog.spec.ts:612`                                                                                                       | PASS (test)                              |
+| 3.4       | Edit existing connection        | `AddProviderDialog.spec.ts:535, 549` (prefill + cache-miss fetch) — fixture updated to `authType: 'apiKey'`                           | PASS (test)                              |
+| 3.5       | Cancel without saving           | `AddProviderDialog.spec.ts:673`                                                                                                       | PASS (test)                              |
+| **REQ-4** | **Providers Quota Placeholder** | `views/ProvidersQuotaView.vue`                                                                                                        | PASS                                     |
+| 4.1       | Navigate to quota               | `/providers/quota` route, banner with `followUpIssue` link to #132                                                                    | PASS (visual)                            |
+| **REQ-5** | **EmptyState Component**        | `components/EmptyState.vue`                                                                                                           | PASS                                     |
+| 5.1       | Backward-compatible callsites   | Wraps shadcn-vue `Empty`; public API `{title, description, icon}` unchanged                                                           | PASS (code)                              |
+| 5.2       | New shadcn-vue features         | Default slot passthrough; sub-component composition supported                                                                         | PASS (code)                              |
+| **REQ-6** | **Catalog Metadata Source**     | `config/providerCatalog.ts` + `useProviderCatalog`                                                                                    | PASS                                     |
+| 6.1       | Display kind metadata           | All metadata fields read from `PROVIDER_KINDS`; counts derived from `useProviders` (typed `providerKind: ProviderKind`, cast removed) | PASS (code)                              |
+| 6.2       | Adding a new kind               | `PROVIDER_KINDS` flows through automatically; `router/index.ts:55-65` `beforeEnter` catches drift                                     | PASS (code + risk)                       |
 
 **Coverage: 20/20 scenarios have evidence. 5/20 have a passing runtime test (the dialog ones).**
 
@@ -179,16 +180,16 @@ post-remediation code paths.
 
 ## 3. Design Coherence (D1–D8)
 
-| # | Decision | Implementation | Status |
-|---|---|---|---|
-| D1 | Keep `useProviders`, add thin `useProviderCatalog` | 110-line derived composable; calls `useProviders()` + `useAvailableModels()`; exposes `items: ComputedRef`; **both cast sites now type-check without `as`** because `ProviderConnectionResponse.providerKind: ProviderKind` and `ProviderModelsGroup.providerKind: ProviderKind` | **PASS** |
-| D2 | No Pinia store | No Pinia references; data lives in `useProviders` | **PASS** |
-| D3 | Static `PROVIDER_KINDS` in TS | `apps/rook/dashboard/src/config/providerCatalog.ts` exports 5 entries | **PASS** |
-| D4 | Wrap shadcn-vue `Empty` inside existing `EmptyState` | `EmptyState.vue` (33 lines) wraps `Empty`/`EmptyHeader`/`EmptyTitle`/`EmptyDescription`/`EmptyContent` | **PASS** |
-| D5 | Catalog is route `/providers` | Router has `/providers` → `ProvidersView` | **PASS** |
-| D6 | Modal controlled by parent via `v-model:open` | `AddProviderDialog` accepts `open` prop, emits `update:open` | **PASS** |
-| D7 | `providerKind` route param validated in `beforeEnter` | `router/index.ts:55-65` validates against `VALID_PROVIDER_KINDS`; invalid kinds redirect to `/providers` | **PASS** |
-| D8 | OAuth form disabled with notice | `AddProviderDialog` ToggleGroup disables OAuth when `supportsOAuth === false`; "coming soon" notice; `AddProviderDialog.spec.ts:662` proves behavior | **PASS** |
+| #  | Decision                                              | Implementation                                                                                                                                                                                                                                                                   | Status   |
+|----|-------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| D1 | Keep `useProviders`, add thin `useProviderCatalog`    | 110-line derived composable; calls `useProviders()` + `useAvailableModels()`; exposes `items: ComputedRef`; **both cast sites now type-check without `as`** because `ProviderConnectionResponse.providerKind: ProviderKind` and `ProviderModelsGroup.providerKind: ProviderKind` | **PASS** |
+| D2 | No Pinia store                                        | No Pinia references; data lives in `useProviders`                                                                                                                                                                                                                                | **PASS** |
+| D3 | Static `PROVIDER_KINDS` in TS                         | `apps/rook/dashboard/src/config/providerCatalog.ts` exports 5 entries                                                                                                                                                                                                            | **PASS** |
+| D4 | Wrap shadcn-vue `Empty` inside existing `EmptyState`  | `EmptyState.vue` (33 lines) wraps `Empty`/`EmptyHeader`/`EmptyTitle`/`EmptyDescription`/`EmptyContent`                                                                                                                                                                           | **PASS** |
+| D5 | Catalog is route `/providers`                         | Router has `/providers` → `ProvidersView`                                                                                                                                                                                                                                        | **PASS** |
+| D6 | Modal controlled by parent via `v-model:open`         | `AddProviderDialog` accepts `open` prop, emits `update:open`                                                                                                                                                                                                                     | **PASS** |
+| D7 | `providerKind` route param validated in `beforeEnter` | `router/index.ts:55-65` validates against `VALID_PROVIDER_KINDS`; invalid kinds redirect to `/providers`                                                                                                                                                                         | **PASS** |
+| D8 | OAuth form disabled with notice                       | `AddProviderDialog` ToggleGroup disables OAuth when `supportsOAuth === false`; "coming soon" notice; `AddProviderDialog.spec.ts:662` proves behavior                                                                                                                             | **PASS** |
 
 **Coherence: 8/8 decisions implemented as designed.** Design §2 table now
 matches reality (useNavigation row marked NOT MODIFIED, lib/api row mentions
@@ -198,18 +199,18 @@ matches reality (useNavigation row marked NOT MODIFIED, lib/api row mentions
 
 ## 4. Correctness Table
 
-| Finding | Judge A (evidence) | Judge B (code) | Severity | Status |
-|---|---|---|---|---|
-| Missing 13 i18n keys in `es.json.providers` | jq shows 29/29 keys | `MessageSchema = typeof en` now compiles (vue-tsc clean) | CRITICAL → resolved | **RESOLVED** |
-| Stale keys (`providersQuotes`, `providersList`) in en+es | `rg` returns 0 matches | `design.md` §7 + §2 reflect removal | WARNING → resolved | **RESOLVED** |
-| `lib/api.ts` `providerKind: string` / `authType: string` | `WireAuthType` type added; 8 fields narrowed | `useProviderCatalog.ts` cast sites removed; `AddProviderDialog.vue:221-222` casts removed | WARNING → resolved | **RESOLVED** |
-| Components in `src/components/providers/` subdir | `ls src/components/` shows flattened layout; subdir gone | `git mv` preserved history; 3 imports updated; `ProviderCategorySection`'s relative `./ProviderCatalogCard.vue` import still works | WARNING → resolved | **RESOLVED** |
-| `tasks.md` checkbox discrepancy | 28 tasks now `[x]`; 10.2–10.10 left `[ ]` with manual-QA note | design + spec implementation are complete; only browser click-through deferred | SUGGESTION → resolved | **RESOLVED** |
-| 5 lucide icons via local map (not `useNavigation` registry) | `design.md` §2 row updated to "NOT MODIFIED" with note | tree-shaking benefit; no architectural regression | SUGGESTION → resolved | **RESOLVED** |
-| Pre-existing `ChartContainer.vue:38` vue-tsc error | Persists in vue-tsc output | Last touched before this change; not in scope | INFO | **PERSISTS (pre-existing)** |
-| Rolldown warnings from `@vueuse/core@14.3.0` | Persists in build output | Third-party, not from our code | INFO | **PERSISTS (pre-existing)** |
-| `wireAuthType()` helper returns inline `'apiKey' \| 'oauth'` instead of `WireAuthType` | Helper at `AddProviderDialog.vue:144` | Cosmetic; type is correctly inferred | NEW SUGGESTION | **NEW** |
-| Two boundary casts in `ProviderDetailsView.vue:44` + `AddProviderDialog.vue:381` | Both at framework boundaries (route param + shadcn Select value) | Legitimate, unrelated to original W2 hot spots | NEW INFO | **NEW** |
+| Finding                                                                                | Judge A (evidence)                                               | Judge B (code)                                                                                                                     | Severity              | Status                      |
+|----------------------------------------------------------------------------------------|------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------|-----------------------------|
+| Missing 13 i18n keys in `es.json.providers`                                            | jq shows 29/29 keys                                              | `MessageSchema = typeof en` now compiles (vue-tsc clean)                                                                           | CRITICAL → resolved   | **RESOLVED**                |
+| Stale keys (`providersQuotes`, `providersList`) in en+es                               | `rg` returns 0 matches                                           | `design.md` §7 + §2 reflect removal                                                                                                | WARNING → resolved    | **RESOLVED**                |
+| `lib/api.ts` `providerKind: string` / `authType: string`                               | `WireAuthType` type added; 8 fields narrowed                     | `useProviderCatalog.ts` cast sites removed; `AddProviderDialog.vue:221-222` casts removed                                          | WARNING → resolved    | **RESOLVED**                |
+| Components in `src/components/providers/` subdir                                       | `ls src/components/` shows flattened layout; subdir gone         | `git mv` preserved history; 3 imports updated; `ProviderCategorySection`'s relative `./ProviderCatalogCard.vue` import still works | WARNING → resolved    | **RESOLVED**                |
+| `tasks.md` checkbox discrepancy                                                        | 28 tasks now `[x]`; 10.2–10.10 left `[ ]` with manual-QA note    | design + spec implementation are complete; only browser click-through deferred                                                     | SUGGESTION → resolved | **RESOLVED**                |
+| 5 lucide icons via local map (not `useNavigation` registry)                            | `design.md` §2 row updated to "NOT MODIFIED" with note           | tree-shaking benefit; no architectural regression                                                                                  | SUGGESTION → resolved | **RESOLVED**                |
+| Pre-existing `ChartContainer.vue:38` vue-tsc error                                     | Persists in vue-tsc output                                       | Last touched before this change; not in scope                                                                                      | INFO                  | **PERSISTS (pre-existing)** |
+| Rolldown warnings from `@vueuse/core@14.3.0`                                           | Persists in build output                                         | Third-party, not from our code                                                                                                     | INFO                  | **PERSISTS (pre-existing)** |
+| `wireAuthType()` helper returns inline `'apiKey' \| 'oauth'` instead of `WireAuthType` | Helper at `AddProviderDialog.vue:144`                            | Cosmetic; type is correctly inferred                                                                                               | NEW SUGGESTION        | **NEW**                     |
+| Two boundary casts in `ProviderDetailsView.vue:44` + `AddProviderDialog.vue:381`       | Both at framework boundaries (route param + shadcn Select value) | Legitimate, unrelated to original W2 hot spots                                                                                     | NEW INFO              | **NEW**                     |
 
 ---
 
@@ -250,6 +251,7 @@ type-hygiene pass.
 #### I1. Two legitimate boundary casts persist (pre-existing pattern)
 
 **Location:**
+
 - `apps/rook/dashboard/src/views/ProviderDetailsView.vue:44` — `route.params.providerKind as ProviderKind`
 - `apps/rook/dashboard/src/components/AddProviderDialog.vue:381` — `kind = v as ProviderKind`
 
@@ -276,9 +278,9 @@ because the schema drift was fixed; only this one pre-existing error remains.
    pipeline is silent on type errors. The design's verification plan listed
    `vue-tsc` as a gate, but nothing in CI enforces it. This is how the
    original C1 escaped.
-   - **Mitigation:** Add a `pnpm exec vue-tsc --noEmit` step to CI before
-     `pnpm run build`. (Filed as a suggestion, not blocking this change —
-     same status as the original report.)
+    - **Mitigation:** Add a `pnpm exec vue-tsc --noEmit` step to CI before
+      `pnpm run build`. (Filed as a suggestion, not blocking this change —
+      same status as the original report.)
 2. **Manual browser QA deferred** (tasks 10.2–10.10). The dialog flows
    (D8 OAuth disabled, test-before-save) are covered by 13 unit tests, but
    visual confirmation in a real browser is still pending. The original

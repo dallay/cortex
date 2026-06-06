@@ -27,63 +27,63 @@
                                        +-------------------------+
 ```
 
-| Layer | Owns | Reads from |
-|---|---|---|
-| Composables | providers list, catalog derivation, mutations | `lib/api.ts` |
-| Views | page-level state (active filter, search query) | composables |
-| Components (cards/lists) | UI state (open dialog, hover) | props + emits |
-| Config | static kind metadata, navigation | constants |
+| Layer                    | Owns                                           | Reads from    |
+|--------------------------|------------------------------------------------|---------------|
+| Composables              | providers list, catalog derivation, mutations  | `lib/api.ts`  |
+| Views                    | page-level state (active filter, search query) | composables   |
+| Components (cards/lists) | UI state (open dialog, hover)                  | props + emits |
+| Config                   | static kind metadata, navigation               | constants     |
 
 ## 2. File Structure
 
-| File | Action | Purpose |
-|---|---|---|
-| `src/views/ProvidersView.vue` | MODIFY | Becomes catalog (table body removed) |
-| `src/views/ProviderDetailsView.vue` | NEW | `/providers/:providerKind` |
-| `src/views/ProvidersQuotaView.vue` | NEW | `/providers/quota` placeholder |
-| `src/components/AddProviderDialog.vue` | MODIFY | Add `providerKind`, `mode`, controlled `v-model:open` |
-| `src/components/EmptyState.vue` | MODIFY | Internally wrap shadcn-vue `Empty`; public API unchanged |
-| `src/components/ProviderCatalogCard.vue` | NEW | Clickable card → details |
-| `src/components/ProviderCategorySection.vue` | NEW | Category header + grid of cards |
-| `src/components/ProviderCatalogFilter.vue` | NEW | Category chips + search input |
-| `src/components/ConnectionListItem.vue` | NEW | Row in details view (test/edit/delete actions) |
-| `src/composables/useProviderCatalog.ts` | NEW | Derived state: per-kind entries with counts |
-| `src/composables/useProviders.ts` | MODIFY | Add `fetchById(id)` |
-| `src/config/providerCatalog.ts` | NEW | Static `PROVIDER_KINDS` metadata |
-| `src/config/navigation.ts` | MODIFY | Replace quotes with quota sub-item |
-| `src/router/index.ts` | MODIFY | 2 new routes, validate `:providerKind` |
-| `src/composables/useNavigation.ts` | NOT MODIFIED | Catalog icons live in a local map inside `ProviderCatalogCard.vue` (Cpu/Sparkles/Brain/Zap/Server) and `ProvidersQuotaView.vue` imports `Fuel` directly. Keeping the sidebar-only `iconRegistry` minimizes its surface and tree-shakes well. |
-| `src/lib/api.ts` | MODIFIED | Tighten `providerKind: ProviderKind` (matches Rust `rename_all = "lowercase"`) and `authType: WireAuthType` (`'apiKey' \| 'oauth'`, matches Rust `rename_all = "camelCase"`). The internal `AuthType` (`'apikey' \| 'oauth'`) in `@/config/providerCatalog` stays for form state; the dialog's `wireAuthType()` helper bridges. |
-| `src/views/sidebar/index.vue` | MODIFY | 3-level breadcrumb when `route.matched.length >= 3` |
-| `src/locales/en.json` + `es.json` | MODIFY | New keys under `providers.{catalog,details,form,kind,quota}` |
-| `src/components/AddProviderDialog.spec.ts` | MODIFY | Pass `providerKind` prop; add OAuth case |
-| `e2e/providers.spec.ts` | MODIFY | Catalog → card → details → test → delete |
+| File                                         | Action       | Purpose                                                                                                                                                                                                                                                                                                                         |
+|----------------------------------------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/views/ProvidersView.vue`                | MODIFY       | Becomes catalog (table body removed)                                                                                                                                                                                                                                                                                            |
+| `src/views/ProviderDetailsView.vue`          | NEW          | `/providers/:providerKind`                                                                                                                                                                                                                                                                                                      |
+| `src/views/ProvidersQuotaView.vue`           | NEW          | `/providers/quota` placeholder                                                                                                                                                                                                                                                                                                  |
+| `src/components/AddProviderDialog.vue`       | MODIFY       | Add `providerKind`, `mode`, controlled `v-model:open`                                                                                                                                                                                                                                                                           |
+| `src/components/EmptyState.vue`              | MODIFY       | Internally wrap shadcn-vue `Empty`; public API unchanged                                                                                                                                                                                                                                                                        |
+| `src/components/ProviderCatalogCard.vue`     | NEW          | Clickable card → details                                                                                                                                                                                                                                                                                                        |
+| `src/components/ProviderCategorySection.vue` | NEW          | Category header + grid of cards                                                                                                                                                                                                                                                                                                 |
+| `src/components/ProviderCatalogFilter.vue`   | NEW          | Category chips + search input                                                                                                                                                                                                                                                                                                   |
+| `src/components/ConnectionListItem.vue`      | NEW          | Row in details view (test/edit/delete actions)                                                                                                                                                                                                                                                                                  |
+| `src/composables/useProviderCatalog.ts`      | NEW          | Derived state: per-kind entries with counts                                                                                                                                                                                                                                                                                     |
+| `src/composables/useProviders.ts`            | MODIFY       | Add `fetchById(id)`                                                                                                                                                                                                                                                                                                             |
+| `src/config/providerCatalog.ts`              | NEW          | Static `PROVIDER_KINDS` metadata                                                                                                                                                                                                                                                                                                |
+| `src/config/navigation.ts`                   | MODIFY       | Replace quotes with quota sub-item                                                                                                                                                                                                                                                                                              |
+| `src/router/index.ts`                        | MODIFY       | 2 new routes, validate `:providerKind`                                                                                                                                                                                                                                                                                          |
+| `src/composables/useNavigation.ts`           | NOT MODIFIED | Catalog icons live in a local map inside `ProviderCatalogCard.vue` (Cpu/Sparkles/Brain/Zap/Server) and `ProvidersQuotaView.vue` imports `Fuel` directly. Keeping the sidebar-only `iconRegistry` minimizes its surface and tree-shakes well.                                                                                    |
+| `src/lib/api.ts`                             | MODIFIED     | Tighten `providerKind: ProviderKind` (matches Rust `rename_all = "lowercase"`) and `authType: WireAuthType` (`'apiKey' \| 'oauth'`, matches Rust `rename_all = "camelCase"`). The internal `AuthType` (`'apikey' \| 'oauth'`) in `@/config/providerCatalog` stays for form state; the dialog's `wireAuthType()` helper bridges. |
+| `src/views/sidebar/index.vue`                | MODIFY       | 3-level breadcrumb when `route.matched.length >= 3`                                                                                                                                                                                                                                                                             |
+| `src/locales/en.json` + `es.json`            | MODIFY       | New keys under `providers.{catalog,details,form,kind,quota}`                                                                                                                                                                                                                                                                    |
+| `src/components/AddProviderDialog.spec.ts`   | MODIFY       | Pass `providerKind` prop; add OAuth case                                                                                                                                                                                                                                                                                        |
+| `e2e/providers.spec.ts`                      | MODIFY       | Catalog → card → details → test → delete                                                                                                                                                                                                                                                                                        |
 
 ## 3. Component Composition
 
-| Component | Props (new in **bold**) | Emits | Wraps |
-|---|---|---|---|
-| `ProviderCatalogCard` | `**providerKind**`, `**displayName**`, `**connectionCount**`, `**category**`, `**hasActiveConnections**` | `**test**`, `**toggle**` | `Card`, `Badge`, `Button`, `Switch` |
-| `ProviderCatalogFilter` | `**categories**`, `**activeCategory**`, `**searchQuery**` | `**update:activeCategory**`, `**update:searchQuery**` | `Toggle` chips, `InputGroup` |
-| `ProviderCategorySection` | `**category**`, `**entries**` | — | `<h2>` + grid of cards |
-| `ConnectionListItem` | `**connection**` | `**test**`, `**edit**`, `**delete**`, `**toggle-proxy**` | `Card`, `StatusBadge`, `Button` |
-| `AddProviderDialog` | `**providerKind?`**, `**mode = 'create'`**, `**connectionId?`** | `**update:open**` | shadcn-vue `Dialog`, `FieldGroup`/`Field`, `ToggleGroup` (auth type) |
-| `EmptyState` | same (`title`, `description`, `icon`) | — | shadcn-vue `Empty` + `EmptyHeader` + `EmptyTitle` + `EmptyDescription` + `EmptyContent` (default slot) |
+| Component                 | Props (new in **bold**)                                                                                  | Emits                                                    | Wraps                                                                                                  |
+|---------------------------|----------------------------------------------------------------------------------------------------------|----------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| `ProviderCatalogCard`     | `**providerKind**`, `**displayName**`, `**connectionCount**`, `**category**`, `**hasActiveConnections**` | `**test**`, `**toggle**`                                 | `Card`, `Badge`, `Button`, `Switch`                                                                    |
+| `ProviderCatalogFilter`   | `**categories**`, `**activeCategory**`, `**searchQuery**`                                                | `**update:activeCategory**`, `**update:searchQuery**`    | `Toggle` chips, `InputGroup`                                                                           |
+| `ProviderCategorySection` | `**category**`, `**entries**`                                                                            | —                                                        | `<h2>` + grid of cards                                                                                 |
+| `ConnectionListItem`      | `**connection**`                                                                                         | `**test**`, `**edit**`, `**delete**`, `**toggle-proxy**` | `Card`, `StatusBadge`, `Button`                                                                        |
+| `AddProviderDialog`       | `**providerKind?`**, `**mode = 'create'`**, `**connectionId?`**                                          | `**update:open**`                                        | shadcn-vue `Dialog`, `FieldGroup`/`Field`, `ToggleGroup` (auth type)                                   |
+| `EmptyState`              | same (`title`, `description`, `icon`)                                                                    | —                                                        | shadcn-vue `Empty` + `EmptyHeader` + `EmptyTitle` + `EmptyDescription` + `EmptyContent` (default slot) |
 
 `ProvidersView` (catalog) groups `useProviderCatalog().entries` by `category` and renders a `ProviderCategorySection` per group. `ProviderDetailsView` subscribes to `useProviders().providers` and filters by `route.params.providerKind`. `ProvidersQuotaView` is pure presentational (mock data + `Alert` banner).
 
 ## 4. Architecture Decisions
 
-| # | Decision | Alternatives | Rationale |
-|---|---|---|---|
-| D1 | Keep `useProviders`, add thin `useProviderCatalog` derived composable | Split into `useProviderCatalog` + `useProviderConnections` (full split) | Catalog only needs counts + displayName; full split adds 2 files for 5 kinds. Single `useProviders` source of truth, derived `ComputedRef` is enough. |
-| D2 | No Pinia store | Add Pinia store for providers | Providers data is request-scoped, < 50 records, mutated via 7 composable methods. Pinia is overkill. |
-| D3 | Static `PROVIDER_KINDS` in TS | Backend-served `GET /api/providers/kinds` | 5 kinds are stable; revisit at 6th kind. Avoid premature API surface. |
-| D4 | Wrap shadcn-vue `Empty` inside existing `EmptyState` (public API unchanged) | Replace `EmptyState` with direct shadcn usage | Back-compat with all current callsites (ProvidersView, HomeView, etc.) without test changes. |
-| D5 | Catalog is route `/providers` (not `/providers/catalog`) | Add `/providers/catalog` | Keeps current URL stable for the primary "Providers" entry point; no redirect required. |
-| D6 | Modal controlled by parent via `v-model:open` | Self-managed `open` ref (today) | Required so both catalog and details can own the modal's lifecycle and reset cleanly. |
-| D7 | `providerKind` route param validated in `beforeEnter` | Validate in view's `onMounted` | Catch invalid URLs at navigation time, redirect to catalog (better UX, no flash of error). |
-| D8 | OAuth form is rendered disabled with notice | Remove OAuth option entirely | Keeps form shape forward-compatible when OAuth flow lands (follow-up issue). |
+| #  | Decision                                                                    | Alternatives                                                            | Rationale                                                                                                                                             |
+|----|-----------------------------------------------------------------------------|-------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| D1 | Keep `useProviders`, add thin `useProviderCatalog` derived composable       | Split into `useProviderCatalog` + `useProviderConnections` (full split) | Catalog only needs counts + displayName; full split adds 2 files for 5 kinds. Single `useProviders` source of truth, derived `ComputedRef` is enough. |
+| D2 | No Pinia store                                                              | Add Pinia store for providers                                           | Providers data is request-scoped, < 50 records, mutated via 7 composable methods. Pinia is overkill.                                                  |
+| D3 | Static `PROVIDER_KINDS` in TS                                               | Backend-served `GET /api/providers/kinds`                               | 5 kinds are stable; revisit at 6th kind. Avoid premature API surface.                                                                                 |
+| D4 | Wrap shadcn-vue `Empty` inside existing `EmptyState` (public API unchanged) | Replace `EmptyState` with direct shadcn usage                           | Back-compat with all current callsites (ProvidersView, HomeView, etc.) without test changes.                                                          |
+| D5 | Catalog is route `/providers` (not `/providers/catalog`)                    | Add `/providers/catalog`                                                | Keeps current URL stable for the primary "Providers" entry point; no redirect required.                                                               |
+| D6 | Modal controlled by parent via `v-model:open`                               | Self-managed `open` ref (today)                                         | Required so both catalog and details can own the modal's lifecycle and reset cleanly.                                                                 |
+| D7 | `providerKind` route param validated in `beforeEnter`                       | Validate in view's `onMounted`                                          | Catch invalid URLs at navigation time, redirect to catalog (better UX, no flash of error).                                                            |
+| D8 | OAuth form is rendered disabled with notice                                 | Remove OAuth option entirely                                            | Keeps form shape forward-compatible when OAuth flow lands (follow-up issue).                                                                          |
 
 ## 5. Routing Changes
 
@@ -168,15 +168,15 @@ Remove `nav.providersQuotes`, `nav.providersList`, and `breadcrumb.providersQuot
 
 ## 8. AddProviderDialog Refactor
 
-| Behavior | Today | Target |
-|---|---|---|
-| `providerKind` | hardcoded `'ollama'` | prop, optional (catalog case shows selector) |
-| `mode` | implicit create | prop `'create' \| 'edit'`, default `'create'` |
-| Auth type | implicit `apiKey` | `ToggleGroup` (apikey / oauth); OAuth form is disabled with notice |
-| Edit prefill | n/a | name/model/priority from `fetchById(id)`; apiKey left empty |
-| Open trigger | self-managed `ref(false)` | `v-model:open` from parent; close → `resetForm()` |
-| Validation | name + apiKey required | + priority 1-100; Save enabled only when `testResult.ok === true` |
-| Test flow | `testCredentials(payload)` | same; result drives Save button |
+| Behavior       | Today                      | Target                                                             |
+|----------------|----------------------------|--------------------------------------------------------------------|
+| `providerKind` | hardcoded `'ollama'`       | prop, optional (catalog case shows selector)                       |
+| `mode`         | implicit create            | prop `'create' \| 'edit'`, default `'create'`                      |
+| Auth type      | implicit `apiKey`          | `ToggleGroup` (apikey / oauth); OAuth form is disabled with notice |
+| Edit prefill   | n/a                        | name/model/priority from `fetchById(id)`; apiKey left empty        |
+| Open trigger   | self-managed `ref(false)`  | `v-model:open` from parent; close → `resetForm()`                  |
+| Validation     | name + apiKey required     | + priority 1-100; Save enabled only when `testResult.ok === true`  |
+| Test flow      | `testCredentials(payload)` | same; result drives Save button                                    |
 
 Use `FieldGroup` + `Field` per shadcn-vue form conventions. The `useProviderForm` composable is **deferred** — keep validation inline in the dialog for v1.
 
@@ -199,16 +199,16 @@ Public API unchanged: `{ title, description, icon }` props + default slot. No ca
 
 ## 10. Risks & Mitigations
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| i18n drift between en/es (pre-existing 13-line gap) | High | Mirror every new key; `MessageSchema = typeof en` enforces it. Do NOT fix pre-existing drift. |
-| 3-level breadcrumb regresses 2-level pages | Med | Guard with `route.matched.length >= 3`; smoke-test Home, API Keys, Combos, Settings. |
-| `AddProviderDialog.spec.ts` rewrite breaks unrelated tests | Med | Keep `shallowMount` pattern; default `providerKind: 'ollama'` in spec helper. |
-| shadcn-vue `Empty` composition differs from current | Low | Test in browser during `sdd-verify`; public API kept identical. |
-| TypeScript union tightening surfaces loose call sites | Med | Add type guard helper; do not change wire protocol. |
-| Quota placeholder mistaken for shipped feature | Low | `Alert` banner + `EmptyState` ("Coming soon") explicit. |
-| Provider CRUD limitation (TOML serves traffic, not SQLite) | Med | Tooltip on catalog: "Saved providers require a server restart to serve traffic." |
-| 5 new lucide icons add bundle weight | Low | ~5 KB tree-shaken; negligible. |
+| Risk                                                       | Likelihood | Mitigation                                                                                    |
+|------------------------------------------------------------|------------|-----------------------------------------------------------------------------------------------|
+| i18n drift between en/es (pre-existing 13-line gap)        | High       | Mirror every new key; `MessageSchema = typeof en` enforces it. Do NOT fix pre-existing drift. |
+| 3-level breadcrumb regresses 2-level pages                 | Med        | Guard with `route.matched.length >= 3`; smoke-test Home, API Keys, Combos, Settings.          |
+| `AddProviderDialog.spec.ts` rewrite breaks unrelated tests | Med        | Keep `shallowMount` pattern; default `providerKind: 'ollama'` in spec helper.                 |
+| shadcn-vue `Empty` composition differs from current        | Low        | Test in browser during `sdd-verify`; public API kept identical.                               |
+| TypeScript union tightening surfaces loose call sites      | Med        | Add type guard helper; do not change wire protocol.                                           |
+| Quota placeholder mistaken for shipped feature             | Low        | `Alert` banner + `EmptyState` ("Coming soon") explicit.                                       |
+| Provider CRUD limitation (TOML serves traffic, not SQLite) | Med        | Tooltip on catalog: "Saved providers require a server restart to serve traffic."              |
+| 5 new lucide icons add bundle weight                       | Low        | ~5 KB tree-shaken; negligible.                                                                |
 
 ## 11. Verification Plan
 
@@ -222,6 +222,7 @@ cd apps/rook/dashboard && pnpm exec vitest run
 ```
 
 **Manual browser flow:**
+
 1. `/providers` → catalog grid grouped by category, all 5 kinds visible
 2. Click `API Key` chip → only API Key kinds; click again → all
 3. Type `ollama` in search → only Ollama card
@@ -236,6 +237,7 @@ cd apps/rook/dashboard && pnpm exec vitest run
 12. `pnpm exec vitest run` → all specs pass (including updated `AddProviderDialog.spec.ts`)
 
 **Verification gates per project AGENTS.md:**
+
 - `just fmt-check` clean
 - `just clippy` clean (no backend changes)
 - `just test-unit` green

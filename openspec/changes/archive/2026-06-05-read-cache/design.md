@@ -6,13 +6,13 @@ Content-based cache keys via SHA-256 hash (model + messages + params). LRU evict
 
 ## Architecture Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Hashing location | Domain (`CompletionRequest::cache_key()`) | Domain knows semantic fields vs ephemeral. Infrastructure only stores/retrieves. |
-| LRU strategy | Separate `DashMap<CacheKey, Instant>`, single-writer eviction | Lock-free reads. Eviction lock minimal. Deterministic behavior. |
-| Stats tracking | `AtomicU64` counters, eventual consistency | Hot path—atomic cheaper than locks. Slight lag acceptable. |
-| HTTP access | Direct `CachePort` via `Arc<dyn CachePort>` | No business logic. Handlers already access ports directly. |
-| Config validation | Startup (`validate()` on load) | Fail fast. Reject `ttl_secs > 86400`. No runtime cost. |
+| Decision          | Choice                                                        | Rationale                                                                        |
+|-------------------|---------------------------------------------------------------|----------------------------------------------------------------------------------|
+| Hashing location  | Domain (`CompletionRequest::cache_key()`)                     | Domain knows semantic fields vs ephemeral. Infrastructure only stores/retrieves. |
+| LRU strategy      | Separate `DashMap<CacheKey, Instant>`, single-writer eviction | Lock-free reads. Eviction lock minimal. Deterministic behavior.                  |
+| Stats tracking    | `AtomicU64` counters, eventual consistency                    | Hot path—atomic cheaper than locks. Slight lag acceptable.                       |
+| HTTP access       | Direct `CachePort` via `Arc<dyn CachePort>`                   | No business logic. Handlers already access ports directly.                       |
+| Config validation | Startup (`validate()` on load)                                | Fail fast. Reject `ttl_secs > 86400`. No runtime cost.                           |
 
 ## Data Flow
 
@@ -143,16 +143,16 @@ impl CacheConfig {
 
 ## Testing Strategy
 
-| Layer | Test | Assertion |
-|-------|------|-----------|
+| Layer  | Test                      | Assertion                               |
+|--------|---------------------------|-----------------------------------------|
 | Domain | `cache_key()` determinism | Same inputs → same signature (100 runs) |
-| Domain | Field exclusion | Changing `id`/`stream` → same signature |
-| Infra | LRU eviction | Fill + 1 → oldest evicted |
-| Infra | Stats accuracy | ops → counters match exactly |
-| Infra | Concurrent access | 100 threads → no panics |
-| HTTP | `/api/cache/stats` | JSON with entries |
-| HTTP | `DELETE /api/cache` | entries = 0 |
-| HTTP | `DELETE /api/cache/:sig` | 204 or 404 |
+| Domain | Field exclusion           | Changing `id`/`stream` → same signature |
+| Infra  | LRU eviction              | Fill + 1 → oldest evicted               |
+| Infra  | Stats accuracy            | ops → counters match exactly            |
+| Infra  | Concurrent access         | 100 threads → no panics                 |
+| HTTP   | `/api/cache/stats`        | JSON with entries                       |
+| HTTP   | `DELETE /api/cache`       | entries = 0                             |
+| HTTP   | `DELETE /api/cache/:sig`  | 204 or 404                              |
 
 ## Migration
 
@@ -163,14 +163,14 @@ impl CacheConfig {
 
 ## File Changes
 
-| File | Action | Description |
-|------|--------|-------------|
-| `shared-kernel/src/lib.rs` | Modify | Add `signature: String` to `CacheKey`, `Display` impl |
-| `rook-core/src/model.rs` | Modify | Add `CacheStats` struct, update `CompletionRequest::cache_key()` |
-| `rook-core/src/ports.rs` | Modify | Add `CachePort::stats()` method |
-| `cache-memory/src/lib.rs` | Modify | Add LRU tracking (`last_accessed`), stats counters, eviction, `stats()` |
-| `apps/rook/src/config.rs` | Modify | Add `max_entries` field, `validate()` method |
-| `rook-usecases/src/route_request.rs` | Modify | Increment `hits`/`misses` counters on cache ops |
-| `transport-axum/src/handlers/cache.rs` | Create | Handlers: `get_cache_stats`, `clear_cache`, `delete_cache_entry` |
-| `transport-axum/src/routes.rs` | Modify | Wire 3 cache routes, extend `/health` with cache stats |
-| `observability/src/metrics.rs` | Modify | Add `rook_cache_evictions` counter |
+| File                                   | Action | Description                                                             |
+|----------------------------------------|--------|-------------------------------------------------------------------------|
+| `shared-kernel/src/lib.rs`             | Modify | Add `signature: String` to `CacheKey`, `Display` impl                   |
+| `rook-core/src/model.rs`               | Modify | Add `CacheStats` struct, update `CompletionRequest::cache_key()`        |
+| `rook-core/src/ports.rs`               | Modify | Add `CachePort::stats()` method                                         |
+| `cache-memory/src/lib.rs`              | Modify | Add LRU tracking (`last_accessed`), stats counters, eviction, `stats()` |
+| `apps/rook/src/config.rs`              | Modify | Add `max_entries` field, `validate()` method                            |
+| `rook-usecases/src/route_request.rs`   | Modify | Increment `hits`/`misses` counters on cache ops                         |
+| `transport-axum/src/handlers/cache.rs` | Create | Handlers: `get_cache_stats`, `clear_cache`, `delete_cache_entry`        |
+| `transport-axum/src/routes.rs`         | Modify | Wire 3 cache routes, extend `/health` with cache stats                  |
+| `observability/src/metrics.rs`         | Modify | Add `rook_cache_evictions` counter                                      |

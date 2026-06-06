@@ -10,22 +10,22 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | 1100–1400 |
-| 400-line budget risk | High |
-| Chained PRs recommended | Yes (advisory) |
-| Suggested split | PR A (Foundation) → PR B (Views & Routes) → PR C (Polish & Verify) |
-| Delivery strategy | single-pr |
-| Chain strategy | pending |
+| Field                   | Value                                                              |
+|-------------------------|--------------------------------------------------------------------|
+| Estimated changed lines | 1100–1400                                                          |
+| 400-line budget risk    | High                                                               |
+| Chained PRs recommended | Yes (advisory)                                                     |
+| Suggested split         | PR A (Foundation) → PR B (Views & Routes) → PR C (Polish & Verify) |
+| Delivery strategy       | single-pr                                                          |
+| Chain strategy          | pending                                                            |
 
 ### Suggested Work Units
 
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | Catalog data, composable, i18n keys, `EmptyState` wrap, dialog refactor + spec | PR A | Base = main |
-| 2 | Catalog/Details/Quota views, routes, nav, breadcrumb | PR B | Stacked on PR A |
-| 3 | Manual UI verify, follow-up issue, final CI + push | PR C | Stacked on PR B |
+| Unit | Goal                                                                           | Likely PR | Notes           |
+|------|--------------------------------------------------------------------------------|-----------|-----------------|
+| 1    | Catalog data, composable, i18n keys, `EmptyState` wrap, dialog refactor + spec | PR A      | Base = main     |
+| 2    | Catalog/Details/Quota views, routes, nav, breadcrumb                           | PR B      | Stacked on PR A |
+| 3    | Manual UI verify, follow-up issue, final CI + push                             | PR C      | Stacked on PR B |
 
 Decision needed before apply: No
 Chained PRs recommended: Yes

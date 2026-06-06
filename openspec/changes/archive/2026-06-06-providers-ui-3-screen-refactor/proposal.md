@@ -20,34 +20,34 @@ This refactor lands the navigation skeleton and a per-kind details view, so addi
 
 ### ADD — New views and components
 
-| Path | Purpose |
-|---|---|
-| `apps/rook/dashboard/src/views/ProvidersCatalogView.vue` | New catalog: grid of `ProviderCatalogCard`s grouped by category (API Key, OAuth, Local) |
-| `apps/rook/dashboard/src/views/ProviderDetailsView.vue` | `/providers/:providerKind` — header + list of connections for that kind, add/test-all/edit/delete actions |
-| `apps/rook/dashboard/src/views/ProvidersQuotaView.vue` | `/providers/quota` — placeholder with mocked data + banner explaining per-provider variation + link to follow-up issue |
-| `apps/rook/dashboard/src/components/ProviderCatalogCard.vue` | Reusable card (name, status pill, connection count, enable toggle, test action) |
-| `apps/rook/dashboard/src/components/ProviderCategorySection.vue` | Wraps category header + grid of cards |
-| `apps/rook/dashboard/src/components/ProviderCatalogFilter.vue` | Category filter chips + search input |
-| `apps/rook/dashboard/src/composables/useProviderCatalog.ts` | Derived state: group connections by kind, count per kind, search/filter pipeline |
-| `apps/rook/dashboard/src/config/providerCatalog.ts` | Static `PROVIDER_KINDS` metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconName) |
-| `apps/rook/dashboard/src/composables/useProviderConnections.ts` | New composable with `fetchById()` (and split from `useProviders` for kind vs. connection concerns — see Open Questions) |
+| Path                                                             | Purpose                                                                                                                 |
+|------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| `apps/rook/dashboard/src/views/ProvidersCatalogView.vue`         | New catalog: grid of `ProviderCatalogCard`s grouped by category (API Key, OAuth, Local)                                 |
+| `apps/rook/dashboard/src/views/ProviderDetailsView.vue`          | `/providers/:providerKind` — header + list of connections for that kind, add/test-all/edit/delete actions               |
+| `apps/rook/dashboard/src/views/ProvidersQuotaView.vue`           | `/providers/quota` — placeholder with mocked data + banner explaining per-provider variation + link to follow-up issue  |
+| `apps/rook/dashboard/src/components/ProviderCatalogCard.vue`     | Reusable card (name, status pill, connection count, enable toggle, test action)                                         |
+| `apps/rook/dashboard/src/components/ProviderCategorySection.vue` | Wraps category header + grid of cards                                                                                   |
+| `apps/rook/dashboard/src/components/ProviderCatalogFilter.vue`   | Category filter chips + search input                                                                                    |
+| `apps/rook/dashboard/src/composables/useProviderCatalog.ts`      | Derived state: group connections by kind, count per kind, search/filter pipeline                                        |
+| `apps/rook/dashboard/src/config/providerCatalog.ts`              | Static `PROVIDER_KINDS` metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconName)         |
+| `apps/rook/dashboard/src/composables/useProviderConnections.ts`  | New composable with `fetchById()` (and split from `useProviders` for kind vs. connection concerns — see Open Questions) |
 
 ### MODIFY — Existing files
 
-| Path | Change |
-|---|---|
-| `apps/rook/dashboard/src/views/ProvidersView.vue` | Replace flat table with `ProvidersCatalogView` body. Keep file name (no rename). |
-| `apps/rook/dashboard/src/components/AddProviderDialog.vue` | Add props: `providerKind: ProviderKind`, `providerId?: string`, `mode: 'create' \| 'edit'`. Controlled by parent via `v-model:open`. Add `authType` toggle (API Key / OAuth). Per-kind default `baseUrl`. |
-| `apps/rook/dashboard/src/components/EmptyState.vue` | Internally wrap shadcn-vue `Empty` primitive. Public API (`title`, `description`, `icon`) unchanged. |
-| `apps/rook/dashboard/src/router/index.ts` | Add `/providers/:providerKind` and `/providers/quota` routes. Validate `:providerKind` against `ProviderKind` union. |
-| `apps/rook/dashboard/src/config/navigation.ts` | Replace `providersQuotes` item with `providersQuota` (→ `/providers/quota`). Remove `providersList` (catalog is the default landing for "Providers"). |
-| `apps/rook/dashboard/src/views/sidebar/index.vue` | Extend global breadcrumb to 3 levels when `route.matched.length >= 3` (Home → Providers → `<kind>`). |
-| `apps/rook/dashboard/src/composables/useNavigation.ts` | Register 5 new icons: `Sparkles`/`Bot`, `Brain`, `Server`/`Cpu`, `Stars`, `Zap`. |
-| `apps/rook/dashboard/src/lib/api.ts` | Add `export type ProviderKind = 'openai' \| 'anthropic' \| 'ollama' \| 'gemini' \| 'groq'`. Tighten `providerKind` and `authType` fields from `string` to the union. |
-| `apps/rook/dashboard/src/composables/useProviders.ts` | Add `fetchById(id)`. (Optional split — see Open Questions.) |
-| `apps/rook/dashboard/src/i18n/en.json` and `es.json` | Add keys: `providers.catalog.*`, `providers.details.*`, `providers.kind.*` (per-kind display names + descriptions), `providers.dialog.edit.*`, `providers.quota.*`, `providers.filters.*`. **Mirror all keys in both files.** |
-| `apps/rook/dashboard/src/components/AddProviderDialog.spec.ts` | Update test to pass new `providerKind` prop. Add OAuth form coverage. |
-| `apps/rook/dashboard/e2e/providers.spec.ts` | Extend E2E: catalog → card → details → test → delete. |
+| Path                                                           | Change                                                                                                                                                                                                                        |
+|----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `apps/rook/dashboard/src/views/ProvidersView.vue`              | Replace flat table with `ProvidersCatalogView` body. Keep file name (no rename).                                                                                                                                              |
+| `apps/rook/dashboard/src/components/AddProviderDialog.vue`     | Add props: `providerKind: ProviderKind`, `providerId?: string`, `mode: 'create' \| 'edit'`. Controlled by parent via `v-model:open`. Add `authType` toggle (API Key / OAuth). Per-kind default `baseUrl`.                     |
+| `apps/rook/dashboard/src/components/EmptyState.vue`            | Internally wrap shadcn-vue `Empty` primitive. Public API (`title`, `description`, `icon`) unchanged.                                                                                                                          |
+| `apps/rook/dashboard/src/router/index.ts`                      | Add `/providers/:providerKind` and `/providers/quota` routes. Validate `:providerKind` against `ProviderKind` union.                                                                                                          |
+| `apps/rook/dashboard/src/config/navigation.ts`                 | Replace `providersQuotes` item with `providersQuota` (→ `/providers/quota`). Remove `providersList` (catalog is the default landing for "Providers").                                                                         |
+| `apps/rook/dashboard/src/views/sidebar/index.vue`              | Extend global breadcrumb to 3 levels when `route.matched.length >= 3` (Home → Providers → `<kind>`).                                                                                                                          |
+| `apps/rook/dashboard/src/composables/useNavigation.ts`         | Register 5 new icons: `Sparkles`/`Bot`, `Brain`, `Server`/`Cpu`, `Stars`, `Zap`.                                                                                                                                              |
+| `apps/rook/dashboard/src/lib/api.ts`                           | Add `export type ProviderKind = 'openai' \| 'anthropic' \| 'ollama' \| 'gemini' \| 'groq'`. Tighten `providerKind` and `authType` fields from `string` to the union.                                                          |
+| `apps/rook/dashboard/src/composables/useProviders.ts`          | Add `fetchById(id)`. (Optional split — see Open Questions.)                                                                                                                                                                   |
+| `apps/rook/dashboard/src/i18n/en.json` and `es.json`           | Add keys: `providers.catalog.*`, `providers.details.*`, `providers.kind.*` (per-kind display names + descriptions), `providers.dialog.edit.*`, `providers.quota.*`, `providers.filters.*`. **Mirror all keys in both files.** |
+| `apps/rook/dashboard/src/components/AddProviderDialog.spec.ts` | Update test to pass new `providerKind` prop. Add OAuth form coverage.                                                                                                                                                         |
+| `apps/rook/dashboard/e2e/providers.spec.ts`                    | Extend E2E: catalog → card → details → test → delete.                                                                                                                                                                         |
 
 ### REMOVE
 
@@ -99,33 +99,33 @@ This refactor is a **UI restructure only**. The existing backend capability `pro
 
 ## 6. Affected Areas
 
-| Area | Impact | Description |
-|---|---|---|
-| `apps/rook/dashboard/src/views/ProvidersView.vue` | Modified | Replaced by `ProvidersCatalogView` body (file name preserved) |
+| Area                                                       | Impact   | Description                                                                   |
+|------------------------------------------------------------|----------|-------------------------------------------------------------------------------|
+| `apps/rook/dashboard/src/views/ProvidersView.vue`          | Modified | Replaced by `ProvidersCatalogView` body (file name preserved)                 |
 | `apps/rook/dashboard/src/components/AddProviderDialog.vue` | Modified | New `providerKind`/`mode`/`authType` props, controlled open state, OAuth form |
-| `apps/rook/dashboard/src/components/EmptyState.vue` | Modified | Internal shadcn-vue `Empty` wrap, public API unchanged |
-| `apps/rook/dashboard/src/router/index.ts` | Modified | Add `/providers/:providerKind` and `/providers/quota` |
-| `apps/rook/dashboard/src/config/navigation.ts` | Modified | `providersQuota` replaces `providersQuotes`; drop `providersList` |
-| `apps/rook/dashboard/src/views/sidebar/index.vue` | Modified | 3-level breadcrumb when `route.matched.length >= 3` |
-| `apps/rook/dashboard/src/i18n/{en,es}.json` | Modified | New keys mirrored in both files |
-| `apps/rook/dashboard/src/composables/useProviders.ts` | Modified | Add `fetchById` |
-| `apps/rook/dashboard/src/lib/api.ts` | Modified | `ProviderKind` and `AuthType` type unions |
-| `apps/rook/dashboard/src/composables/useNavigation.ts` | Modified | 5 new icon registrations |
-| Backend (`crates/*`) | None | No changes |
+| `apps/rook/dashboard/src/components/EmptyState.vue`        | Modified | Internal shadcn-vue `Empty` wrap, public API unchanged                        |
+| `apps/rook/dashboard/src/router/index.ts`                  | Modified | Add `/providers/:providerKind` and `/providers/quota`                         |
+| `apps/rook/dashboard/src/config/navigation.ts`             | Modified | `providersQuota` replaces `providersQuotes`; drop `providersList`             |
+| `apps/rook/dashboard/src/views/sidebar/index.vue`          | Modified | 3-level breadcrumb when `route.matched.length >= 3`                           |
+| `apps/rook/dashboard/src/i18n/{en,es}.json`                | Modified | New keys mirrored in both files                                               |
+| `apps/rook/dashboard/src/composables/useProviders.ts`      | Modified | Add `fetchById`                                                               |
+| `apps/rook/dashboard/src/lib/api.ts`                       | Modified | `ProviderKind` and `AuthType` type unions                                     |
+| `apps/rook/dashboard/src/composables/useNavigation.ts`     | Modified | 5 new icon registrations                                                      |
+| Backend (`crates/*`)                                       | None     | No changes                                                                    |
 
 ---
 
 ## 7. Risks
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| i18n key drift between `en.json` and `es.json` (already 13-line gap) | High | Mirror every new key in both files; CI / `vue-tsc` will fail if missing. Do not fix pre-existing drift in this PR. |
-| `AddProviderDialog.spec.ts` rewrite breaks unrelated tests | Med | Update test as part of the dialog refactor; keep shallowMount pattern. |
-| Global breadcrumb extension to 3 levels breaks 2-level pages | Med | Guard with `route.matched.length >= 3`; smoke-test Home, ApiKeys, Combos, Models, Settings. |
-| TypeScript union tightening in `lib/api.ts` surfaces pre-existing loose typing | Med | Fix or cast at the call site; do NOT change the wire protocol. |
-| 5 new lucide icons add bundle weight | Low | ~5 KB tree-shaken; negligible for the catalog view. |
-| Quota placeholder ships as "Coming soon" and is mistaken for shipped feature | Low | Banner + `Coming soon` empty state explicitly mark it as not real. |
-| Provider CRUD limitation (TOML providers serve traffic, not SQLite) surprises users | Med | Add a `Tooltip`/banner on the catalog: "Saved providers are persisted but require a server restart to serve traffic." (Pre-existing limitation, surfaced as UX expectation.) |
+| Risk                                                                                | Likelihood | Mitigation                                                                                                                                                                   |
+|-------------------------------------------------------------------------------------|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| i18n key drift between `en.json` and `es.json` (already 13-line gap)                | High       | Mirror every new key in both files; CI / `vue-tsc` will fail if missing. Do not fix pre-existing drift in this PR.                                                           |
+| `AddProviderDialog.spec.ts` rewrite breaks unrelated tests                          | Med        | Update test as part of the dialog refactor; keep shallowMount pattern.                                                                                                       |
+| Global breadcrumb extension to 3 levels breaks 2-level pages                        | Med        | Guard with `route.matched.length >= 3`; smoke-test Home, ApiKeys, Combos, Models, Settings.                                                                                  |
+| TypeScript union tightening in `lib/api.ts` surfaces pre-existing loose typing      | Med        | Fix or cast at the call site; do NOT change the wire protocol.                                                                                                               |
+| 5 new lucide icons add bundle weight                                                | Low        | ~5 KB tree-shaken; negligible for the catalog view.                                                                                                                          |
+| Quota placeholder ships as "Coming soon" and is mistaken for shipped feature        | Low        | Banner + `Coming soon` empty state explicitly mark it as not real.                                                                                                           |
+| Provider CRUD limitation (TOML providers serve traffic, not SQLite) surprises users | Med        | Add a `Tooltip`/banner on the catalog: "Saved providers are persisted but require a server restart to serve traffic." (Pre-existing limitation, surfaced as UX expectation.) |
 
 ---
 
@@ -134,6 +134,7 @@ This refactor is a **UI restructure only**. The existing backend capability `pro
 Frontend-only change. Rollback = revert the PR (or `git revert`). No DB migrations, no API contract changes, no feature flags needed. The previous `ProvidersView.vue` flat-table behavior is fully recoverable from git history.
 
 If the dialog refactor ships bugs, the safest interim state is to:
+
 1. Keep `AddProviderDialog.vue` accepting the new props (back-compat by making `providerKind` optional, defaulting to `'ollama'`).
 2. Land the catalog/details views first behind the new routes.
 3. Cut over the `AddProviderDialog` callers last.
