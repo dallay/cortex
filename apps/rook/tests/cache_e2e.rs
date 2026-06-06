@@ -408,7 +408,7 @@ async fn test_token_cache_hit_increments_metrics() {
     // Record the token cache hit with cost >= 0.005 (0.5 cents minimum for rounding)
     // Use cache_read_tokens (100) instead of total_tokens (150) since only cached prompt tokens are saved
     cache
-        .increment_token_cache_hit(response.usage.cache_read_tokens.unwrap() as u64, 0.01)
+        .increment_token_cache_hit(response.usage.cache_read_tokens.unwrap(), 0.01)
         .await
         .expect("increment token cache hit");
 
