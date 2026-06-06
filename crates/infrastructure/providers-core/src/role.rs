@@ -1,5 +1,6 @@
 // role.rs — Role enum for provider message roles
 
+use rook_core::Role as CoreRole;
 use serde::{Deserialize, Serialize};
 
 /// Role in a conversation message.
@@ -26,6 +27,20 @@ impl Role {
             Role::Assistant => "assistant",
             Role::Tool => "tool",
         }
+    }
+}
+
+/// Convert `rook_core::Role` to the wire-format string for OpenAI-compatible APIs.
+///
+/// This is the helper that all providers should use instead of inline match blocks.
+/// Handles the `Developer` role by mapping it to `"developer"` (not `"system"`),
+/// since not all providers map Developer → System.
+pub fn role_to_string(role: CoreRole) -> &'static str {
+    match role {
+        CoreRole::System => "system",
+        CoreRole::User => "user",
+        CoreRole::Assistant => "assistant",
+        CoreRole::Developer => "developer",
     }
 }
 
@@ -61,6 +76,15 @@ mod tests {
         assert_eq!(Role::User.to_role_string(), "user");
         assert_eq!(Role::Assistant.to_role_string(), "assistant");
         assert_eq!(Role::Tool.to_role_string(), "tool");
+    }
+
+    #[test]
+    fn test_role_to_string_core_role() {
+        // role_to_string takes CoreRole (from rook_core), not the local Role enum
+        assert_eq!(role_to_string(CoreRole::System), "system");
+        assert_eq!(role_to_string(CoreRole::User), "user");
+        assert_eq!(role_to_string(CoreRole::Assistant), "assistant");
+        assert_eq!(role_to_string(CoreRole::Developer), "developer");
     }
 
     #[test]
