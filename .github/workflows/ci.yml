@@ -424,6 +424,8 @@ jobs:
           flags: backend
           fail_ci_if_error: true
           verbose: true
+          disable_search: true
+          disable_file_fixes: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -456,6 +458,8 @@ jobs:
           flags: frontend
           fail_ci_if_error: true
           verbose: true
+          disable_search: true
+          disable_file_fixes: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
