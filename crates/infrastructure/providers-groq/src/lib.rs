@@ -2,13 +2,14 @@
 
 use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
+use providers_core::{parse_event_text, sanitize_body, SseEvent};
 use reqwest::Client;
 use rook_core::{
-    ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
-    StreamChunk, TokenUsage,
+    ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
+    ProviderPort, StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
-use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
@@ -79,6 +80,49 @@ impl GroqProviderConfig {
     }
 }
 
+/// Map a Groq HTTP error response to a typed `CortexError`.
+///
+/// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
+async fn map_groq_http_error(provider_id: &ProviderId, resp: reqwest::Response) -> CortexError {
+    let status = resp.status();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    let reset_at = resp
+        .headers()
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    let raw_body = resp.text().await.unwrap_or_default();
+    let sanitized = sanitize_body(&raw_body);
+
+    match status.as_u16() {
+        401 => CortexError::auth_failed("Groq authentication failed"),
+        429 => {
+            let retry_secs = retry_after.unwrap_or(60);
+            if let Some(reset) = reset_at {
+                CortexError::rate_limited_with_reset(provider_id.clone(), retry_secs, reset)
+            } else {
+                CortexError::rate_limited(provider_id.clone(), retry_secs)
+            }
+        }
+        400 => CortexError::invalid_request(sanitized),
+        _ => CortexError::provider(format!("Groq error {status}: {sanitized}")),
+    }
+}
+
+/// Convert rook_core::Role to a string for Groq API.
+fn role_to_string(role: &rook_core::Role) -> String {
+    match role {
+        rook_core::Role::System => "system".to_string(),
+        rook_core::Role::User => "user".to_string(),
+        rook_core::Role::Assistant => "assistant".to_string(),
+        rook_core::Role::Developer => "developer".to_string(),
+    }
+}
+
 pub struct GroqProvider {
     config: GroqProviderConfig,
     client: Client,
@@ -99,13 +143,7 @@ impl GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
+                    role: role_to_string(&m.role),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
@@ -126,48 +164,53 @@ impl GroqProvider {
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
     }
 
-    async fn validate_response(resp: reqwest::Response) -> CortexResult<reqwest::Response> {
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Groq error {status}: {body}"
-            )));
-        }
-        Ok(resp)
-    }
-
     fn process_bytes(
-        request_id: &shared_kernel::RequestId,
+        request_id: &RequestId,
         sse_buffer: &mut SseBuffer,
         bytes: &[u8],
     ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
-        let events = sse_buffer.push(bytes);
-        let chunks: Vec<StreamChunk> = events
+        // Validate UTF-8 before processing SSE
+        let text = match providers_core::process_bytes(bytes) {
+            Ok(t) => t,
+            Err(e) => {
+                return futures::stream::iter(vec![Err(CortexError::provider(format!(
+                    "invalid utf-8: {e}"
+                )))]);
+            }
+        };
+        let events = sse_buffer.push(text.as_bytes());
+        let chunks: Vec<Result<StreamChunk, CortexError>> = events
             .into_iter()
             .flat_map(|event_text| Self::parse_event_text(&event_text, request_id))
             .collect();
 
-        futures::stream::iter(chunks.into_iter().map(Ok))
+        futures::stream::iter(chunks)
     }
 
     fn parse_event_text(
         event_text: &str,
-        request_id: &shared_kernel::RequestId,
-    ) -> Vec<StreamChunk> {
+        request_id: &RequestId,
+    ) -> Vec<Result<StreamChunk, CortexError>> {
         event_text
             .lines()
             .filter_map(|l| l.strip_prefix("data: "))
-            .filter(|line| !line.trim().is_empty() && line.trim() != "[DONE]")
-            .filter_map(|data_line| serde_json::from_str::<GroqStreamResponse>(data_line).ok())
-            .map(|parsed| Self::response_to_chunk(parsed, request_id))
+            .filter_map(|line| {
+                parse_event_text(line).and_then(|event| match event {
+                    SseEvent::Data(data) => Some(data),
+                    SseEvent::Done => None,
+                })
+            })
+            .map(|data_line| {
+                serde_json::from_str::<GroqStreamResponse>(&data_line)
+                    .map(|parsed| Self::response_to_chunk(parsed, request_id))
+                    .map_err(|e| {
+                        CortexError::provider(format!("failed to parse stream event: {e}"))
+                    })
+            })
             .collect()
     }
 
-    fn response_to_chunk(
-        parsed: GroqStreamResponse,
-        request_id: &shared_kernel::RequestId,
-    ) -> StreamChunk {
+    fn response_to_chunk(parsed: GroqStreamResponse, request_id: &RequestId) -> StreamChunk {
         let choice = parsed.choices.first();
         let usage = parsed.usage.as_ref().map(|u| TokenUsage {
             prompt_tokens: u.prompt_tokens,
@@ -192,12 +235,12 @@ impl GroqProvider {
         }
     }
 
-    fn map_finish_reason(reason: &str) -> Option<rook_core::FinishReason> {
+    fn map_finish_reason(reason: &str) -> Option<FinishReason> {
         match reason {
-            "stop" => Some(rook_core::FinishReason::Stop),
-            "length" => Some(rook_core::FinishReason::Length),
-            "content_filter" => Some(rook_core::FinishReason::ContentFilter),
-            "tool_calls" => Some(rook_core::FinishReason::ToolCalls),
+            "stop" => Some(FinishReason::Stop),
+            "length" => Some(FinishReason::Length),
+            "content_filter" => Some(FinishReason::ContentFilter),
+            "tool_calls" => Some(FinishReason::ToolCalls),
             _ => None,
         }
     }
@@ -249,13 +292,7 @@ impl ProviderPort for GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
+                    role: role_to_string(&m.role),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
@@ -276,11 +313,7 @@ impl ProviderPort for GroqProvider {
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Groq error {status}: {body}"
-            )));
+            return Err(map_groq_http_error(&self.config.id, resp).await);
         }
 
         let groq_resp: GroqResponse = resp
@@ -322,7 +355,11 @@ impl ProviderPort for GroqProvider {
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
         let body = Self::build_stream_request(req);
         let resp = self.send_stream_request(&body).await?;
-        let resp = Self::validate_response(resp).await?;
+
+        // Check HTTP status before processing the stream
+        if !resp.status().is_success() {
+            return Err(map_groq_http_error(&self.config.id, resp).await);
+        }
 
         let request_id = req.id.clone();
         let mut sse_buffer = SseBuffer::new();

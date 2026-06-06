@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
+use providers_core::process_bytes;
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -43,6 +44,25 @@ pub struct OllamaProvider {
     client: Client,
 }
 
+/// Map a Ollama HTTP error response to a typed `CortexError`.
+///
+/// Reads the response body and formats it as a provider error.
+pub(crate) async fn map_ollama_http_error(resp: reqwest::Response) -> CortexError {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    CortexError::provider(format!("Ollama error {status}: {body}"))
+}
+
+/// Convert rook_core::Role to a string for Ollama API.
+fn role_to_string(role: &rook_core::Role) -> String {
+    match role {
+        rook_core::Role::System => "system".to_string(),
+        rook_core::Role::User => "user".to_string(),
+        rook_core::Role::Assistant => "assistant".to_string(),
+        rook_core::Role::Developer => "developer".to_string(),
+    }
+}
+
 impl OllamaProvider {
     pub fn new(config: OllamaProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
@@ -58,12 +78,7 @@ impl OllamaProvider {
                 .messages
                 .iter()
                 .map(|m| serde_json::json!({
-                    "role": match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    },
+                    "role": role_to_string(&m.role),
                     "content": m.content.as_text(),
                 }))
                 .collect::<Vec<_>>(),
@@ -81,17 +96,6 @@ impl OllamaProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
-    }
-
-    async fn validate_response(resp: reqwest::Response) -> CortexResult<reqwest::Response> {
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body}"
-            )));
-        }
-        Ok(resp)
     }
 
     fn parse_line_to_chunk(
@@ -127,6 +131,10 @@ impl OllamaProvider {
         }))
     }
 
+    /// Extract complete lines from the line buffer.
+    ///
+    /// Splits on newlines and returns all non-empty lines.
+    /// The remaining partial line stays in `line_buffer`.
     fn extract_complete_lines(line_buffer: &mut String) -> Vec<String> {
         let mut complete_lines = Vec::new();
         while let Some(newline_pos) = line_buffer.find('\n') {
@@ -169,12 +177,7 @@ impl ProviderPort for OllamaProvider {
                 .messages
                 .iter()
                 .map(|m| serde_json::json!({
-                    "role": match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    },
+                    "role": role_to_string(&m.role),
                     "content": m.content.as_text(),
                 }))
                 .collect::<Vec<_>>(),
@@ -191,11 +194,7 @@ impl ProviderPort for OllamaProvider {
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body}"
-            )));
+            return Err(map_ollama_http_error(resp).await);
         }
 
         let parsed: OllamaChatResponse = resp
@@ -232,7 +231,11 @@ impl ProviderPort for OllamaProvider {
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
         let body = Self::build_stream_request(req);
         let resp = self.send_stream_request(&body).await?;
-        let resp = Self::validate_response(resp).await?;
+
+        // Check HTTP status before processing the stream
+        if !resp.status().is_success() {
+            return Err(map_ollama_http_error(resp).await);
+        }
 
         let request_id = req.id.clone();
 
@@ -254,8 +257,8 @@ impl ProviderPort for OllamaProvider {
                         None => return None,
                     };
 
-                    // Convert to UTF-8 string and append to line buffer
-                    let text = match String::from_utf8(bytes.to_vec()) {
+                    // Convert to UTF-8 string using providers_core::process_bytes
+                    let text = match process_bytes(&bytes) {
                         Ok(t) => t,
                         Err(e) => {
                             return Some((
@@ -285,5 +288,88 @@ impl ProviderPort for OllamaProvider {
         .try_flatten();
 
         Ok(Box::pin(stream))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_complete_lines_single_line() {
+        let mut buffer = "hello world\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["hello world"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_extract_complete_lines_multiple_lines() {
+        let mut buffer = "line1\nline2\nline3\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_extract_complete_lines_empty_lines_filtered() {
+        let mut buffer = "line1\n\nline2\n\n\nline3\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_whitespace_only_filtered() {
+        let mut buffer = "line1\n   \nline2\n".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_partial_line_kept() {
+        let mut buffer = "line1\npartial".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert_eq!(lines, vec!["line1"]);
+        assert_eq!(buffer, "partial");
+    }
+
+    #[test]
+    fn test_extract_complete_lines_no_newline() {
+        let mut buffer = "no newline".to_string();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert!(lines.is_empty());
+        assert_eq!(buffer, "no newline");
+    }
+
+    #[test]
+    fn test_extract_complete_lines_empty_buffer() {
+        let mut buffer = String::new();
+        let lines = OllamaProvider::extract_complete_lines(&mut buffer);
+        assert!(lines.is_empty());
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_role_to_string_system() {
+        assert_eq!(role_to_string(&rook_core::Role::System), "system");
+    }
+
+    #[test]
+    fn test_role_to_string_user() {
+        assert_eq!(role_to_string(&rook_core::Role::User), "user");
+    }
+
+    #[test]
+    fn test_role_to_string_assistant() {
+        assert_eq!(role_to_string(&rook_core::Role::Assistant), "assistant");
+    }
+
+    #[test]
+    fn test_role_to_string_developer() {
+        assert_eq!(role_to_string(&rook_core::Role::Developer), "developer");
     }
 }
