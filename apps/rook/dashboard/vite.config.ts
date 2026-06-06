@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { codecovVitePlugin } from '@codecov/vite-plugin'
 
 // Backend target for the Vite dev server proxy. Override via the API_TARGET
 // env var (e.g. set it in dev/e2e/run-api-keys-e2e.sh when the backend is on
@@ -9,7 +10,16 @@ import { fileURLToPath, URL } from 'node:url'
 const API_TARGET = process.env.API_TARGET ?? 'http://localhost:8080'
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    // Put the Codecov vite plugin after all other plugins
+    codecovVitePlugin({
+      enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
+      bundleName: 'rook-dashboard',
+      uploadToken: process.env.CODECOV_TOKEN,
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
