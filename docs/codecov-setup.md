@@ -150,11 +150,40 @@ Expected response: `200 OK` with validation details.
 
 ## Troubleshooting
 
+### Delayed or missing PR comments
+
+**Symptom**: Codecov comment doesn't appear on PR, or appears much later than expected.
+
+**Root cause**: The `after_n_builds: 2` setting in `codecov.yml` waits for **both** backend and frontend coverage uploads before posting a comment. If path-filter in CI skips one job (e.g., frontend-only changes skip backend coverage), Codecov will wait indefinitely or timeout.
+
+**How to detect**:
+1. Check CI logs - if only one coverage job ran, the comment will be delayed
+2. Look at Codecov dashboard - you'll see only one flag uploaded (backend OR frontend, not both)
+3. Path-filter output in CI shows which jobs were skipped
+
+**Solutions**:
+
+#### Option 1: Adjust `after_n_builds` dynamically (recommended)
+
+- Set `after_n_builds: 1` if you frequently make frontend-only or backend-only changes
+- Trade-off: Comments appear faster but may not show complete coverage picture
+
+#### Option 2: Remove path-filter restrictions
+
+- Always run both coverage jobs regardless of changes
+- Trade-off: Longer CI times but consistent comment behavior
+
+#### Option 3: Use Codecov's carryforward flags
+
+- Already enabled in config - Codecov will use previous coverage for skipped jobs
+- The comment will eventually post after timeout (~10 minutes)
+- Trade-off: Delayed comments but accurate coverage using carried-forward data
+
 ### Flag not showing in PR comment
 
 1. Check that the upload succeeded in CI logs
 2. Verify the flag name matches exactly in both `codecov.yml` and CI upload
-3. Ensure `after_n_builds: 2` in comment config (waits for both flags)
+3. See "Delayed or missing PR comments" above if only one flag uploaded
 
 ### Coverage not updating
 

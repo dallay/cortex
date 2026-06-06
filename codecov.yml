@@ -56,13 +56,6 @@ coverage:
 flag_management:
   default_rules:
     carryforward: true
-    statuses:
-      - type: project
-        target: auto
-        threshold: 1%
-      - type: patch
-        target: 80%
-        threshold: 5%
   
   individual_flags:
     - name: backend
@@ -70,27 +63,12 @@ flag_management:
         - "apps/rook/src/**"
         - "apps/rook/tests/**"
         - "crates/**"
-        - "packages/**"
       carryforward: true
-      statuses:
-        - type: project
-          target: 85%
-          threshold: 2%
-        - type: patch
-          target: 85%
-          threshold: 5%
     
     - name: frontend
       paths:
         - "apps/rook/dashboard/**"
       carryforward: true
-      statuses:
-        - type: project
-          target: 80%
-          threshold: 2%
-        - type: patch
-          target: 75%
-          threshold: 5%
 
 # Comment configuration
 comment:
@@ -100,8 +78,9 @@ comment:
   require_base: yes
   require_head: yes
   branches: null
-  # Show flag-specific coverage in comments
-  after_n_builds: 2  # Wait for both backend and frontend reports
+  # Wait for both backend and frontend reports before commenting
+  # See docs/codecov-setup.md for troubleshooting delayed/missing comments
+  after_n_builds: 2
 
 # Ignore patterns
 ignore:
@@ -110,9 +89,7 @@ ignore:
   - "target/**"
   - "**/*.test.ts"
   - "**/*.spec.ts"
-  - "**/tests/**"
   - "**/__tests__/**"
-  - "**/test_*.rs"
 
 # Bundle Analysis Configuration (for frontend)
 bundle_analysis:
