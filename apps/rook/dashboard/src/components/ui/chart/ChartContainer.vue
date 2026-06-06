@@ -3,9 +3,7 @@ import type { HTMLAttributes } from "vue"
 import type { ChartConfig } from "."
 import { useId } from "reka-ui"
 import { computed, toRefs } from "vue"
-import { cn } from "@/lib/utils"
 import { provideChartContext } from "."
-import ChartStyle from "./ChartStyle.vue"
 </script>
 
 <script setup lang="ts">
@@ -25,7 +23,7 @@ defineSlots<{
 
 const { config } = toRefs(props)
 const uniqueId = useId()
-const chartId = computed(() => `chart-${props.id || uniqueId.replace(/:/g, "")}`)
+const chartId = computed(() => `chart-${props.id || uniqueId.replaceAll(/:/g, "")}`)
 
 provideChartContext({
   id: uniqueId,

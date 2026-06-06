@@ -176,6 +176,10 @@ impl CompletionRequest {
             "tool_choice",
             serde_json::to_value(&self.tool_choice).unwrap(),
         );
+        canonical.insert(
+            "allowed_providers",
+            serde_json::to_value(&self.restrictions.allowed_providers).unwrap(),
+        );
 
         // Serialize to JSON bytes
         let json_bytes = serde_json::to_vec(&canonical).unwrap();

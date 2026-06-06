@@ -529,73 +529,80 @@ impl RookConfig {
 
     /// Validate combo configurations and emit warnings for issues
     fn validate_combos(combos: &[ComboConfig]) {
-        use std::collections::{HashMap, HashSet};
-
-        let mut seen_names: HashSet<String> = HashSet::new();
-        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for combo in combos {
-            // Check duplicate combo names
-            if !seen_names.insert(combo.name.clone()) {
+            Self::validate_combo_metadata(combo, &mut seen_names, &mut seen_ids);
+            Self::validate_combo_steps(combo);
+            Self::validate_combo_step_count(combo);
+        }
+    }
+
+    fn validate_combo_metadata(
+        combo: &ComboConfig,
+        seen_names: &mut std::collections::HashSet<String>,
+        seen_ids: &mut std::collections::HashSet<String>,
+    ) {
+        if !seen_names.insert(combo.name.clone()) {
+            tracing::warn!(
+                combo_name = %combo.name,
+                "duplicate combo name found in config - later definition will override"
+            );
+        }
+
+        if !seen_ids.insert(combo.id.clone()) {
+            tracing::warn!(
+                combo_id = %combo.id,
+                "duplicate combo ID found in config - later definition will override"
+            );
+        }
+
+        if combo.strategy != "priority" {
+            tracing::warn!(
+                combo_name = %combo.name,
+                strategy = %combo.strategy,
+                "unsupported combo strategy - only 'priority' is supported in this version"
+            );
+        }
+    }
+
+    fn validate_combo_steps(combo: &ComboConfig) {
+        use std::collections::HashMap;
+
+        let mut priorities: HashMap<u8, usize> = HashMap::new();
+        for (idx, step) in combo.steps.iter().enumerate() {
+            if let Some(prev_idx) = priorities.insert(step.priority, idx) {
                 tracing::warn!(
                     combo_name = %combo.name,
-                    "duplicate combo name found in config - later definition will override"
+                    priority = step.priority,
+                    step_indices = format!("{prev_idx}, {idx}"),
+                    "duplicate priority within combo - execution order may be unpredictable"
                 );
             }
 
-            // Check duplicate combo IDs
-            if !seen_ids.insert(combo.id.clone()) {
-                tracing::warn!(
-                    combo_id = %combo.id,
-                    "duplicate combo ID found in config - later definition will override"
-                );
-            }
-
-            // Validate strategy
-            if combo.strategy != "priority" {
+            if step.priority == 0 {
                 tracing::warn!(
                     combo_name = %combo.name,
-                    strategy = %combo.strategy,
-                    "unsupported combo strategy - only 'priority' is supported in this version"
+                    step_index = idx,
+                    "priority must be between 1 and 255, got 0 - this combo may fail at runtime"
                 );
             }
+        }
+    }
 
-            // Check for duplicate priorities within combo
-            let mut priorities: HashMap<u8, usize> = HashMap::new();
-            for (idx, step) in combo.steps.iter().enumerate() {
-                if let Some(prev_idx) = priorities.insert(step.priority, idx) {
-                    tracing::warn!(
-                        combo_name = %combo.name,
-                        priority = step.priority,
-                        step_indices = format!("{prev_idx}, {idx}"),
-                        "duplicate priority within combo - execution order may be unpredictable"
-                    );
-                }
-
-                // Validate priority range
-                if step.priority == 0 {
-                    tracing::warn!(
-                        combo_name = %combo.name,
-                        step_index = idx,
-                        "priority must be between 1 and 255, got 0 - this combo may fail at runtime"
-                    );
-                }
-            }
-
-            // Check step count
-            if combo.steps.is_empty() {
-                tracing::warn!(
-                    combo_name = %combo.name,
-                    "combo has no steps - it will fail at runtime"
-                );
-            }
-            if combo.steps.len() > 10 {
-                tracing::warn!(
-                    combo_name = %combo.name,
-                    step_count = combo.steps.len(),
-                    "combo has more than 10 steps - maximum is 10, this may fail at runtime"
-                );
-            }
+    fn validate_combo_step_count(combo: &ComboConfig) {
+        if combo.steps.is_empty() {
+            tracing::warn!(
+                combo_name = %combo.name,
+                "combo has no steps - it will fail at runtime"
+            );
+        } else if combo.steps.len() > 10 {
+            tracing::warn!(
+                combo_name = %combo.name,
+                step_count = combo.steps.len(),
+                "combo has more than 10 steps - maximum is 10, this may fail at runtime"
+            );
         }
     }
 }

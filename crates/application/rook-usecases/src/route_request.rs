@@ -24,6 +24,18 @@ use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
 use crate::PricingConfig;
 
+/// Grouped parameters for success handling to avoid excessive parameter count
+struct SuccessContext {
+    req: CompletionRequest,
+    provider_resp: CompletionResponse,
+    provider_id: ProviderId,
+    connection_id: Option<ConnectionId>,
+    provider_format: ApiFormat,
+    client_format: ApiFormat,
+    cache_key: rook_core::CacheKey,
+    latency_ms: u64,
+}
+
 /// Grouped metrics for usage recording to avoid excessive parameter count
 struct UsageMetrics<'a> {
     status: RequestStatus,
@@ -213,45 +225,17 @@ impl RouteRequest {
         }
 
         // 0a. Resolve model alias if enabled (BEFORE restrictions check)
-        if self.alias_config.enabled {
-            match self.alias_repository.find_by_alias(&req.model, None).await {
-                Ok(Some(alias_entry)) => {
-                    tracing::debug!(
-                        alias = %req.model,
-                        canonical = %alias_entry.canonical,
-                        "Resolved model alias"
-                    );
-                    req.model = alias_entry.canonical;
-                }
-                Ok(None) => {
-                    // No alias found, proceed with original model
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        model = %req.model,
-                        "Alias resolution failed, using original model"
-                    );
-                }
-            }
-        }
+        self.resolve_model_alias(&mut req).await;
 
         let cache_key = req.cache_key();
         let start = Instant::now();
 
         // 0b. Model restriction check (AFTER alias resolution)
-        if !req.restrictions.allowed_models.is_empty()
-            && !req.restrictions.allowed_models.contains(&req.model)
-        {
-            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
-        }
+        self.check_model_restriction(&req)?;
 
         // 1. Cache hit?
-        if req.metadata.cacheable {
-            if let Some(cached) = self.cache.get(&cache_key).await? {
-                tracing::debug!(request_id = %req.id, "cache hit");
-                return Ok(cached);
-            }
+        if let Some(cached) = self.try_get_cached(&req, &cache_key).await? {
+            return Ok(cached);
         }
 
         // 2. Select provider
@@ -260,11 +244,7 @@ impl RouteRequest {
         let connection_id = self.resolve_connection_id(&provider_id).await;
 
         // 2a. Provider restriction check (after selection, before execution)
-        if !req.restrictions.allowed_providers.is_empty()
-            && !req.restrictions.allowed_providers.contains(&provider_id)
-        {
-            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
-        }
+        self.check_provider_restriction(&req, &provider_id)?;
 
         // 2b. Inject cache-control header if provider supports token caching (Phase 4: Task 4.4)
         if supports_token_cache(&provider_id, &self.token_cache_config) {
@@ -284,96 +264,190 @@ impl RouteRequest {
 
         match result {
             Ok(provider_resp) => {
-                let resp = self.format_translator.translate_response(
+                self.handle_success(SuccessContext {
+                    req,
+                    provider_resp,
+                    provider_id,
+                    connection_id,
                     provider_format,
                     client_format,
-                    provider_resp,
-                )?;
-
-                // 3a. Update token cache metrics (Phase 5: Task 5.4-5.6)
-                if let Some(cache_hit) = resp.cache_hit {
-                    if cache_hit {
-                        // Token cache hit - calculate cost savings
-                        let tokens_saved = resp.usage.total_tokens as u64;
-                        let cost_usd = self.estimate_token_cache_savings(&resp.usage);
-
-                        if let Err(e) = self
-                            .cache
-                            .increment_token_cache_hit(tokens_saved, cost_usd)
-                            .await
-                        {
-                            tracing::warn!(error = %e, "failed to increment token cache hit");
-                        }
-                    } else {
-                        // Token cache miss
-                        if let Err(e) = self.cache.increment_token_cache_miss().await {
-                            tracing::warn!(error = %e, "failed to increment token cache miss");
-                        }
-                    }
-                }
-
-                // 4. Cache if eligible
-                if req.metadata.cacheable {
-                    if let Err(e) = self.cache.set(&cache_key, &resp, DEFAULT_CACHE_TTL).await {
-                        tracing::warn!(error = %e, "failed to cache response");
-                    }
-                }
-
-                // 5. Audit success
-                let entry = AuditEntry::success(
-                    &req.id,
-                    &provider_id,
-                    &req.model,
-                    Some(resp.usage.clone()),
+                    cache_key,
                     latency_ms,
-                );
-                if let Err(e) = self.audit.record(entry).await {
-                    tracing::warn!(error = %e, "failed to record audit entry");
-                }
-
-                self.record_usage(
-                    &req,
-                    &provider_id,
-                    connection_id,
-                    UsageMetrics {
-                        status: RequestStatus::Success,
-                        usage: Some(&resp.usage),
-                        ttft_ms: Some(latency_ms),
-                        latency_ms,
-                    },
-                )
-                .await;
-
-                // 6. Record telemetry
-                if let Some(telemetry) = &self.telemetry {
-                    telemetry.record_observation(
-                        provider_id.clone(),
-                        latency_ms,
-                        None, // Non-streaming requests don't have TTFT
-                        ObservationStatus::Success,
-                    );
-                }
-
-                Ok(resp)
+                })
+                .await
             }
             Err(e) => {
-                let final_latency = start.elapsed().as_millis() as u64;
-                self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
-                    .await;
-
-                // Record telemetry failure
-                if let Some(telemetry) = &self.telemetry {
-                    let status = if e.is_rate_limited() {
-                        ObservationStatus::RateLimited
-                    } else {
-                        ObservationStatus::Failure
-                    };
-                    telemetry.record_observation(provider_id.clone(), final_latency, None, status);
-                }
-
-                Err(e)
+                self.handle_failure(req, provider_id, connection_id, start, e)
+                    .await
             }
         }
+    }
+
+    async fn resolve_model_alias(&self, req: &mut CompletionRequest) {
+        if !self.alias_config.enabled {
+            return;
+        }
+
+        match self.alias_repository.find_by_alias(&req.model, None).await {
+            Ok(Some(alias_entry)) => {
+                tracing::debug!(
+                    alias = %req.model,
+                    canonical = %alias_entry.canonical,
+                    "Resolved model alias"
+                );
+                req.model = alias_entry.canonical;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    model = %req.model,
+                    "Alias resolution failed, using original model"
+                );
+            }
+        }
+    }
+
+    fn check_model_restriction(&self, req: &CompletionRequest) -> Result<(), CortexError> {
+        if !req.restrictions.allowed_models.is_empty()
+            && !req.restrictions.allowed_models.contains(&req.model)
+        {
+            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
+        }
+        Ok(())
+    }
+
+    fn check_provider_restriction(
+        &self,
+        req: &CompletionRequest,
+        provider_id: &ProviderId,
+    ) -> Result<(), CortexError> {
+        if !req.restrictions.allowed_providers.is_empty()
+            && !req.restrictions.allowed_providers.contains(provider_id)
+        {
+            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
+        }
+        Ok(())
+    }
+
+    async fn try_get_cached(
+        &self,
+        req: &CompletionRequest,
+        cache_key: &rook_core::CacheKey,
+    ) -> Result<Option<CompletionResponse>, CortexError> {
+        if !req.metadata.cacheable {
+            return Ok(None);
+        }
+
+        if let Some(cached) = self.cache.get(cache_key).await? {
+            tracing::debug!(request_id = %req.id, "cache hit");
+            return Ok(Some(cached));
+        }
+
+        Ok(None)
+    }
+
+    async fn handle_success(&self, ctx: SuccessContext) -> Result<CompletionResponse, CortexError> {
+        let resp = self.format_translator.translate_response(
+            ctx.provider_format,
+            ctx.client_format,
+            ctx.provider_resp,
+        )?;
+
+        // Update token cache metrics (Phase 5: Task 5.4-5.6)
+        if let Some(cache_hit) = resp.cache_hit {
+            if cache_hit {
+                // Token cache hit - calculate cost savings
+                let tokens_saved = resp.usage.total_tokens as u64;
+                let cost_usd = self.estimate_token_cache_savings(&resp.usage);
+
+                if let Err(e) = self
+                    .cache
+                    .increment_token_cache_hit(tokens_saved, cost_usd)
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to increment token cache hit");
+                }
+            } else {
+                // Token cache miss
+                if let Err(e) = self.cache.increment_token_cache_miss().await {
+                    tracing::warn!(error = %e, "failed to increment token cache miss");
+                }
+            }
+        }
+
+        // Cache if eligible
+        if ctx.req.metadata.cacheable {
+            if let Err(e) = self
+                .cache
+                .set(&ctx.cache_key, &resp, DEFAULT_CACHE_TTL)
+                .await
+            {
+                tracing::warn!(error = %e, "failed to cache response");
+            }
+        }
+
+        // Audit success
+        let entry = AuditEntry::success(
+            &ctx.req.id,
+            &ctx.provider_id,
+            &ctx.req.model,
+            Some(resp.usage.clone()),
+            ctx.latency_ms,
+        );
+        if let Err(e) = self.audit.record(entry).await {
+            tracing::warn!(error = %e, "failed to record audit entry");
+        }
+
+        self.record_usage(
+            &ctx.req,
+            &ctx.provider_id,
+            ctx.connection_id,
+            UsageMetrics {
+                status: RequestStatus::Success,
+                usage: Some(&resp.usage),
+                ttft_ms: Some(ctx.latency_ms),
+                latency_ms: ctx.latency_ms,
+            },
+        )
+        .await;
+
+        // Record telemetry
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.record_observation(
+                ctx.provider_id,
+                ctx.latency_ms,
+                None,
+                ObservationStatus::Success,
+            );
+        }
+
+        Ok(resp)
+    }
+
+    async fn handle_failure(
+        &self,
+        req: CompletionRequest,
+        provider_id: ProviderId,
+        connection_id: Option<ConnectionId>,
+        start: Instant,
+        e: CortexError,
+    ) -> Result<CompletionResponse, CortexError> {
+        let final_latency = start.elapsed().as_millis() as u64;
+        self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
+            .await;
+
+        // Record telemetry failure
+        if let Some(telemetry) = &self.telemetry {
+            let status = if e.is_rate_limited() {
+                ObservationStatus::RateLimited
+            } else {
+                ObservationStatus::Failure
+            };
+            telemetry.record_observation(provider_id, final_latency, None, status);
+        }
+
+        Err(e)
     }
 
     pub async fn execute_stream(

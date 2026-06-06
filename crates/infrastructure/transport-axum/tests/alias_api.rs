@@ -106,6 +106,33 @@ async fn test_app_with_seeded() -> Router {
     alias_routes::router(repo)
 }
 
+/// Helper to make HTTP request and return response
+async fn make_request(
+    app: Router,
+    uri: &str,
+    method: &str,
+    body: Body,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .uri(uri)
+            .method(method)
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+/// Helper to deserialize response body as JSON
+async fn json_body<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -113,48 +140,22 @@ async fn test_app_with_seeded() -> Router {
 #[tokio::test]
 async fn test_get_aliases_empty() {
     let app = test_app();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("GET")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(app, "/", "GET", Body::empty()).await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let aliases: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let aliases: Vec<serde_json::Value> = json_body(response).await;
     assert_eq!(aliases.len(), 0);
 }
 
 #[tokio::test]
 async fn test_get_aliases_with_builtin() {
     let app = test_app_with_seeded().await;
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("GET")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(app, "/", "GET", Body::empty()).await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let aliases: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let aliases: Vec<serde_json::Value> = json_body(response).await;
     assert_eq!(aliases.len(), 2);
 
     // Verify structure
@@ -174,17 +175,13 @@ async fn test_create_alias_success() {
         "providerId": "openai"
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::CREATED);
 }
@@ -198,24 +195,17 @@ async fn test_create_alias_duplicate() {
         "canonical": "gpt-4o-2024-08-06"
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error: serde_json::Value = json_body(response).await;
     assert_eq!(error["code"], "ALIAS_ALREADY_EXISTS");
 }
 
@@ -228,24 +218,17 @@ async fn test_create_alias_empty_alias() {
         "canonical": "gpt-4-0613"
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error: serde_json::Value = json_body(response).await;
     assert_eq!(error["code"], "INVALID_ALIAS");
 }
 
@@ -258,24 +241,17 @@ async fn test_create_alias_empty_canonical() {
         "canonical": ""
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error: serde_json::Value = json_body(response).await;
     assert_eq!(error["code"], "INVALID_CANONICAL");
 }
 
@@ -289,24 +265,17 @@ async fn test_create_alias_cycle_detection() {
         "canonical": "gpt-4o-latest"  // This is itself an alias
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error: serde_json::Value = json_body(response).await;
     assert_eq!(error["code"], "ALIAS_CYCLE");
     assert!(error["error"]
         .as_str()
@@ -317,17 +286,7 @@ async fn test_create_alias_cycle_detection() {
 #[tokio::test]
 async fn test_delete_alias_success() {
     let app = test_app_with_seeded().await;
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/gpt-4o-latest")
-                .method("DELETE")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(app, "/gpt-4o-latest", "DELETE", Body::empty()).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
@@ -335,24 +294,11 @@ async fn test_delete_alias_success() {
 #[tokio::test]
 async fn test_delete_alias_not_found() {
     let app = test_app();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/nonexistent-alias")
-                .method("DELETE")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(app, "/nonexistent-alias", "DELETE", Body::empty()).await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error: serde_json::Value = json_body(response).await;
     assert_eq!(error["code"], "ALIAS_NOT_FOUND");
 }
 
@@ -367,39 +313,22 @@ async fn test_create_and_list() {
         "providerId": "test-provider"
     });
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("POST")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(
+        app.clone(),
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::CREATED);
 
     // List aliases
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .method("GET")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = make_request(app, "/", "GET", Body::empty()).await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let aliases: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    let aliases: Vec<serde_json::Value> = json_body(response).await;
     assert_eq!(aliases.len(), 1);
     assert_eq!(aliases[0]["alias"], "test-alias");
     assert_eq!(aliases[0]["canonical"], "test-model-v1");

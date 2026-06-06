@@ -6,8 +6,3 @@
 -- =============================================================================
 CREATE INDEX IF NOT EXISTS idx_provider_connections_runtime_active_priority_created
 ON provider_connections (provider_runtime_id, is_active, priority ASC, created_at DESC);
-
--- Partial index alternative (uncomment if your SQLite version supports it well):
--- CREATE INDEX IF NOT EXISTS idx_provider_connections_active_priority_created
--- ON provider_connections (priority ASC, created_at DESC)
--- WHERE is_active = 1;

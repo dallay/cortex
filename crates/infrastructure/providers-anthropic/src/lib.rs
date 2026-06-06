@@ -257,6 +257,155 @@ impl AnthropicProvider {
             .build()?;
         Ok(Arc::new(Self { config, client }))
     }
+
+    fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
+        let system_text = Self::extract_system_messages(req);
+        AnthropicStreamRequest {
+            model: req.model.to_string(),
+            messages: req
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::User | Role::Assistant))
+                .map(|m| AnthropicMessage {
+                    role: match m.role {
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                        _ => unreachable!(),
+                    },
+                    content: m.content.as_text().to_string(),
+                })
+                .collect(),
+            system: system_text,
+            stream: true,
+            max_tokens: req.max_tokens.or(Some(4096)),
+            temperature: req.temperature,
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
+        }
+    }
+
+    fn extract_system_messages(req: &CompletionRequest) -> Option<String> {
+        let parts: Vec<&str> = req
+            .messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::System | Role::Developer))
+            .map(|m| m.content.as_text())
+            .collect();
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
+    async fn send_stream_request(
+        &self,
+        body: &AnthropicStreamRequest,
+        req: &CompletionRequest,
+    ) -> CortexResult<reqwest::Response> {
+        let mut request_builder = self
+            .client
+            .post(format!("{}/v1/messages", self.config.base_url))
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json");
+
+        // Inject cache-control header if present (Phase 4: Task 4.4)
+        if let Some(cache_control) = &req.metadata.cache_control_header {
+            request_builder = request_builder.header("cache-control", cache_control);
+        }
+
+        request_builder
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CortexError::provider(format!("request failed: {e}")))
+    }
+
+    async fn validate_response(resp: reqwest::Response) -> CortexResult<reqwest::Response> {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CortexError::provider(format!("{status}: {body}")));
+        }
+        Ok(resp)
+    }
+
+    fn process_bytes(
+        request_id: &RequestId,
+        model: &ModelId,
+        sse_buffer: &mut SseBuffer,
+        bytes: &[u8],
+    ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
+        let events = sse_buffer.push(bytes);
+        let chunks: Vec<Result<StreamChunk, CortexError>> = events
+            .into_iter()
+            .flat_map(|event_text| Self::parse_event_text(&event_text, request_id, model))
+            .collect();
+
+        futures::stream::iter(chunks)
+    }
+
+    fn parse_event_text(
+        event_text: &str,
+        request_id: &RequestId,
+        model: &ModelId,
+    ) -> Vec<Result<StreamChunk, CortexError>> {
+        event_text
+            .lines()
+            .filter_map(|l| l.strip_prefix("data: "))
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|data_line| serde_json::from_str::<AnthropicStreamEvent>(data_line).ok())
+            .filter_map(|parsed| Self::event_to_chunk(parsed, request_id, model))
+            .collect()
+    }
+
+    fn event_to_chunk(
+        event: AnthropicStreamEvent,
+        request_id: &RequestId,
+        model: &ModelId,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        match event {
+            AnthropicStreamEvent::ContentBlockDelta { index: _, delta } => Some(Ok(StreamChunk {
+                id: request_id.clone(),
+                model: model.clone(),
+                delta: delta.text,
+                finish_reason: None,
+                usage: None,
+            })),
+            AnthropicStreamEvent::MessageDelta { delta, usage } => {
+                let finish_reason = if delta.stop_reason == "tool_use" {
+                    FinishReason::ToolCalls
+                } else {
+                    FinishReason::Stop
+                };
+                Some(Ok(StreamChunk {
+                    id: request_id.clone(),
+                    model: model.clone(),
+                    delta: String::new(),
+                    finish_reason: Some(finish_reason),
+                    usage: Some(TokenUsage {
+                        prompt_tokens: usage.input_tokens.unwrap_or(0),
+                        completion_tokens: usage.output_tokens,
+                        total_tokens: usage
+                            .input_tokens
+                            .unwrap_or(0)
+                            .saturating_add(usage.output_tokens),
+                        cache_read_tokens: usage.cache_read_input_tokens,
+                        cache_creation_tokens: usage.cache_creation_input_tokens,
+                        reasoning_tokens: None,
+                        estimated_cost_usd: None,
+                    }),
+                }))
+            }
+            AnthropicStreamEvent::Error { error } => Some(Err(CortexError::provider(format!(
+                "Anthropic error: {} - {}",
+                error.error_type, error.message
+            )))),
+            _ => None,
+        }
+    }
 }
 
 #[async_trait]
@@ -384,139 +533,13 @@ impl ProviderPort for AnthropicProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        // Extract system/developer messages into the top-level `system` field.
-        let system_text: Option<String> = {
-            let parts: Vec<&str> = req
-                .messages
-                .iter()
-                .filter(|m| matches!(m.role, Role::System | Role::Developer))
-                .map(|m| m.content.as_text())
-                .collect();
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join("\n"))
-            }
-        };
-        let body = AnthropicStreamRequest {
-            model: req.model.to_string(),
-            messages: req
-                .messages
-                .iter()
-                .filter(|m| matches!(m.role, Role::User | Role::Assistant))
-                .map(|m| AnthropicMessage {
-                    role: match m.role {
-                        Role::User => "user".to_string(),
-                        Role::Assistant => "assistant".to_string(),
-                        _ => unreachable!(),
-                    },
-                    content: m.content.as_text().to_string(),
-                })
-                .collect(),
-            system: system_text,
-            stream: true,
-            max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
-            temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
-        };
-
-        let mut request_builder = self
-            .client
-            .post(format!("{}/v1/messages", self.config.base_url))
-            .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json");
-
-        // Inject cache-control header if present (Phase 4: Task 4.4)
-        if let Some(cache_control) = &req.metadata.cache_control_header {
-            request_builder = request_builder.header("cache-control", cache_control);
-        }
-
-        let resp = request_builder
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!("{status}: {body}")));
-        }
+        let body = Self::build_stream_request(req);
+        let resp = self.send_stream_request(&body, req).await?;
+        let resp = Self::validate_response(resp).await?;
 
         let request_id = req.id.clone();
         let model = req.model.clone();
         let mut sse_buffer = SseBuffer::new();
-
-        fn process_bytes(
-            request_id: &RequestId,
-            model: &ModelId,
-            sse_buffer: &mut SseBuffer,
-            bytes: &[u8],
-        ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
-            let events = sse_buffer.push(bytes);
-            let mut chunks: Vec<Result<StreamChunk, CortexError>> = Vec::new();
-
-            for event_text in events {
-                for data_line in event_text.lines().filter_map(|l| l.strip_prefix("data: ")) {
-                    if data_line.trim().is_empty() {
-                        continue;
-                    }
-
-                    let parsed: AnthropicStreamEvent = match serde_json::from_str(data_line) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-
-                    match parsed {
-                        AnthropicStreamEvent::ContentBlockDelta { index: _, delta } => {
-                            chunks.push(Ok(StreamChunk {
-                                id: request_id.clone(),
-                                model: model.clone(),
-                                delta: delta.text,
-                                finish_reason: None,
-                                usage: None,
-                            }));
-                        }
-                        AnthropicStreamEvent::MessageDelta { delta, usage } => {
-                            let finish_reason = if delta.stop_reason == "tool_use" {
-                                FinishReason::ToolCalls
-                            } else {
-                                FinishReason::Stop
-                            };
-                            chunks.push(Ok(StreamChunk {
-                                id: request_id.clone(),
-                                model: model.clone(),
-                                delta: String::new(),
-                                finish_reason: Some(finish_reason),
-                                usage: Some(TokenUsage {
-                                    prompt_tokens: usage.input_tokens.unwrap_or(0),
-                                    completion_tokens: usage.output_tokens,
-                                    total_tokens: usage
-                                        .input_tokens
-                                        .unwrap_or(0)
-                                        .saturating_add(usage.output_tokens),
-                                    cache_read_tokens: usage.cache_read_input_tokens,
-                                    cache_creation_tokens: usage.cache_creation_input_tokens,
-                                    reasoning_tokens: None,
-                                    estimated_cost_usd: None,
-                                }),
-                            }));
-                        }
-                        AnthropicStreamEvent::Error { error } => {
-                            chunks.push(Err(CortexError::provider(format!(
-                                "Anthropic error: {} - {}",
-                                error.error_type, error.message
-                            ))));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            futures::stream::iter(chunks)
-        }
 
         let stream = resp
             .bytes_stream()
@@ -524,7 +547,12 @@ impl ProviderPort for AnthropicProvider {
             .and_then(move |bytes| {
                 let request_id = request_id.clone();
                 let model = model.clone();
-                futures::future::ok(process_bytes(&request_id, &model, &mut sse_buffer, &bytes))
+                futures::future::ok(Self::process_bytes(
+                    &request_id,
+                    &model,
+                    &mut sse_buffer,
+                    &bytes,
+                ))
             })
             .try_flatten();
 

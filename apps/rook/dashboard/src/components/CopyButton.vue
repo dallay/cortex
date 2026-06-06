@@ -42,7 +42,7 @@ const copyToClipboard = async () => {
     document.body.appendChild(textarea)
     textarea.select()
     document.execCommand('copy')
-    document.body.removeChild(textarea)
+    textarea.remove()
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
   } catch (err) {
