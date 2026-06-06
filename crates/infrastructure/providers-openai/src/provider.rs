@@ -8,54 +8,9 @@ use rook_core::{
     ProviderPort, StreamChunk, TokenUsage,
 };
 
+use providers_core::sanitize_body;
 use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
-
-/// Truncate a string to at most `max` chars, safe across UTF-8 multi-byte boundaries.
-fn char_safe_truncate(s: &str, max: usize) -> String {
-    let mut chars = s.chars();
-    let truncated: String = chars.by_ref().take(max).collect();
-    if chars.next().is_some() {
-        format!("{truncated}… (truncated)")
-    } else {
-        truncated
-    }
-}
-
-/// Sanitize and truncate error response body to prevent sensitive data leakage.
-fn sanitize_error_body(body: &str) -> String {
-    const MAX_LENGTH: usize = 200;
-    const SENSITIVE_KEYS: &[&str] = &[
-        "api_key",
-        "authorization",
-        "token",
-        "access_token",
-        "secret",
-        "headers",
-    ];
-
-    // Try to parse as JSON and redact sensitive fields
-    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(obj) = json.as_object_mut() {
-            let keys_to_redact: Vec<String> = obj
-                .keys()
-                .filter(|k| {
-                    let lower = k.to_lowercase();
-                    SENSITIVE_KEYS.iter().any(|s| lower.contains(s))
-                })
-                .cloned()
-                .collect();
-            for key in keys_to_redact {
-                obj.insert(key, serde_json::Value::String("(redacted)".to_string()));
-            }
-        }
-        let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
-        char_safe_truncate(&sanitized, MAX_LENGTH)
-    } else {
-        // Fall back to plain text truncation
-        char_safe_truncate(body, MAX_LENGTH)
-    }
-}
 
 /// Map an OpenAI HTTP error response to a typed `CortexError`.
 ///
@@ -73,7 +28,7 @@ async fn map_openai_http_error(provider_id: &ProviderId, resp: reqwest::Response
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
     let raw_body = resp.text().await.unwrap_or_default();
-    let sanitized = sanitize_error_body(&raw_body);
+    let sanitized = sanitize_body(&raw_body);
 
     match status.as_u16() {
         401 => CortexError::auth_failed("OpenAI authentication failed"),
