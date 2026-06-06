@@ -15,7 +15,7 @@
  */
 import { onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Fuel, Info } from '@lucide/vue'
+import { Fuel, Info, ExternalLink } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -34,9 +34,11 @@ onMounted(() => {
   fetchModels()
 })
 
-// TODO: replace with the real implementation once the backend exposes
-// a quota endpoint. Track the follow-up work in the GitHub issue
-// linked from the spec/design doc.
+// TODO(issue #132): replace with the real per-provider quota data once the
+// backend exposes a QuotaPort. See:
+// https://github.com/dallay/cortex/issues/132
+// Spec: openspec/changes/providers-ui-3-screen-refactor/specs/providers-ui/spec.md (REQ-8)
+// Design: openspec/changes/providers-ui-3-screen-refactor/design.md (D7)
 </script>
 
 <template>
@@ -56,8 +58,15 @@ onMounted(() => {
       <AlertTitle>{{ t('providers.quota.comingSoon') }}</AlertTitle>
       <AlertDescription>
         {{ t('providers.quota.banner') }}
-        <!-- TODO: link to the implementation tracking issue once filed.
-             Do not hardcode a GitHub URL here until the issue exists. -->
+        <a
+          href="https://github.com/dallay/cortex/issues/132"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="underline ml-1 inline-flex items-center gap-1"
+        >
+          {{ t('providers.quota.followUpIssue') }}
+          <ExternalLink class="h-3 w-3" />
+        </a>
       </AlertDescription>
     </Alert>
 
