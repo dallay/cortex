@@ -23,8 +23,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import AddProviderDialog from '@/components/AddProviderDialog.vue'
 import ProviderCatalogFilter, {
   type CategoryFilter,
-} from '@/components/providers/ProviderCatalogFilter.vue'
-import ProviderCategorySection from '@/components/providers/ProviderCategorySection.vue'
+} from '@/components/ProviderCatalogFilter.vue'
+import ProviderCategorySection from '@/components/ProviderCategorySection.vue'
 import { useProviders } from '@/composables/useProviders'
 import { useAvailableModels } from '@/composables/useAvailableModels'
 import { useProviderCatalog } from '@/composables/useProviderCatalog'

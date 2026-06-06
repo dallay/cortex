@@ -218,8 +218,8 @@ function buildUpdateRequest(
 // ---------------------------------------------------------------------------
 
 function loadFromConnection(conn: ProviderConnectionResponse) {
-  kind.value = conn.providerKind as ProviderKind
-  authType.value = (conn.authType === 'oauth' ? 'oauth' : 'apikey') as AuthType
+  kind.value = conn.providerKind
+  authType.value = conn.authType === 'oauth' ? 'oauth' : 'apikey'
   form.value.displayName = conn.name
   form.value.baseUrl = conn.config.baseUrl ?? findCatalogEntry(kind.value).defaultBaseUrl
   form.value.priority = conn.priority

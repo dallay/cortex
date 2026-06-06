@@ -67,7 +67,7 @@ export function useProviderCatalog(): UseProviderCatalog {
     () => {
       const acc = new Map<ProviderKind, Set<string>>()
       for (const entry of modelsByProvider.value) {
-        const kind = entry.provider.providerKind as ProviderKind
+        const kind = entry.provider.providerKind
         const bucket = acc.get(kind) ?? new Set<string>()
         for (const model of entry.models) {
           bucket.add(model)
@@ -86,7 +86,7 @@ export function useProviderCatalog(): UseProviderCatalog {
     const providersByKind = new Map<ProviderKind, number>()
     const activeByKind = new Map<ProviderKind, boolean>()
     for (const p of providers.value) {
-      const kind = p.providerKind as ProviderKind
+      const kind = p.providerKind
       providersByKind.set(kind, (providersByKind.get(kind) ?? 0) + 1)
       if (p.isActive) {
         activeByKind.set(kind, true)

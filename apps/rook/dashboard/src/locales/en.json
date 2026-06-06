@@ -6,8 +6,6 @@
     "apiKeysCreate": "Create",
     "endpoints": "Endpoints",
     "providers": "Providers",
-    "providersList": "List",
-    "providersQuotes": "Quotes",
     "providersCatalog": "Providers",
     "providersQuota": "Quota",
     "combos": "Combos",
@@ -26,7 +24,6 @@
     "apiKeysCreate": "Create New Key",
     "endpoints": "Endpoints",
     "providers": "Providers",
-    "providersQuotes": "Provider Quotes",
     "combos": "Combos",
     "settings": "Settings"
   },

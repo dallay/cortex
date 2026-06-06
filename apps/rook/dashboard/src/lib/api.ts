@@ -2,6 +2,21 @@
 // API Key types
 // =============================================================================
 
+import type { ProviderKind } from '@/config/providerCatalog'
+
+/**
+ * Wire format for `authType` in API requests/responses.
+ *
+ * Matches the Rust `AuthType` enum in
+ * `crates/domain/rook-core/src/provider_connection.rs`, which serializes
+ * to camelCase via `#[serde(rename_all = "camelCase")]`. This is DIFFERENT
+ * from the internal `AuthType` type in `@/config/providerCatalog`, which
+ * is the form-state value (`'apikey'` lowercase, no camelCase). Use
+ * `WireAuthType` for the API boundary; use `AuthType` for in-component
+ * state. The dialog's `wireAuthType()` helper bridges between them.
+ */
+export type WireAuthType = 'apiKey' | 'oauth'
+
 export interface ApiKeyRecordResponse {
   id: string
   label: string
@@ -28,7 +43,7 @@ export interface ApiKeyRecordResponse {
 export interface ProviderModelsGroup {
   providerId: string
   providerName: string
-  providerKind: string
+  providerKind: ProviderKind
   models: string[]
 }
 
@@ -59,9 +74,9 @@ export interface ListApiKeysResponse {
 }
 
 export interface TestCredentialsPayload {
-  providerKind: string
+  providerKind: ProviderKind
   providerRuntimeId: string
-  authType: string
+  authType: WireAuthType
   credentials: {
     apiKey?: string
     email?: string
@@ -127,9 +142,9 @@ export interface ProviderHealth {
 
 export interface ProviderConnectionResponse {
   id: string
-  providerKind: string
+  providerKind: ProviderKind
   providerRuntimeId: string
-  authType: string
+  authType: WireAuthType
   name: string
   priority: number
   isActive: boolean
@@ -517,9 +532,9 @@ function createApiClient() {
 }
 
 export interface CreateProviderRequest {
-  providerKind: string
+  providerKind: ProviderKind
   providerRuntimeId: string
-  authType: string
+  authType: WireAuthType
   name: string
   priority: number
   isActive: boolean
@@ -529,9 +544,9 @@ export interface CreateProviderRequest {
 
 export interface UpdateProviderRequest {
   expectedUpdatedAt: string
-  providerKind?: string
+  providerKind?: ProviderKind
   providerRuntimeId?: string
-  authType?: string
+  authType?: WireAuthType
   name?: string
   priority?: number
   isActive?: boolean

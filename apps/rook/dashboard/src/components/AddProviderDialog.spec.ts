@@ -448,7 +448,7 @@ function makeConnection(
     id: 'conn-1',
     providerKind: 'ollama',
     providerRuntimeId: 'ollama-local',
-    authType: 'apikey',
+    authType: 'apiKey',
     name: 'Local Ollama',
     priority: 50,
     isActive: true,

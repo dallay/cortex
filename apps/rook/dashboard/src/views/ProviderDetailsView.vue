@@ -30,7 +30,7 @@ import LoadingState from '@/components/LoadingState.vue'
 import ErrorBanner from '@/components/ErrorBanner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AddProviderDialog from '@/components/AddProviderDialog.vue'
-import ConnectionListItem from '@/components/providers/ConnectionListItem.vue'
+import ConnectionListItem from '@/components/ConnectionListItem.vue'
 
 const route = useRoute()
 const router = useRouter()

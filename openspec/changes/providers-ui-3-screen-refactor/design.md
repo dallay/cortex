@@ -52,8 +52,8 @@
 | `src/config/providerCatalog.ts` | NEW | Static `PROVIDER_KINDS` metadata |
 | `src/config/navigation.ts` | MODIFY | Replace quotes with quota sub-item |
 | `src/router/index.ts` | MODIFY | 2 new routes, validate `:providerKind` |
-| `src/composables/useNavigation.ts` | MODIFY | 5 new lucide icons |
-| `src/lib/api.ts` | MODIFY | Tighten `providerKind`/`authType` to unions |
+| `src/composables/useNavigation.ts` | NOT MODIFIED | Catalog icons live in a local map inside `ProviderCatalogCard.vue` (Cpu/Sparkles/Brain/Zap/Server) and `ProvidersQuotaView.vue` imports `Fuel` directly. Keeping the sidebar-only `iconRegistry` minimizes its surface and tree-shakes well. |
+| `src/lib/api.ts` | MODIFIED | Tighten `providerKind: ProviderKind` (matches Rust `rename_all = "lowercase"`) and `authType: WireAuthType` (`'apiKey' \| 'oauth'`, matches Rust `rename_all = "camelCase"`). The internal `AuthType` (`'apikey' \| 'oauth'`) in `@/config/providerCatalog` stays for form state; the dialog's `wireAuthType()` helper bridges. |
 | `src/views/sidebar/index.vue` | MODIFY | 3-level breadcrumb when `route.matched.length >= 3` |
 | `src/locales/en.json` + `es.json` | MODIFY | New keys under `providers.{catalog,details,form,kind,quota}` |
 | `src/components/AddProviderDialog.spec.ts` | MODIFY | Pass `providerKind` prop; add OAuth case |
@@ -164,7 +164,7 @@ items: [
 }
 ```
 
-Remove `nav.providersQuotes` + `breadcrumb.providersQuotes` from both files.
+Remove `nav.providersQuotes`, `nav.providersList`, and `breadcrumb.providersQuotes` from both files.
 
 ## 8. AddProviderDialog Refactor
 
