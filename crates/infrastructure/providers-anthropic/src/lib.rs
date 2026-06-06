@@ -8,6 +8,7 @@ use rook_core::{
     ProviderPort, Role, StreamChunk, TokenUsage,
 };
 
+use providers_core::sanitize_body;
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
 use sse_stream::SseBuffer;
@@ -203,18 +204,6 @@ async fn map_anthropic_http_error(
     }
 }
 
-/// Sanitize and truncate body to avoid sensitive data leakage.
-fn sanitize_body(body: &str) -> String {
-    const MAX: usize = 200;
-    let mut chars = body.chars();
-    let truncated: String = chars.by_ref().take(MAX).collect();
-    if chars.next().is_some() {
-        format!("{truncated}… (truncated)")
-    } else {
-        truncated
-    }
-}
-
 impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
@@ -277,15 +266,6 @@ impl AnthropicProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
-    }
-
-    async fn validate_response(resp: reqwest::Response) -> CortexResult<reqwest::Response> {
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!("{status}: {body}")));
-        }
-        Ok(resp)
     }
 
     fn process_bytes(
@@ -481,7 +461,11 @@ impl ProviderPort for AnthropicProvider {
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
         let body = Self::build_stream_request(req);
         let resp = self.send_stream_request(&body).await?;
-        let resp = Self::validate_response(resp).await?;
+
+        // Check HTTP status before processing the stream
+        if !resp.status().is_success() {
+            return Err(map_anthropic_http_error(&self.config.id, resp).await);
+        }
 
         let request_id = req.id.clone();
         let model = req.model.clone();
