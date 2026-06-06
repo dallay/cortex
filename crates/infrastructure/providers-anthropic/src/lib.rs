@@ -327,7 +327,8 @@ impl AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!("{status}: {body}")));
+            let sanitized = sanitize_body(&body);
+            return Err(CortexError::provider(format!("{status}: {sanitized}")));
         }
         Ok(resp)
     }

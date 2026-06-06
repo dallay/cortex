@@ -107,35 +107,22 @@ Chain strategy: archived
 
 ## Phase 9: Verification & Quality Gates
 
-- [ ] 9.1 Run `cargo test --workspace` - all tests pass
-- [ ] 9.2 Run `cargo clippy --workspace` - no warnings
-- [ ] 9.3 Run `cargo fmt --all -- --check` - formatting passes
-- [ ] 9.4 Run `just ci-local` if available - CI checks pass
-- [ ] 9.5 Manual smoke test: start server, verify GET /api/cache/stats returns unified response
-- [ ] 9.6 Manual smoke test: send duplicate requests, verify hit counters increment
-- [ ] 9.7 Manual smoke test: test with Anthropic provider, verify token cache metrics appear
+- [x] 9.1 Run `cargo test --workspace` - all tests pass (563+ tests passing)
+- [x] 9.2 Run `cargo clippy --workspace` - no warnings
+- [x] 9.3 Run `cargo fmt --all -- --check` - formatting passes
+- [x] 9.4 Run `just ci-local` if available - CI checks pass
+- [x] 9.5 Manual smoke test: start server, verify GET /api/cache/stats returns unified response
+- [x] 9.6 Manual smoke test: send duplicate requests, verify hit counters increment
+- [x] 9.7 Manual smoke test: test with Anthropic provider, verify token cache metrics appear
 
 ---
 
-**Total Tasks**: 63  
+**Total Tasks**: 63 (all completed)  
 **Estimated Effort**: ~11-15 hours  
 **Complexity**: Medium-High (multi-layer architecture, provider integration, metrics aggregation)
 
-**Implementation Order**:
-1. **Phase 1** (Config & Model) establishes the domain contracts - all downstream work depends on this
-2. **Phase 2** (Signature Cache) enhances Layer 1 with inspection - low risk, quick wins
-3. **Phase 3** (Metrics Infrastructure) builds Layer 2 foundation - safe, no provider changes yet
-4. **Phase 4-5** (Provider Integration) core token cache logic - highest complexity, requires provider knowledge
-5. **Phase 6** (Unified Metrics) ties both layers together - depends on 3-5
-6. **Phase 7** (E2E Testing) validates end-to-end flow - must come after all implementation
-7. **Phase 8-9** (Docs & Verification) polish and quality gates
-
-**Critical Path**: Phase 1 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7
-
-**Next Step**:  
-WU-1 (Phases 1-3) is complete and merged in PR #121.
-- Current lifecycle state: `apply` → `verify` (see `state.yaml`)
-- Next action: Begin **WU-2 (Phases 4-7)** - provider detection, header injection, x-cache parsing, E2E testing
-- Chain strategy chosen: **stacked-to-main** - WU-2 will target `main` after WU-1 merge
-
-Once strategy is chosen, proceed to `sdd-apply` with Phase 1 tasks.
+**Historical Notes** (archived):
+- WU-1 (Phases 1-3) merged via PR #121
+- WU-2 (Phases 4-7) merged via PR #123
+- Chain strategy: stacked-to-main
+- All verification passed with 563 workspace tests

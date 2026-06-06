@@ -176,9 +176,18 @@ impl CompletionRequest {
             "tool_choice",
             serde_json::to_value(&self.tool_choice).unwrap(),
         );
+        // Normalize allowed_providers to a sorted deduped vec for stable hashing
+        let mut normalized_providers: Vec<String> = self
+            .restrictions
+            .allowed_providers
+            .iter()
+            .map(|p| p.as_str().to_string())
+            .collect();
+        normalized_providers.sort();
+        normalized_providers.dedup();
         canonical.insert(
             "allowed_providers",
-            serde_json::to_value(&self.restrictions.allowed_providers).unwrap(),
+            serde_json::to_value(&normalized_providers).unwrap(),
         );
 
         // Serialize to JSON bytes

@@ -435,19 +435,19 @@ The system MUST support independent enable/disable control for signature cache (
 
 #### Scenario: Validate provider list for token cache
 
-- GIVEN token_cache.providers contains [Anthropic, DeepSeek, Qwen]
+- GIVEN token_cache.providers contains ["anthropic", "deepseek", "qwen", "openai"]
 - WHEN a request is routed to ProviderId::Anthropic
 - THEN cache-control header MUST be injected
 - WHEN a request is routed to ProviderId::OpenAI
-- THEN cache-control header MUST NOT be injected
+- THEN cache-control header MUST be injected
 
 #### Scenario: Empty provider list defaults to known supporting providers
 
 - GIVEN token_cache.providers is empty
 - AND token_cache.mode is Auto
 - WHEN the configuration is loaded
-- THEN the system MUST default to providers [Anthropic, DeepSeek, Qwen]
-NOTE: "Claude" is a model family, not a separate provider. All Claude models route to ProviderId::Anthropic.
+- THEN the system MUST default to providers ["anthropic", "deepseek", "qwen", "openai"]
+NOTE: "claude" is an alias prefix that maps to "anthropic". All Claude models route to ProviderId::Anthropic.
 
 ### Requirement: Provider Detection Logic
 
@@ -479,7 +479,7 @@ The system MUST correctly map ModelId to ProviderId to determine cache-control h
 - GIVEN a CompletionRequest with model="gpt-4o"
 - WHEN provider detection runs
 - THEN the detected provider MUST be ProviderId::OpenAI
-- AND cache-control header MUST NOT be injected in Auto mode
+- AND cache-control header MUST be injected in Auto mode (OpenAI supports prompt caching)
 
 #### Scenario: Unknown model defaults to no caching
 
@@ -533,7 +533,7 @@ pub struct SignatureCacheConfig {
 
 pub struct TokenCacheConfig {
     pub mode: CacheMode,
-    pub providers: Vec<String>, // Provider ID prefixes for matching (e.g., "anthropic", "claude"). Empty = default to known supporting providers.
+    pub providers: Vec<String>, // Provider ID string prefixes for matching (e.g., "anthropic", "claude"→"anthropic", "openai", "gpt"). Empty = default to ["anthropic", "deepseek", "qwen", "openai"].
 }
 
 pub enum CacheMode {
