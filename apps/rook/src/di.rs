@@ -272,7 +272,6 @@ impl RookContainer {
                     alias_repo.clone(), // model_alias_repository - wired in Phase 3
                     config.model_aliases.clone().into(),
                     telemetry_tracker, // telemetry tracker from config
-                    config.cache.token_cache.clone().into(), // Layer 2 token cache config
                 ),
                 ManageProviders::new(router.clone()),
                 health_check,

@@ -421,7 +421,6 @@ mod tests {
                 api_key_id: None,
                 requested_tier: None,
                 combo_id: None,
-                cache_control_header: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         }

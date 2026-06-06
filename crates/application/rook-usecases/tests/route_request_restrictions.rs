@@ -12,9 +12,7 @@ use rook_core::{
     ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, SignatureEntry, StreamChunk,
     TokenCacheStats, TokenUsage,
 };
-use rook_usecases::{
-    route_request::ModelAliasesConfig, PricingConfig, RouteRequest, TokenCacheConfig,
-};
+use rook_usecases::{route_request::ModelAliasesConfig, PricingConfig, RouteRequest};
 use shared_kernel::{CacheKey, RequestId};
 
 // --- Fake Implementations ---
@@ -267,7 +265,6 @@ async fn allowed_models_contains_requested_model_passes() {
         alias_repo,
         alias_config,
         None, // telemetry
-        TokenCacheConfig::default(),
     );
 
     let req = CompletionRequest {
@@ -289,7 +286,6 @@ async fn allowed_models_contains_requested_model_passes() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("gpt-3.5-turbo")],
@@ -325,7 +321,6 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         alias_repo,
         alias_config,
         None, // telemetry
-        TokenCacheConfig::default(),
     );
 
     let req = CompletionRequest {
@@ -347,7 +342,6 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4")],
@@ -387,7 +381,6 @@ async fn allowed_providers_contains_selected_provider_passes() {
         alias_repo,
         alias_config,
         None, // telemetry
-        TokenCacheConfig::default(),
     );
 
     let req = CompletionRequest {
@@ -409,7 +402,6 @@ async fn allowed_providers_contains_selected_provider_passes() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],
@@ -445,7 +437,6 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         alias_repo,
         alias_config,
         None, // telemetry
-        TokenCacheConfig::default(),
     );
 
     let req = CompletionRequest {
@@ -467,7 +458,6 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],

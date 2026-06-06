@@ -47,102 +47,6 @@ struct UsageMetrics<'a> {
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 
-/// Default providers that support token caching (Anthropic prompt caching, OpenAI, etc.)
-const DEFAULT_TOKEN_CACHE_PROVIDERS: &[&str] = &[
-    "anthropic",
-    "claude",
-    "deepseek",
-    "qwen",
-    "zai",
-    "openai",
-    "gpt",
-];
-
-/// Configuration for Layer 2 token cache (provider-side token caching)
-///
-/// Token cache leverages provider-side caching by injecting `cache-control: max-stale=3600`
-/// headers into outbound requests. Providers that support token caching (e.g., Anthropic)
-/// return `x-cache: hit` or `x-cache: miss` headers, which Rook parses to track cache
-/// performance and estimate cost savings.
-///
-/// See `supports_token_cache()` for provider detection logic.
-#[derive(Debug, Clone)]
-pub struct TokenCacheConfig {
-    pub mode: CacheMode,
-    pub providers: Vec<String>,
-}
-
-/// Token cache mode — controls when cache-control headers are injected
-///
-/// **Logic:**
-/// - `Never`: No cache-control headers injected (token caching disabled)
-/// - `Always`: Inject cache-control for all providers (experimental)
-/// - `Auto`: Inject only for providers matching `TokenCacheConfig.providers` prefixes,
-///   or default known providers (Anthropic, DeepSeek, Qwen, ZAI) if list is empty
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheMode {
-    /// Inject cache-control only for known supporting providers
-    Auto,
-    /// Always inject cache-control header regardless of provider
-    Always,
-    /// Never inject cache-control header (token caching disabled)
-    Never,
-}
-
-impl Default for TokenCacheConfig {
-    fn default() -> Self {
-        Self {
-            mode: CacheMode::Never,
-            providers: Vec::new(),
-        }
-    }
-}
-
-/// Determine if a provider supports token caching based on configuration.
-///
-/// **Logic:**
-/// 1. `mode = Never`: Always returns false (token caching disabled)
-/// 2. `mode = Always`: Always returns true (force-enable for all providers)
-/// 3. `mode = Auto`: Check if provider_id matches any prefix in config.providers
-///    - If `config.providers` is empty, use DEFAULT_TOKEN_CACHE_PROVIDERS
-///    - Otherwise, use the explicit provider list
-///
-/// **Prefix Matching:**
-/// Providers are matched by prefix to support versioned provider IDs.
-/// Example: "anthropic" matches "anthropic", "anthropic-v2", "anthropic-prod", etc.
-///
-/// **Default Providers (when `config.providers` is empty and `mode = Auto`):**
-/// - `anthropic`: Anthropic Claude models with prompt caching
-/// - `deepseek`: DeepSeek models
-/// - `qwen`: Qwen/Alibaba Cloud models
-/// - `zai`: ZAI models
-///
-/// # Examples
-/// ```ignore
-/// let config = TokenCacheConfig { mode: CacheMode::Auto, providers: vec!["anthropic".into()] };
-/// assert!(supports_token_cache(&ProviderId::new("anthropic"), &config)); // exact match
-/// assert!(supports_token_cache(&ProviderId::new("anthropic-v2"), &config)); // prefix match
-/// assert!(!supports_token_cache(&ProviderId::new("openai"), &config)); // no match
-/// ```
-pub fn supports_token_cache(provider_id: &ProviderId, config: &TokenCacheConfig) -> bool {
-    match config.mode {
-        CacheMode::Never => false,
-        CacheMode::Always => true,
-        CacheMode::Auto => {
-            let provider_str = provider_id.as_str();
-            let providers_to_check: Vec<&str> = if config.providers.is_empty() {
-                DEFAULT_TOKEN_CACHE_PROVIDERS.to_vec()
-            } else {
-                config.providers.iter().map(|s| s.as_str()).collect()
-            };
-
-            providers_to_check
-                .iter()
-                .any(|prefix| provider_str.starts_with(prefix))
-        }
-    }
-}
-
 pub struct RouteRequest {
     router: Arc<dyn RouterPort>,
     cache: Arc<dyn CachePort>,
@@ -155,8 +59,6 @@ pub struct RouteRequest {
     alias_repository: Arc<dyn ModelAliasRepositoryPort>,
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
-    /// Layer 2 token cache configuration (controls cache-control header injection)
-    token_cache_config: TokenCacheConfig,
 }
 
 /// Configuration for model alias resolution
@@ -180,7 +82,6 @@ impl RouteRequest {
         alias_repository: Arc<dyn ModelAliasRepositoryPort>,
         alias_config: ModelAliasesConfig,
         telemetry: Option<Arc<TelemetryTracker>>,
-        token_cache_config: TokenCacheConfig,
     ) -> Self {
         Self {
             router,
@@ -194,7 +95,6 @@ impl RouteRequest {
             alias_repository,
             alias_config,
             telemetry,
-            token_cache_config,
         }
     }
 
@@ -253,11 +153,6 @@ impl RouteRequest {
 
         // 2a. Provider restriction check (after selection, before execution)
         self.check_provider_restriction(&req, &provider_id)?;
-
-        // 2b. Inject cache-control header if provider supports token caching (Phase 4: Task 4.4)
-        if supports_token_cache(&provider_id, &self.token_cache_config) {
-            req.metadata.cache_control_header = Some("max-stale=3600".to_string());
-        }
 
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(
@@ -361,32 +256,6 @@ impl RouteRequest {
             ctx.client_format,
             ctx.provider_resp,
         )?;
-
-        // Update token cache metrics (Phase 5: Task 5.4-5.6)
-        if let Some(cache_hit) = resp.cache_hit {
-            if cache_hit {
-                // Token cache hit - calculate cost savings using cached tokens only
-                // Prefer cache_read_tokens if available, otherwise use prompt_tokens as approximation
-                let tokens_saved = resp
-                    .usage
-                    .cache_read_tokens
-                    .unwrap_or((resp.usage.prompt_tokens as f64 * 0.5) as u64);
-                let cost_usd = self.estimate_token_cache_savings(&resp.usage);
-
-                if let Err(e) = self
-                    .cache
-                    .increment_token_cache_hit(tokens_saved, cost_usd)
-                    .await
-                {
-                    tracing::warn!(error = %e, "failed to increment token cache hit");
-                }
-            } else {
-                // Token cache miss
-                if let Err(e) = self.cache.increment_token_cache_miss().await {
-                    tracing::warn!(error = %e, "failed to increment token cache miss");
-                }
-            }
-        }
 
         // Cache if eligible
         if ctx.req.metadata.cacheable {
@@ -520,12 +389,6 @@ impl RouteRequest {
         {
             return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
         }
-
-        // 0b. Inject cache-control header if provider supports token caching (Phase 4: Task 4.4)
-        if supports_token_cache(&provider_id, &self.token_cache_config) {
-            req.metadata.cache_control_header = Some("max-stale=3600".to_string());
-        }
-
         let provider_format = provider.api_format();
         let provider_req = self.format_translator.translate_request(
             client_format,
@@ -825,18 +688,12 @@ impl RouteRequest {
                 continue;
             }
 
-            // 3c. Inject cache-control header if provider supports token caching (Phase 4: Task 4.4)
-            let mut combo_req = req.clone();
-            if supports_token_cache(provider_id, &self.token_cache_config) {
-                combo_req.metadata.cache_control_header = Some("max-stale=3600".to_string());
-            }
-
-            // 3d. Execute with per-step timeout
+            // 3c. Execute with per-step timeout
             let provider_format = provider.api_format();
             let provider_req = self.format_translator.translate_request(
                 client_format,
                 provider_format,
-                combo_req,
+                req.clone(),
             )?;
 
             let step_start = Instant::now();
@@ -1165,25 +1022,6 @@ impl RouteRequest {
             );
             metrics::counter!("usage_record_failed_total").increment(1);
         }
-    }
-
-    /// Estimate cost savings from token cache hit.
-    ///
-    /// Uses hardcoded default pricing ($3/M tokens for Claude 3.5 Sonnet baseline).
-    /// Future enhancement: make configurable via token_cache.pricing config section.
-    ///
-    /// Phase 5: Task 5.6
-    fn estimate_token_cache_savings(&self, usage: &TokenUsage) -> f64 {
-        const DEFAULT_PROMPT_RATE_PER_MILLION: f64 = 3.00; // $3/M tokens
-
-        // Prefer cache_read_tokens if available (Anthropic-specific field)
-        let cached_tokens = usage.cache_read_tokens.unwrap_or({
-            // Fallback: use prompt_tokens with conservative multiplier
-            // This is an approximation for providers that don't report cached tokens separately
-            (usage.prompt_tokens as f64 * 0.5) as u64
-        });
-
-        (cached_tokens as f64 * DEFAULT_PROMPT_RATE_PER_MILLION) / 1_000_000.0
     }
 }
 
@@ -1614,7 +1452,6 @@ mod tests {
                 api_key_id: None,
                 requested_tier: None,
                 combo_id: None,
-                cache_control_header: None,
             },
             restrictions: rook_core::ApiKeyRestrictions::default(),
         }
@@ -1644,8 +1481,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let mut stream = usecase
@@ -1697,8 +1533,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         )
     }
 
@@ -1725,8 +1560,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -1781,8 +1615,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
@@ -1836,8 +1669,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
         let req = request();
 
@@ -1884,8 +1716,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -1923,8 +1754,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let result = usecase.execute(request()).await;
@@ -2056,8 +1886,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
         let mut req = request();
         req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
@@ -2164,8 +1993,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let mut stream = usecase
@@ -2216,8 +2044,7 @@ mod tests {
             Arc::new(TestFormatTranslator),
             Arc::new(TestAliasRepository),
             test_alias_config(),
-            None,                        // telemetry
-            TokenCacheConfig::default(), // token_cache_config
+            None, // telemetry
         );
 
         let stream = usecase
@@ -2239,491 +2066,5 @@ mod tests {
             usage_recorder.entries.lock().unwrap().is_empty(),
             "recording should have failed"
         );
-    }
-
-    // Tests for Phase 4: Provider detection and token cache support
-    mod token_cache_tests {
-        use super::*;
-
-        #[test]
-        fn test_provider_detection_anthropic_auto_mode() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec![
-                    "anthropic".to_string(),
-                    "claude".to_string(),
-                    "deepseek".to_string(),
-                    "qwen".to_string(),
-                    "zai".to_string(),
-                ],
-            };
-
-            assert!(
-                supports_token_cache(&ProviderId::new("anthropic"), &config),
-                "anthropic provider should support token cache in Auto mode"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("claude-haiku"), &config),
-                "claude-haiku provider should support token cache in Auto mode"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("deepseek-chat"), &config),
-                "deepseek-chat provider should support token cache in Auto mode"
-            );
-        }
-
-        #[test]
-        fn test_provider_detection_openai_auto_mode() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec![
-                    "anthropic".to_string(),
-                    "claude".to_string(),
-                    "deepseek".to_string(),
-                    "qwen".to_string(),
-                    "zai".to_string(),
-                ],
-            };
-
-            assert!(
-                !supports_token_cache(&ProviderId::new("openai"), &config),
-                "openai provider should NOT support token cache in Auto mode"
-            );
-            assert!(
-                !supports_token_cache(&ProviderId::new("gpt-4"), &config),
-                "gpt-4 provider should NOT support token cache in Auto mode"
-            );
-        }
-
-        #[test]
-        fn test_provider_detection_always_mode() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Always,
-                providers: vec![],
-            };
-
-            assert!(
-                supports_token_cache(&ProviderId::new("openai"), &config),
-                "openai should support token cache in Always mode"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("anthropic"), &config),
-                "anthropic should support token cache in Always mode"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("unknown-provider"), &config),
-                "unknown provider should support token cache in Always mode"
-            );
-        }
-
-        #[test]
-        fn test_provider_detection_never_mode() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Never,
-                providers: vec!["anthropic".to_string()],
-            };
-
-            assert!(
-                !supports_token_cache(&ProviderId::new("anthropic"), &config),
-                "anthropic should NOT support token cache in Never mode"
-            );
-            assert!(
-                !supports_token_cache(&ProviderId::new("openai"), &config),
-                "openai should NOT support token cache in Never mode"
-            );
-        }
-
-        #[test]
-        fn test_provider_detection_custom_providers_list() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec!["custom-provider".to_string(), "experimental".to_string()],
-            };
-
-            assert!(
-                supports_token_cache(&ProviderId::new("custom-provider"), &config),
-                "custom-provider should match custom providers list"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("experimental-v2"), &config),
-                "experimental-v2 should match prefix in custom providers list"
-            );
-            assert!(
-                !supports_token_cache(&ProviderId::new("openai"), &config),
-                "openai should NOT match custom providers list"
-            );
-        }
-
-        #[test]
-        fn test_provider_detection_empty_providers_uses_defaults() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec![], // Empty - should use hardcoded defaults
-            };
-
-            // Should fall back to default known providers
-            assert!(
-                supports_token_cache(&ProviderId::new("anthropic"), &config),
-                "anthropic should be in default providers"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("claude"), &config),
-                "claude should be in default providers"
-            );
-        }
-
-        #[test]
-        fn test_provider_id_prefix_matching() {
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec!["anthropic".to_string()],
-            };
-
-            assert!(
-                supports_token_cache(&ProviderId::new("anthropic"), &config),
-                "exact match should work"
-            );
-            assert!(
-                supports_token_cache(&ProviderId::new("anthropic-claude-3"), &config),
-                "prefix match should work"
-            );
-            assert!(
-                !supports_token_cache(&ProviderId::new("non-anthropic"), &config),
-                "partial match should NOT work"
-            );
-        }
-
-        // Phase 4: Task 4.4 - Cache-control header injection tests
-        #[tokio::test]
-        async fn test_cache_control_header_injected_for_supporting_provider() {
-            // Create a test provider that captures the request
-            struct CaptureProvider {
-                id: ProviderId,
-                captured_request: Arc<Mutex<Option<CompletionRequest>>>,
-            }
-
-            #[async_trait]
-            impl ProviderPort for CaptureProvider {
-                fn id(&self) -> &ProviderId {
-                    &self.id
-                }
-
-                fn supported_models(&self) -> &[ModelId] {
-                    std::slice::from_ref(&TEST_MODEL)
-                }
-
-                fn api_format(&self) -> ApiFormat {
-                    ApiFormat::OpenAI
-                }
-
-                fn is_available(&self) -> bool {
-                    true
-                }
-
-                async fn health_check(&self) -> HealthStatus {
-                    HealthStatus::Healthy {
-                        provider: self.id.clone(),
-                        latency_ms: 1,
-                    }
-                }
-
-                async fn complete(
-                    &self,
-                    req: &CompletionRequest,
-                ) -> CortexResult<CompletionResponse> {
-                    *self.captured_request.lock().unwrap() = Some(req.clone());
-
-                    Ok(CompletionResponse {
-                        id: req.id.clone(),
-                        provider: self.id.clone(),
-                        model: req.model.clone(),
-                        content: "test".to_string(),
-                        content_blocks: vec![rook_core::MessageContent::Text("test".to_string())],
-                        usage: TokenUsage {
-                            prompt_tokens: 1,
-                            completion_tokens: 1,
-                            total_tokens: 2,
-                            cache_read_tokens: None,
-                            cache_creation_tokens: None,
-                            reasoning_tokens: None,
-                            estimated_cost_usd: None,
-                        },
-                        latency_ms: 1,
-                        cache_hit: None,
-                    })
-                }
-
-                async fn stream(
-                    &self,
-                    _req: &CompletionRequest,
-                ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>>
-                {
-                    Ok(Box::pin(stream::empty()))
-                }
-            }
-
-            let captured = Arc::new(Mutex::new(None));
-            let provider: Arc<dyn ProviderPort> = Arc::new(CaptureProvider {
-                id: ProviderId::new("anthropic"),
-                captured_request: captured.clone(),
-            });
-
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec!["anthropic".to_string()],
-            };
-
-            let usecase = RouteRequest::new(
-                Arc::new(TestRouter { provider }),
-                Arc::new(TestCache {
-                    get_calls: Mutex::new(0),
-                    set_calls: Mutex::new(0),
-                }),
-                Arc::new(TestAudit {
-                    entries: Mutex::new(Vec::new()),
-                }),
-                None,
-                None,
-                None,
-                Arc::new(crate::PricingConfig::default()),
-                Arc::new(TestFormatTranslator),
-                Arc::new(TestAliasRepository),
-                test_alias_config(),
-                None,
-                config,
-            );
-
-            let _ = usecase.execute(request()).await.expect("should succeed");
-
-            let captured_req = captured.lock().unwrap();
-            assert!(captured_req.is_some(), "request should have been captured");
-
-            let req = captured_req.as_ref().unwrap();
-            assert_eq!(
-                req.metadata.cache_control_header.as_deref(),
-                Some("max-stale=3600"),
-                "cache-control header should be injected for anthropic provider"
-            );
-        }
-
-        #[tokio::test]
-        async fn test_cache_control_header_not_injected_for_non_supporting_provider() {
-            struct CaptureProvider {
-                id: ProviderId,
-                captured_request: Arc<Mutex<Option<CompletionRequest>>>,
-            }
-
-            #[async_trait]
-            impl ProviderPort for CaptureProvider {
-                fn id(&self) -> &ProviderId {
-                    &self.id
-                }
-
-                fn supported_models(&self) -> &[ModelId] {
-                    std::slice::from_ref(&TEST_MODEL)
-                }
-
-                fn api_format(&self) -> ApiFormat {
-                    ApiFormat::OpenAI
-                }
-
-                fn is_available(&self) -> bool {
-                    true
-                }
-
-                async fn health_check(&self) -> HealthStatus {
-                    HealthStatus::Healthy {
-                        provider: self.id.clone(),
-                        latency_ms: 1,
-                    }
-                }
-
-                async fn complete(
-                    &self,
-                    req: &CompletionRequest,
-                ) -> CortexResult<CompletionResponse> {
-                    *self.captured_request.lock().unwrap() = Some(req.clone());
-
-                    Ok(CompletionResponse {
-                        id: req.id.clone(),
-                        provider: self.id.clone(),
-                        model: req.model.clone(),
-                        content: "test".to_string(),
-                        content_blocks: vec![rook_core::MessageContent::Text("test".to_string())],
-                        usage: TokenUsage {
-                            prompt_tokens: 1,
-                            completion_tokens: 1,
-                            total_tokens: 2,
-                            cache_read_tokens: None,
-                            cache_creation_tokens: None,
-                            reasoning_tokens: None,
-                            estimated_cost_usd: None,
-                        },
-                        latency_ms: 1,
-                        cache_hit: None,
-                    })
-                }
-
-                async fn stream(
-                    &self,
-                    _req: &CompletionRequest,
-                ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>>
-                {
-                    Ok(Box::pin(stream::empty()))
-                }
-            }
-
-            let captured = Arc::new(Mutex::new(None));
-            let provider: Arc<dyn ProviderPort> = Arc::new(CaptureProvider {
-                id: ProviderId::new("openai"),
-                captured_request: captured.clone(),
-            });
-
-            let config = TokenCacheConfig {
-                mode: CacheMode::Auto,
-                providers: vec!["anthropic".to_string()],
-            };
-
-            let usecase = RouteRequest::new(
-                Arc::new(TestRouter { provider }),
-                Arc::new(TestCache {
-                    get_calls: Mutex::new(0),
-                    set_calls: Mutex::new(0),
-                }),
-                Arc::new(TestAudit {
-                    entries: Mutex::new(Vec::new()),
-                }),
-                None,
-                None,
-                None,
-                Arc::new(crate::PricingConfig::default()),
-                Arc::new(TestFormatTranslator),
-                Arc::new(TestAliasRepository),
-                test_alias_config(),
-                None,
-                config,
-            );
-
-            let _ = usecase.execute(request()).await.expect("should succeed");
-
-            let captured_req = captured.lock().unwrap();
-            assert!(captured_req.is_some(), "request should have been captured");
-
-            let req = captured_req.as_ref().unwrap();
-            assert!(
-                req.metadata.cache_control_header.is_none(),
-                "cache-control header should NOT be injected for openai provider"
-            );
-        }
-
-        #[tokio::test]
-        async fn test_cache_control_header_injected_in_never_mode() {
-            struct CaptureProvider {
-                id: ProviderId,
-                captured_request: Arc<Mutex<Option<CompletionRequest>>>,
-            }
-
-            #[async_trait]
-            impl ProviderPort for CaptureProvider {
-                fn id(&self) -> &ProviderId {
-                    &self.id
-                }
-
-                fn supported_models(&self) -> &[ModelId] {
-                    std::slice::from_ref(&TEST_MODEL)
-                }
-
-                fn api_format(&self) -> ApiFormat {
-                    ApiFormat::OpenAI
-                }
-
-                fn is_available(&self) -> bool {
-                    true
-                }
-
-                async fn health_check(&self) -> HealthStatus {
-                    HealthStatus::Healthy {
-                        provider: self.id.clone(),
-                        latency_ms: 1,
-                    }
-                }
-
-                async fn complete(
-                    &self,
-                    req: &CompletionRequest,
-                ) -> CortexResult<CompletionResponse> {
-                    *self.captured_request.lock().unwrap() = Some(req.clone());
-
-                    Ok(CompletionResponse {
-                        id: req.id.clone(),
-                        provider: self.id.clone(),
-                        model: req.model.clone(),
-                        content: "test".to_string(),
-                        content_blocks: vec![rook_core::MessageContent::Text("test".to_string())],
-                        usage: TokenUsage {
-                            prompt_tokens: 1,
-                            completion_tokens: 1,
-                            total_tokens: 2,
-                            cache_read_tokens: None,
-                            cache_creation_tokens: None,
-                            reasoning_tokens: None,
-                            estimated_cost_usd: None,
-                        },
-                        latency_ms: 1,
-                        cache_hit: None,
-                    })
-                }
-
-                async fn stream(
-                    &self,
-                    _req: &CompletionRequest,
-                ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>>
-                {
-                    Ok(Box::pin(stream::empty()))
-                }
-            }
-
-            let captured = Arc::new(Mutex::new(None));
-            let provider: Arc<dyn ProviderPort> = Arc::new(CaptureProvider {
-                id: ProviderId::new("anthropic"),
-                captured_request: captured.clone(),
-            });
-
-            let config = TokenCacheConfig {
-                mode: CacheMode::Never,
-                providers: vec!["anthropic".to_string()],
-            };
-
-            let usecase = RouteRequest::new(
-                Arc::new(TestRouter { provider }),
-                Arc::new(TestCache {
-                    get_calls: Mutex::new(0),
-                    set_calls: Mutex::new(0),
-                }),
-                Arc::new(TestAudit {
-                    entries: Mutex::new(Vec::new()),
-                }),
-                None,
-                None,
-                None,
-                Arc::new(crate::PricingConfig::default()),
-                Arc::new(TestFormatTranslator),
-                Arc::new(TestAliasRepository),
-                test_alias_config(),
-                None,
-                config,
-            );
-
-            let _ = usecase.execute(request()).await.expect("should succeed");
-
-            let captured_req = captured.lock().unwrap();
-            assert!(captured_req.is_some(), "request should have been captured");
-
-            let req = captured_req.as_ref().unwrap();
-            assert!(
-                req.metadata.cache_control_header.is_none(),
-                "cache-control header should NOT be injected in Never mode"
-            );
-        }
     }
 }

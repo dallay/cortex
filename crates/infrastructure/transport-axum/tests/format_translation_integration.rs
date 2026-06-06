@@ -17,7 +17,7 @@ use rook_core::{
     HealthStatus, MessageContent, ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort,
     ModelId, ProviderPort, RequestMetadata, Role, RouterPort, StreamChunk, TokenUsage,
 };
-use rook_usecases::{route_request::ModelAliasesConfig, RouteRequest, TokenCacheConfig};
+use rook_usecases::{route_request::ModelAliasesConfig, RouteRequest};
 use shared_kernel::{CacheKey, ProviderId, RequestId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -454,7 +454,6 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
             auto_seed: false,
         },
         None, // telemetry
-        TokenCacheConfig::default(),
     )
 }
 
@@ -478,7 +477,6 @@ fn registry_domain_request() -> CompletionRequest {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     }

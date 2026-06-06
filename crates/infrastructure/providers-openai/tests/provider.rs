@@ -98,7 +98,6 @@ async fn complete_returns_response_on_success() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -152,7 +151,6 @@ async fn stream_returns_chunks_on_openai_sse_success() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -243,7 +241,6 @@ async fn complete_parses_cached_tokens_and_reasoning_tokens() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };
@@ -302,7 +299,6 @@ async fn stream_request_includes_include_usage_option() {
             api_key_id: None,
             requested_tier: None,
             combo_id: None,
-            cache_control_header: None,
         },
         restrictions: rook_core::ApiKeyRestrictions::default(),
     };

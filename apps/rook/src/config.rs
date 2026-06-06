@@ -286,15 +286,6 @@ pub struct CacheConfig {
 }
 
 /// Configuration for Layer 1 signature cache (request deduplication).
-///
-/// Signature cache uses SHA-256 hashing to deduplicate identical requests
-/// within the TTL window. When enabled, Rook computes a signature from the
-/// normalized request (model, messages, parameters) and checks the cache
-/// before forwarding to providers.
-///
-/// **Inspection endpoints** (`/api/cache/signatures`, `/api/cache/signature/:sig`)
-/// allow operators to list cached signatures and retrieve responses by signature
-/// for debugging and cache validation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SignatureCacheConfig {
     #[serde(default = "default_true")]
@@ -305,23 +296,7 @@ pub struct SignatureCacheConfig {
 }
 
 /// Configuration for Layer 2 token cache (provider-side token caching).
-///
-/// Token cache leverages provider-side caching (e.g., Anthropic prompt caching)
-/// by injecting `cache-control: max-stale=3600` headers into outbound requests.
-/// Providers return `x-cache: hit` or `x-cache: miss` headers, which Rook parses
-/// to track cache hits and estimate cost savings.
-///
-/// **Configuration:**
-/// - `mode = "auto"`: Enable only for known providers (Anthropic, DeepSeek, Qwen, ZAI)
-///   or providers explicitly listed in the `providers` array.
-/// - `mode = "always"`: Force enable for ALL providers (use with caution).
-/// - `mode = "never"`: Disable provider-side token caching (default).
-/// - `providers = []`: Empty list uses default known providers when mode=auto.
-///   Non-empty list overrides defaults (prefix matching: "anthropic" matches "anthropic-v2").
-///
-/// **Cost Savings:**
-/// Rook tracks tokens saved via provider-side caching and estimates cost savings
-/// using average provider pricing. Metrics appear in `GET /api/cache/stats`.
+/// Fields will be used in WU-2 (Phase 4-5: provider integration).
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct TokenCacheConfig {
@@ -329,18 +304,11 @@ pub struct TokenCacheConfig {
     #[serde(default = "default_cache_mode")]
     pub mode: CacheMode,
     /// List of provider IDs that support token caching. Empty defaults to known supporting providers.
-    /// Supports prefix matching: "anthropic" matches "anthropic", "anthropic-v2", etc.
     #[serde(default)]
     pub providers: Vec<String>,
 }
 
 /// Token cache mode — controls when cache-control headers are injected.
-///
-/// **Mode Behavior:**
-/// - `Auto`: Inject `cache-control` only for known providers (Anthropic, DeepSeek, Qwen, ZAI)
-///   or providers explicitly listed in `TokenCacheConfig.providers`.
-/// - `Always`: Always inject `cache-control` header regardless of provider (experimental).
-/// - `Never`: Disable provider-side token caching (default, safest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CacheMode {
@@ -372,25 +340,6 @@ impl Default for TokenCacheConfig {
 
 fn default_cache_mode() -> CacheMode {
     CacheMode::Never
-}
-
-impl From<TokenCacheConfig> for rook_usecases::TokenCacheConfig {
-    fn from(cfg: TokenCacheConfig) -> Self {
-        Self {
-            mode: cfg.mode.into(),
-            providers: cfg.providers,
-        }
-    }
-}
-
-impl From<CacheMode> for rook_usecases::CacheMode {
-    fn from(mode: CacheMode) -> Self {
-        match mode {
-            CacheMode::Auto => rook_usecases::CacheMode::Auto,
-            CacheMode::Always => rook_usecases::CacheMode::Always,
-            CacheMode::Never => rook_usecases::CacheMode::Never,
-        }
-    }
 }
 
 impl CacheConfig {

@@ -131,7 +131,6 @@ impl From<OpenAIChatRequest> for CompletionRequest {
                 api_key_id: None,
                 requested_tier: None,
                 combo_id: None,
-                cache_control_header: None,
             },
             restrictions: ApiKeyRestrictions::default(),
         }
