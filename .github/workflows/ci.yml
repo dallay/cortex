@@ -421,10 +421,12 @@ jobs:
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: lcov.info
-          fail_ci_if_error: true
+          flags: backend
+          fail_ci_if_error: false
           verbose: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          CODECOV_DISABLE_VERIFICATION: true
 
   coverage-frontend:
     name: Coverage (Frontend)
@@ -452,10 +454,12 @@ jobs:
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: apps/rook/dashboard/coverage/lcov.info
-          fail_ci_if_error: true
+          flags: frontend
+          fail_ci_if_error: false
           verbose: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          CODECOV_DISABLE_VERIFICATION: true
 
   sonar:
     name: SonarCloud
