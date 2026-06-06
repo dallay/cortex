@@ -2,14 +2,14 @@
 
 use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
+use providers_core::role_to_string;
 use reqwest::Client;
 use rook_core::{
- ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
+    ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
     StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
-use providers_core::role_to_string;
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 

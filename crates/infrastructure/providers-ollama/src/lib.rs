@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
+use providers_core::role_to_string;
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -9,7 +10,6 @@ use rook_core::{
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
-use providers_core::role_to_string;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +53,7 @@ impl OllamaProvider {
     }
 
     /// Build the request body JSON for the Ollama chat API.
-    fn build_request_body(req:&CompletionRequest, stream: bool) -> serde_json::Value {
+    fn build_request_body(req: &CompletionRequest, stream: bool) -> serde_json::Value {
         let messages: Vec<serde_json::Value> = req
             .messages
             .iter()
@@ -71,10 +71,7 @@ impl OllamaProvider {
         })
     }
 
-    async fn send_request(
-&self,
-        body: &serde_json::Value,
-    ) -> CortexResult<reqwest::Response> {
+    async fn send_request(&self, body: &serde_json::Value) -> CortexResult<reqwest::Response> {
         self.client
             .post(format!("{}/api/chat", self.config.base_url))
             .json(body)
@@ -194,7 +191,7 @@ impl ProviderPort for OllamaProvider {
     }
 
     async fn stream(
-&self,
+        &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
         let body = Self::build_request_body(req, true);
