@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
-use providers_core::process_bytes;
+use providers_core::{process_bytes, role_to_string};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
@@ -44,25 +44,6 @@ pub struct OllamaProvider {
     client: Client,
 }
 
-/// Map a Ollama HTTP error response to a typed `CortexError`.
-///
-/// Reads the response body and formats it as a provider error.
-pub(crate) async fn map_ollama_http_error(resp: reqwest::Response) -> CortexError {
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    CortexError::provider(format!("Ollama error {status}: {body}"))
-}
-
-/// Convert rook_core::Role to a string for Ollama API.
-fn role_to_string(role: &rook_core::Role) -> String {
-    match role {
-        rook_core::Role::System => "system".to_string(),
-        rook_core::Role::User => "user".to_string(),
-        rook_core::Role::Assistant => "assistant".to_string(),
-        rook_core::Role::Developer => "developer".to_string(),
-    }
-}
-
 impl OllamaProvider {
     pub fn new(config: OllamaProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
@@ -71,25 +52,26 @@ impl OllamaProvider {
         Ok(Arc::new(Self { config, client }))
     }
 
-    fn build_stream_request(req: &CompletionRequest) -> serde_json::Value {
+    /// Build the request body JSON for the Ollama chat API.
+    fn build_request_body(req: &CompletionRequest, stream: bool) -> serde_json::Value {
+        let messages: Vec<serde_json::Value> = req
+            .messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "role": role_to_string(m.role),
+                    "content": m.content.as_text(),
+                })
+            })
+            .collect();
         serde_json::json!({
             "model": req.model.to_string(),
-            "messages": req
-                .messages
-                .iter()
-                .map(|m| serde_json::json!({
-                    "role": role_to_string(&m.role),
-                    "content": m.content.as_text(),
-                }))
-                .collect::<Vec<_>>(),
-            "stream": true,
+            "messages": messages,
+            "stream": stream,
         })
     }
 
-    async fn send_stream_request(
-        &self,
-        body: &serde_json::Value,
-    ) -> CortexResult<reqwest::Response> {
+    async fn send_request(&self, body: &serde_json::Value) -> CortexResult<reqwest::Response> {
         self.client
             .post(format!("{}/api/chat", self.config.base_url))
             .json(body)
@@ -171,30 +153,17 @@ impl ProviderPort for OllamaProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        let body = serde_json::json!({
-            "model": req.model.to_string(),
-            "messages": req
-                .messages
-                .iter()
-                .map(|m| serde_json::json!({
-                    "role": role_to_string(&m.role),
-                    "content": m.content.as_text(),
-                }))
-                .collect::<Vec<_>>(),
-            "stream": false,
-        });
+        let body = Self::build_request_body(req, false);
 
         let start = std::time::Instant::now();
-        let resp = self
-            .client
-            .post(format!("{}/api/chat", self.config.base_url))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+        let resp = self.send_request(&body).await?;
 
         if !resp.status().is_success() {
-            return Err(map_ollama_http_error(resp).await);
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CortexError::provider(format!(
+                "Ollama error {status}: {body}"
+            )));
         }
 
         let parsed: OllamaChatResponse = resp
@@ -229,12 +198,15 @@ impl ProviderPort for OllamaProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        let body = Self::build_stream_request(req);
-        let resp = self.send_stream_request(&body).await?;
+        let body = Self::build_request_body(req, true);
+        let resp = self.send_request(&body).await?;
 
-        // Check HTTP status before processing the stream
         if !resp.status().is_success() {
-            return Err(map_ollama_http_error(resp).await);
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CortexError::provider(format!(
+                "Ollama error {status}: {body}"
+            )));
         }
 
         let request_id = req.id.clone();
@@ -355,21 +327,21 @@ mod tests {
 
     #[test]
     fn test_role_to_string_system() {
-        assert_eq!(role_to_string(&rook_core::Role::System), "system");
+        assert_eq!(role_to_string(rook_core::Role::System), "system");
     }
 
     #[test]
     fn test_role_to_string_user() {
-        assert_eq!(role_to_string(&rook_core::Role::User), "user");
+        assert_eq!(role_to_string(rook_core::Role::User), "user");
     }
 
     #[test]
     fn test_role_to_string_assistant() {
-        assert_eq!(role_to_string(&rook_core::Role::Assistant), "assistant");
+        assert_eq!(role_to_string(rook_core::Role::Assistant), "assistant");
     }
 
     #[test]
     fn test_role_to_string_developer() {
-        assert_eq!(role_to_string(&rook_core::Role::Developer), "developer");
+        assert_eq!(role_to_string(rook_core::Role::Developer), "developer");
     }
 }

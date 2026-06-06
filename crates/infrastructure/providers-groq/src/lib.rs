@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
-use providers_core::{parse_event_text, sanitize_body, SseEvent};
+use providers_core::{parse_event_text, role_to_string, sanitize_body, SseEvent};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
@@ -113,16 +113,6 @@ async fn map_groq_http_error(provider_id: &ProviderId, resp: reqwest::Response) 
     }
 }
 
-/// Convert rook_core::Role to a string for Groq API.
-fn role_to_string(role: &rook_core::Role) -> String {
-    match role {
-        rook_core::Role::System => "system".to_string(),
-        rook_core::Role::User => "user".to_string(),
-        rook_core::Role::Assistant => "assistant".to_string(),
-        rook_core::Role::Developer => "developer".to_string(),
-    }
-}
-
 pub struct GroqProvider {
     config: GroqProviderConfig,
     client: Client,
@@ -143,7 +133,7 @@ impl GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: role_to_string(&m.role),
+                    role: role_to_string(m.role).to_string(),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
@@ -292,7 +282,7 @@ impl ProviderPort for GroqProvider {
                 .messages
                 .iter()
                 .map(|m| GroqRequestMessage {
-                    role: role_to_string(&m.role),
+                    role: role_to_string(m.role).to_string(),
                     content: m.content.as_text().to_string(),
                 })
                 .collect(),
