@@ -7,8 +7,8 @@ use axum::{
 };
 use cache_memory::InMemoryCache;
 use rook_core::{
-    CachePort, CacheStats, CompletionResponse, MessageContent, ModelId, ProviderId, SignatureEntry,
-    TokenUsage,
+    CachePort, CompletionResponse, MessageContent, ModelId, ProviderId, SignatureEntry, TokenUsage,
+    UnifiedCacheStats,
 };
 use shared_kernel::{CacheKey, RequestId};
 use std::sync::Arc;
@@ -85,11 +85,16 @@ async fn get_cache_stats_returns_200_with_json() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let stats: CacheStats = serde_json::from_slice(&body).unwrap();
+    let stats: UnifiedCacheStats = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(stats.entries, 2);
-    assert_eq!(stats.hits, 1);
-    assert_eq!(stats.misses, 0);
+    // Verify signature cache stats
+    assert_eq!(stats.signature_cache.entries, 2);
+    assert_eq!(stats.signature_cache.hits, 1);
+    assert_eq!(stats.signature_cache.misses, 0);
+
+    // Verify combined stats
+    assert_eq!(stats.combined.total_requests, 1);
+    assert_eq!(stats.combined.cached_requests, 1);
 }
 
 #[tokio::test]

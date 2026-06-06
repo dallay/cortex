@@ -5,18 +5,19 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use rook_core::{CachePort, CacheStats, SignatureEntry};
+use rook_core::{CachePort, SignatureEntry, UnifiedCacheStats};
 use std::sync::Arc;
 
-/// GET /api/cache/stats — Return cache statistics (both signature and token cache layers)
+/// GET /api/cache/stats — Return unified cache statistics (signature + token cache layers)
 pub async fn get_cache_stats(
     Extension(cache): Extension<Arc<dyn CachePort>>,
-) -> Result<Json<CacheStats>, StatusCode> {
-    cache
+) -> Result<Json<UnifiedCacheStats>, StatusCode> {
+    let stats = cache
         .stats()
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(UnifiedCacheStats::from_cache_stats(stats)))
 }
 
 /// DELETE /api/cache — Clear entire cache

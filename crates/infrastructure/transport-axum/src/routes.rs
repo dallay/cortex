@@ -791,7 +791,7 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
     use std::collections::HashMap;
     let circuit_map: HashMap<_, _> = circuit_states.into_iter().collect();
 
-    // Get cache stats
+    // Get unified cache stats (signature + token cache layers)
     let cache_stats =
         usecases
             .route_request
@@ -806,6 +806,8 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
                 max_entries: 0,
                 token_cache: rook_core::TokenCacheStats::default(),
             });
+
+    let unified_cache_stats = rook_core::UnifiedCacheStats::from_cache_stats(cache_stats);
 
     Json(serde_json::json!({
         "status": status,
@@ -841,15 +843,7 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
 
             provider_json
         }).collect::<Vec<_>>(),
-        "cache_stats": {
-            "hits": cache_stats.hits,
-            "misses": cache_stats.misses,
-            "evictions": cache_stats.evictions,
-            "entries": cache_stats.entries,
-            "max_entries": cache_stats.max_entries,
-            "hit_rate": cache_stats.hit_rate(),
-            "utilization": cache_stats.utilization(),
-        }
+        "cache_stats": unified_cache_stats
     }))
 }
 
