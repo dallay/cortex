@@ -1,0 +1,124 @@
+# Codecov Configuration for code-quality (Rook)
+# Backend (Rust) + Frontend (Vue.js Dashboard)
+
+codecov:
+  require_ci_to_pass: yes
+  notify:
+    wait_for_ci: yes
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: false
+      
+      # Backend (Rust) coverage target
+      backend:
+        target: 85%
+        threshold: 2%
+        flags:
+          - backend
+        informational: false
+      
+      # Frontend (Dashboard) coverage target
+      frontend:
+        target: 80%
+        threshold: 2%
+        flags:
+          - frontend
+        informational: false
+    
+    patch:
+      default:
+        target: 80%
+        threshold: 5%
+        informational: false
+      
+      backend:
+        target: 85%
+        threshold: 5%
+        flags:
+          - backend
+      
+      frontend:
+        target: 75%
+        threshold: 5%
+        flags:
+          - frontend
+
+# Flag Management - Automatic approach
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+      - type: patch
+        target: 80%
+        threshold: 5%
+  
+  individual_flags:
+    - name: backend
+      paths:
+        - "apps/rook/src/**"
+        - "apps/rook/tests/**"
+        - "crates/**"
+        - "packages/**"
+      carryforward: true
+      statuses:
+        - type: project
+          target: 85%
+          threshold: 2%
+        - type: patch
+          target: 85%
+          threshold: 5%
+    
+    - name: frontend
+      paths:
+        - "apps/rook/dashboard/**"
+      carryforward: true
+      statuses:
+        - type: project
+          target: 80%
+          threshold: 2%
+        - type: patch
+          target: 75%
+          threshold: 5%
+
+# Comment configuration
+comment:
+  layout: "header, diff, flags, components, files, footer"
+  behavior: default
+  require_changes: false
+  require_base: yes
+  require_head: yes
+  branches: null
+  # Show flag-specific coverage in comments
+  after_n_builds: 2  # Wait for both backend and frontend reports
+
+# Ignore patterns
+ignore:
+  - "apps/rook/dashboard/node_modules"
+  - "apps/rook/dashboard/dist"
+  - "target/**"
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+  - "**/tests/**"
+  - "**/__tests__/**"
+  - "**/test_*.rs"
+
+# Bundle Analysis Configuration (for frontend)
+bundle_analysis:
+  warning_threshold: "5%"
+  status: "informational"
+
+# GitHub-specific configuration
+github_checks:
+  annotations: true
