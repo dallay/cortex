@@ -67,11 +67,14 @@ impl TokenBucket {
     ///
     /// Caps at 1 hour to prevent u64::MAX overflow on very low refill rates.
     #[inline]
-    pub fn retry_after(&self, _capacity: u64, refill_per_second: f64) -> Duration {
-        if self.tokens >= 1.0 {
+    pub fn retry_after(&self, capacity: u64, refill_per_second: f64) -> Duration {
+        let elapsed = self.last_refill.elapsed().as_secs_f64();
+        let current_tokens =
+            (capacity as f64).min(self.tokens + elapsed * refill_per_second);
+        if current_tokens >= 1.0 {
             Duration::ZERO
         } else {
-            let tokens_needed = 1.0 - self.tokens;
+            let tokens_needed = 1.0 - current_tokens;
             let secs = if refill_per_second > 0.0 {
                 (tokens_needed / refill_per_second).ceil() as u64
             } else {

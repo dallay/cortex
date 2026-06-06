@@ -59,19 +59,25 @@ Extract shared provider utilities into a new zero-dependency `providers-core` cr
 
 | File | Action | Description |
 |------|--------|-------------|
-| `crates/infrastructure/providers-core/Cargo.toml` | Create | Zero-dep crate manifest |
-| `crates/infrastructure/providers-core/src/lib.rs` | Create | Public re-exports |
-| `crates/infrastructure/providers-core/src/role.rs` | Create | Role enum + to_role_string() |
-| `crates/infrastructure/providers-core/src/sse.rs` | Create | parse_event_text(), process_bytes() |
-| `crates/infrastructure/providers-core/src/sanitize.rs` | Create | sanitize_body(), char_safe_truncate() |
-| `crates/infrastructure/providers-core/src/request.rs` | Create | send_stream_request() template |
+| `crates/infrastructure/providers-core/Cargo.toml` | Create | Zero-dep crate (providers-core, no external service deps) |
+| `crates/infrastructure/providers-core/src/lib.rs` | Create | Public re-exports: Role, role_to_string, SseEvent, parse_event_text, process_bytes, sanitize_body, char_safe_truncate, validate_response |
+| `crates/infrastructure/providers-core/src/role.rs` | Create | Re-exports CoreRole from rook_core + role_to_string() standalone helper + unit tests |
+| `crates/infrastructure/providers-core/src/sse.rs` | Create | parse_event_text() → Option<SseEvent>, process_bytes() iterator, SseEvent enum, SseBuffer struct |
+| `crates/infrastructure/providers-core/src/sanitize.rs` | Create | sanitize_body() with recursive JSON redaction, char_safe_truncate(), SENSITIVE_KEYS constant |
+| `crates/infrastructure/providers-core/src/request.rs` | Create | RequestTemplate, CommonHeaders, serialize_body, serialize_body_for_log |
+| `crates/infrastructure/providers-core/src/validation.rs` | Create | validate_response(), validate_response_with_type() |
 | `crates/infrastructure/providers-core/tests/stream_tests.rs` | Create | Wiremock-based stream() tests |
 | `crates/infrastructure/providers-core/tests/sanitize_tests.rs` | Create | Sanitization + truncation tests |
 | `crates/infrastructure/providers-core/tests/validation_tests.rs` | Create | validate_response() tests |
-| `crates/infrastructure/providers-anthropic/src/lib.rs` | Modify | Replace duplicated code with providers-core imports |
-| `crates/infrastructure/providers-groq/src/lib.rs` | Modify | Replace duplicated code with providers-core imports |
-| `crates/infrastructure/providers-ollama/src/lib.rs` | Modify | Replace duplicated code with providers-core imports |
-| `crates/infrastructure/providers-openai/src/provider.rs` | Modify | Replace duplicated code with providers-core imports |
+| `crates/infrastructure/provider-utils/Cargo.toml` | Create | Shared provider utilities crate (not a workspace member — standalone) |
+| `crates/infrastructure/provider-utils/src/lib.rs` | Create | Public re-exports |
+| `crates/infrastructure/provider-utils/src/error.rs` | Create | sanitize_error_body() with recursive JSON redaction |
+| `crates/infrastructure/provider-utils/src/token_bucket.rs` | Create | TokenBucket, RetryAfterExt, rate_limit_headers() |
+| `crates/infrastructure/providers-anthropic/src/lib.rs` | Modify | Replace duplicated SSE parsing + sanitize_body with providers-core imports; add stream() HTTP status fix |
+| `crates/infrastructure/providers-groq/src/lib.rs` | Modify | Replace SSE parsing + validate_response with providers-core; remove unused validate_response |
+| `crates/infrastructure/providers-ollama/src/lib.rs` | Modify | Replace from_utf8 with process_bytes; add 19 unit tests |
+| `crates/infrastructure/providers-openai/src/provider.rs` | Modify | Replace local sanitize_body with providers_core::sanitize::sanitize_body |
+| `crates/infrastructure/providers-openai/tests/error_mapping_tests.rs` | Create | Error mapping tests: 401, 429, 400 responses; extracted test helpers |
 | `apps/rook/dashboard/package.json` | Modify | Add @codecov/vite-plugin devDependency |
 | `apps/rook/dashboard/vite.config.ts` | Modify | Add codecovVitePlugin to plugins array |
 
@@ -80,22 +86,21 @@ Extract shared provider utilities into a new zero-dependency `providers-core` cr
 ### providers-core API
 
 ```rust
-// role.rs
-pub enum Role {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-impl Role {
-    pub fn to_role_string(&self) -> &'static str;
-}
+// role.rs — re-exports CoreRole from rook_core + provides role_to_string helper
+pub use rook_core::Role;         // CoreRole enum from domain layer
+pub use rook_core::RoleExt;      // trait with to_role_string() method
+pub fn role_to_string(role: Role) -> &'static str;  // standalone helper for use in match arms
 
 // sse.rs
-pub fn parse_event_text(line: &str) -> Option<String>;
-// Returns the content after "data: " prefix, or None if line doesn't match SSE data format.
-// Filters out "[DONE]" messages.
+#[derive(Debug, Clone)]
+pub enum SseEvent {
+    Data(String),
+    Done,
+}
+
+pub fn parse_event_text(line: &str) -> Option<SseEvent>;
+// Returns SseEvent::Data(content) for lines matching "data: <content>",
+// SseEvent::Done for "[DONE]" messages, or None for other lines.
 // Does NOT parse JSON — caller handles provider-specific parsing.
 
 pub fn process_bytes(
@@ -106,20 +111,23 @@ pub fn process_bytes(
 // Skips invalid UTF-8 without panicking.
 
 // sanitize.rs
-pub fn sanitize_body(body: &str, max_chars: usize) -> String;
-// Parses body as JSON, redacts keys matching SENSITIVE_KEYS, truncates to max_chars.
+pub fn sanitize_body(body: &str) -> String;
+// Parses body as JSON, recursively redacts keys matching SENSITIVE_KEYS (any nesting level),
+// then truncates to MAX_LENGTH (200 chars).
 // Falls back to plain truncation if not valid JSON.
 
 pub fn char_safe_truncate(s: &str, max_chars: usize) -> String;
 // Truncates at character boundary (not byte), adds "… (truncated)" if cut.
 
 // request.rs
-pub async fn send_stream_request(
-    client: &Client,
-    builder: RequestBuilder,
-    url: &str,
-) -> Result<Response, HttpError>;
-// Template for building and sending streaming requests with consistent error handling.
+pub struct CommonHeaders { /* ... */ }
+pub struct RequestTemplate { /* ... */ }
+pub fn serialize_body<T: Serialize>(body: &T) -> Option<Vec<u8>>;
+pub fn serialize_body_for_log<T: Serialize>(body: &T) -> String;
+
+// validation.rs
+pub fn validate_response(response: &Response) -> Result<(), ProviderError>;
+// Checks response status code; returns Ok(()) for 2xx, Err(ProviderError) otherwise.
 ```
 
 ### SENSITIVE_KEYS constant

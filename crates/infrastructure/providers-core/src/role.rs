@@ -1,7 +1,7 @@
 // role.rs — Role enum for provider message roles
 
-use serde::{Deserialize, Serialize};
 use rook_core::Role as CoreRole;
+use serde::{Deserialize, Serialize};
 
 /// Role in a conversation message.
 ///
@@ -76,6 +76,15 @@ mod tests {
         assert_eq!(Role::User.to_role_string(), "user");
         assert_eq!(Role::Assistant.to_role_string(), "assistant");
         assert_eq!(Role::Tool.to_role_string(), "tool");
+    }
+
+    #[test]
+    fn test_role_to_string_core_role() {
+        // role_to_string takes CoreRole (from rook_core), not the local Role enum
+        assert_eq!(role_to_string(CoreRole::System), "system");
+        assert_eq!(role_to_string(CoreRole::User), "user");
+        assert_eq!(role_to_string(CoreRole::Assistant), "assistant");
+        assert_eq!(role_to_string(CoreRole::Developer), "developer");
     }
 
     #[test]

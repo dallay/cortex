@@ -28,14 +28,14 @@ Solve BOTH issues permanently by extracting shared utilities into `providers-cor
 
 ### Phase 1: Create providers-core crate
 Extract common utilities from all providers into `providers-core/src/`:
-- `role.rs` — Role enum with `to_provider_string()` mapping
-- `sse.rs` — `parse_event_text()`, `process_bytes()` helpers
+- `role.rs` — Re-exports CoreRole from rook_core + `role_to_string()` standalone helper
+- `sse.rs` — `parse_event_text()` → Option<SseEvent>, `process_bytes()` helpers
 - `validation.rs` — `validate_response()` template
-- `request.rs` — `send_stream_request()` template
+- `request.rs` — RequestTemplate, CommonHeaders, serialize helpers
 - `sanitize.rs` — body sanitization and truncation utilities
 
 ### Phase 2: Update providers to use providers-core
-- Update `provider-openai`, `provider-anthropic`, `provider-groq`, `provider-ollama`
+- Update `providers-openai`, `providers-anthropic`, `providers-groq`, `providers-ollama`
 - Remove duplicated code, use imports from `providers-core`
 - Expected: ~165 lines removed, reducing duplicated_lines_density below 3%
 
@@ -58,10 +58,11 @@ Update `vite.config.ts` to include the plugin, add `CODECOV_TOKEN` to CI env.
 | Area | Impact | Description |
 |------|--------|-------------|
 | `providers-core/` | New | New crate for shared provider utilities |
-| `provider-openai/src/` | Modified | Use providers-core imports, remove duplicated code |
-| `provider-anthropic/src/` | Modified | Use providers-core, add stream tests |
-| `provider-groq/src/` | Modified | Use providers-core, add stream tests |
-| `provider-ollama/src/` | Modified | Use providers-core, add stream tests |
+| `provider-utils/` | New | Shared utilities crate (error redaction, token bucket) — not a workspace member |
+| `providers-openai/src/` | Modified | Use providers-core imports, remove duplicated code |
+| `providers-anthropic/src/` | Modified | Use providers-core, add stream tests |
+| `providers-groq/src/` | Modified | Use providers-core, add stream tests |
+| `providers-ollama/src/` | Modified | Use providers-core, add stream tests |
 | `apps/rook/dashboard/` | Modified | Add Codecov vite plugin |
 | `apps/rook/dashboard/vite.config.ts` | Modified | Configure Codecov plugin |
 

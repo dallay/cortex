@@ -20,21 +20,38 @@ pub fn sanitize_error_body(body: &str, max_len: usize) -> String {
         "headers",
     ];
 
+    /// Recursively redact sensitive keys in a JSON value.
+    fn redact_sensitive_in_value(value: &mut serde_json::Value, sensitive_keys: &[&str]) {
+        match value {
+            serde_json::Value::Object(map) => {
+                let keys_to_redact: Vec<String> = map
+                    .keys()
+                    .filter(|k| {
+                        let lower = k.to_lowercase();
+                        sensitive_keys.iter().any(|s| lower.contains(s))
+                    })
+                    .cloned()
+                    .collect();
+                for key in keys_to_redact {
+                    map.insert(key, serde_json::Value::String("(redacted)".to_string()));
+                }
+                // Recurse into all values (including nested objects/arrays)
+                for v in map.values_mut() {
+                    redact_sensitive_in_value(v, sensitive_keys);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    redact_sensitive_in_value(v, sensitive_keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Try to parse as JSON and redact sensitive fields
     if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(obj) = json.as_object_mut() {
-            let keys_to_redact: Vec<String> = obj
-                .keys()
-                .filter(|k| {
-                    let lower = k.to_lowercase();
-                    SENSITIVE_KEYS.iter().any(|s| lower.contains(s))
-                })
-                .cloned()
-                .collect();
-            for key in keys_to_redact {
-                obj.insert(key, serde_json::Value::String("(redacted)".to_string()));
-            }
-        }
+        redact_sensitive_in_value(&mut json, SENSITIVE_KEYS);
         let sanitized = serde_json::to_string(&json).unwrap_or_else(|_| body.to_string());
         truncate(&sanitized, max_len)
     } else {

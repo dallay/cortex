@@ -14,10 +14,10 @@ The system SHALL create a new `providers-core` crate at `crates/infrastructure/p
 - AND MUST contain modules: `role.rs`, `sse.rs`, `validation.rs`, `request.rs`, `sanitize.rs`
 - AND MUST be added to the workspace members list
 
-#### Scenario: Role enum with to_role_string()
+#### Scenario: role_to_string() helper
 
-- GIVEN a `Role` enum in `providers_core::role`
-- WHEN `to_role_string()` is called with a `rook_core::Role` variant
+- GIVEN `providers_core::role::role_to_string(CoreRole)` is called
+- WHEN passed a `rook_core::Role` variant
 - THEN it MUST return the correct provider-specific string mapping:
   - `System` → `"system"`
   - `User` → `"user"`
@@ -30,20 +30,20 @@ The system MUST provide SSE parsing utilities in `providers_core::sse`.
 
 #### Scenario: parse_event_text() helper
 
-- GIVEN an SSE event text string with `data: ` prefix lines
-- WHEN `parse_event_text(event_text, request_id)` is called
-- THEN it MUST filter lines starting with `data: `
-- AND MUST filter out lines containing `[DONE]`
-- AND MUST parse remaining lines as JSON
-- AND MUST return a `Vec<StreamChunk>`
+- GIVEN an SSE event text string (a single line)
+- WHEN `parse_event_text(line: &str)` is called
+- THEN it MUST return `Some(SseEvent::Data(content))` for lines with `data: ` prefix
+- AND MUST return `Some(SseEvent::Done)` for lines containing `[DONE]`
+- AND MUST return `None` for lines that don't match SSE data format
+- NOTE: Does NOT parse JSON — caller handles provider-specific parsing
 
 #### Scenario: process_bytes() helper
 
 - GIVEN a byte slice and an `SseBuffer`
-- WHEN `process_bytes(bytes, sse_buffer, request_id)` is called
-- THEN it MUST push bytes to the SSE buffer
-- AND MUST call `parse_event_text()` on resulting events
-- AND MUST return a `Stream` of `Result<StreamChunk, CortexError>`
+- WHEN `process_bytes(bytes, sse_buffer)` is called
+- THEN it MUST push valid UTF-8 strings to the SSE buffer
+- AND MUST skip invalid UTF-8 sequences without panicking
+- AND MUST return an iterator yielding each complete SSE line as `String`
 
 ### Requirement: validate_response() generic function MUST be provided
 
@@ -53,25 +53,13 @@ The system MUST provide a generic response validation function in `providers_cor
 
 - GIVEN a successful HTTP response (2xx status)
 - WHEN `validate_response(resp)` is called
-- THEN it MUST return `Ok(resp)`
+- THEN it MUST return `Ok(())`
 
 #### Scenario: Failed response validation
 
 - GIVEN a failed HTTP response (non-2xx status)
 - WHEN `validate_response(resp)` is called
-- THEN it MUST return `Err(CortexError::provider(...))` with status and body
-
-### Requirement: send_stream_request() template MUST be provided
-
-The system MUST provide a request sending template in `providers_core::request`.
-
-#### Scenario: Stream request with common headers
-
-- GIVEN a provider configuration and request body
-- WHEN `send_stream_request(client, base_url, api_key, body)` is called
-- THEN it MUST set common headers (Authorization, content-type)
-- AND MUST use the configured timeout
-- AND MUST return `CortexResult<reqwest::Response>`
+- THEN it MUST return `Err(ProviderError)` with status code and sanitized body
 
 ### Requirement: Sanitization utilities MUST be provided
 
@@ -88,8 +76,16 @@ The system MUST provide body sanitization in `providers_core::sanitize`.
 
 - GIVEN a JSON body with sensitive keys
 - WHEN `sanitize_body(body)` is called
-- THEN it MUST redact values for keys containing: `api_key`, `authorization`, `token`, `access_token`, `secret`, `headers`
+- THEN it MUST recursively redact values for keys matching SENSITIVE_KEYS at ANY nesting level
 - AND MUST replace sensitive values with `"(redacted)"`
+- AND MUST preserve non-sensitive data unchanged
+
+#### Scenario: sanitize_body() nested sensitive keys
+
+- GIVEN a JSON body: `{"error": {"token": "secret123"}, "api_key": "sk-12345"}`
+- WHEN `sanitize_body()` is called
+- THEN both the nested `"token"` AND the top-level `"api_key"` MUST be redacted
+- AND the non-sensitive `"error"` key MUST be preserved
 
 #### Scenario: char_safe_truncate() UTF-8 safety
 
@@ -218,6 +214,14 @@ Each provider's `map_*_http_error` function MUST have unit tests.
 - WHEN `sanitize_body()` is called
 - THEN the result MUST contain `"api_key": "(redacted)"`
 - AND MUST contain `"data": "ok"`
+- AND MUST NOT contain `"secret123"`
+
+#### Scenario: sanitize_body() with nested sensitive keys
+
+- GIVEN a nested JSON body: `{"error": {"token": "secret123"}, "api_key": "sk-12345"}`
+- WHEN `sanitize_body()` is called
+- THEN both the nested `token` AND the top-level `api_key` MUST be redacted
+- AND `error` content MUST be preserved
 
 #### Scenario: sanitize_body() with plain text
 
@@ -275,70 +279,70 @@ The system MUST configure the Codecov plugin in `vite.config.ts`.
 
 ## MODIFIED Requirements
 
-### Requirement: provider-openai MUST use providers-core imports
+### Requirement: providers-openai MUST use providers-core imports
 
-The `provider-openai` crate MUST import shared utilities from `providers-core` instead of duplicating them.
+The `providers-openai` crate MUST import shared utilities from `providers-core` instead of duplicating them.
 
 (Previously: All utilities defined inline in provider.rs)
 
 #### Scenario: OpenAI uses providers-core sanitize
 
 - GIVEN `providers-core` is available
-- WHEN `provider-openai` is compiled
-- THEN `sanitize_error_body()` MUST be imported from `providers_core::sanitize`
-- AND local definition MUST be removed
+- WHEN `providers-openai` is compiled
+- THEN `sanitize_body()` MUST be imported from `providers_core::sanitize`
+- AND local `sanitize_body` definition MUST be removed
 
 #### Scenario: OpenAI uses providers-core role mapping
 
 - GIVEN `providers-core` is available
-- WHEN `provider-openai` is compiled
-- THEN role string conversion MUST use `providers_core::role::to_role_string()`
+- WHEN `providers-openai` is compiled
+- THEN role string conversion MUST use `providers_core::role::role_to_string()`
 - AND local role mapping MUST be removed
 
-### Requirement: provider-anthropic MUST use providers-core imports
+### Requirement: providers-anthropic MUST use providers-core imports
 
-The `provider-anthropic` crate MUST import shared utilities from `providers-core`.
+The `providers-anthropic` crate MUST import shared utilities from `providers-core`.
 
-(Previously: `sanitize_body()`, `map_anthropic_http_error()`, SSE parsing defined inline)
+(Previously: `sanitize_body()`, `sanitize_body()`, SSE parsing defined inline)
 
 #### Scenario: Anthropic uses providers-core sanitize
 
 - GIVEN `providers-core` is available
-- WHEN `provider-anthropic` is compiled
+- WHEN `providers-anthropic` is compiled
 - THEN `sanitize_body()` MUST be imported from `providers_core::sanitize`
 - AND local definition MUST be removed
 
-#### Scenario: Anthropic uses providers-core error mapping
+#### Scenario: Anthropic uses providers-core SSE parsing
 
 - GIVEN `providers-core` is available
-- WHEN `provider-anthropic` is compiled
-- THEN `map_anthropic_http_error()` MUST be imported from `providers_core::error`
-- AND local definition MUST be removed
+- WHEN `providers-anthropic` is compiled
+- THEN SSE parsing MUST use `providers_core::sse::parse_event_text` and `process_bytes`
+- AND local SSE parsing MUST be removed
 
-### Requirement: provider-groq MUST use providers-core imports
+### Requirement: providers-groq MUST use providers-core imports
 
-The `provider-groq` crate MUST import shared utilities from `providers-core`.
+The `providers-groq` crate MUST import shared utilities from `providers-core`.
 
 (Previously: Duplicated utilities defined inline)
 
 #### Scenario: Groq uses providers-core imports
 
 - GIVEN `providers-core` is available
-- WHEN `provider-groq` is compiled
-- THEN `sanitize_body()`, SSE parsing, and error mapping MUST be imported from `providers-core`
+- WHEN `providers-groq` is compiled
+- THEN `sanitize_body()`, SSE parsing, and validation MUST be imported from `providers-core`
 - AND local duplicate definitions MUST be removed
 
-### Requirement: provider-ollama MUST use providers-core imports
+### Requirement: providers-ollama MUST use providers-core imports
 
-The `provider-ollama` crate MUST import shared utilities from `providers-core`.
+The `providers-ollama` crate MUST import shared utilities from `providers-core`.
 
 (Previously: Duplicated utilities defined inline)
 
 #### Scenario: Ollama uses providers-core imports
 
 - GIVEN `providers-core` is available
-- WHEN `provider-ollama` is compiled
-- THEN `sanitize_body()`, SSE parsing, and error mapping MUST be imported from `providers-core`
+- WHEN `providers-ollama` is compiled
+- THEN `sanitize_body()`, SSE parsing, and validation MUST be imported from `providers-core`
 - AND local duplicate definitions MUST be removed
 
 ---
