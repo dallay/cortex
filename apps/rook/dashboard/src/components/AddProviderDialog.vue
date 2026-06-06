@@ -44,6 +44,7 @@ import type {
   CreateProviderRequest,
   ProviderConnectionResponse,
   UpdateProviderRequest,
+  WireAuthType,
 } from '@/lib/api'
 
 type DialogMode = 'create' | 'edit'
@@ -141,7 +142,7 @@ const canSave = computed(
 // ---------------------------------------------------------------------------
 
 /** Internal `apikey` → wire `apiKey` (backend enum uses camelCase). */
-function wireAuthType(a: AuthType): 'apiKey' | 'oauth' {
+function wireAuthType(a: AuthType): WireAuthType {
   return a === 'apikey' ? 'apiKey' : 'oauth'
 }
 
