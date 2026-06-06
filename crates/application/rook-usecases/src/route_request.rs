@@ -48,7 +48,15 @@ struct UsageMetrics<'a> {
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Default providers that support token caching (Anthropic prompt caching, OpenAI, etc.)
-const DEFAULT_TOKEN_CACHE_PROVIDERS: &[&str] = &["anthropic", "claude", "deepseek", "qwen", "zai", "openai", "gpt"];
+const DEFAULT_TOKEN_CACHE_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "claude",
+    "deepseek",
+    "qwen",
+    "zai",
+    "openai",
+    "gpt",
+];
 
 /// Configuration for Layer 2 token cache (provider-side token caching)
 ///
