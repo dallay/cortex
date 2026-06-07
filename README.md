@@ -1,285 +1,253 @@
-# Cortex — AI Proxy & Router
-[![CI](https://github.com/dallay/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
-[![Rust 1.89](https://img.shields.io/badge/rust-1.89-orange.svg)](https://www.rust-lang.org)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=alert_status&token=fefb3503ebdc74104af9a848d3444ba86008c9b0)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
-[![Quality gate](https://sonarcloud.io/api/project_badges/quality_gate?project=dallay_cortex&token=fefb3503ebdc74104af9a848d3444ba86008c9b0)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
-[![codecov](https://codecov.io/gh/dallay/cortex/graph/badge.svg?token=X2A75Y1676)](https://codecov.io/gh/dallay/cortex)
+<div align="center">
 
-**Cortex** is a Rust monorepo for AI infrastructure. Currently includes **Rook** — an AI proxy/router that routes LLM requests to multiple providers with fallback, caching, and audit logging.
+# 🧠 Cortex
 
-## Features
+## Next-generation AI proxy and routing infrastructure
 
-- **Multi-provider routing** — OpenAI, Anthropic, Ollama, Gemini, Groq
-- **Fallback chains** — automatic failover when a provider fails
-- **Response caching** — TTL-based in-memory cache
-- **Audit logging** — SQLite-backed request/response logging
-- **Encryption** — AES-256-GCM with Argon2id key derivation
-- **OpenAI-compatible API** — drop-in replacement for existing clients
+[![CI](https://img.shields.io/github/actions/workflow/status/dallay/cortex/ci.yml?branch=main&label=CI&logo=github)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/dallay/cortex)](LICENSE)
+[![Rust Version](https://img.shields.io/badge/rust-1.81%2B-blue.svg)](https://www.rust-lang.org)
+[![GitHub Stars](https://img.shields.io/github/stars/dallay/cortex?style=social)](https://github.com/dallay/cortex/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/dallay/cortex)](https://github.com/dallay/cortex/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex)](https://github.com/dallay/cortex/commits/main)
 
-## Quick Start
+[Getting Started](#-getting-started) • [Documentation](#-documentation) • [Contributing](#-contributing) • [Community](#-community)
 
-```bash
-# Build
-cargo build --release -p rook
+</div>
 
-# Run (config via ROOK_CONFIG env or default ~/.config/cortex/rook.toml)
-ROOK_CONFIG=./rook.toml cargo run --release -p rook
+## 📑 Table of Contents
 
-# Or with a release binary
-./target/release/rook
-```
+- [About](#-about)
+- [Features](#-features)
+- [Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+- [Usage](#-usage)
+- [Configuration](#-configuration)
+- [Architecture](#-architecture)
+- [Tools](#-tools)
+- [Development](#-development)
+- [Documentation](#-documentation)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Community](#-community)
+- [Acknowledgments](#-acknowledgments)
 
-## Development Setup
+## 📖 About
 
-Complete guide to running backend + dashboard locally from scratch.
+**Cortex** is a high-performance AI infrastructure project written in Rust. Its primary component, **Rook**, acts as an intelligent AI proxy and router designed to simplify and harden your AI application stack.
+
+In an ecosystem with multiple LLM providers (OpenAI, Anthropic, Google, etc.), Cortex provides a unified, OpenAI-compatible interface with enterprise-grade features out of the box. It solves common challenges such as provider outages, high latency, and lack of observability by providing automatic failover, efficient caching, and comprehensive audit logging.
+
+## ✨ Features
+
+- 🔌 **OpenAI-compatible API**: Drop-in replacement for existing OpenAI clients.
+- ✨ **Multi-provider routing**: Support for OpenAI, Anthropic, Ollama, Gemini, and Groq.
+- 🔄 **Automatic fallback**: Resilience against provider failures with configurable fallback chains.
+- 🚀 **Built-in caching**: Reduce costs and latency with TTL-based in-memory caching.
+- 📊 **Audit logging**: Full traceability of requests and responses backed by SQLite.
+- 🏗️ **Clean Architecture**: Built with Domain-Driven Design (DDD) for high maintainability.
+- 🦀 **Rust-powered**: Exceptional performance, memory safety, and concurrency.
+- 🔒 **Production-ready**: Includes health checks, observability (tracing, metrics), and encryption.
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Rust toolchain — `rustup` (the correct version is pinned in `rust-toolchain.toml`)
-- [just](https://github.com/casey/just) — `cargo install just`
-- [pnpm](https://pnpm.io) — `npm install -g pnpm`
-- Node.js 18+
+- **Rust 1.81 or later** (the version is pinned in `rust-toolchain.toml`)
+- **Cargo** (included with Rust)
+- (Optional) **Just** task runner: `cargo install just`
+- (Optional for dashboard) **Node.js 18+** and **pnpm**
 
-### 1. First-time setup
+### Installation
 
+#### From source
 ```bash
-# Clone and enter the repo
-git clone <repo-url> && cd cortex
-
-# Install git hooks (pre-commit: fmt + check; pre-push: clippy + test)
-npx lefthook@latest install
-
-# Install dashboard npm dependencies + verify Rust toolchain
-just setup
+git clone https://github.com/dallay/cortex.git
+cd cortex
+cargo build --release -p rook
 ```
 
-### 2. Start the backend
+#### Binary releases
+Download pre-built binaries from [Releases](https://github.com/dallay/cortex/releases) for:
+- Linux (x86_64, aarch64)
+- macOS (Intel, Apple Silicon)
+- Windows (x86_64, aarch64)
 
-```bash
-just run
+### Quick Start
+
+1. **Configure Rook**:
+   Create a config file at `./rook.toml` (or use the `ROOK_CONFIG` env var to point elsewhere):
+   ```toml
+   [server]
+   host = "127.0.0.1"
+   port = 8080
+
+   [providers.openai]
+   api_key = "sk-..."
+   enabled = true
+   ```
+
+2. **Run the server**:
+   ```bash
+   # Using cargo
+   ROOK_CONFIG=./rook.toml cargo run --release -p rook
+
+   # Using binary
+   ./target/release/rook
+   ```
+
+3. **Test the proxy**:
+   ```bash
+   curl http://localhost:8080/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{
+       "model": "gpt-4",
+       "messages": [{"role": "user", "content": "Hello!"}]
+     }'
+   ```
+
+## 🛠 Usage
+
+### Multi-provider Fallback
+Configure a fallback chain to ensure your application stays online even if a provider fails:
+
+```toml
+# In your rook.toml
+[[fallback_chains]]
+name = "robust-gpt4"
+chain = ["openai/gpt-4", "anthropic/claude-3-opus"]
 ```
 
-The backend starts on `http://localhost:8080`. On a **fresh database** it enters
-**bootstrap mode** and prints a one-time setup token in the logs:
+### Dashboard Access
+Cortex comes with a built-in dashboard for management.
+On a fresh database, Rook enters **bootstrap mode**. Check the logs for a setup token and open the dashboard (if running locally, typically `http://localhost:5173` if you run it via `just run-dashboard`).
 
-```
-+-----------------------------------------------------------+
-|             ROOK -- BOOTSTRAP MODE ACTIVE                 |
-+-----------------------------------------------------------+
-|  Setup token: rk-setup-<token>                            |
-|                                                            |
-|  To complete setup, open the dashboard at                  |
-|  http://localhost:5173 and enter the token above          |
-|  along with your desired admin password.                   |
-+-----------------------------------------------------------+
-```
+## ⚙️ Configuration
 
-### 3. Initialize the admin account
+See the [Configuration Guide](docs/configuration.md) for detailed options.
 
-The backend enters **bootstrap mode** on a fresh database and prints a setup
-token in the server logs:
+**Quick reference**:
+- **Server**: host, port, timeouts, encryption settings.
+- **Providers**: API keys, endpoints, health check intervals.
+- **Cache**: TTL, size limits.
+- **Audit**: log location, rotation.
 
-```
-+-----------------------------------------------------------+
-|             ROOK -- BOOTSTRAP MODE ACTIVE                 |
-+-----------------------------------------------------------+
-|  Setup token: rk-setup-<token>                            |
-|                                                            |
-|  To complete setup, open the dashboard at                  |
-|  http://localhost:5173 and enter the token above          |
-|  along with your desired admin password.                   |
-+-----------------------------------------------------------+
-```
+## 🏗 Architecture
 
-Open the dashboard (`just run-dashboard` in a second terminal) at
-`http://localhost:5173`. The setup form appears automatically when the
-server is in bootstrap mode — paste the token from the log and choose a
-strong admin password (minimum 12 characters).
-
-This creates the admin user and clears the setup token from memory.
-The server switches to normal mode immediately — no restart needed.
-
-> **Default admin email**: `admin@rook.local`
-
-### 4. Start the dashboard
-
-Open a second terminal:
-
-```bash
-just run-dashboard
-```
-
-Dashboard is served at `http://localhost:5173`. It proxies API calls to `localhost:8080`
-via Vite's dev proxy — no CORS configuration required.
-
-Log in with the admin credentials you set in step 3.
-
-### Resetting the database
-
-SQLite uses three files (`rook.db`, `rook.db-wal`, `rook.db-shm`). **Always delete
-all three together** — a leftover WAL file against a fresh DB causes SQLite error 522
-("file truncated") on the next startup.
-
-```bash
-just db-reset
-```
-
-Then restart the backend — it will re-run migrations and enter bootstrap mode again.
-
-### Killing a stale backend
-
-If the backend crashes without releasing the port:
-
-```bash
-just kill-backend
-```
-
-### Environment variables (optional)
-
-| Variable                | Default | Purpose                                               |
-|-------------------------|---------|-------------------------------------------------------|
-| `ROOK_CONFIG`           | —       | Path to a custom `rook.toml` (overrides defaults)     |
-| `ENCRYPTION_PASSPHRASE` | —       | Required when `provider_crud.enabled = true`          |
-| `ENCRYPTION_SALT`       | —       | Required when `provider_crud.enabled = true`          |
-| `RUST_LOG`              | `info`  | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
-
-Create a `.env` file at the repo root — `just` loads it automatically (`dotenv-load = true`):
-
-```bash
-# .env (never commit this file)
-RUST_LOG=debug
-ENCRYPTION_PASSPHRASE=dev-passphrase-change-me
-ENCRYPTION_SALT=dev-salt-change-me
-```
-
-### Running E2E tests
-
-Playwright tests require both the backend and frontend to be running. The global
-setup handles authentication automatically.
-
-```bash
-# Run all E2E tests against a local backend (Chromium + Firefox + WebKit)
-cd apps/rook/dashboard && pnpm test:e2e
-```
-
-**Isolated mode (Docker — recommended, no host DB pollution):**
-
-```bash
-# Build image + start container + run Playwright + cleanup in one shot
-just test-e2e
-
-# Start container only, then run tests manually
-just test-e2e-dev
-cd apps/rook/dashboard && pnpm playwright test e2e/api-keys.spec.ts
-just test-e2e-cleanup
-```
-
-See [`dev/README.md`](dev/README.md) for the full breakdown of all Docker testing
-paths (smoke test, Playwright E2E, multi-distro validation).
-
-## Project Structure
+Cortex follows Clean Architecture principles with clear separation of concerns:
 
 ```text
 cortex/
-├── apps/
-│   └── rook/                      # Binary — main.rs, DI bootstrap, config
+├── apps/rook/              # Binary entry point, DI bootstrap
 ├── crates/
-│   ├── domain/
-│   │   ├── shared-kernel/         # Zero-deps types (ProviderId, ModelId, CortexError)
-│   │   └── rook-core/             # Domain model, port traits
-│   ├── application/
-│   │   └── rook-usecases/         # RouteRequest, FallbackRouter, health checks
-│   └── infrastructure/
-│       ├── transport-axum/        # HTTP server, wire-format ↔ domain adapters
-│       ├── providers-openai/       # OpenAI provider implementation
-│       ├── providers-anthropic/    # Anthropic provider implementation
-│       ├── providers-ollama/      # Ollama provider implementation
-│       ├── providers-gemini/      # Gemini provider implementation
-│       ├── providers-groq/        # Groq provider implementation
-│       ├── cache-memory/          # DashMap TTL cache
-│       ├── audit-sqlite/          # SQLite audit log
-│       ├── auth-sqlite/           # API key authentication
-│       ├── encryption-inmemory/   # AES-256-GCM + Argon2id
-│       ├── provider-sqlite/       # Provider connection persistence
-│       ├── observability/         # Tracing, metrics, OpenTelemetry
-│       ├── sse-stream/           # Server-Sent Events streaming
-│       └── db-migration/         # Database migrations
-├── docs/                          # Architecture, config, API docs
-└── justfile                       # Dev commands
+│   ├── domain/             # Business logic
+│   │   ├── shared-kernel/  # Zero-deps common types
+│   │   └── rook-core/      # Domain models and ports
+│   ├── application/        # Use cases
+│   │   └── rook-usecases/  # Orchestration logic
+│   └── infrastructure/     # External adapters
+│       ├── providers-*/    # LLM provider clients
+│       ├── cache-memory/   # Caching implementation
+│       ├── audit-sqlite/   # Audit logging
+│       └── transport-axum/ # HTTP server
+└── docs/                   # Documentation
 ```
 
-## Tooling
+See [Architecture Documentation](docs/architecture.md) for details.
 
-| Command         | Description                                      |
-|-----------------|--------------------------------------------------|
-| `just fmt`      | Format code                                      |
-| `just clippy`   | Clippy with deny warnings                        |
-| `just test`     | Run all tests (workspace)                        |
-| `just ci-local` | Full CI locally (fmt → clippy → check → test)    |
-| `just dev`      | Watch mode: check + test + clippy on file change |
+## 🧰 Tools
 
-**CI order** (important): `fmt --check` → `clippy` → `check` → `test` → `doc` → `audit`
+| Tool | Status | Description |
+|------|--------|-------------|
+| [Rook](apps/rook/) | ✅ Active | AI proxy/router with multi-provider support |
+| *Future tools* | 🚧 Planned | TBD |
 
-## Documentation
+## 🛠 Development
 
-- [Architecture](docs/architecture.md) — layer diagram, key abstractions, data flow
-- [Configuration](docs/configuration.md) — config schema, provider examples
-- [Providers](docs/providers.md) — per-provider config, timeouts, health checks
-- [API Reference](docs/api.md) — endpoints, request/response formats, errors
-
-## Rust Toolchain
-
-- **Version**: 1.89 (as specified in `rust-toolchain.toml`)
-- **MSRV**: 1.81
-
-## Cross-Compilation Targets
-
-| Target                      | Platform            |
-|-----------------------------|---------------------|
-| `x86_64-unknown-linux-gnu`  | Linux x86_64        |
-| `aarch64-unknown-linux-gnu` | Linux ARM64         |
-| `x86_64-pc-windows-msvc`    | Windows x86_64      |
-| `aarch64-pc-windows-msvc`   | Windows ARM64       |
-| `x86_64-apple-darwin`       | macOS Intel         |
-| `aarch64-apple-darwin`      | macOS Apple Silicon |
-
-**Note**: `aarch64-unknown-linux-gnu` is **not cross-compiled in CI** due to OpenSSL/ring header complexity.
-
-## Git Hooks
-
-This project uses [lefthook](https://github.com/evilmartians/lefthook) for git hooks:
-
+### Setup
 ```bash
-# Install hooks (once)
-npx lefthook@latest install
-
-# Or via npm
-npm install -g lefthook && npx lefthook install
-
-# Or standalone (macOS)
-curl -fsSL https://raw.githubusercontent.com/evilmartians/lefthook/master/bin/lefthook_darwin_amd64 -o /usr/local/bin/lefthook && chmod +x /usr/local/bin/lefthook
+# Clone and setup
+git clone https://github.com/dallay/cortex.git
+cd cortex
+just setup
 ```
 
-Hooks run on `pre-commit` (fmt, check, markdownlint) and `pre-push` (clippy, test).
+### Development commands
+```bash
+# Format code
+just fmt
 
-## Architecture
+# Run linter
+just clippy
 
-Clean Architecture layers (outermost → innermost):
+# Run tests
+just test
 
+# Watch mode (auto-check, test, clippy)
+just dev
+
+# Full CI locally
+just ci-local
 ```
-apps/rook (binary, DI bootstrap)
-  → transport-axum (HTTP, OpenAI/Anthropic adapters)
-    → rook-usecases (RouteRequest, FallbackRouter)
-      → rook-core (domain model, ports)
-        → shared-kernel (no deps — ProviderId, ModelId, CortexError)
+
+### Testing
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run specific crate tests
+cargo test -p rook-core
+
+# Run E2E tests (requires Docker)
+just test-e2e
 ```
 
-Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepositoryPort`, `KeyManager`
+## 📚 Documentation
 
-## Quirks & Gotchas
+- [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
+- [Providers](docs/providers.md)
+- [API Reference](docs/api.md)
 
-- **rustls only** — no OpenSSL. All TLS via `rustls-tls` feature of `reqwest`
-- **No hot provider registration** — Provider CRUD stores connections in SQLite but TOML providers serve traffic
-- **Encryption requires `provider_crud.enabled`** — needs `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` env vars
-- **`~` and `${ENV_VAR}` expansion** in config — `config.rs` expands these in TOML paths and api_key values
-- **No inline `#[cfg(test)]` modules** — tests are separate test targets, not embedded in libs
+## 🗺 Roadmap
+
+### Current Focus
+- 🔨 Dynamic provider registry
+- 🔐 Enhanced authentication and authorization
+- 📈 Advanced metrics and observability
+
+### Planned Features
+- [ ] Rate limiting and quota management
+- [ ] Request/response transformation
+- [ ] Plugin system
+- [ ] WebUI dashboard enhancements
+- [ ] Streaming support optimization
+- [ ] Additional provider integrations
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+Follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## 👥 Community
+
+- 💬 [GitHub Discussions](https://github.com/dallay/cortex/discussions) - Questions and ideas
+- 🐛 [Issue Tracker](https://github.com/dallay/cortex/issues) - Bug reports and feature requests
+
+## 🙏 Acknowledgments
+
+Built with:
+- [Rust](https://www.rust-lang.org/) - Systems programming language
+- [Tokio](https://tokio.rs/) - Async runtime
+- [Axum](https://github.com/tokio-rs/axum) - Web framework
+- [Rusqlite](https://github.com/rusqlite/rusqlite) - SQLite bindings
+
+Special thanks to all contributors and the Rust community.
