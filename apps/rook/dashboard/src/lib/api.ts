@@ -575,11 +575,38 @@ export interface ConnectionConfigInput {
   baseUrl?: string
 }
 
+export type TestConnectionStatus =
+  | "ok"
+  | "warning"
+  | "unhealthy"
+  | "unknown"
+  | "expired"
+
 export interface TestConnectionResponse {
-  ok: boolean | null
-  status: string
+  /**
+   * Whether the credentials are usable. `true` for `Healthy`,
+   * `Warning`, and `Unknown`; `false` for `Unhealthy` and `Expired`.
+   * The dashboard's Save button is enabled iff `valid === true`,
+   * regardless of `status` or `warning`.
+   */
+  valid: boolean
+  /** One of `"ok" | "warning" | "unhealthy" | "unknown" | "expired"`. */
+  status: TestConnectionStatus
   latencyMs: number | null
   error: string | null
+  /**
+   * Soft signal surfaced as a yellow alert. Set when credentials are
+   * valid but the probe saw a non-fatal condition (HTTP 429, no API
+   * key configured, etc.). A warning does not block Save.
+   */
+  warning: string | null
+  /**
+   * Probe method used to derive this result. Free-form string
+   * (`"models_list"`, `"v1beta_models"`, `"tags_reachability"`,
+   * `"chat_probe"`, `"not_supported"`, `"oauth_expired"`, ...).
+   * Optional: providers that don't probe return `null`.
+   */
+  method: string | null
 }
 
 // Singleton instance

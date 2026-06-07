@@ -706,6 +706,200 @@ describe("AddProviderDialog — edit mode", () => {
 	});
 });
 
+describe("AddProviderDialog — test before save", () => {
+	it("disables the save button when the form has not been tested", async () => {
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-test");
+
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.exists()).toBe(true);
+		expect(saveButton.element.disabled).toBe(true);
+	});
+
+	it("enables the save button after a successful testCredentials call", async () => {
+		mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+			valid: true as const,
+			status: "ok" as const,
+			latencyMs: 87,
+			error: null,
+			warning: null,
+			method: "models_list",
+		}));
+
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-test");
+
+		await wrapper.find('[data-testid="test-button"]').trigger("click");
+		await flushPromises();
+
+		expect(mockState.testCredentialsImpl).toHaveBeenCalled();
+		expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-ok"]').exists(),
+		).toBe(true);
+
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.element.disabled).toBe(false);
+	});
+
+	it("keeps the save button disabled after a failed testCredentials call", async () => {
+		mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+			valid: false as const,
+			status: "unhealthy" as const,
+			latencyMs: 30,
+			error: "auth rejected: HTTP 401",
+			warning: null,
+			method: "models_list",
+		}));
+
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-bad");
+
+		await wrapper.find('[data-testid="test-button"]').trigger("click");
+		await flushPromises();
+
+		expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true);
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.element.disabled).toBe(true);
+	});
+
+	it("disables the test button until displayName and apiKey are filled", async () => {
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		const testButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="test-button"]',
+		);
+		expect(testButton.exists()).toBe(true);
+		expect(testButton.element.disabled).toBe(true);
+	});
+
+	// --- new: 3-state test result block (ok / warning / invalid) ---
+
+	it("enables save and shows a yellow alert on a warning response (HTTP 429)", async () => {
+		mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+			valid: true as const,
+			status: "warning" as const,
+			latencyMs: 17,
+			error: null,
+			warning: "Rate limited, but credentials are valid",
+			method: "chat_probe",
+		}));
+
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-test");
+
+		await wrapper.find('[data-testid="test-button"]').trigger("click");
+		await flushPromises();
+
+		// Yellow alert must be visible.
+		expect(
+			wrapper.find('[data-testid="test-result-icon-warning"]').exists(),
+		).toBe(true);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-ok"]').exists(),
+		).toBe(false);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-error"]').exists(),
+		).toBe(false);
+
+		// The warning text bubbles through to the message line.
+		const message = wrapper.find('[data-testid="test-result-message"]');
+		expect(message.exists()).toBe(true);
+		expect(message.text()).toContain("Rate limited");
+
+		// Save must be enabled even though status is "warning" — that's
+		// the whole point of the new shape.
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.element.disabled).toBe(false);
+	});
+
+	it("disables save and shows a red alert on an invalid response (HTTP 401)", async () => {
+		mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+			valid: false as const,
+			status: "unhealthy" as const,
+			latencyMs: 30,
+			error: "auth rejected: HTTP 401 — invalid key",
+			warning: null,
+			method: "models_list",
+		}));
+
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-bad");
+
+		await wrapper.find('[data-testid="test-button"]').trigger("click");
+		await flushPromises();
+
+		expect(
+			wrapper.find('[data-testid="test-result-icon-error"]').exists(),
+		).toBe(true);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-warning"]').exists(),
+		).toBe(false);
+
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.element.disabled).toBe(true);
+	});
+
+	it("enables save on an unknown response (no probe available) and shows no warning icon", async () => {
+		mockState.testCredentialsImpl.mockImplementation(() => async () => ({
+			valid: true as const,
+			status: "unknown" as const,
+			latencyMs: null,
+			error: null,
+			warning: "health_check_not_supported",
+			method: "not_supported",
+		}));
+
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Local Ollama");
+		await setInputValue(wrapper, "input-apiKey", "sk-test");
+
+		await wrapper.find('[data-testid="test-button"]').trigger("click");
+		await flushPromises();
+
+		// Unknown renders as the neutral/unknown icon (AlertCircle
+		// in muted color), NOT as the warning or error icon.
+		expect(
+			wrapper.find('[data-testid="test-result-icon-unknown"]').exists(),
+		).toBe(true);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-warning"]').exists(),
+		).toBe(false);
+		expect(
+			wrapper.find('[data-testid="test-result-icon-error"]').exists(),
+		).toBe(false);
+
+		// Save enabled — the previous `ok === true` rule blocked this
+		// for Unknown (because ok was `null`); the new `valid === true`
+		// rule correctly enables it.
+		const saveButton = wrapper.find<HTMLButtonElement>(
+			'[data-testid="save-button"]',
+		);
+		expect(saveButton.element.disabled).toBe(false);
+	});
+});
+
 describe("AddProviderDialog — auth type gating", () => {
 	it("disables the OAuth toggle when the catalog entry only supports apikey (ollama)", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });

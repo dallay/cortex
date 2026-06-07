@@ -406,3 +406,111 @@ This is a structural requirement, not a sanitization step: the field is physical
 | T-AC6 | Missing feature flag returns `404 NOT_FOUND` for all provider paths.                                                  |
 | T-AC7 | OAuth expiry is checked before the runtime provider probe is called.                                                  |
 | T-AC8 | Error messages are sanitized — no plaintext credentials, keys, internal paths, or stack traces in any error response. |
+
+---
+
+## Delta (2026-06-07) — Credential Validation Warning
+
+> Supersedes the response examples in §4.6 and adds new scenarios to the
+> scenario library. Wire shape is **breaking**: `ok: Option<bool>` is
+> replaced by `valid: bool` + `warning` + `method`. Acceptable — no released
+> versions exist.
+
+### MODIFIED: `TestConnectionResponse` DTO shape
+
+The DTO MUST mirror the domain `TestConnectionResult` field-for-field, with
+`#[serde(rename_all = "camelCase")]`:
+
+```typescript
+interface TestConnectionResponse {
+  valid: boolean
+  status: "ok" | "warning" | "unhealthy" | "unknown" | "expired"
+  latencyMs: number | null
+  error: string | null
+  warning: string | null
+  method: string | null
+}
+```
+
+- All 6 fields MUST be present in every response (with `null` where optional).
+- `valid` MUST be a non-nullable boolean. There MUST NOT be a 3-valued
+  `truthy | falsy | null` shape.
+- The `status` string MUST be one of the 5 enumerated values.
+
+### MODIFIED: §4.6 response examples (replacement)
+
+#### status: ok
+
+```json
+{ "valid": true, "status": "ok", "latencyMs": 87, "error": null, "warning": null, "method": "models_list" }
+```
+
+#### status: warning (HTTP 429 — quota exhausted)
+
+```json
+{ "valid": true, "status": "warning", "latencyMs": 92, "error": null, "warning": "Rate limited, but credentials are valid", "method": "chat_probe" }
+```
+
+#### status: warning (no API key configured)
+
+```json
+{ "valid": true, "status": "warning", "latencyMs": 45, "error": null, "warning": "No API key configured. You can add one later via Edit.", "method": "tags_reachability" }
+```
+
+#### status: unhealthy (HTTP 401)
+
+```json
+{ "valid": false, "status": "unhealthy", "latencyMs": 102, "error": "auth rejected: HTTP 401 — check that your API key is valid and has access to the model", "warning": null, "method": "models_list" }
+```
+
+#### status: unhealthy (HTTP 5xx)
+
+```json
+{ "valid": false, "status": "unhealthy", "latencyMs": 3000, "error": "Cannot reach server: HTTP 503", "warning": null, "method": "models_list" }
+```
+
+#### status: unknown (no probe supported)
+
+```json
+{ "valid": true, "status": "unknown", "latencyMs": null, "error": null, "warning": null, "method": "not_supported" }
+```
+
+#### status: expired (OAuth — pre-probe)
+
+```json
+{ "valid": false, "status": "expired", "latencyMs": null, "error": "OAuth token expired at 2026-06-01T00:00:00Z", "warning": null, "method": null }
+```
+
+### ADDED: Scenario library entries
+
+#### S-TEST-05: Test — HTTP 429 (quota exhausted)
+
+- **Given** provider CRUD is enabled, a connection exists, and the runtime probe returns HTTP 429
+- **When** a client sends `POST /api/providers/:id/test`
+- **Then** response is `200 OK` with `{ "valid": true, "status": "warning", "warning": "Rate limited, but credentials are valid", ... }`
+- **And** the stored `testStatus` is updated to `active`
+
+#### S-TEST-06: Test — HTTP 401 (auth rejected)
+
+- **Given** provider CRUD is enabled, a connection exists, and the runtime probe returns HTTP 401
+- **When** a client sends `POST /api/providers/:id/test`
+- **Then** response is `200 OK` with `{ "valid": false, "status": "unhealthy", "error": "auth rejected: HTTP 401 — ...", ... }`
+
+#### S-TEST-07: Test — network failure
+
+- **Given** provider CRUD is enabled, a connection exists, and the probe cannot reach the server (DNS, timeout, connection refused)
+- **When** a client sends `POST /api/providers/:id/test`
+- **Then** response is `200 OK` with `{ "valid": false, "status": "unhealthy", "error": "Cannot reach server: ...", ... }`
+
+#### S-TEST-08: Test — no API key configured but host reachable
+
+- **Given** provider CRUD is enabled, a connection exists with no API key, and the host is reachable
+- **When** a client sends `POST /api/providers/:id/test`
+- **Then** response is `200 OK` with `{ "valid": true, "status": "warning", "warning": "No API key configured. You can add one later via Edit.", ... }`
+
+### ADDED: Acceptance criterion
+
+| AC    | Criterion                                                                                                                          |
+|-------|------------------------------------------------------------------------------------------------------------------------------------|
+| T-AC9 | Every `TestConnectionResponse` carries all 6 fields; `valid` is a non-nullable boolean; `status` is one of the 5 enumerated values. |
+| T-AC10 | HTTP 429 from a credential probe produces `valid: true, status: "warning"`; HTTP 401/403 produces `valid: false, status: "unhealthy"`. |

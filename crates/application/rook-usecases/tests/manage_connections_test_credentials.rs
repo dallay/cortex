@@ -242,10 +242,10 @@ fn test_credentials_returns_healthy_for_valid_credentials() {
 
             assert!(result.is_ok(), "expected Ok, got {:?}", result);
             let res = result.unwrap();
-            assert_eq!(res.ok, Some(true), "expected ok=Some(true)");
+            assert!(res.valid, "expected valid=true for healthy");
             assert_eq!(
-                res.status, "active",
-                "expected status='active', got '{}'",
+                res.status, "ok",
+                "expected status='ok', got '{}'",
                 res.status
             );
             assert_eq!(
@@ -258,6 +258,11 @@ fn test_credentials_returns_healthy_for_valid_credentials() {
                 res.error.is_none(),
                 "expected error=None, got {:?}",
                 res.error
+            );
+            assert!(
+                res.warning.is_none(),
+                "expected warning=None for healthy, got {:?}",
+                res.warning
             );
         });
 }
@@ -353,6 +358,177 @@ fn test_credentials_validates_empty_api_key() {
                 err_msg.contains("empty") || err_msg.contains("Empty"),
                 "expected error containing 'empty', got '{}'",
                 err_msg
+            );
+        });
+}
+
+// ---------------------------------------------------------------------------
+// from_health() mapper — covers the 4 HealthStatus variants.
+//
+// These tests exercise the `valid`/`status`/`warning`/`method` mapping
+// end-to-end through the `test_credentials` use case. The mapper is
+// private, so we drive it via the public API with a `MockProvider` that
+// returns a canned HealthStatus. This is the only way to assert the
+// Warning -> {valid: true, status: "warning", warning: Some(...)} path
+// without exposing internals.
+// ---------------------------------------------------------------------------
+
+fn build_manage_connections(health: HealthStatus) -> ManageConnections {
+    let mock_provider = Arc::new(MockProvider::new(ProviderId::new("ollama-primary"), health));
+    ManageConnections::new(
+        Arc::new(InMemoryProviderRepository::default()),
+        Arc::new(NoopRegistry),
+        Arc::new(NoopKeyManager),
+        Arc::new(NoopProviderBuilder::new(mock_provider)),
+    )
+}
+
+async fn run_test_credentials() -> rook_usecases::manage_connections::TestConnectionResult {
+    let mc = build_manage_connections(HealthStatus::Healthy {
+        provider: ProviderId::new("ollama-primary"),
+        latency_ms: 0,
+    });
+    mc.test_credentials(TestCredentialsRequest {
+        provider_kind: ProviderKind::Ollama,
+        provider_runtime_id: ProviderId::new("ollama-primary"),
+        auth_type: AuthType::ApiKey,
+        credentials: CredentialsInput::ApiKey {
+            api_key: "sk-test".to_string(),
+        },
+        config: config(),
+    })
+    .await
+    .expect("test_credentials should succeed")
+}
+
+#[test]
+fn mapper_healthy_returns_valid_true_status_ok_no_warning() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let res = run_test_credentials().await;
+            assert!(res.valid, "expected valid=true for Healthy");
+            assert_eq!(res.status, "ok");
+            assert!(res.warning.is_none(), "warning should be None for Healthy");
+            assert!(res.error.is_none());
+            assert!(
+                res.method.is_some(),
+                "method should be Some for a probed Healthy response"
+            );
+        });
+}
+
+#[test]
+fn mapper_warning_returns_valid_true_status_warning_with_warning_text() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            // We can't use run_test_credentials() because it bakes in
+            // a Healthy status. Build the usecase with a Warning
+            // status directly and run test_credentials through it.
+            let mc = build_manage_connections(HealthStatus::Warning {
+                provider: ProviderId::new("ollama-primary"),
+                latency_ms: 17,
+                reason: "Rate limited, but credentials are valid".to_string(),
+            });
+            let res = mc
+                .test_credentials(TestCredentialsRequest {
+                    provider_kind: ProviderKind::Ollama,
+                    provider_runtime_id: ProviderId::new("ollama-primary"),
+                    auth_type: AuthType::ApiKey,
+                    credentials: CredentialsInput::ApiKey {
+                        api_key: "sk-test".to_string(),
+                    },
+                    config: config(),
+                })
+                .await
+                .expect("test_credentials should succeed");
+
+            assert!(res.valid, "expected valid=true for Warning");
+            assert_eq!(res.status, "warning");
+            assert_eq!(res.latency_ms, Some(17));
+            assert_eq!(
+                res.warning.as_deref(),
+                Some("Rate limited, but credentials are valid")
+            );
+            assert!(res.error.is_none(), "error should be None for Warning");
+        });
+}
+
+#[test]
+fn mapper_unhealthy_returns_valid_false_status_unhealthy_with_error() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let mc = build_manage_connections(HealthStatus::Unhealthy {
+                provider: ProviderId::new("ollama-primary"),
+                latency_ms: Some(30),
+                error: "auth rejected: HTTP 401 — invalid key".to_string(),
+            });
+            let res = mc
+                .test_credentials(TestCredentialsRequest {
+                    provider_kind: ProviderKind::Ollama,
+                    provider_runtime_id: ProviderId::new("ollama-primary"),
+                    auth_type: AuthType::ApiKey,
+                    credentials: CredentialsInput::ApiKey {
+                        api_key: "sk-test".to_string(),
+                    },
+                    config: config(),
+                })
+                .await
+                .expect("test_credentials should succeed");
+
+            assert!(!res.valid, "expected valid=false for Unhealthy");
+            assert_eq!(res.status, "unhealthy");
+            assert_eq!(res.latency_ms, Some(30));
+            assert_eq!(
+                res.error.as_deref(),
+                Some("auth rejected: HTTP 401 — invalid key")
+            );
+            assert!(
+                res.warning.is_none(),
+                "warning should be None for Unhealthy"
+            );
+        });
+}
+
+#[test]
+fn mapper_unknown_returns_valid_true_status_unknown_with_reason_as_warning() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let mc = build_manage_connections(HealthStatus::Unknown {
+                provider: ProviderId::new("anthropic-primary"),
+                reason: "health_check_not_supported".to_string(),
+            });
+            let res = mc
+                .test_credentials(TestCredentialsRequest {
+                    provider_kind: ProviderKind::Anthropic,
+                    provider_runtime_id: ProviderId::new("anthropic-primary"),
+                    auth_type: AuthType::ApiKey,
+                    credentials: CredentialsInput::ApiKey {
+                        api_key: "sk-test".to_string(),
+                    },
+                    config: config(),
+                })
+                .await
+                .expect("test_credentials should succeed");
+
+            assert!(res.valid, "expected valid=true for Unknown (Save enabled)");
+            assert_eq!(res.status, "unknown");
+            // Unknown carries the reason text as a `warning` so the
+            // dashboard can optionally display "no probe available",
+            // but it's still a valid connection.
+            assert_eq!(res.warning.as_deref(), Some("health_check_not_supported"));
+            assert!(res.error.is_none(), "error should be None for Unknown");
+            assert_eq!(
+                res.method.as_deref(),
+                Some("not_supported"),
+                "method should be 'not_supported' for Unknown"
             );
         });
 }

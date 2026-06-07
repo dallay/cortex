@@ -164,3 +164,67 @@ The catalog view SHALL derive its kind-level metadata (displayName, runtimeId, d
 - **WHEN** a developer adds an entry to `PROVIDER_KINDS`
 - **THEN** the new kind appears in the catalog without template changes
 - **AND** the route `/providers/:providerKind` resolves only for kinds in the backend `ProviderKind` enum
+
+---
+
+## Delta (2026-06-07) — Credential Validation Warning
+
+> Relaxes the Save-button gating rule in the Connection Modal so a
+> credentials-valid result with a non-blocking warning (e.g. quota exhausted)
+> still allows Save. Adds a third visual state (yellow) to the test-result
+> block.
+
+### MODIFIED: Connection Modal — Save button gating (supersedes line 85)
+
+The Save button MUST be enabled iff `valid === true` regardless of `status`
+or `warning` content. The `ok` and `warning` statuses both allow Save. Only
+`unhealthy` and `expired` statuses disable Save. `unknown` also allows Save
+(no probe was possible but credentials were not rejected).
+
+| Test result                          | Save button     |
+|--------------------------------------|-----------------|
+| `valid: true, status: "ok"`          | **enabled**     |
+| `valid: true, status: "warning"`     | **enabled**     |
+| `valid: true, status: "unknown"`     | **enabled**     |
+| `valid: false, status: "unhealthy"`  | **disabled**    |
+| `valid: false, status: "expired"`    | **disabled**    |
+| (no test run yet)                    | **disabled**    |
+
+### MODIFIED: Test credentials scenario (supersedes lines 93-99)
+
+The test result block MUST display three visual states: **success** (green
+`CheckCircle2` icon), **warning** (yellow `AlertTriangle` icon, `text-yellow-600`
+Tailwind class), **failure** (red `AlertCircle` icon). The `warning` field,
+when present, MUST be shown with the yellow styling.
+
+#### Scenario: Test credentials
+
+- **WHEN** the user fills the form and clicks `Test`
+- **THEN** the modal calls `POST /api/providers/test-credentials`
+- **AND** displays the result with one of the three visual states (success / warning / failure) and the latency
+- **AND** `Save` is enabled iff the response has `valid: true`
+
+### MODIFIED: Save a new connection (supersedes line 102)
+
+#### Scenario: Save a new connection
+
+- **WHEN** the test result has `valid: true` (status `ok`, `warning`, or `unknown`) and the user clicks `Save`
+- **THEN** the modal calls `POST /api/providers`
+- **AND** the modal closes
+- **AND** the catalog/details view refreshes to show the new connection
+
+### ADDED: User sees a 429 warning
+
+- **GIVEN** the user is configuring Ollama Cloud with a valid key that has hit its weekly quota
+- **WHEN** the user clicks "Test connection"
+- **THEN** a yellow alert appears with text "Rate limited, but credentials are valid"
+- **AND** the Save button is enabled
+- **AND** clicking Save persists the connection
+- **AND** a subsequent `POST /api/providers/{id}/test` returns the same warning (transient — quota may refresh)
+
+### ADDED: User sees an auth error
+
+- **GIVEN** the user is configuring Ollama Cloud with an invalid key
+- **WHEN** the user clicks "Test connection"
+- **THEN** a red alert appears with text "auth rejected: HTTP 401 — check that your API key is valid and has access to the model"
+- **AND** the Save button is disabled

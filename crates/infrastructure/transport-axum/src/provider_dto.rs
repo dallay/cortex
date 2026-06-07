@@ -160,10 +160,21 @@ pub struct TestStatusResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestConnectionResponse {
-    pub ok: Option<bool>,
+    /// Whether the credentials are usable. `true` for `Healthy`,
+    /// `Warning`, and `Unknown`; `false` for `Unhealthy` and `Expired`.
+    /// The dashboard's Save button is enabled iff `valid === true`,
+    /// regardless of `status` or `warning`.
+    pub valid: bool,
+    /// One of `"ok" | "warning" | "unhealthy" | "unknown" | "expired"`.
     pub status: String,
     pub latency_ms: Option<u64>,
     pub error: Option<String>,
+    /// Soft signal surfaced to the dashboard as a yellow alert. Set
+    /// when credentials are valid but the probe saw a non-fatal
+    /// condition (HTTP 429, no API key configured, etc.).
+    pub warning: Option<String>,
+    /// Probe method used to derive this result. Free-form string.
+    pub method: Option<String>,
 }
 
 impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
@@ -297,10 +308,12 @@ impl From<&TestStatus> for TestStatusResponse {
 impl From<&TestConnectionResult> for TestConnectionResponse {
     fn from(result: &TestConnectionResult) -> Self {
         Self {
-            ok: result.ok,
+            valid: result.valid,
             status: result.status.clone(),
             latency_ms: result.latency_ms,
             error: result.error.clone(),
+            warning: result.warning.clone(),
+            method: result.method.clone(),
         }
     }
 }

@@ -221,6 +221,8 @@
 			"testCredentials": "Probar conexión",
 			"testing": "Probando…",
 			"testSuccess": "Prueba exitosa",
+			"testWarning": "Prueba exitosa con advertencias",
+			"testUnknown": "Prueba omitida (sin sonda disponible)",
 			"testFailed": "Prueba fallida",
 			"save": "Guardar",
 			"cancel": "Cancelar",

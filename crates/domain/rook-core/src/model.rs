@@ -353,6 +353,19 @@ pub enum HealthStatus {
         provider: ProviderId,
         latency_ms: u64,
     },
+    /// Credentials are valid and the upstream is reachable, but the
+    /// probe surfaced a non-fatal signal: the caller is rate-limited
+    /// (HTTP 429), no API key has been configured yet, or some other
+    /// transient condition that should be surfaced as a warning rather
+    /// than a hard failure. `is_healthy()` returns `true` for `Warning`
+    /// and `last_error()` returns `None` — the warning text lives in
+    /// `reason` and is bubbled up to the UI via the
+    /// `TestConnectionResult::warning` field.
+    Warning {
+        provider: ProviderId,
+        latency_ms: u64,
+        reason: String,
+    },
     Unhealthy {
         provider: ProviderId,
         latency_ms: Option<u64>,
@@ -365,13 +378,18 @@ pub enum HealthStatus {
 }
 
 impl HealthStatus {
+    /// Returns `true` for variants that represent a valid, usable
+    /// connection (`Healthy` and `Warning`). `Warning` is considered
+    /// healthy because credentials are accepted by the upstream — the
+    /// caller is simply rate-limited or has not yet configured a key.
     pub fn is_healthy(&self) -> bool {
-        matches!(self, Self::Healthy { .. })
+        matches!(self, Self::Healthy { .. } | Self::Warning { .. })
     }
 
     pub fn provider_id(&self) -> &ProviderId {
         match self {
             Self::Healthy { provider, .. }
+            | Self::Warning { provider, .. }
             | Self::Unhealthy { provider, .. }
             | Self::Unknown { provider, .. } => provider,
         }
@@ -380,6 +398,7 @@ impl HealthStatus {
     pub fn latency_ms(&self) -> Option<u64> {
         match self {
             Self::Healthy { latency_ms, .. } => Some(*latency_ms),
+            Self::Warning { latency_ms, .. } => Some(*latency_ms),
             Self::Unhealthy { latency_ms, .. } => *latency_ms,
             Self::Unknown { .. } => None,
         }
@@ -389,7 +408,12 @@ impl HealthStatus {
         match self {
             Self::Unhealthy { error, .. } => Some(error),
             Self::Unknown { reason, .. } => Some(reason),
-            Self::Healthy { .. } => None,
+            // `Warning` carries a soft signal (e.g. "Rate limited, but
+            // credentials are valid") that is bubbled up as `warning`
+            // on the wire, not as `error`. Returning `None` keeps the
+            // legacy /health summary log clean: a warning should not
+            // be reported as an error in operator dashboards.
+            Self::Healthy { .. } | Self::Warning { .. } => None,
         }
     }
 }
@@ -1365,5 +1389,66 @@ mod cache_stats_tests {
             token_cache: TokenCacheStats::default(),
         };
         assert_eq!(stats.utilization(), Some(1.0));
+    }
+}
+
+#[cfg(test)]
+mod health_status_tests {
+    use super::*;
+    use shared_kernel::ProviderId;
+
+    fn pid() -> ProviderId {
+        ProviderId::new("openai-primary")
+    }
+
+    #[test]
+    fn healthy_is_healthy_and_has_no_error() {
+        let s = HealthStatus::Healthy {
+            provider: pid(),
+            latency_ms: 42,
+        };
+        assert!(s.is_healthy());
+        assert_eq!(s.last_error(), None);
+        assert_eq!(s.latency_ms(), Some(42));
+        assert_eq!(s.provider_id().as_str(), "openai-primary");
+    }
+
+    #[test]
+    fn warning_is_healthy_and_has_no_error() {
+        let s = HealthStatus::Warning {
+            provider: pid(),
+            latency_ms: 50,
+            reason: "Rate limited, but credentials are valid".to_string(),
+        };
+        // Warning is "valid but flagged" — credentials are accepted.
+        assert!(s.is_healthy(), "Warning should be considered healthy");
+        // The warning text is surfaced via TestConnectionResult.warning,
+        // not via last_error(), so the /health summary stays clean.
+        assert_eq!(s.last_error(), None);
+        assert_eq!(s.latency_ms(), Some(50));
+        assert_eq!(s.provider_id().as_str(), "openai-primary");
+    }
+
+    #[test]
+    fn unhealthy_is_not_healthy_and_surfaces_error() {
+        let s = HealthStatus::Unhealthy {
+            provider: pid(),
+            latency_ms: None,
+            error: "auth rejected: HTTP 401".to_string(),
+        };
+        assert!(!s.is_healthy());
+        assert_eq!(s.last_error(), Some("auth rejected: HTTP 401"));
+        assert_eq!(s.latency_ms(), None);
+    }
+
+    #[test]
+    fn unknown_is_not_healthy_and_surfaces_reason() {
+        let s = HealthStatus::Unknown {
+            provider: pid(),
+            reason: "health_check_not_supported".to_string(),
+        };
+        assert!(!s.is_healthy());
+        assert_eq!(s.last_error(), Some("health_check_not_supported"));
+        assert_eq!(s.latency_ms(), None);
     }
 }

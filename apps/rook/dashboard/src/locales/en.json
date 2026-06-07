@@ -221,6 +221,8 @@
 			"testCredentials": "Test connection",
 			"testing": "Testing…",
 			"testSuccess": "Test passed",
+			"testWarning": "Test passed with warnings",
+			"testUnknown": "Test skipped (no probe available)",
 			"testFailed": "Test failed",
 			"save": "Save",
 			"cancel": "Cancel",

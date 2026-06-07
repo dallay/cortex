@@ -211,16 +211,26 @@ fn test_connection_response_serializes_correctly() {
     use transport_axum::provider_dto::TestConnectionResponse;
 
     let response = TestConnectionResponse {
-        ok: Some(true),
-        status: "active".to_string(),
+        valid: true,
+        status: "ok".to_string(),
         latency_ms: Some(42),
         error: None,
+        warning: None,
+        method: Some("models_list".to_string()),
     };
 
     let json = serde_json::to_string(&response).expect("should serialize");
-    assert!(json.contains("\"ok\":true"));
-    assert!(json.contains("\"status\":\"active\""));
+    assert!(json.contains("\"valid\":true"));
+    assert!(json.contains("\"status\":\"ok\""));
     assert!(json.contains("\"latencyMs\":42"));
+    assert!(
+        json.contains("\"warning\":null"),
+        "warning should serialize as null when not set, got: {json}"
+    );
+    assert!(
+        json.contains("\"method\":\"models_list\""),
+        "method should serialize when set, got: {json}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -232,24 +242,197 @@ fn test_connection_response_expired_status() {
     use transport_axum::provider_dto::TestConnectionResponse;
 
     let response = TestConnectionResponse {
-        ok: None, // Spec says null for expired
+        valid: false,
         status: "expired".to_string(),
         latency_ms: None,
         error: Some("OAuth token expired at 1772150400".to_string()),
+        warning: None,
+        method: Some("oauth_expired".to_string()),
     };
 
     let json = serde_json::to_string(&response).expect("should serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("should parse");
 
-    assert!(
-        value["ok"].is_null(),
-        "ok should be null for expired status"
-    );
+    assert_eq!(value["valid"], false);
     assert_eq!(value["status"], "expired");
     assert!(value["error"]
         .as_str()
         .unwrap()
         .contains("OAuth token expired"));
+    assert_eq!(value["method"], "oauth_expired");
+    assert!(value["warning"].is_null());
+}
+
+// ---------------------------------------------------------------------------
+// Wire example responses — covers all 7 examples from the spec delta.
+//
+// The wire shape is the same Rust struct on every example; the
+// difference is which fields are Some/None and the status enum value.
+// This is a regression suite for the From<&TestConnectionResult>
+// conversion so any future change to the usecase DTO must update the
+// wire too.
+// ---------------------------------------------------------------------------
+
+fn parse_test_response(json: &str) -> serde_json::Value {
+    serde_json::from_str(json).expect("should parse")
+}
+
+#[test]
+fn wire_example_ok_healthy() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: true,
+        status: "ok".to_string(),
+        latency_ms: Some(123),
+        error: None,
+        warning: None,
+        method: Some("models_list".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], true);
+    assert_eq!(value["status"], "ok");
+    assert_eq!(value["latencyMs"], 123);
+    assert!(value["error"].is_null());
+    assert!(value["warning"].is_null());
+    assert_eq!(value["method"], "models_list");
+}
+
+#[test]
+fn wire_example_warning_429_rate_limited() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: true,
+        status: "warning".to_string(),
+        latency_ms: Some(45),
+        error: None,
+        warning: Some("Rate limited, but credentials are valid".to_string()),
+        method: Some("chat_probe".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], true, "Save must remain enabled on warning");
+    assert_eq!(value["status"], "warning");
+    assert_eq!(value["latencyMs"], 45);
+    assert!(value["error"].is_null());
+    assert_eq!(value["warning"], "Rate limited, but credentials are valid");
+    assert_eq!(value["method"], "chat_probe");
+}
+
+#[test]
+fn wire_example_warning_no_api_key() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: true,
+        status: "warning".to_string(),
+        latency_ms: Some(8),
+        error: None,
+        warning: Some("No API key configured. You can add one later via Edit.".to_string()),
+        method: Some("models_list".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], true, "no-key is a warning, not a failure");
+    assert_eq!(value["status"], "warning");
+    assert_eq!(
+        value["warning"],
+        "No API key configured. You can add one later via Edit."
+    );
+}
+
+#[test]
+fn wire_example_unhealthy_401_auth_rejected() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: false,
+        status: "unhealthy".to_string(),
+        latency_ms: Some(30),
+        error: Some("auth rejected: HTTP 401 — invalid key".to_string()),
+        warning: None,
+        method: Some("models_list".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], false, "auth rejected must block Save");
+    assert_eq!(value["status"], "unhealthy");
+    assert!(value["error"].as_str().unwrap().contains("auth rejected"));
+    assert!(value["warning"].is_null());
+}
+
+#[test]
+fn wire_example_unhealthy_5xx_server_error() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: false,
+        status: "unhealthy".to_string(),
+        latency_ms: None,
+        error: Some("Cannot reach server: HTTP 502".to_string()),
+        warning: None,
+        method: Some("models_list".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], false);
+    assert_eq!(value["status"], "unhealthy");
+    assert!(value["error"]
+        .as_str()
+        .unwrap()
+        .contains("Cannot reach server"));
+}
+
+#[test]
+fn wire_example_unknown_no_probe() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: true,
+        status: "unknown".to_string(),
+        latency_ms: None,
+        error: None,
+        warning: Some("health_check_not_supported".to_string()),
+        method: Some("not_supported".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], true, "Unknown must allow Save");
+    assert_eq!(value["status"], "unknown");
+    assert_eq!(value["warning"], "health_check_not_supported");
+    assert_eq!(value["method"], "not_supported");
+}
+
+#[test]
+fn wire_example_expired_oauth() {
+    use transport_axum::provider_dto::TestConnectionResponse;
+
+    let response = TestConnectionResponse {
+        valid: false,
+        status: "expired".to_string(),
+        latency_ms: None,
+        error: Some("OAuth token expired at 1772150400".to_string()),
+        warning: None,
+        method: Some("oauth_expired".to_string()),
+    };
+    let json = serde_json::to_string(&response).expect("should serialize");
+    let value = parse_test_response(&json);
+
+    assert_eq!(value["valid"], false, "Expired must block Save");
+    assert_eq!(value["status"], "expired");
+    assert!(value["error"]
+        .as_str()
+        .unwrap()
+        .contains("OAuth token expired"));
+    assert_eq!(value["method"], "oauth_expired");
 }
 
 // ---------------------------------------------------------------------------

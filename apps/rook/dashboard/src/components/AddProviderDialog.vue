@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, Loader2, Trash2 } from '@lucide/vue'
+import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -144,6 +144,22 @@ const canTest = computed(
 const canSave = computed(
   () => canTest.value && testResult.value?.valid === true && !saving.value,
 )
+
+/**
+ * Display message for the test-result block. Derived from the wire
+ * response so the user sees a single human-readable line regardless
+ * of which variant the backend emitted.
+ */
+const testResultMessage = computed(() => {
+  const r = testResult.value
+  if (!r) return ''
+  if (r.warning) return r.warning
+  if (r.error) return r.error
+  if (r.status === 'ok') {
+    return `Connected successfully (${r.latencyMs ?? 0}ms)`
+  }
+  return `Status: ${r.status}`
+})
 
 // ---------------------------------------------------------------------------
 // Wire format helpers
@@ -542,23 +558,51 @@ async function handleDelete() {
           data-testid="test-result"
         >
           <CheckCircle2
-            v-if="testResult.valid"
+            v-if="testResult.valid && testResult.status === 'ok'"
             class="h-5 w-5 text-green-500 mt-0.5"
+            data-testid="test-result-icon-ok"
           />
-          <AlertCircle v-else class="h-5 w-5 text-destructive mt-0.5" />
+          <AlertTriangle
+            v-else-if="testResult.valid && testResult.status === 'warning'"
+            class="h-5 w-5 text-yellow-600 mt-0.5"
+            data-testid="test-result-icon-warning"
+          />
+          <AlertCircle
+            v-else-if="testResult.status === 'unknown'"
+            class="h-5 w-5 text-muted-foreground mt-0.5"
+            data-testid="test-result-icon-unknown"
+          />
+          <AlertCircle
+            v-else
+            class="h-5 w-5 text-destructive mt-0.5"
+            data-testid="test-result-icon-error"
+          />
           <div class="flex-1">
             <p
               class="text-sm font-medium"
-              :class="testResult.valid ? 'text-green-600' : 'text-destructive'"
+              :class="
+                testResult.status === 'ok'
+                  ? 'text-green-600'
+                  : testResult.status === 'warning'
+                    ? 'text-yellow-600'
+                    : testResult.status === 'unknown'
+                      ? 'text-muted-foreground'
+                      : 'text-destructive'
+              "
+              data-testid="test-result-status"
             >
               {{
-                testResult.valid
+                testResult.status === 'ok'
                   ? t('providers.form.testSuccess')
-                  : t('providers.form.testFailed')
+                  : testResult.status === 'warning'
+                    ? t('providers.form.testWarning')
+                    : testResult.status === 'unknown'
+                      ? t('providers.form.testUnknown')
+                      : t('providers.form.testFailed')
               }}
             </p>
-            <p class="text-xs text-muted-foreground mt-0.5">
-              {{ testResult.warning || testResult.error || `Status: ${testResult.status}` }}
+            <p class="text-xs text-muted-foreground mt-0.5" data-testid="test-result-message">
+              {{ testResultMessage }}
             </p>
           </div>
         </div>

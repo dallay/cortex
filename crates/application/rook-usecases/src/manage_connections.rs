@@ -177,10 +177,12 @@ impl ManageConnections {
                 conn.updated_at = Utc::now();
                 self.repo.update(&conn, expected).await?;
                 return Ok(TestConnectionResult {
-                    ok: Some(false),
+                    valid: false,
                     status: "expired".to_string(),
                     latency_ms: None,
                     error: Some(format!("OAuth token expired at {expires_at}")),
+                    warning: None,
+                    method: Some("oauth_expired".to_string()),
                 });
             }
         }
@@ -473,34 +475,67 @@ pub enum CredentialsInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestConnectionResult {
-    pub ok: Option<bool>,
+    /// Whether the credentials are *usable*: `true` for `Healthy`,
+    /// `Warning`, and `Unknown`; `false` for `Unhealthy` and
+    /// `Expired`. Replaces the legacy `Option<bool>` (which used `None`
+    /// for `Unknown` and made the dashboard's `ok === true` rule
+    /// accidentally block Save for unprobed providers like Anthropic).
+    pub valid: bool,
+    /// One of `"ok" | "warning" | "unhealthy" | "unknown" | "expired"`.
     pub status: String,
     pub latency_ms: Option<u64>,
     pub error: Option<String>,
+    /// Soft signal surfaced to the dashboard as a yellow alert. Set
+    /// when credentials are valid but the probe saw a non-fatal
+    /// condition (HTTP 429, no API key configured, etc.). Distinct
+    /// from `error`: a warning does not block Save.
+    pub warning: Option<String>,
+    /// Probe method used to derive this result. Free-form string
+    /// (`"models_list"`, `"v1beta_models"`, `"tags_reachability"`,
+    /// `"chat_probe"`, `"not_supported"`, `"oauth_expired"`, ...).
+    /// Allows operators to audit which probe path produced a given
+    /// result without changing the wire schema.
+    pub method: Option<String>,
 }
 
 impl TestConnectionResult {
     fn from_health(health: &HealthStatus) -> Self {
         match health {
             HealthStatus::Healthy { latency_ms, .. } => Self {
-                ok: Some(true),
-                status: "active".to_string(),
+                valid: true,
+                status: "ok".to_string(),
                 latency_ms: Some(*latency_ms),
                 error: None,
+                warning: None,
+                method: Some("models_list".to_string()),
+            },
+            HealthStatus::Warning {
+                latency_ms, reason, ..
+            } => Self {
+                valid: true,
+                status: "warning".to_string(),
+                latency_ms: Some(*latency_ms),
+                error: None,
+                warning: Some(reason.clone()),
+                method: Some("models_list".to_string()),
             },
             HealthStatus::Unhealthy {
                 latency_ms, error, ..
             } => Self {
-                ok: Some(false),
+                valid: false,
                 status: "unhealthy".to_string(),
                 latency_ms: *latency_ms,
                 error: Some(error.clone()),
+                warning: None,
+                method: Some("models_list".to_string()),
             },
             HealthStatus::Unknown { reason, .. } => Self {
-                ok: None,
+                valid: true,
                 status: "unknown".to_string(),
                 latency_ms: None,
-                error: Some(reason.clone()),
+                error: None,
+                warning: Some(reason.clone()),
+                method: Some("not_supported".to_string()),
             },
         }
     }
@@ -510,6 +545,14 @@ fn test_status_from_health(health: HealthStatus) -> TestStatus {
     let last_test_at = Utc::now();
     match health {
         HealthStatus::Healthy { latency_ms, .. } => TestStatus::Active {
+            last_test_at,
+            latency_ms,
+        },
+        // Warnings are transient: the connection itself is Active and
+        // usable. Persisting the warning would mix wire-only state
+        // into the 5-variant TestStatus enum, which is intentionally
+        // orthogonal to the dashboard's yellow-alert semantics.
+        HealthStatus::Warning { latency_ms, .. } => TestStatus::Active {
             last_test_at,
             latency_ms,
         },
@@ -1968,8 +2011,8 @@ mod tests {
                 let result = mc.test(&conn_id).await;
                 assert!(result.is_ok());
                 let res = result.unwrap();
-                assert_eq!(res.ok, Some(true));
-                assert_eq!(res.status, "active");
+                assert!(res.valid, "expected valid=true for healthy");
+                assert_eq!(res.status, "ok");
                 assert_eq!(res.latency_ms, Some(42));
             });
     }
@@ -2029,7 +2072,7 @@ mod tests {
                 let result = mc.test(&conn_id).await;
                 assert!(result.is_ok());
                 let res = result.unwrap();
-                assert_eq!(res.ok, Some(false));
+                assert!(!res.valid, "expected valid=false for unhealthy");
                 assert_eq!(res.status, "unhealthy");
             });
     }
@@ -2085,9 +2128,10 @@ mod tests {
                 let result = mc.test(&conn_id).await;
                 assert!(result.is_ok());
                 let res = result.unwrap();
-                assert_eq!(res.ok, Some(false));
+                assert!(!res.valid, "expected valid=false for expired");
                 assert_eq!(res.status, "expired");
                 assert!(res.error.is_some());
+                assert_eq!(res.method.as_deref(), Some("oauth_expired"));
             });
     }
     // ---------------------------------------------------------------------------

@@ -524,3 +524,87 @@ The HTTP transport layer (DTOs, route structure, error mapping, conditional moun
 **Transport Spec**: `specs/provider-connections-transport/spec.md`
 
 This main spec defines WHAT the system does. The transport spec defines HOW HTTP clients interact with it. Both specs together are the complete behavioral contract.
+
+---
+
+## Delta (2026-06-07) — Credential Validation Warning
+
+> Supersedes the response shape in §7.9 and adds a wire-level `Warning`
+> classification. `TestStatus` persistence is **unchanged** — warnings are
+> wire-only and are mapped to `TestStatus::Active` because credentials are
+> valid.
+
+### MODIFIED: `HealthStatus` enum (domain)
+
+A 4th variant is added to `HealthStatus`. The change is additive; existing
+variants keep their semantics.
+
+```rust
+pub enum HealthStatus {
+    Healthy { provider: ProviderId, latency_ms: u64 },
+    Unhealthy { provider: ProviderId, latency_ms: u64, error: String },
+    Unknown { provider: ProviderId, reason: String },
+    Warning { provider: ProviderId, latency_ms: u64, reason: String }, // NEW
+}
+```
+
+`from_health()` MUST map `Warning` → `TestConnectionResult { valid: true,
+status: "warning", warning: Some(reason), error: None, latency_ms: Some(..),
+method: Some(<probe>) }`. `test_status_from_health()` MUST map `Warning` →
+`TestStatus::Active`.
+
+### MODIFIED: `TestConnectionResult` shape (replaces §7.9 wire examples)
+
+| Old field          | New field                | Notes                                                            |
+|--------------------|--------------------------|------------------------------------------------------------------|
+| `ok: Option<bool>` | `valid: bool`            | Plain boolean — no 3-valued `null`.                              |
+| `status: String`   | `status: String` (enum)  | One of `"ok" \| "warning" \| "unhealthy" \| "unknown" \| "expired"`. |
+| `latencyMs: u64?`  | `latencyMs: u64?`        | Unchanged.                                                       |
+| `error: String?`   | `error: String?`         | **Blocking** reason — present iff `valid: false`.                |
+| —                  | `warning: String?`       | **NEW** — non-blocking advisory; present iff `status: "warning"`. |
+| —                  | `method: String?`        | **NEW** — which probe produced the result (`"models_list"`, `"chat_probe"`, `"tags_reachability"`, `"not_supported"`, `"oauth_expired"`). |
+
+### ADDED: Probe-result classification
+
+`from_health()` MUST classify upstream responses as follows:
+
+| Upstream response                          | `valid` | `status`     | `warning`                                                 | `error`                                                        |
+|--------------------------------------------|---------|--------------|-----------------------------------------------------------|----------------------------------------------------------------|
+| HTTP 2xx from probe                        | `true`  | `"ok"`       | `null`                                                    | `null`                                                         |
+| HTTP 401 or 403                            | `false` | `"unhealthy"`| `null`                                                    | `"auth rejected: HTTP {status} — check that your API key..."`  |
+| HTTP 429                                   | `true`  | `"warning"`  | `"Rate limited, but credentials are valid"`               | `null`                                                         |
+| HTTP 5xx or network failure                | `false` | `"unhealthy"`| `null`                                                    | `"Cannot reach server: {detail}"`                              |
+| Reachable but no API key configured        | `true`  | `"warning"`  | `"No API key configured. You can add one later via Edit."` | `null`                                                        |
+| `HealthStatus::Unknown` (no probe)          | `true`  | `"unknown"`  | `null`                                                    | `null`                                                         |
+| OAuth `expiresAt` in the past (pre-probe)  | `false` | `"expired"`  | `null`                                                    | `"OAuth token expired at {timestamp}"`                         |
+
+#### Scenario: 429 response on a credential probe
+
+- **Given** a provider is configured with a valid API key AND the upstream returns HTTP 429
+- **When** the user clicks "Test connection"
+- **Then** the response MUST be `{ valid: true, status: "warning", warning: "Rate limited, but credentials are valid" }`
+- **And** the persisted `testStatus` MUST be `active` (credentials are valid)
+
+#### Scenario: 401 response on a credential probe
+
+- **Given** a provider is configured with an invalid API key AND the upstream returns HTTP 401
+- **When** the user clicks "Test connection"
+- **Then** the response MUST be `{ valid: false, status: "unhealthy", error: "auth rejected: HTTP 401 — check that your API key is valid and has access to the model" }`
+
+#### Scenario: Network failure on a credential probe
+
+- **Given** the provider's host is unreachable (DNS, timeout, connection refused)
+- **When** the user clicks "Test connection"
+- **Then** the response MUST be `{ valid: false, status: "unhealthy", error: "Cannot reach server: {detail}" }`
+
+#### Scenario: No API key configured but host is reachable
+
+- **Given** the user is configuring a provider AND leaves the API key field empty AND the host is reachable
+- **When** the user clicks "Test connection"
+- **Then** the response MUST be `{ valid: true, status: "warning", warning: "No API key configured. You can add one later via Edit." }`
+
+### ADDED: Acceptance criterion
+
+| #    | Criterion                                                                                                                              | Validation Method               |
+|------|----------------------------------------------------------------------------------------------------------------------------------------|---------------------------------|
+| AC11 | HTTP 429 from a credential probe returns `valid: true, status: "warning"`, persists as `TestStatus::Active`, and the dashboard Save is enabled. | Wiremock + integration test |

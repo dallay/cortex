@@ -6,6 +6,7 @@ pub mod api_key;
 pub mod decrypted_credentials;
 pub mod model;
 pub mod ports;
+pub mod probes;
 pub mod provider_connection;
 
 pub use api_key::*;
