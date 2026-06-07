@@ -2,29 +2,78 @@ use providers_gemini::{GeminiProvider, GeminiProviderConfig};
 use rook_core::{CompletionRequest, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 
+// ---------------------------------------------------------------------------
+// health_check tests
+// ---------------------------------------------------------------------------
+
 #[tokio::test]
-async fn health_check_returns_unknown() {
-    // Gemini provider's health_check is not implemented — it always returns Unknown
+async fn health_check_returns_healthy_on_2xx() {
+    // Gemini's /v1beta/models endpoint accepts x-goog-api-key. A 200
+    // response means credentials are valid and the model catalog is
+    // available.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1beta/models"))
+        .and(wiremock::matchers::header("x-goog-api-key", "test-key"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [
+                    { "name": "models/gemini-2.0-flash" }
+                ]
+            })),
+        )
+        .mount(&server)
+        .await;
+
     let provider = GeminiProvider::new(GeminiProviderConfig {
         id: ProviderId::new("gemini-test"),
         api_key: "test-key".to_string(),
-        base_url: None,
+        base_url: Some(server.uri()),
         models: vec![ModelId::new("gemini-2.0-flash")],
         timeout_secs: 10,
     })
     .unwrap();
 
     let status = provider.health_check().await;
-    assert!(matches!(status, HealthStatus::Unknown { .. }));
+    assert!(matches!(status, HealthStatus::Healthy { .. }));
 }
 
 #[tokio::test]
-async fn health_check_is_unhealthy_on_error() {
-    // Even with a bad response, health_check returns Unknown (not implemented)
+async fn health_check_returns_warning_on_429() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/v1beta/models"))
-        .respond_with(wiremock::ResponseTemplate::new(403))
+        .respond_with(wiremock::ResponseTemplate::new(429))
+        .mount(&server)
+        .await;
+
+    let provider = GeminiProvider::new(GeminiProviderConfig {
+        id: ProviderId::new("gemini-test"),
+        api_key: "test-key".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("gemini-2.0-flash")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Warning { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("rate limit"),
+                "expected reason to mention rate limit, got: {reason}"
+            );
+        }
+        other => panic!("expected Warning, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_401() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1beta/models"))
+        .respond_with(wiremock::ResponseTemplate::new(401))
         .mount(&server)
         .await;
 
@@ -38,8 +87,96 @@ async fn health_check_is_unhealthy_on_error() {
     .unwrap();
 
     let status = provider.health_check().await;
-    // health_check is not implemented, so it always returns Unknown
-    assert!(matches!(status, HealthStatus::Unknown { .. }));
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("auth rejected") && error.contains("401"),
+                "expected 'auth rejected' and '401' in error, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_500() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1beta/models"))
+        .respond_with(wiremock::ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let provider = GeminiProvider::new(GeminiProviderConfig {
+        id: ProviderId::new("gemini-test"),
+        api_key: "test-key".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("gemini-2.0-flash")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("500"),
+                "expected '500' in error, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_network_error() {
+    // Port 1 is reserved and refuses connections — network error path.
+    let provider = GeminiProvider::new(GeminiProviderConfig {
+        id: ProviderId::new("gemini-test"),
+        api_key: "test-key".to_string(),
+        base_url: Some("http://127.0.0.1:1".to_string()),
+        models: vec![ModelId::new("gemini-2.0-flash")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("/v1beta/models") || error.contains("failed"),
+                "expected error to mention the probe path or 'failed', got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_warning_on_no_key() {
+    // No API key configured — the probe must short-circuit before
+    // touching the network.
+    let server = wiremock::MockServer::start().await;
+    // No wiremock routes mounted.
+    let provider = GeminiProvider::new(GeminiProviderConfig {
+        id: ProviderId::new("gemini-test"),
+        api_key: String::new(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("gemini-2.0-flash")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Warning { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("no api key"),
+                "expected reason to mention no API key, got: {reason}"
+            );
+        }
+        other => panic!("expected Warning, got {other:?}"),
+    }
 }
 
 #[tokio::test]

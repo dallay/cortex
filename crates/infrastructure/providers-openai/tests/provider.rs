@@ -3,8 +3,12 @@ use providers_openai::provider::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{CompletionRequest, FinishReason, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 
+// ---------------------------------------------------------------------------
+// health_check tests
+// ---------------------------------------------------------------------------
+
 #[tokio::test]
-async fn health_check_returns_healthy_on_200() {
+async fn health_check_returns_healthy_on_2xx() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/models"))
@@ -30,6 +34,39 @@ async fn health_check_returns_healthy_on_200() {
 }
 
 #[tokio::test]
+async fn health_check_returns_warning_on_429() {
+    // 429 means credentials are valid but the upstream is rate-limiting
+    // the caller. The dashboard should show a yellow alert and keep
+    // Save enabled (valid: true, status: "warning").
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(429))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Warning { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("rate limit"),
+                "expected reason to mention rate limit, got: {reason}"
+            );
+        }
+        other => panic!("expected Warning, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn health_check_returns_unhealthy_on_401() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -48,7 +85,127 @@ async fn health_check_returns_unhealthy_on_401() {
     .unwrap();
 
     let status = provider.health_check().await;
-    assert!(matches!(status, HealthStatus::Unhealthy { .. }));
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("auth rejected") && error.contains("401"),
+                "expected 'auth rejected' and '401' in error, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_403() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("auth rejected") && error.contains("403"),
+                "expected 'auth rejected' and '403' in error, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_500() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("500"),
+                "expected '500' in error, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_unhealthy_on_network_error() {
+    // Port 1 is reserved and refuses connections — network error path.
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: "http://127.0.0.1:1".to_string(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Unhealthy { error, .. } => {
+            assert!(
+                error.contains("/v1/models") || error.contains("models"),
+                "expected error to mention the probe path, got: {error}"
+            );
+        }
+        other => panic!("expected Unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn health_check_returns_warning_on_no_key() {
+    // No API key configured — the user can add one later. Surface as a
+    // yellow warning so the dashboard keeps Save enabled.
+    let server = wiremock::MockServer::start().await;
+    // No wiremock routes mounted — the probe must short-circuit before
+    // touching the network.
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: String::new(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+    match status {
+        HealthStatus::Warning { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("no api key"),
+                "expected reason to mention no API key, got: {reason}"
+            );
+        }
+        other => panic!("expected Warning, got {other:?}"),
+    }
 }
 
 #[tokio::test]

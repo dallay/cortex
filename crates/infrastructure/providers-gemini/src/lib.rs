@@ -97,9 +97,73 @@ impl ProviderPort for GeminiProvider {
     }
 
     async fn health_check(&self) -> HealthStatus {
-        HealthStatus::Unknown {
-            provider: self.config.id.clone(),
-            reason: "health_check_not_supported".to_string(),
+        // No API key configured — surface as a yellow warning so the
+        // user can still Save and add a key later via Edit.
+        if self.config.api_key.is_empty() {
+            return HealthStatus::Warning {
+                provider: self.config.id.clone(),
+                latency_ms: 0,
+                reason: "No API key configured. You can add one later via Edit.".to_string(),
+            };
+        }
+
+        let start = std::time::Instant::now();
+        let probe_url = format!("{}/v1beta/models", self.base_url());
+        match self
+            .client
+            .get(&probe_url)
+            .header("x-goog-api-key", &self.config.api_key)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                let status = resp.status();
+                match rook_core::probes::classify_status_code(status.as_u16()) {
+                    rook_core::probes::ProbeClassification::Ok => HealthStatus::Healthy {
+                        provider: self.config.id.clone(),
+                        latency_ms,
+                    },
+                    rook_core::probes::ProbeClassification::RateLimited => HealthStatus::Warning {
+                        provider: self.config.id.clone(),
+                        latency_ms,
+                        reason: "Rate limited, but credentials are valid".to_string(),
+                    },
+                    rook_core::probes::ProbeClassification::AuthRejected(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: format!(
+                                "auth rejected: HTTP {code} — check that your API key is valid and has access to the model"
+                            ),
+                        }
+                    }
+                    rook_core::probes::ProbeClassification::ServerError(code)
+                    | rook_core::probes::ProbeClassification::ClientError(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: format!("GET /v1beta/models returned HTTP {code}"),
+                        }
+                    }
+                    // Network errors are constructed by the Err arm below.
+                    rook_core::probes::ProbeClassification::NetworkError(_) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: "GET /v1beta/models returned an unknown status".to_string(),
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(latency_ms),
+                    error: format!("GET /v1beta/models failed: {e}"),
+                }
+            }
         }
     }
 

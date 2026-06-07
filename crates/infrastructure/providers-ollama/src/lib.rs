@@ -191,24 +191,29 @@ impl ProviderPort for OllamaProvider {
         //    Ollama Cloud returns 401 on this endpoint when the Bearer
         //    token is missing or invalid, which is the real "are my
         //    credentials accepted?" check.
-        let start = std::time::Instant::now();
-        let latency_ms = || start.elapsed().as_millis() as u64;
+        //
+        // Per-step latency: when step 2 fails (e.g. 429, 401), we
+        // report the failing step's latency, not total elapsed (ADR-5
+        // in design.md). When both steps succeed, we report the total.
+        let total_start = std::time::Instant::now();
+        let total_latency_ms = || total_start.elapsed().as_millis() as u64;
 
         // Step 1: reachability.
+        let step1_start = std::time::Instant::now();
         let tags_result = self.tags_request().send().await;
         match tags_result {
             Ok(resp) if resp.status().is_success() => {}
             Ok(resp) => {
                 return HealthStatus::Unhealthy {
                     provider: self.config.id.clone(),
-                    latency_ms: Some(latency_ms()),
+                    latency_ms: Some(step1_start.elapsed().as_millis() as u64),
                     error: format!("GET /api/tags returned HTTP {}", resp.status()),
                 };
             }
             Err(e) => {
                 return HealthStatus::Unhealthy {
                     provider: self.config.id.clone(),
-                    latency_ms: Some(latency_ms()),
+                    latency_ms: Some(step1_start.elapsed().as_millis() as u64),
                     error: format!("GET /api/tags failed: {e}"),
                 };
             }
@@ -216,11 +221,12 @@ impl ProviderPort for OllamaProvider {
 
         // Step 2: credential check (only when a key is configured).
         if self.config.api_key.as_deref().is_none_or(str::is_empty) {
-            // No key configured — accept reachability as the signal.
-            // (Local Ollama path: no auth, 200 on /api/tags is enough.)
-            return HealthStatus::Healthy {
+            // No key configured — surface as a yellow warning so the
+            // user is nudged to add a key (e.g. for Ollama Cloud).
+            return HealthStatus::Warning {
                 provider: self.config.id.clone(),
-                latency_ms: latency_ms(),
+                latency_ms: 0,
+                reason: "No API key configured. You can add one later via Edit.".to_string(),
             };
         }
 
@@ -235,33 +241,59 @@ impl ProviderPort for OllamaProvider {
             "messages": [{"role": "user", "content": "hi"}],
             "stream": false,
         });
+
+        // Per-step timing: report the failing step's latency, not total.
+        let step2_start = std::time::Instant::now();
         match self.chat_request(&probe_body).send().await {
             Ok(resp) if resp.status().is_success() => HealthStatus::Healthy {
                 provider: self.config.id.clone(),
-                latency_ms: latency_ms(),
+                latency_ms: total_latency_ms(),
             },
-            Ok(resp) if resp.status() == reqwest::StatusCode::UNAUTHORIZED
-                || resp.status() == reqwest::StatusCode::FORBIDDEN =>
-            {
-                HealthStatus::Unhealthy {
-                    provider: self.config.id.clone(),
-                    latency_ms: Some(latency_ms()),
-                    error: format!(
-                        "auth rejected: HTTP {} — check that your API key is valid and has access to the model",
-                        resp.status()
-                    ),
+            Ok(resp) => {
+                let step2_latency = step2_start.elapsed().as_millis() as u64;
+                let status = resp.status();
+                match rook_core::probes::classify_status_code(status.as_u16()) {
+                    rook_core::probes::ProbeClassification::AuthRejected(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(step2_latency),
+                            error: format!(
+                                "auth rejected: HTTP {code} — check that your API key is valid and has access to the model"
+                            ),
+                        }
+                    }
+                    rook_core::probes::ProbeClassification::RateLimited => HealthStatus::Warning {
+                        provider: self.config.id.clone(),
+                        latency_ms: step2_latency,
+                        reason: "Rate limited, but credentials are valid".to_string(),
+                    },
+                    rook_core::probes::ProbeClassification::ServerError(code)
+                    | rook_core::probes::ProbeClassification::ClientError(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(step2_latency),
+                            error: format!("POST /api/chat returned HTTP {code}"),
+                        }
+                    }
+                    // Network errors are constructed in the Err arm below.
+                    rook_core::probes::ProbeClassification::Ok
+                    | rook_core::probes::ProbeClassification::NetworkError(_) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(step2_latency),
+                            error: format!("POST /api/chat returned an unexpected status {status}"),
+                        }
+                    }
                 }
             }
-            Ok(resp) => HealthStatus::Unhealthy {
-                provider: self.config.id.clone(),
-                latency_ms: Some(latency_ms()),
-                error: format!("POST /api/chat returned HTTP {}", resp.status()),
-            },
-            Err(e) => HealthStatus::Unhealthy {
-                provider: self.config.id.clone(),
-                latency_ms: Some(latency_ms()),
-                error: format!("POST /api/chat failed: {e}"),
-            },
+            Err(e) => {
+                let step2_latency = step2_start.elapsed().as_millis() as u64;
+                HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(step2_latency),
+                    error: format!("POST /api/chat failed: {e}"),
+                }
+            }
         }
     }
 

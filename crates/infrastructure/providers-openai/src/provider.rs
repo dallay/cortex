@@ -283,28 +283,74 @@ impl ProviderPort for OpenAIProvider {
     }
 
     async fn health_check(&self) -> HealthStatus {
+        // No API key configured — surface as a yellow warning so the
+        // user can still Save and add a key later via Edit.
+        if self.config.api_key.is_empty() {
+            return HealthStatus::Warning {
+                provider: self.config.id.clone(),
+                latency_ms: 0,
+                reason: "No API key configured. You can add one later via Edit.".to_string(),
+            };
+        }
+
         let start = std::time::Instant::now();
+        let probe_url = format!("{}/models", self.config.base_url);
         match self
             .client
-            .get(format!("{}/models", self.config.base_url))
+            .get(&probe_url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => HealthStatus::Healthy {
-                provider: self.config.id.clone(),
-                latency_ms: start.elapsed().as_millis() as u64,
-            },
-            Ok(resp) => HealthStatus::Unhealthy {
-                provider: self.config.id.clone(),
-                latency_ms: Some(start.elapsed().as_millis() as u64),
-                error: format!("HTTP {}", resp.status()),
-            },
-            Err(e) => HealthStatus::Unhealthy {
-                provider: self.config.id.clone(),
-                latency_ms: None,
-                error: e.to_string(),
-            },
+            Ok(resp) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                let status = resp.status();
+                match rook_core::probes::classify_status_code(status.as_u16()) {
+                    rook_core::probes::ProbeClassification::Ok => HealthStatus::Healthy {
+                        provider: self.config.id.clone(),
+                        latency_ms,
+                    },
+                    rook_core::probes::ProbeClassification::RateLimited => HealthStatus::Warning {
+                        provider: self.config.id.clone(),
+                        latency_ms,
+                        reason: "Rate limited, but credentials are valid".to_string(),
+                    },
+                    rook_core::probes::ProbeClassification::AuthRejected(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: format!(
+                                "auth rejected: HTTP {code} — check that your API key is valid and has access to the model"
+                            ),
+                        }
+                    }
+                    rook_core::probes::ProbeClassification::ServerError(code)
+                    | rook_core::probes::ProbeClassification::ClientError(code) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: format!("GET /models returned HTTP {code}"),
+                        }
+                    }
+                    // Network errors are constructed by the Err arm below,
+                    // not by classify_status_code — we shouldn't reach this.
+                    rook_core::probes::ProbeClassification::NetworkError(_) => {
+                        HealthStatus::Unhealthy {
+                            provider: self.config.id.clone(),
+                            latency_ms: Some(latency_ms),
+                            error: "GET /models returned an unknown status".to_string(),
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(latency_ms),
+                    error: format!("GET /models failed: {e}"),
+                }
+            }
         }
     }
 
