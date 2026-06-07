@@ -138,8 +138,8 @@
 - **`crates/application/rook-usecases/tests/manage_connections_test_credentials.rs`**
   — uses `MockProvider` returning canned `HealthStatus` values; covers
   Healthy/Unhealthy/Unknown mappings. **Need to add cases for**: (a) `ok: true
-  + warning: "Rate limited..."` mapping (which requires `HealthStatus` to
-  express "credentials valid but quota exhausted"); (b) `ok: true + warning:
+  and warning: "Rate limited..."` mapping (which requires `HealthStatus` to
+  express "credentials valid but quota exhausted"); (b) `ok: true and warning:
   "No API key configured"` (no-token path); (c) confirm `Expired` path is
   untouched.
 - **`crates/infrastructure/transport-axum/tests/provider_routes.rs:206-236,
@@ -147,7 +147,7 @@
   `test_status_enum_has_expected_variants` test. **Need to add serialization
   tests for the new shape** (camelCase `warning` and `method`).
 - **`crates/infrastructure/providers-ollama/tests/`** — wiremock tests. **Need
-  to add**: 429 response → `Healthy` (or new `Warning`) variant test; 401 → 
+  to add**: 429 response → `Healthy` (or new `Warning`) variant test; 401 →
   `Unhealthy` test; success-after-reachability test.
 
 ## 4. Spec Coverage Gaps Found
