@@ -2,7 +2,7 @@
 
 # 🧠 Cortex
 
-**Next-generation AI proxy and routing infrastructure**
+## Next-generation AI proxy and routing infrastructure
 
 [![CI](https://img.shields.io/github/actions/workflow/status/dallay/cortex/ci.yml?branch=main&label=CI&logo=github)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/dallay/cortex)](LICENSE)
@@ -79,7 +79,7 @@ Download pre-built binaries from [Releases](https://github.com/dallay/cortex/rel
 ### Quick Start
 
 1. **Configure Rook**:
-   Create a config file at `~/.config/cortex/rook.toml` (or use the `ROOK_CONFIG` env var):
+   Create a config file at `./rook.toml` (or use the `ROOK_CONFIG` env var to point elsewhere):
    ```toml
    [server]
    host = "127.0.0.1"
