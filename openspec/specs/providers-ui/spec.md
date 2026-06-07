@@ -181,14 +181,14 @@ or `warning` content. The `ok` and `warning` statuses both allow Save. Only
 `unhealthy` and `expired` statuses disable Save. `unknown` also allows Save
 (no probe was possible but credentials were not rejected).
 
-| Test result                          | Save button     |
-|--------------------------------------|-----------------|
-| `valid: true, status: "ok"`          | **enabled**     |
-| `valid: true, status: "warning"`     | **enabled**     |
-| `valid: true, status: "unknown"`     | **enabled**     |
-| `valid: false, status: "unhealthy"`  | **disabled**    |
-| `valid: false, status: "expired"`    | **disabled**    |
-| (no test run yet)                    | **disabled**    |
+| Test result                         | Save button  |
+|-------------------------------------|--------------|
+| `valid: true, status: "ok"`         | **enabled**  |
+| `valid: true, status: "warning"`    | **enabled**  |
+| `valid: true, status: "unknown"`    | **enabled**  |
+| `valid: false, status: "unhealthy"` | **disabled** |
+| `valid: false, status: "expired"`   | **disabled** |
+| (no test run yet)                   | **disabled** |
 
 ### MODIFIED: Test credentials scenario (supersedes lines 93-99)
 

@@ -8,40 +8,40 @@
 - `openspec/config.yaml` present and well-formed (mode: `openspec`, language:
   `rust`, edition `2021`, rust 1.81). 16 packages listed.
 - `openspec/specs/` contains 22 domain folders. Relevant ones for this change:
-  - `provider-connections/` — canonical wire + domain contract for test
-    connection. **Primary delta target.**
-  - `provider-connections-transport/` — HTTP DTO and routing spec. **Primary
-    delta target (wire shape).**
-  - `providers-ui/` — frontend UX spec. **Delta target (Save-button rule).**
-  - `health-circuit-visibility/` — operator `/health` + `/api/resilience`
-    observability. **NOT a delta target** (different surface).
-  - `rate-limiting/` — server-side per-client 429 middleware. **NOT a delta
-    target** (different concern).
-  - `combo-execution/` — fallback chains. **NOT a delta target** (it lists 429
-    as a retry trigger for routing — independent of test-connection UX).
-  - `dynamic-provider-registry/` — registry-port contract. **NOT a delta
-    target** (does not own test-connection response shape).
+    - `provider-connections/` — canonical wire + domain contract for test
+      connection. **Primary delta target.**
+    - `provider-connections-transport/` — HTTP DTO and routing spec. **Primary
+      delta target (wire shape).**
+    - `providers-ui/` — frontend UX spec. **Delta target (Save-button rule).**
+    - `health-circuit-visibility/` — operator `/health` + `/api/resilience`
+      observability. **NOT a delta target** (different surface).
+    - `rate-limiting/` — server-side per-client 429 middleware. **NOT a delta
+      target** (different concern).
+    - `combo-execution/` — fallback chains. **NOT a delta target** (it lists 429
+      as a retry trigger for routing — independent of test-connection UX).
+    - `dynamic-provider-registry/` — registry-port contract. **NOT a delta
+      target** (does not own test-connection response shape).
 - `openspec/changes/` only contains `archive/`. **No active change conflicts.**
 - `openspec/changes/2026-06-07-credential-validation-warning/` did not exist —
   created by this phase.
 
 ## 2. Archived Changes — No Overlap
 
-| Change                                            | Relation       | Overlap verdict | Reason                                                                                                                                                                       |
-| ------------------------------------------------- | -------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `2026-06-04-health-circuit-visibility`            | Related        | **None**        | Owns `/health` and `/api/resilience` for circuit-breaker observability. Different endpoints, different shape (`CircuitStateSnapshot`). Test-connection path is untouched.   |
-| `2026-06-06-providers-ui-3-screen-refactor`       | Touches UI     | **None (sequential)** | Restructured `/providers` to 3-screen flow (catalog → details → modal). The `AddProviderDialog.vue` test-result UI is the version this change will modify. **Additive, not replacing.** |
-| `2026-06-02-api-key-scopes-and-restrictions`      | Tangential     | **None**        | API-key management features (scopes, restrictions). Test-connection logic is a separate concern.                                                                            |
-| `2026-05-31-api-key-crud`                         | Tangential     | **None**        | API-key CRUD lifecycle. Does not touch `TestConnectionResult` shape.                                                                                                        |
-| `2026-06-01-anthropic-sse-streaming`              | Unrelated      | **None**        | Anthropic SSE adapter for routing.                                                                                                                                           |
-| `2026-06-01-format-translation-layer`             | Unrelated      | **None**        | OpenAI ↔ Anthropic wire format translation.                                                                                                                                  |
-| `2026-06-03-per-client-rate-limiting`             | Unrelated      | **None**        | Server-side rate limit middleware.                                                                                                                                          |
-| `2026-06-04-multi-step-fallback-chains`           | Unrelated      | **None**        | Combo execution / fallback routing.                                                                                                                                         |
-| `2026-06-04-usage-tracking-token-counts-cost-estimation` | Unrelated | **None**        | Token accounting.                                                                                                                                                            |
-| `2026-06-05-read-cache`                           | Unrelated      | **None**        | Cache feature.                                                                                                                                                               |
-| `2026-05-31-dynamic-provider-registry`            | Unrelated      | **None**        | Registry port contract.                                                                                                                                                      |
-| `2026-05-31-provider-connections`                 | Predecessor    | **None (already merged)** | This is the spec that defines the current `TestConnectionResult` shape — it's the **delta base**, not an overlap.                                                       |
-| `2025-05-31-security-authz-architecture-notes`    | Notes          | **None**        | Architecture notes, no formal change artifacts.                                                                                                                              |
+| Change                                                   | Relation    | Overlap verdict           | Reason                                                                                                                                                                                  |
+|----------------------------------------------------------|-------------|---------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `2026-06-04-health-circuit-visibility`                   | Related     | **None**                  | Owns `/health` and `/api/resilience` for circuit-breaker observability. Different endpoints, different shape (`CircuitStateSnapshot`). Test-connection path is untouched.               |
+| `2026-06-06-providers-ui-3-screen-refactor`              | Touches UI  | **None (sequential)**     | Restructured `/providers` to 3-screen flow (catalog → details → modal). The `AddProviderDialog.vue` test-result UI is the version this change will modify. **Additive, not replacing.** |
+| `2026-06-02-api-key-scopes-and-restrictions`             | Tangential  | **None**                  | API-key management features (scopes, restrictions). Test-connection logic is a separate concern.                                                                                        |
+| `2026-05-31-api-key-crud`                                | Tangential  | **None**                  | API-key CRUD lifecycle. Does not touch `TestConnectionResult` shape.                                                                                                                    |
+| `2026-06-01-anthropic-sse-streaming`                     | Unrelated   | **None**                  | Anthropic SSE adapter for routing.                                                                                                                                                      |
+| `2026-06-01-format-translation-layer`                    | Unrelated   | **None**                  | OpenAI ↔ Anthropic wire format translation.                                                                                                                                             |
+| `2026-06-03-per-client-rate-limiting`                    | Unrelated   | **None**                  | Server-side rate limit middleware.                                                                                                                                                      |
+| `2026-06-04-multi-step-fallback-chains`                  | Unrelated   | **None**                  | Combo execution / fallback routing.                                                                                                                                                     |
+| `2026-06-04-usage-tracking-token-counts-cost-estimation` | Unrelated   | **None**                  | Token accounting.                                                                                                                                                                       |
+| `2026-06-05-read-cache`                                  | Unrelated   | **None**                  | Cache feature.                                                                                                                                                                          |
+| `2026-05-31-dynamic-provider-registry`                   | Unrelated   | **None**                  | Registry port contract.                                                                                                                                                                 |
+| `2026-05-31-provider-connections`                        | Predecessor | **None (already merged)** | This is the spec that defines the current `TestConnectionResult` shape — it's the **delta base**, not an overlap.                                                                       |
+| `2025-05-31-security-authz-architecture-notes`           | Notes       | **None**                  | Architecture notes, no formal change artifacts.                                                                                                                                         |
 
 ## 3. Code State — Confirmed (matches orchestrator context)
 
@@ -67,10 +67,10 @@
   `TestConnectionResult { ok: Option<bool>, status: String, latency_ms,
   error }`. The `from_health()` mapper translates `HealthStatus` →
   `TestConnectionResult`:
-  - `Healthy` → `ok: Some(true)`, `status: "active"`, `latency_ms: Some(..)`, `error: None`
-  - `Unhealthy` → `ok: Some(false)`, `status: "unhealthy"`, `latency_ms`, `error: Some(..)`
-  - `Unknown` → `ok: None`, `status: "unknown"`, `latency_ms: None`, `error: Some(reason)`
-  - `test_status_from_health()` mirrors this for persistence.
+    - `Healthy` → `ok: Some(true)`, `status: "active"`, `latency_ms: Some(..)`, `error: None`
+    - `Unhealthy` → `ok: Some(false)`, `status: "unhealthy"`, `latency_ms`, `error: Some(..)`
+    - `Unknown` → `ok: None`, `status: "unknown"`, `latency_ms: None`, `error: Some(reason)`
+    - `test_status_from_health()` mirrors this for persistence.
 - **`manage_connections.rs:163-179`** — the `test()` function checks OAuth
   expiry BEFORE the runtime provider probe and returns
   `TestConnectionResult { ok: Some(false), status: "expired", latency_ms: None,
@@ -100,14 +100,14 @@
 
 ### 3.4 Provider implementations
 
-| Provider        | File:line                                       | Current behavior                                                                                                                                                                                                                                                                                            |
-| --------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `openai`        | `providers-openai/src/provider.rs:285-305`      | Single-step: `GET {base_url}/models` with Bearer auth. Any non-2xx → `Unhealthy { error: "HTTP {status}" }`. **No 401/403 differentiation. No 429 handling.**                                                                                                                                                |
-| `anthropic`     | `providers-anthropic/src/lib.rs:362-367`        | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe at all.**                                                                                                                                                                                                                            |
-| `ollama`        | `providers-ollama/src/lib.rs:182-269`           | **2-step probe:** (1) `GET /api/tags` for reachability; (2) if `api_key` is set, `POST /api/chat` with minimal body for auth check. 401/403 → `Unhealthy { error: "auth rejected: HTTP 401 — ..." }`. 2xx → `Healthy`. **No 429 handling** — currently falls into the generic "POST /api/chat returned HTTP 429" bucket. **This is the bug.** |
-| `gemini`        | `providers-gemini/src/lib.rs:99-104`            | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe.**                                                                                                                                                                                                                                   |
-| `groq`          | `providers-groq/src/lib.rs:271-276`              | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe.**                                                                                                                                                                                                                                   |
-| `ollama-cloud`  | NOT YET INSPECTED (treat as ollama variant)     | Need to confirm whether `OllamaCloud` is a separate impl or a config flag on `Ollama`. **Open question for proposal phase.**                                                                                                                                                                                 |
+| Provider       | File:line                                   | Current behavior                                                                                                                                                                                                                                                                                                                              |
+|----------------|---------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `openai`       | `providers-openai/src/provider.rs:285-305`  | Single-step: `GET {base_url}/models` with Bearer auth. Any non-2xx → `Unhealthy { error: "HTTP {status}" }`. **No 401/403 differentiation. No 429 handling.**                                                                                                                                                                                 |
+| `anthropic`    | `providers-anthropic/src/lib.rs:362-367`    | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe at all.**                                                                                                                                                                                                                                                              |
+| `ollama`       | `providers-ollama/src/lib.rs:182-269`       | **2-step probe:** (1) `GET /api/tags` for reachability; (2) if `api_key` is set, `POST /api/chat` with minimal body for auth check. 401/403 → `Unhealthy { error: "auth rejected: HTTP 401 — ..." }`. 2xx → `Healthy`. **No 429 handling** — currently falls into the generic "POST /api/chat returned HTTP 429" bucket. **This is the bug.** |
+| `gemini`       | `providers-gemini/src/lib.rs:99-104`        | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe.**                                                                                                                                                                                                                                                                     |
+| `groq`         | `providers-groq/src/lib.rs:271-276`         | Returns `Unknown { reason: "health_check_not_supported" }`. **No probe.**                                                                                                                                                                                                                                                                     |
+| `ollama-cloud` | NOT YET INSPECTED (treat as ollama variant) | Need to confirm whether `OllamaCloud` is a separate impl or a config flag on `Ollama`. **Open question for proposal phase.**                                                                                                                                                                                                                  |
 
 ### 3.5 Dashboard UX
 
@@ -152,14 +152,14 @@
 
 ## 4. Spec Coverage Gaps Found
 
-| Gap                                                                                   | Why it matters for the change                                                                                                                  |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider-connections/spec.md` does not enumerate 429 or quota status.                 | The change needs to ADD a "warning" status category to the `TestConnectionResult` contract. This is a delta on §7.3 of the spec.               |
-| `provider-connections/spec.md:497` explicitly excludes "Rate limit enforcement from quota thresholds" from v1. | The change is intentionally re-introducing a SLICE of quota awareness (test-time only) — the proposal should note this.                       |
-| `providers-ui/spec.md:85, 102` says "MUST require a successful credential test before Save is enabled." | The new design relaxes this: Save is enabled when `valid === true` regardless of warning. The proposal must update this requirement.           |
-| `providers-ui/spec.md:96-98` says "displays the result (ok/error, latency)"           | The new design adds a third visual state (warning). The proposal must update this scenario.                                                     |
-| No spec covers 429-from-upstream semantics in the test-connection path.                | The proposal should add a new requirement capturing "429 during a credential probe is a valid signal with a warning, not a failure."           |
-| `provider-connections-transport/spec.md:240-265` documents 4 response shapes; missing is the warning shape. | The wire-spec delta needs to add 2-3 new response examples (warning, method-tagged, no-token).                                                |
+| Gap                                                                                                            | Why it matters for the change                                                                                                        |
+|----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `provider-connections/spec.md` does not enumerate 429 or quota status.                                         | The change needs to ADD a "warning" status category to the `TestConnectionResult` contract. This is a delta on §7.3 of the spec.     |
+| `provider-connections/spec.md:497` explicitly excludes "Rate limit enforcement from quota thresholds" from v1. | The change is intentionally re-introducing a SLICE of quota awareness (test-time only) — the proposal should note this.              |
+| `providers-ui/spec.md:85, 102` says "MUST require a successful credential test before Save is enabled."        | The new design relaxes this: Save is enabled when `valid === true` regardless of warning. The proposal must update this requirement. |
+| `providers-ui/spec.md:96-98` says "displays the result (ok/error, latency)"                                    | The new design adds a third visual state (warning). The proposal must update this scenario.                                          |
+| No spec covers 429-from-upstream semantics in the test-connection path.                                        | The proposal should add a new requirement capturing "429 during a credential probe is a valid signal with a warning, not a failure." |
+| `provider-connections-transport/spec.md:240-265` documents 4 response shapes; missing is the warning shape.    | The wire-spec delta needs to add 2-3 new response examples (warning, method-tagged, no-token).                                       |
 
 ## 5. Reference: OmniRoute pattern (already adopted in the orchestrator's brief)
 
@@ -169,6 +169,7 @@
 > **This is the design pattern the user already agreed to.**
 
 Mapping to cortex:
+
 - **Layer 1 (auth introspection)**: `Ollama::health_check` already has this for
   Ollama Cloud (POST /api/chat). Needs to be added to openai/gemini/groq.
 - **Layer 2 (lightweight read)**: `GET /models` for OpenAI; `GET .../v1beta/models`
@@ -211,6 +212,7 @@ Mapping to cortex:
 ## 7. Quick File Map (for sdd-spec/sdd-apply)
 
 **Files to MODIFY:**
+
 - `crates/domain/rook-core/src/model.rs` — add `Warning` variant to `HealthStatus`.
 - `crates/domain/rook-core/src/provider_connection.rs` — possibly add `Warning` variant to `TestStatus` (or NOT — the wire-only warning is enough; TBD in propose).
 - `crates/application/rook-usecases/src/manage_connections.rs` — extend `TestConnectionResult` and `from_health`/`test_status_from_health`; update `canSave`-equivalent logic in `test()` to return `valid: true` for warning case.
@@ -225,14 +227,17 @@ Mapping to cortex:
 - `apps/rook/dashboard/src/components/AddProviderDialog.spec.ts` — add warning-case tests.
 
 **Files to ADD:**
+
 - (none expected — the change is additive within existing modules)
 
 **Spec files to UPDATE (delta):**
+
 - `openspec/specs/provider-connections/spec.md` — §7.3 / §10 AC add warning response shape + 429/quota rule.
 - `openspec/specs/provider-connections-transport/spec.md` — add new response examples for warning.
 - `openspec/specs/providers-ui/spec.md` — update "Test credentials" scenario + "Save" scenario for the new 3-state model.
 
 **Spec files NOT to touch:**
+
 - `openspec/specs/health-circuit-visibility/spec.md` — different concern.
 - `openspec/specs/rate-limiting/spec.md` — different concern.
 - `openspec/specs/combo-execution/spec.md` — different concern.

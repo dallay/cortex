@@ -510,7 +510,7 @@ interface TestConnectionResponse {
 
 ### ADDED: Acceptance criterion
 
-| AC    | Criterion                                                                                                                          |
-|-------|------------------------------------------------------------------------------------------------------------------------------------|
-| T-AC9 | Every `TestConnectionResponse` carries all 6 fields; `valid` is a non-nullable boolean; `status` is one of the 5 enumerated values. |
+| AC     | Criterion                                                                                                                              |
+|--------|----------------------------------------------------------------------------------------------------------------------------------------|
+| T-AC9  | Every `TestConnectionResponse` carries all 6 fields; `valid` is a non-nullable boolean; `status` is one of the 5 enumerated values.    |
 | T-AC10 | HTTP 429 from a credential probe produces `valid: true, status: "warning"`; HTTP 401/403 produces `valid: false, status: "unhealthy"`. |

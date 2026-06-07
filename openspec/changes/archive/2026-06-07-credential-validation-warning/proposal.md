@@ -21,14 +21,14 @@ We adopt a cortex-flavored version of OmniRoute's 3-layer probe pattern (`tmp/Om
 
 ### Per-provider probe plan
 
-| Provider     | Probe                                                              | Differentiates 401/403 | Differentiates 429 | No-token warning | No probe |
-| ------------ | ------------------------------------------------------------------ | ---------------------- | ------------------ | ---------------- | -------- |
-| openai       | `GET {base_url}/v1/models` (Bearer)                                | ✓                      | ✓                  | ✓                |          |
-| anthropic    | (none — returns `Unknown`)                                         | n/a                    | n/a                | n/a              | ✓        |
-| gemini       | `GET {base_url}/v1beta/models` (Bearer or `?key=`)                 | ✓                      | ✓                  | ✓                |          |
-| groq         | `GET {base_url}/openai/v1/models` (OpenAI-compatible)              | ✓                      | ✓                  | ✓                |          |
-| ollama       | 2-step: `GET /api/tags` (reachability) + `POST /api/chat` (auth)  | ✓                      | ✓                  | ✓                |          |
-| ollama-cloud | (likely same as ollama; confirm in `sdd-design` via `di.rs:810`)   | ✓                      | ✓                  | ✓                |          |
+| Provider     | Probe                                                            | Differentiates 401/403 | Differentiates 429 | No-token warning | No probe |
+|--------------|------------------------------------------------------------------|------------------------|--------------------|------------------|----------|
+| openai       | `GET {base_url}/v1/models` (Bearer)                              | ✓                      | ✓                  | ✓                |          |
+| anthropic    | (none — returns `Unknown`)                                       | n/a                    | n/a                | n/a              | ✓        |
+| gemini       | `GET {base_url}/v1beta/models` (Bearer or `?key=`)               | ✓                      | ✓                  | ✓                |          |
+| groq         | `GET {base_url}/openai/v1/models` (OpenAI-compatible)            | ✓                      | ✓                  | ✓                |          |
+| ollama       | 2-step: `GET /api/tags` (reachability) + `POST /api/chat` (auth) | ✓                      | ✓                  | ✓                |          |
+| ollama-cloud | (likely same as ollama; confirm in `sdd-design` via `di.rs:810`) | ✓                      | ✓                  | ✓                |          |
 
 ## Scope
 
@@ -67,13 +67,13 @@ We adopt a cortex-flavored version of OmniRoute's 3-layer probe pattern (`tmp/Om
 5+ Rust crates + 1 dashboard module, plus 3 spec files. Full file map in `findings.md` §7. Summary:
 
 | Layer            | Files                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Domain           | `crates/domain/rook-core/src/model.rs`, `crates/domain/rook-core/src/provider_connection.rs` (no change)                 |
+|------------------|---------------------------------------------------------------------------------------------------------------------------|
+| Domain           | `crates/domain/rook-core/src/model.rs`, `crates/domain/rook-core/src/provider_connection.rs` (no change)                  |
 | Application      | `crates/application/rook-usecases/src/manage_connections.rs`                                                              |
 | Transport (wire) | `crates/infrastructure/transport-axum/src/provider_dto.rs`, `crates/infrastructure/transport-axum/src/provider_routes.rs` |
-| Providers        | `providers-openai`, `providers-ollama`, `providers-ollama-cloud?`, `providers-gemini`, `providers-groq`                    |
-| Dashboard        | `apps/rook/dashboard/src/lib/api.ts`, `apps/rook/dashboard/src/components/AddProviderDialog.vue`, `.spec.ts`               |
-| Specs (delta)    | `provider-connections/spec.md`, `provider-connections-transport/spec.md`, `providers-ui/spec.md`                            |
+| Providers        | `providers-openai`, `providers-ollama`, `providers-ollama-cloud?`, `providers-gemini`, `providers-groq`                   |
+| Dashboard        | `apps/rook/dashboard/src/lib/api.ts`, `apps/rook/dashboard/src/components/AddProviderDialog.vue`, `.spec.ts`              |
+| Specs (delta)    | `provider-connections/spec.md`, `provider-connections-transport/spec.md`, `providers-ui/spec.md`                          |
 
 ## Capabilities
 

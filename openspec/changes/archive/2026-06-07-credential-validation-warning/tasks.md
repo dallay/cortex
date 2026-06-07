@@ -5,14 +5,14 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | ~600-900 (12 files modified, 1 new module, multi-provider refactor, dashboard, tests) |
-| 400-line budget risk | High |
-| Chained PRs recommended | Yes |
-| Suggested split | PR 1 (domain + helper) → PR 2 (application + transport DTO) → PR 3 (providers — ollama, openai, gemini, groq) → PR 4 (dashboard + tests + docs) |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | stacked-to-main |
+| Field                   | Value                                                                                                                                           |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| Estimated changed lines | ~600-900 (12 files modified, 1 new module, multi-provider refactor, dashboard, tests)                                                           |
+| 400-line budget risk    | High                                                                                                                                            |
+| Chained PRs recommended | Yes                                                                                                                                             |
+| Suggested split         | PR 1 (domain + helper) → PR 2 (application + transport DTO) → PR 3 (providers — ollama, openai, gemini, groq) → PR 4 (dashboard + tests + docs) |
+| Delivery strategy       | ask-on-risk                                                                                                                                     |
+| Chain strategy          | stacked-to-main                                                                                                                                 |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
@@ -21,12 +21,12 @@ Chain strategy: stacked-to-main
 
 ### Suggested Work Units
 
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | Domain enum + classification helper | PR 1 | Foundational; tests-only delta possible; base = main |
-| 2 | Application + transport DTO + route adapter | PR 2 | Builds on PR 1; wire shape; base = main (rebase-on-merge) |
-| 3 | Per-provider probe refactor (ollama, openai, gemini, groq) | PR 3 | Independent provider files; can split per provider if needed; base = main |
-| 4 | Dashboard UI, dashboard tests, e2e, spec deltas, docs | PR 4 | End-user visible; base = main |
+| Unit | Goal                                                       | Likely PR | Notes                                                                     |
+|------|------------------------------------------------------------|-----------|---------------------------------------------------------------------------|
+| 1    | Domain enum + classification helper                        | PR 1      | Foundational; tests-only delta possible; base = main                      |
+| 2    | Application + transport DTO + route adapter                | PR 2      | Builds on PR 1; wire shape; base = main (rebase-on-merge)                 |
+| 3    | Per-provider probe refactor (ollama, openai, gemini, groq) | PR 3      | Independent provider files; can split per provider if needed; base = main |
+| 4    | Dashboard UI, dashboard tests, e2e, spec deltas, docs      | PR 4      | End-user visible; base = main                                             |
 
 ## 0. Pre-flight verification (5 min)
 
@@ -38,110 +38,110 @@ Chain strategy: stacked-to-main
 ## 1. Domain layer (rook-core)
 
 - [ ] **1.1** Add `Warning { provider, latency_ms, reason }` variant to `HealthStatus` enum in `crates/domain/rook-core/src/model.rs`.
-  - Verification: `cargo build -p rook-core` succeeds.
+    - Verification: `cargo build -p rook-core` succeeds.
 - [ ] **1.2** Update `is_healthy()` to return `true` for `Warning` (in addition to `Healthy`).
-  - Verification: `cargo test -p rook-core` (existing tests pass; add 1 new test for `Warning.is_healthy() == true`).
+    - Verification: `cargo test -p rook-core` (existing tests pass; add 1 new test for `Warning.is_healthy() == true`).
 - [ ] **1.3** Update `last_error()` to return `None` for `Warning`.
-  - Verification: add 1 test.
+    - Verification: add 1 test.
 - [ ] **1.4** Create `crates/domain/rook-core/src/probes.rs` with `ProbeClassification` enum and `classify_status_code()` helper (takes `StatusCode` or `u16` per 0.1).
-  - Verification: `cargo test -p rook-core -- probes` (add unit tests for each classification: 200, 401, 403, 429, 500, 503, etc.).
+    - Verification: `cargo test -p rook-core -- probes` (add unit tests for each classification: 200, 401, 403, 429, 500, 503, etc.).
 - [ ] **1.5** Add `pub mod probes;` to `crates/domain/rook-core/src/lib.rs`.
-  - Verification: `cargo build -p rook-core` succeeds.
+    - Verification: `cargo build -p rook-core` succeeds.
 - [ ] **1.6** Update all `ProviderPort` impls in test code that pattern-match `HealthStatus`. Use `cargo test --workspace` to find them.
-  - Verification: `cargo test --workspace` green.
+    - Verification: `cargo test --workspace` green.
 
 ## 2. Application layer (rook-usecases)
 
 - [ ] **2.1** Extend `TestConnectionResult` struct in `crates/application/rook-usecases/src/manage_connections.rs` with `valid: bool`, `warning: Option<String>`, `method: Option<String>`. Remove `ok: Option<bool>`.
-  - Verification: `cargo build -p rook-usecases` succeeds.
+    - Verification: `cargo build -p rook-usecases` succeeds.
 - [ ] **2.2** Rewrite `from_health()` to map 4 HealthStatus variants + the `Expired` short-circuit to the new shape. Map `Warning -> valid: true, status: "warning", warning: Some(reason.clone()), method: Some("...".to_string())` based on the source.
-  - Verification: `cargo test -p rook-usecases` (existing tests pass; add 3 new tests for Healthy/Warning/Unhealthy/Unknown mappings).
+    - Verification: `cargo test -p rook-usecases` (existing tests pass; add 3 new tests for Healthy/Warning/Unhealthy/Unknown mappings).
 - [ ] **2.3** Update `test_status_from_health()` to map `Warning -> TestStatus::Active` (warnings are transient).
-  - Verification: existing test for `Healthy -> Active` stays green; add new test for `Warning -> Active`.
+    - Verification: existing test for `Healthy -> Active` stays green; add new test for `Warning -> Active`.
 - [ ] **2.4** Update the `Expired` short-circuit in `test()` (lines 163-179) to return `valid: false, status: "expired", method: Some("oauth_expired".to_string())`.
-  - Verification: existing OAuth test stays green.
+    - Verification: existing OAuth test stays green.
 - [ ] **2.5** Update all consumers of `TestConnectionResult` in `rook-usecases` tests (specifically `manage_connections_test_credentials.rs`) to use `valid` instead of `ok`.
-  - Verification: `cargo test -p rook-usecases` green.
+    - Verification: `cargo test -p rook-usecases` green.
 - [ ] **2.6** Update `crates/application/rook-usecases/src/manage_connections.rs::TestConnectionResult` debug derives if needed (it's already `#[derive(Debug, Clone, PartialEq, Eq)]` — should be fine).
 
 ## 3. Transport layer (transport-axum)
 
 - [ ] **3.1** Update `TestConnectionResponse` struct in `crates/infrastructure/transport-axum/src/provider_dto.rs` to mirror the new `TestConnectionResult` (add `valid`, `warning`, `method`; remove `ok`).
-  - Verification: `cargo build -p transport-axum` succeeds.
+    - Verification: `cargo build -p transport-axum` succeeds.
 - [ ] **3.2** Update the `From<&TestConnectionResult> for TestConnectionResponse` impl (or add it if missing).
-  - Verification: `cargo test -p transport-axum` (existing tests pass).
+    - Verification: `cargo test -p transport-axum` (existing tests pass).
 - [ ] **3.3** Add serialization tests in `crates/infrastructure/transport-axum/tests/provider_routes.rs` for all 7 wire example responses (ok, warning-429, warning-no-key, unhealthy-401, unhealthy-5xx, unknown, expired).
-  - Verification: `cargo test -p transport-axum --test provider_routes` green.
+    - Verification: `cargo test -p transport-axum --test provider_routes` green.
 - [ ] **3.4** Update the `/health` endpoint summary logic in `routes.rs` (if it inspects `TestConnectionResult` — should not, since it uses `HealthStatus` directly).
-  - Verification: `cargo test -p transport-axum` green.
+    - Verification: `cargo test -p transport-axum` green.
 
 ## 4. Provider layer (5 providers + 1 new helper dep)
 
 ### 4.1 openai
 
 - [ ] **4.1.1** Refactor `OpenAIProvider::health_check` in `crates/infrastructure/providers-openai/src/provider.rs:285-305` to use `classify_status_code`. Map responses:
-  - 2xx → `Healthy`
-  - 429 → `Warning { reason: "Rate limited, but credentials are valid" }`
-  - 401/403 → `Unhealthy { error: "auth rejected: HTTP {code} — ..." }`
-  - 5xx, other 4xx, network → `Unhealthy`
+    - 2xx → `Healthy`
+    - 429 → `Warning { reason: "Rate limited, but credentials are valid" }`
+    - 401/403 → `Unhealthy { error: "auth rejected: HTTP {code} — ..." }`
+    - 5xx, other 4xx, network → `Unhealthy`
 - [ ] **4.1.2** Add no-key short-circuit at the top of `health_check()`: if `self.api_key.is_empty()`, return `Warning { reason: "No API key configured..." }`.
 - [ ] **4.1.3** Update existing unit tests in `crates/infrastructure/providers-openai/tests/provider.rs` to use the new shape.
-  - Verification: `cargo test -p providers-openai` green.
+    - Verification: `cargo test -p providers-openai` green.
 - [ ] **4.1.4** Add new wiremock tests for 429, no-key, 5xx, network-failure.
-  - Verification: `cargo test -p providers-openai` green with new tests.
+    - Verification: `cargo test -p providers-openai` green with new tests.
 
 ### 4.2 ollama (covers ollama-cloud per ADR-4)
 
 - [ ] **4.2.1** Refactor `OllamaProvider::health_check` in `crates/infrastructure/providers-ollama/src/lib.rs:182-269` to:
-  - Step 1 (`GET /api/tags`): no change in classification.
-  - Step 2 (`POST /api/chat`): add 429 → `Warning` bucket.
-  - No-key path: change from `Healthy` to `Warning { reason: "No API key configured..." }`.
-  - Use `classify_status_code` helper.
+    - Step 1 (`GET /api/tags`): no change in classification.
+    - Step 2 (`POST /api/chat`): add 429 → `Warning` bucket.
+    - No-key path: change from `Healthy` to `Warning { reason: "No API key configured..." }`.
+    - Use `classify_status_code` helper.
 - [ ] **4.2.2** Update existing wiremock tests in `crates/infrastructure/providers-ollama/tests/provider.rs` to use the new shape.
-  - Verification: `cargo test -p providers-ollama` green.
+    - Verification: `cargo test -p providers-ollama` green.
 - [ ] **4.2.3** Add new wiremock tests: 429 on chat probe → `Warning`, no-key reachability → `Warning`, latency-2-step-when-429-fails.
-  - Verification: `cargo test -p providers-ollama` green.
+    - Verification: `cargo test -p providers-ollama` green.
 - [ ] **4.2.4** Verify OllamaCloud behavior by adding a unit test for the `OllamaProvider` shared impl (if not present, the existing tests cover it — OllamaCloud just maps to Ollama at `di.rs:811-814`).
-  - Verification: `cargo test -p providers-ollama` green.
+    - Verification: `cargo test -p providers-ollama` green.
 
 ### 4.3 anthropic
 
 - [ ] **4.3.1** Keep `HealthStatus::Unknown { reason: "health_check_not_supported" }` in `crates/infrastructure/providers-anthropic/src/lib.rs:362-367`. No change.
-  - Verification: existing test stays green.
+    - Verification: existing test stays green.
 
 ### 4.4 gemini (NEW probe)
 
 - [ ] **4.4.1** Replace `Unknown` placeholder in `crates/infrastructure/providers-gemini/src/lib.rs:99-104` with a real probe. Use `GET {base_url}/v1beta/models` with `Authorization: Bearer {key}` (or `?key=` per verification 0.3). Apply `classify_status_code` to map responses.
 - [ ] **4.4.2** Add no-key short-circuit: if `self.api_key.is_empty()`, return `Warning { reason: "No API key configured..." }`.
 - [ ] **4.4.3** Update unit tests in `crates/infrastructure/providers-gemini/tests/provider.rs` to use the new shape and add wiremock tests for 2xx, 401, 429, 5xx, no-key, network-error.
-  - Verification: `cargo test -p providers-gemini` green.
+    - Verification: `cargo test -p providers-gemini` green.
 
 ### 4.5 groq (NEW probe)
 
 - [ ] **4.5.1** Replace `Unknown` placeholder in `crates/infrastructure/providers-groq/src/lib.rs:271-276` with a real probe. Use `GET {base_url}/openai/v1/models` with `Authorization: Bearer {key}`. Apply `classify_status_code` to map responses.
 - [ ] **4.5.2** Add no-key short-circuit: if `self.api_key.is_empty()`, return `Warning { reason: "No API key configured..." }`.
 - [ ] **4.5.3** Update unit tests in `crates/infrastructure/providers-groq/tests/provider.rs` to use the new shape and add wiremock tests for 2xx, 401, 429, 5xx, no-key, network-error.
-  - Verification: `cargo test -p providers-groq` green.
+    - Verification: `cargo test -p providers-groq` green.
 
 ## 5. Dashboard layer (Vue)
 
 - [ ] **5.1** Update `TestConnectionResponse` interface in `apps/rook/dashboard/src/lib/api.ts:578-583` to the new shape (`valid: boolean`, `warning: string | null`, `method: string | null`, status enum).
-  - Verification: `pnpm tsc --noEmit` in `apps/rook/dashboard/` clean.
+    - Verification: `pnpm tsc --noEmit` in `apps/rook/dashboard/` clean.
 - [ ] **5.2** Refactor `testResult` ref in `apps/rook/dashboard/src/components/AddProviderDialog.vue:115` from `{ ok: boolean; message: string }` to the full `TestConnectionResponse` shape.
-  - Verification: `pnpm tsc --noEmit` clean.
+    - Verification: `pnpm tsc --noEmit` clean.
 - [ ] **5.3** Update `canSave` computed in `AddProviderDialog.vue:143-144` from `testResult.value?.ok === true` to `testResult.value?.valid === true`.
-  - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
+    - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
 - [ ] **5.4** Update the test-result display block in `AddProviderDialog.vue:527-548` to handle 3 visual states: ok (green CheckCircle2), warning (yellow AlertTriangle + `text-yellow-600`), unhealthy/expired (red AlertCircle).
-  - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
+    - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
 - [ ] **5.5** Add `AlertTriangle` to the `lucide-vue-next` imports at the top of the file.
-  - Verification: `pnpm tsc --noEmit` clean.
+    - Verification: `pnpm tsc --noEmit` clean.
 - [ ] **5.6** Add new Vitest tests in `AddProviderDialog.spec.ts`:
-  - 429 response → Save enabled, yellow alert
-  - 401 response → Save disabled, red alert
-  - 5xx response → Save disabled, red alert
-  - No-key response → Save enabled, yellow alert
-  - Unknown response → Save enabled, no alert
-  - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
+    - 429 response → Save enabled, yellow alert
+    - 401 response → Save disabled, red alert
+    - 5xx response → Save disabled, red alert
+    - No-key response → Save enabled, yellow alert
+    - Unknown response → Save enabled, no alert
+    - Verification: `pnpm exec vitest run src/components/AddProviderDialog.spec.ts` green.
 
 ## 6. End-to-end verification
 
@@ -150,9 +150,9 @@ Chain strategy: stacked-to-main
 - [ ] **6.3** Run `cargo test --workspace --all-features` for the final pre-merge pass.
 - [ ] **6.4** Run `cd apps/rook/dashboard && pnpm exec vitest run` for the dashboard unit tests.
 - [ ] **6.5** Run real-world e2e test: start a fresh rook on `:8080`, log in, hit `/api/providers/test-credentials` with:
-  - A valid Ollama Cloud key at quota limit → expect `valid: true, status: "warning"`.
-  - A valid Ollama Cloud key on a free tier with quota available → expect `valid: true, status: "ok"` (or `unknown` if no quota issues).
-  - An invalid Ollama Cloud key → expect `valid: false, status: "unhealthy", error: contains "auth rejected"`.
+    - A valid Ollama Cloud key at quota limit → expect `valid: true, status: "warning"`.
+    - A valid Ollama Cloud key on a free tier with quota available → expect `valid: true, status: "ok"` (or `unknown` if no quota issues).
+    - An invalid Ollama Cloud key → expect `valid: false, status: "unhealthy", error: contains "auth rejected"`.
 - [ ] **6.6** Run Playwright e2e for the new warning case (if applicable — the existing Playwright suite covers the catalog flow; add a new test for the yellow alert + Save-enabled path).
 - [ ] **6.7** Update `docs/api.md` and `docs/providers.md` with the new response shape and the 5-state semantics.
 

@@ -555,28 +555,28 @@ method: Some(<probe>) }`. `test_status_from_health()` MUST map `Warning` →
 
 ### MODIFIED: `TestConnectionResult` shape (replaces §7.9 wire examples)
 
-| Old field          | New field                | Notes                                                            |
-|--------------------|--------------------------|------------------------------------------------------------------|
-| `ok: Option<bool>` | `valid: bool`            | Plain boolean — no 3-valued `null`.                              |
-| `status: String`   | `status: String` (enum)  | One of `"ok" \| "warning" \| "unhealthy" \| "unknown" \| "expired"`. |
-| `latencyMs: u64?`  | `latencyMs: u64?`        | Unchanged.                                                       |
-| `error: String?`   | `error: String?`         | **Blocking** reason — present iff `valid: false`.                |
-| —                  | `warning: String?`       | **NEW** — non-blocking advisory; present iff `status: "warning"`. |
-| —                  | `method: String?`        | **NEW** — which probe produced the result (`"models_list"`, `"chat_probe"`, `"tags_reachability"`, `"not_supported"`, `"oauth_expired"`). |
+| Old field          | New field               | Notes                                                                                                                                     |
+|--------------------|-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| `ok: Option<bool>` | `valid: bool`           | Plain boolean — no 3-valued `null`.                                                                                                       |
+| `status: String`   | `status: String` (enum) | One of `"ok" \| "warning" \| "unhealthy" \| "unknown" \| "expired"`.                                                                      |
+| `latencyMs: u64?`  | `latencyMs: u64?`       | Unchanged.                                                                                                                                |
+| `error: String?`   | `error: String?`        | **Blocking** reason — present iff `valid: false`.                                                                                         |
+| —                  | `warning: String?`      | **NEW** — non-blocking advisory; present iff `status: "warning"`.                                                                         |
+| —                  | `method: String?`       | **NEW** — which probe produced the result (`"models_list"`, `"chat_probe"`, `"tags_reachability"`, `"not_supported"`, `"oauth_expired"`). |
 
 ### ADDED: Probe-result classification
 
 `from_health()` MUST classify upstream responses as follows:
 
-| Upstream response                          | `valid` | `status`     | `warning`                                                 | `error`                                                        |
-|--------------------------------------------|---------|--------------|-----------------------------------------------------------|----------------------------------------------------------------|
-| HTTP 2xx from probe                        | `true`  | `"ok"`       | `null`                                                    | `null`                                                         |
-| HTTP 401 or 403                            | `false` | `"unhealthy"`| `null`                                                    | `"auth rejected: HTTP {status} — check that your API key..."`  |
-| HTTP 429                                   | `true`  | `"warning"`  | `"Rate limited, but credentials are valid"`               | `null`                                                         |
-| HTTP 5xx or network failure                | `false` | `"unhealthy"`| `null`                                                    | `"Cannot reach server: {detail}"`                              |
-| Reachable but no API key configured        | `true`  | `"warning"`  | `"No API key configured. You can add one later via Edit."` | `null`                                                        |
-| `HealthStatus::Unknown` (no probe)          | `true`  | `"unknown"`  | `null`                                                    | `null`                                                         |
-| OAuth `expiresAt` in the past (pre-probe)  | `false` | `"expired"`  | `null`                                                    | `"OAuth token expired at {timestamp}"`                         |
+| Upstream response                         | `valid` | `status`      | `warning`                                                  | `error`                                                       |
+|-------------------------------------------|---------|---------------|------------------------------------------------------------|---------------------------------------------------------------|
+| HTTP 2xx from probe                       | `true`  | `"ok"`        | `null`                                                     | `null`                                                        |
+| HTTP 401 or 403                           | `false` | `"unhealthy"` | `null`                                                     | `"auth rejected: HTTP {status} — check that your API key..."` |
+| HTTP 429                                  | `true`  | `"warning"`   | `"Rate limited, but credentials are valid"`                | `null`                                                        |
+| HTTP 5xx or network failure               | `false` | `"unhealthy"` | `null`                                                     | `"Cannot reach server: {detail}"`                             |
+| Reachable but no API key configured       | `true`  | `"warning"`   | `"No API key configured. You can add one later via Edit."` | `null`                                                        |
+| `HealthStatus::Unknown` (no probe)        | `true`  | `"unknown"`   | `null`                                                     | `null`                                                        |
+| OAuth `expiresAt` in the past (pre-probe) | `false` | `"expired"`   | `null`                                                     | `"OAuth token expired at {timestamp}"`                        |
 
 #### Scenario: 429 response on a credential probe
 
@@ -605,6 +605,6 @@ method: Some(<probe>) }`. `test_status_from_health()` MUST map `Warning` →
 
 ### ADDED: Acceptance criterion
 
-| #    | Criterion                                                                                                                              | Validation Method               |
-|------|----------------------------------------------------------------------------------------------------------------------------------------|---------------------------------|
+| #    | Criterion                                                                                                                                       | Validation Method           |
+|------|-------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------|
 | AC11 | HTTP 429 from a credential probe returns `valid: true, status: "warning"`, persists as `TestStatus::Active`, and the dashboard Save is enabled. | Wiremock + integration test |
