@@ -43,6 +43,7 @@ import {
 import type {
   CreateProviderRequest,
   ProviderConnectionResponse,
+  TestConnectionResponse,
   UpdateProviderRequest,
   WireAuthType,
 } from '@/lib/api'
@@ -112,7 +113,7 @@ const form = ref<FormState>(blankForm())
 const testing = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
-const testResult = ref<{ ok: boolean; message: string } | null>(null)
+const testResult = ref<TestConnectionResponse | null>(null)
 const showDeleteConfirm = ref(false)
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,13 @@ const showKindSelector = computed(() => props.providerKind === undefined)
 const catalogEntry = computed(() => findCatalogEntry(kind.value))
 const isApikey = computed(() => authType.value === 'apikey')
 const supportsOAuth = computed(() => catalogEntry.value.authTypes.includes('oauth'))
+// Managed-cloud providers (e.g. Ollama Cloud) ship with a vendor-fixed
+// base URL — we still send it to the backend, but the user has no reason
+// to edit it and may shoot themselves in the foot if they do. Default
+// to `true` to keep current behavior for every other provider.
+const baseUrlEditable = computed(
+  () => catalogEntry.value.baseUrlEditable ?? true,
+)
 
 const canTest = computed(
   () =>
@@ -134,7 +142,7 @@ const canTest = computed(
 )
 
 const canSave = computed(
-  () => canTest.value && testResult.value?.ok === true && !saving.value,
+  () => canTest.value && testResult.value?.valid === true && !saving.value,
 )
 
 // ---------------------------------------------------------------------------
@@ -285,21 +293,26 @@ async function handleTest() {
   testResult.value = null
   try {
     const result = await testCredentials(buildTestPayload())
-    if (result?.ok) {
-      testResult.value = {
-        ok: true,
-        message: `Connected successfully (${result.latencyMs ?? 0}ms)`,
-      }
+    if (result) {
+      testResult.value = result
     } else {
       testResult.value = {
-        ok: false,
-        message: result?.error ?? 'Connection failed',
+        valid: false,
+        status: 'unhealthy',
+        latencyMs: null,
+        error: 'Connection failed',
+        warning: null,
+        method: null,
       }
     }
   } catch (e) {
     testResult.value = {
-      ok: false,
-      message: e instanceof Error ? e.message : 'Test failed',
+      valid: false,
+      status: 'unhealthy',
+      latencyMs: null,
+      error: e instanceof Error ? e.message : 'Test failed',
+      warning: null,
+      method: null,
     }
   } finally {
     testing.value = false
@@ -313,7 +326,14 @@ async function handleSave() {
     if (isEditMode.value && props.connectionId) {
       const existing = providerById.value.get(props.connectionId)
       if (!existing) {
-        testResult.value = { ok: false, message: 'Connection not found' }
+        testResult.value = {
+          valid: false,
+          status: 'unhealthy',
+          latencyMs: null,
+          error: 'Connection not found',
+          warning: null,
+          method: null,
+        }
         return
       }
       const updated = await update(
@@ -355,7 +375,7 @@ async function handleDelete() {
 
 <template>
   <Dialog :open="open" @update:open="handleOpenChange">
-    <DialogContent class="sm:max-w-[560px]">
+    <DialogContent class="sm:max-w-140">
       <DialogHeader>
         <DialogTitle>
           {{
@@ -457,8 +477,9 @@ async function handleDelete() {
           />
         </div>
 
-        <!-- Base URL -->
-        <div class="space-y-2">
+        <!-- Base URL (hidden for managed-cloud providers where the
+             endpoint is vendor-fixed, e.g. Ollama Cloud) -->
+        <div v-if="baseUrlEditable" class="space-y-2">
           <Label for="baseUrl">{{ t('providers.form.baseUrl') }}</Label>
           <Input
             id="baseUrl"
@@ -508,8 +529,7 @@ async function handleDelete() {
           <Label for="enabled">{{ t('providers.form.enabled') }}</Label>
           <Switch
             id="enabled"
-            :checked="form.enabled"
-            @update:checked="(v: boolean) => (form.enabled = v)"
+            v-model="form.enabled"
             :disabled="saving"
             data-testid="switch-enabled"
           />
@@ -522,23 +542,23 @@ async function handleDelete() {
           data-testid="test-result"
         >
           <CheckCircle2
-            v-if="testResult.ok"
+            v-if="testResult.valid"
             class="h-5 w-5 text-green-500 mt-0.5"
           />
           <AlertCircle v-else class="h-5 w-5 text-destructive mt-0.5" />
           <div class="flex-1">
             <p
               class="text-sm font-medium"
-              :class="testResult.ok ? 'text-green-600' : 'text-destructive'"
+              :class="testResult.valid ? 'text-green-600' : 'text-destructive'"
             >
               {{
-                testResult.ok
+                testResult.valid
                   ? t('providers.form.testSuccess')
                   : t('providers.form.testFailed')
               }}
             </p>
             <p class="text-xs text-muted-foreground mt-0.5">
-              {{ testResult.message }}
+              {{ testResult.warning || testResult.error || `Status: ${testResult.status}` }}
             </p>
           </div>
         </div>

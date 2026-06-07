@@ -802,6 +802,27 @@ pub fn build_provider_from_connection(
                 base_url,
                 models: Vec::new(),
                 timeout_secs: 300,
+                api_key: None,
+            };
+            providers_ollama::OllamaProvider::new(config)
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::OllamaCloud => {
+            // Ollama Cloud reuses the same `OllamaProvider` implementation —
+            // it differs only in the base URL (defaults to https://ollama.com)
+            // and the required Bearer auth token. The API surface
+            // (`/api/chat`) is identical to local Ollama.
+            let base_url = base_url_override.unwrap_or_else(|| "https://ollama.com".to_string());
+            let config = providers_ollama::OllamaProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                base_url,
+                models: Vec::new(),
+                timeout_secs: 300,
+                api_key: if api_key.is_empty() {
+                    None
+                } else {
+                    Some(api_key)
+                },
             };
             providers_ollama::OllamaProvider::new(config)
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?

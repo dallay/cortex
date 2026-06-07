@@ -113,10 +113,10 @@ const enabled = computed(() => props.connection.isActive)
           <Trash2 class="h-4 w-4" />
         </Button>
         <Switch
-          :checked="enabled"
+          :model-value="connection.isActive"
           :disabled="busy"
           :data-testid="`connection-toggle-${connection.id}`"
-          @update:checked="(value: boolean) => emit('toggle', { id: connection.id, enabled: value })"
+          @update:model-value="(value: boolean) => emit('toggle', { id: connection.id, enabled: value })"
         />
       </div>
     </div>

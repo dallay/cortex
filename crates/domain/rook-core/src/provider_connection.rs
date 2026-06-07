@@ -77,6 +77,7 @@ pub enum ProviderKind {
     OpenAI,
     Anthropic,
     Ollama,
+    OllamaCloud,
     Gemini,
     Groq,
 }
@@ -87,6 +88,7 @@ impl ProviderKind {
             Self::OpenAI => "openai",
             Self::Anthropic => "anthropic",
             Self::Ollama => "ollama",
+            Self::OllamaCloud => "ollama-cloud",
             Self::Gemini => "gemini",
             Self::Groq => "groq",
         }
@@ -101,6 +103,7 @@ impl TryFrom<&str> for ProviderKind {
             "openai" => Ok(Self::OpenAI),
             "anthropic" => Ok(Self::Anthropic),
             "ollama" => Ok(Self::Ollama),
+            "ollama-cloud" => Ok(Self::OllamaCloud),
             "gemini" => Ok(Self::Gemini),
             "groq" => Ok(Self::Groq),
             _ => Err(ValidationError::InvalidProviderKind),
@@ -232,7 +235,14 @@ mod tests {
 
     #[test]
     fn provider_kind_valid_cases() {
-        for kind in ["openai", "anthropic", "ollama", "gemini", "groq"] {
+        for kind in [
+            "openai",
+            "anthropic",
+            "ollama",
+            "ollama-cloud",
+            "gemini",
+            "groq",
+        ] {
             assert!(ProviderKind::try_from(kind).is_ok());
         }
     }
@@ -244,6 +254,10 @@ mod tests {
             ProviderKind::try_from("Anthropic"),
             Ok(ProviderKind::Anthropic)
         );
+        assert_eq!(
+            ProviderKind::try_from("OLLAMA-CLOUD"),
+            Ok(ProviderKind::OllamaCloud)
+        );
     }
 
     #[test]
@@ -253,6 +267,20 @@ mod tests {
                 ProviderKind::try_from(kind),
                 Err(ValidationError::InvalidProviderKind)
             );
+        }
+    }
+
+    #[test]
+    fn provider_kind_as_str_roundtrip() {
+        for kind in [
+            ProviderKind::OpenAI,
+            ProviderKind::Anthropic,
+            ProviderKind::Ollama,
+            ProviderKind::OllamaCloud,
+            ProviderKind::Gemini,
+            ProviderKind::Groq,
+        ] {
+            assert_eq!(ProviderKind::try_from(kind.as_str()), Ok(kind));
         }
     }
 }

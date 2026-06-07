@@ -108,3 +108,32 @@ fn build_provider_from_connection_oauth_access_token_used_as_api_key() {
     let provider = result.unwrap();
     assert_eq!(provider.id().as_str(), id.to_string());
 }
+
+// 5.18 — OllamaCloud uses the cloud default base URL when no override
+#[test]
+fn build_provider_from_connection_ollama_cloud_uses_default_base_url() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "ollama-cloud-key".to_string(),
+    };
+    let id = conn_id();
+    let result = build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None);
+    let provider = result.expect("expected Ok for OllamaCloud with default base_url");
+    assert_eq!(provider.id().as_str(), id.to_string());
+}
+
+// 5.19 — OllamaCloud honors an override base URL
+#[test]
+fn build_provider_from_connection_ollama_cloud_uses_override() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "ollama-cloud-key".to_string(),
+    };
+    let id = conn_id();
+    let result = build_provider_from_connection(
+        &id,
+        ProviderKind::OllamaCloud,
+        &creds,
+        Some("https://staging.ollama.example.com".to_string()),
+    );
+    let provider = result.expect("expected Ok for OllamaCloud with override base_url");
+    assert_eq!(provider.id().as_str(), id.to_string());
+}

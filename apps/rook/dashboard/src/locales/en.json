@@ -1,267 +1,287 @@
 {
-  "nav": {
-    "home": "Home",
-    "apiKeys": "API Keys",
-    "apiKeysList": "List",
-    "apiKeysCreate": "Create",
-    "endpoints": "Endpoints",
-    "providers": "Providers",
-    "providersCatalog": "Providers",
-    "providersQuota": "Quota",
-    "combos": "Combos",
-    "settings": "Settings",
-    "support": "Support",
-    "issues": "Issues",
-    "feedback": "Feedback"
-  },
-  "sidebar": {
-    "platform": "Platform"
-  },
-  "breadcrumb": {
-    "home": "Home",
-    "apiKeys": "API Keys",
-    "apiKeysList": "List",
-    "apiKeysCreate": "Create New Key",
-    "endpoints": "Endpoints",
-    "providers": "Providers",
-    "combos": "Combos",
-    "settings": "Settings"
-  },
-  "theme": {
-    "toggle": "Toggle theme",
-    "light": "Switch to light mode",
-    "dark": "Switch to dark mode"
-  },
-  "common": {
-    "loading": "Loading...",
-    "error": "An error occurred",
-    "save": "Save",
-    "cancel": "Cancel",
-    "delete": "Delete",
-    "edit": "Edit",
-    "create": "Create",
-    "search": "Search",
-    "noResults": "No results found",
-    "logout": "Log out",
-    "actions": "Actions"
-  },
-  "home": {
-    "title": "Dashboard",
-    "subtitle": "Overview of your Rook instance",
-    "requestsToday": "Requests Today",
-    "activeProviders": "Active Providers",
-    "avgLatency": "Avg Latency",
-    "apiKeys": "API Keys",
-    "systemStatus": "System Status",
-    "providerStatus": "Provider Status",
-    "viewEndpoints": "View Endpoints",
-    "viewEndpointsDescription": "See all available API endpoints",
-    "manageKeys": "Manage Keys",
-    "manageKeysDescription": "Create and manage API keys",
-    "viewProviders": "View Providers",
-    "viewProvidersDescription": "Configure your AI providers",
-    "recentActivity": "Recent Activity",
-    "noProvidersTitle": "No providers configured",
-    "noProvidersDescription": "Add your first AI provider to start routing requests"
-  },
-  "endpoints": {
-    "title": "Endpoints",
-    "description": "Available API endpoints for connecting to Rook",
-    "baseUrl": "Base URL",
-    "copyUrl": "Copy URL",
-    "copied": "Copied!",
-    "categories": {
-      "core": "Core APIs",
-      "media": "Media & Multi-Modal",
-      "utility": "Utility"
-    },
-    "chatCompletions": "Chat completions",
-    "responses": "Responses API",
-    "completions": "Legacy completions",
-    "messages": "Anthropic messages",
-    "embeddings": "Embeddings creation",
-    "imagesGenerations": "Image generation",
-    "audioTranscriptions": "Whisper transcription",
-    "audioSpeech": "Text-to-speech",
-    "models": "List models catalog",
-    "files": "Files API",
-    "batches": "Batch processing"
-  },
-  "apiKeys": {
-    "description": "Manage your API keys for accessing Rook",
-    "create": "Create API Key",
-    "createNew": "Create new API key",
-    "namePlaceholder": "Enter key name",
-    "name": "Name",
-    "key": "Key",
-    "keyPrefix": "Prefix",
-    "created": "Created",
-    "lastUsed": "Last Used",
-    "empty": "No API keys yet",
-    "copyKey": "Copy key"
-  },
-  "providers": {
-    "description": "Configure your AI providers and their status",
-    "add": "Add Provider",
-    "addProvider": "Add Provider",
-    "addProviderDescription": "Connect a new AI provider to Rook",
-    "name": "Name",
-    "status": "Status",
-    "latency": "Latency",
-    "priority": "Priority",
-    "active": "Active",
-    "apiKey": "API Key",
-    "apiKeyHint": "Get your API key from ollama.com/cloud",
-    "baseUrl": "Base URL",
-    "priorityHint": "Lower numbers have higher priority (0-255)",
-    "advancedConfig": "Advanced Configuration",
-    "maxConcurrent": "Max Concurrent Requests",
-    "defaultModel": "Default Model",
-    "testConnection": "Test Connection",
-    "testSuccess": "Connection successful",
-    "testFailed": "Connection failed",
-    "empty": "No providers yet",
-    "emptyDescription": "Add your first provider to start routing AI requests",
-    "quotes": {
-      "provider": "Provider",
-      "model": "Model",
-      "inputCost": "Input",
-      "outputCost": "Output",
-      "updated": "Updated"
-    },
-    "kind": {
-      "openai": "OpenAI",
-      "anthropic": "Anthropic",
-      "gemini": "Google Gemini",
-      "groq": "Groq",
-      "ollama": "Ollama",
-      "openai.description": "OpenAI's GPT models for chat and reasoning.",
-      "anthropic.description": "Anthropic's Claude models with strong reasoning.",
-      "gemini.description": "Google's Gemini models with multimodal support.",
-      "groq.description": "Groq's fast LPU inference for open-source models.",
-      "ollama.description": "Run open-source models locally with Ollama."
-    },
-    "category": {
-      "apiKey": "API Key",
-      "apiKey.description": "Cloud providers authenticated with an API key.",
-      "oauth": "OAuth",
-      "oauth.description": "Providers authenticated via OAuth flow.",
-      "local": "Local",
-      "local.description": "Self-hosted providers running on your machine."
-    },
-    "catalog": {
-      "title": "Providers",
-      "subtitle": "Connect and manage your LLM provider integrations.",
-      "searchPlaceholder": "Search providers…",
-      "filterByCategory": "Filter by category",
-      "filterAll": "All",
-      "noResults": "No providers match your filters.",
-      "addProvider": "Add provider",
-      "connectionsCount": "{count} connection | {count} connections",
-      "active": "Active",
-      "notConfigured": "Not configured"
-    },
-    "details": {
-      "title": "{providerName} connections",
-      "subtitle": "Manage all connections for {providerName}.",
-      "addConnection": "Add connection",
-      "noConnections": "You haven't added any connections for {providerName} yet.",
-      "backToCatalog": "← Back to providers",
-      "deleteConfirm": "Delete this connection?",
-      "testSuccess": "Connection test succeeded.",
-      "testFailure": "Connection test failed: {error}"
-    },
-    "quota": {
-      "title": "Provider quota",
-      "subtitle": "Track token usage and limits across your providers.",
-      "banner": "Per-provider quota tracking is in development. Each provider exposes quota differently. This view will show live data once the integration is complete.",
-      "comingSoon": "Coming soon",
-      "followUpIssue": "Track the implementation",
-      "noData": "Quota data is not yet available for {providerName}."
-    },
-    "form": {
-      "createTitle": "Add {providerName} connection",
-      "editTitle": "Edit {providerName} connection",
-      "selectProvider": "Select a provider",
-      "authType": "Authentication type",
-      "authTypeApikey": "API Key",
-      "authTypeOauth": "OAuth",
-      "apiKey": "API key",
-      "apiKeyPlaceholder": "sk-…",
-      "baseUrl": "Base URL",
-      "baseUrlHelp": "Override the default base URL for this provider.",
-      "displayName": "Display name",
-      "displayNamePlaceholder": "My {providerName} connection",
-      "priority": "Priority",
-      "priorityHelp": "Higher priority connections are tried first.",
-      "models": "Models",
-      "modelsHelp": "Comma-separated list of model IDs this connection supports.",
-      "modelsPlaceholder": "gpt-4o, gpt-4o-mini",
-      "enabled": "Enabled",
-      "testCredentials": "Test connection",
-      "testing": "Testing…",
-      "testSuccess": "Test passed",
-      "testFailed": "Test failed",
-      "save": "Save",
-      "cancel": "Cancel",
-      "delete": "Delete",
-      "oauthComingSoon": "OAuth authentication is not yet supported in this release."
-    }
-  },
-  "combos": {
-    "description": "Create fallback chains of AI providers",
-    "create": "Create Combo",
-    "createNew": "Create new combo",
-    "createFirst": "Create your first combo",
-    "empty": "No combos yet",
-    "emptyDescription": "Combos let you chain providers with automatic fallback"
-  },
-  "settings": {
-    "description": "Configure your Rook instance",
-    "api": "API Settings",
-    "baseUrl": "Custom Base URL",
-    "baseUrlAuto": "Using auto-detected URL",
-    "baseUrlCustom": "Using custom URL",
-    "port": "Port",
-    "security": "Security",
-    "auditLog": "Audit Log",
-    "auditLogDescription": "Log all API requests",
-    "metrics": "Metrics",
-    "metricsDescription": "Enable metrics collection",
-    "general": "General",
-    "logLevel": "Log Level",
-    "maxConcurrent": "Max Concurrent Requests",
-    "about": "About"
-  },
-  "auth": {
-    "title": "Admin login",
-    "description": "Sign in with the admin password",
-    "field": {
-      "password": "Password"
-    },
-    "submit": "Sign in",
-    "submitting": "Signing in…",
-    "showPassword": "Show password",
-    "hidePassword": "Hide password",
-    "logout": "Sign out",
-    "error": {
-      "unknown": "Authentication failed. Please try again."
-    }
-  },
-  "setup": {
-    "title": "Set admin password",
-    "description": "You must set the admin password before using Rook",
-    "field": {
-      "token": "Setup token",
-      "password": "Password",
-      "confirm": "Confirm password"
-    },
-    "submit": "Set password",
-    "submitting": "Setting password…",
-    "error": {
-      "passwordMismatch": "Passwords do not match",
-      "passwordTooShort": "Password must be at least 12 characters",
-      "unknown": "Setup failed. Please try again."
-    }
-  }
+	"nav": {
+		"home": "Home",
+		"apiKeys": "API Keys",
+		"apiKeysList": "List",
+		"apiKeysCreate": "Create",
+		"endpoints": "Endpoints",
+		"providers": "Providers",
+		"providersCatalog": "Providers",
+		"providersQuota": "Quota",
+		"combos": "Combos",
+		"settings": "Settings",
+		"support": "Support",
+		"issues": "Issues",
+		"feedback": "Feedback"
+	},
+	"sidebar": {
+		"platform": "Platform"
+	},
+	"breadcrumb": {
+		"home": "Home",
+		"apiKeys": "API Keys",
+		"apiKeysList": "List",
+		"apiKeysCreate": "Create New Key",
+		"endpoints": "Endpoints",
+		"providers": "Providers",
+		"combos": "Combos",
+		"settings": "Settings"
+	},
+	"theme": {
+		"toggle": "Toggle theme",
+		"light": "Switch to light mode",
+		"dark": "Switch to dark mode"
+	},
+	"common": {
+		"loading": "Loading...",
+		"error": "An error occurred",
+		"save": "Save",
+		"cancel": "Cancel",
+		"delete": "Delete",
+		"edit": "Edit",
+		"create": "Create",
+		"search": "Search",
+		"noResults": "No results found",
+		"logout": "Log out",
+		"actions": "Actions"
+	},
+	"home": {
+		"title": "Dashboard",
+		"subtitle": "Overview of your Rook instance",
+		"requestsToday": "Requests Today",
+		"activeProviders": "Active Providers",
+		"avgLatency": "Avg Latency",
+		"apiKeys": "API Keys",
+		"systemStatus": "System Status",
+		"providerStatus": "Provider Status",
+		"viewEndpoints": "View Endpoints",
+		"viewEndpointsDescription": "See all available API endpoints",
+		"manageKeys": "Manage Keys",
+		"manageKeysDescription": "Create and manage API keys",
+		"viewProviders": "View Providers",
+		"viewProvidersDescription": "Configure your AI providers",
+		"recentActivity": "Recent Activity",
+		"noProvidersTitle": "No providers configured",
+		"noProvidersDescription": "Add your first AI provider to start routing requests"
+	},
+	"endpoints": {
+		"title": "Endpoints",
+		"description": "Available API endpoints for connecting to Rook",
+		"baseUrl": "Base URL",
+		"copyUrl": "Copy URL",
+		"copied": "Copied!",
+		"categories": {
+			"core": "Core APIs",
+			"media": "Media & Multi-Modal",
+			"utility": "Utility"
+		},
+		"chatCompletions": "Chat completions",
+		"responses": "Responses API",
+		"completions": "Legacy completions",
+		"messages": "Anthropic messages",
+		"embeddings": "Embeddings creation",
+		"imagesGenerations": "Image generation",
+		"audioTranscriptions": "Whisper transcription",
+		"audioSpeech": "Text-to-speech",
+		"models": "List models catalog",
+		"files": "Files API",
+		"batches": "Batch processing"
+	},
+	"apiKeys": {
+		"description": "Manage your API keys for accessing Rook",
+		"create": "Create API Key",
+		"createNew": "Create new API key",
+		"namePlaceholder": "Enter key name",
+		"name": "Name",
+		"key": "Key",
+		"keyPrefix": "Prefix",
+		"created": "Created",
+		"lastUsed": "Last Used",
+		"empty": "No API keys yet",
+		"copyKey": "Copy key"
+	},
+	"providers": {
+		"description": "Configure your AI providers and their status",
+		"add": "Add Provider",
+		"addProvider": "Add Provider",
+		"addProviderDescription": "Connect a new AI provider to Rook",
+		"name": "Name",
+		"status": "Status",
+		"latency": "Latency",
+		"priority": "Priority",
+		"active": "Active",
+		"apiKey": "API Key",
+		"apiKeyHint": "Get your API key from ollama.com/cloud",
+		"baseUrl": "Base URL",
+		"priorityHint": "Lower numbers have higher priority (0-255)",
+		"advancedConfig": "Advanced Configuration",
+		"maxConcurrent": "Max Concurrent Requests",
+		"defaultModel": "Default Model",
+		"testConnection": "Test Connection",
+		"testSuccess": "Connection successful",
+		"testFailed": "Connection failed",
+		"empty": "No providers yet",
+		"emptyDescription": "Add your first provider to start routing AI requests",
+		"quotes": {
+			"provider": "Provider",
+			"model": "Model",
+			"inputCost": "Input",
+			"outputCost": "Output",
+			"updated": "Updated"
+		},
+		"kind": {
+			"openai": {
+				"name": "OpenAI",
+				"description": "OpenAI's GPT models for chat and reasoning."
+			},
+			"anthropic": {
+				"name": "Anthropic",
+				"description": "Anthropic's Claude models with strong reasoning."
+			},
+			"gemini": {
+				"name": "Google Gemini",
+				"description": "Google's Gemini models with multimodal support."
+			},
+			"groq": {
+				"name": "Groq",
+				"description": "Groq's fast LPU inference for open-source models."
+			},
+			"ollama": {
+				"name": "Ollama",
+				"description": "Run open-source models locally with Ollama."
+			},
+			"ollamaCloud": {
+				"name": "Ollama Cloud",
+				"description": "Run open-source models on Ollama's managed cloud. Requires an API key from ollama.com/settings/keys."
+			}
+		},
+		"category": {
+			"apiKey": {
+				"name": "API Key",
+				"description": "Cloud providers authenticated with an API key."
+			},
+			"oauth": {
+				"name": "OAuth",
+				"description": "Providers authenticated via OAuth flow."
+			},
+			"local": {
+				"name": "Local",
+				"description": "Self-hosted providers running on your machine."
+			}
+		},
+		"catalog": {
+			"title": "Providers",
+			"subtitle": "Connect and manage your LLM provider integrations.",
+			"searchPlaceholder": "Search providers…",
+			"filterByCategory": "Filter by category",
+			"filterAll": "All",
+			"noResults": "No providers match your filters.",
+			"addProvider": "Add provider",
+			"connectionsCount": "{count} connection | {count} connections",
+			"active": "Active",
+			"notConfigured": "Not configured"
+		},
+		"details": {
+			"title": "{providerName} connections",
+			"subtitle": "Manage all connections for {providerName}.",
+			"addConnection": "Add connection",
+			"noConnections": "You haven't added any connections for {providerName} yet.",
+			"backToCatalog": "Back to providers",
+			"deleteConfirm": "Delete this connection?",
+			"testSuccess": "Connection test succeeded.",
+			"testFailure": "Connection test failed: {error}"
+		},
+		"quota": {
+			"title": "Provider quota",
+			"subtitle": "Track token usage and limits across your providers.",
+			"banner": "Per-provider quota tracking is in development. Each provider exposes quota differently. This view will show live data once the integration is complete.",
+			"comingSoon": "Coming soon",
+			"followUpIssue": "Track the implementation",
+			"noData": "Quota data is not yet available for {providerName}."
+		},
+		"form": {
+			"createTitle": "Add {providerName} connection",
+			"editTitle": "Edit {providerName} connection",
+			"selectProvider": "Select a provider",
+			"authType": "Authentication type",
+			"authTypeApikey": "API Key",
+			"authTypeOauth": "OAuth",
+			"apiKey": "API key",
+			"apiKeyPlaceholder": "sk-…",
+			"baseUrl": "Base URL",
+			"baseUrlHelp": "Override the default base URL for this provider.",
+			"displayName": "Display name",
+			"displayNamePlaceholder": "My {providerName} connection",
+			"priority": "Priority",
+			"priorityHelp": "Higher priority connections are tried first.",
+			"models": "Models",
+			"modelsHelp": "Comma-separated list of model IDs this connection supports.",
+			"modelsPlaceholder": "gpt-4o, gpt-4o-mini",
+			"enabled": "Enabled",
+			"testCredentials": "Test connection",
+			"testing": "Testing…",
+			"testSuccess": "Test passed",
+			"testFailed": "Test failed",
+			"save": "Save",
+			"cancel": "Cancel",
+			"delete": "Delete",
+			"oauthComingSoon": "OAuth authentication is not yet supported in this release."
+		}
+	},
+	"combos": {
+		"description": "Create fallback chains of AI providers",
+		"create": "Create Combo",
+		"createNew": "Create new combo",
+		"createFirst": "Create your first combo",
+		"empty": "No combos yet",
+		"emptyDescription": "Combos let you chain providers with automatic fallback"
+	},
+	"settings": {
+		"description": "Configure your Rook instance",
+		"api": "API Settings",
+		"baseUrl": "Custom Base URL",
+		"baseUrlAuto": "Using auto-detected URL",
+		"baseUrlCustom": "Using custom URL",
+		"port": "Port",
+		"security": "Security",
+		"auditLog": "Audit Log",
+		"auditLogDescription": "Log all API requests",
+		"metrics": "Metrics",
+		"metricsDescription": "Enable metrics collection",
+		"general": "General",
+		"logLevel": "Log Level",
+		"maxConcurrent": "Max Concurrent Requests",
+		"about": "About"
+	},
+	"auth": {
+		"title": "Admin login",
+		"description": "Sign in with the admin password",
+		"field": {
+			"password": "Password"
+		},
+		"submit": "Sign in",
+		"submitting": "Signing in…",
+		"showPassword": "Show password",
+		"hidePassword": "Hide password",
+		"logout": "Sign out",
+		"error": {
+			"unknown": "Authentication failed. Please try again."
+		}
+	},
+	"setup": {
+		"title": "Set admin password",
+		"description": "You must set the admin password before using Rook",
+		"field": {
+			"token": "Setup token",
+			"password": "Password",
+			"confirm": "Confirm password"
+		},
+		"submit": "Set password",
+		"submitting": "Setting password…",
+		"error": {
+			"passwordMismatch": "Passwords do not match",
+			"passwordTooShort": "Password must be at least 12 characters",
+			"unknown": "Setup failed. Please try again."
+		}
+	}
 }

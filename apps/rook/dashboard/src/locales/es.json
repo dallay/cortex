@@ -1,267 +1,287 @@
 {
-  "nav": {
-    "home": "Inicio",
-    "apiKeys": "Claves API",
-    "apiKeysList": "Listar",
-    "apiKeysCreate": "Crear",
-    "endpoints": "Endpoints",
-    "providers": "Proveedores",
-    "providersCatalog": "Proveedores",
-    "providersQuota": "Cuota",
-    "combos": "Combos",
-    "settings": "Configuración",
-    "support": "Soporte",
-    "issues": "Issues",
-    "feedback": "Comentarios"
-  },
-  "sidebar": {
-    "platform": "Plataforma"
-  },
-  "breadcrumb": {
-    "home": "Inicio",
-    "apiKeys": "Claves API",
-    "apiKeysList": "Listar",
-    "apiKeysCreate": "Crear Nueva Clave",
-    "endpoints": "Endpoints",
-    "providers": "Proveedores",
-    "combos": "Combos",
-    "settings": "Configuración"
-  },
-  "theme": {
-    "toggle": "Cambiar tema",
-    "light": "Cambiar a modo claro",
-    "dark": "Cambiar a modo oscuro"
-  },
-  "common": {
-    "loading": "Cargando...",
-    "error": "Ocurrió un error",
-    "save": "Guardar",
-    "cancel": "Cancelar",
-    "delete": "Eliminar",
-    "edit": "Editar",
-    "create": "Crear",
-    "search": "Buscar",
-    "noResults": "No se encontraron resultados",
-    "logout": "Cerrar sesión",
-    "actions": "Acciones"
-  },
-  "home": {
-    "title": "Panel",
-    "subtitle": "Resumen de tu instancia de Rook",
-    "requestsToday": "Solicitudes Hoy",
-    "activeProviders": "Proveedores Activos",
-    "avgLatency": "Latencia Prom.",
-    "apiKeys": "Claves API",
-    "systemStatus": "Estado del Sistema",
-    "providerStatus": "Estado de Proveedores",
-    "viewEndpoints": "Ver Endpoints",
-    "viewEndpointsDescription": "Ver todos los endpoints disponibles",
-    "manageKeys": "Gestionar Claves",
-    "manageKeysDescription": "Crear y gestionar claves API",
-    "viewProviders": "Ver Proveedores",
-    "viewProvidersDescription": "Configurar tus proveedores AI",
-    "recentActivity": "Actividad Reciente",
-    "noProvidersTitle": "Sin proveedores configurados",
-    "noProvidersDescription": "Añade tu primer proveedor para empezar a rutear solicitudes"
-  },
-  "endpoints": {
-    "title": "Endpoints",
-    "description": "Endpoints disponibles para conectar a Rook",
-    "baseUrl": "URL Base",
-    "copyUrl": "Copiar URL",
-    "copied": "¡Copiado!",
-    "categories": {
-      "core": "APIs Core",
-      "media": "Media y Multi-Modal",
-      "utility": "Utilidades"
-    },
-    "chatCompletions": "Chat completions",
-    "responses": "API de respuestas",
-    "completions": "Completions legacy",
-    "messages": "Mensajes Anthropic",
-    "embeddings": "Creación de embeddings",
-    "imagesGenerations": "Generación de imágenes",
-    "audioTranscriptions": "Transcripción Whisper",
-    "audioSpeech": "Texto a voz",
-    "models": "Catálogo de modelos",
-    "files": "API de archivos",
-    "batches": "Procesamiento por lotes"
-  },
-  "apiKeys": {
-    "description": "Gestiona tus claves API para acceder a Rook",
-    "create": "Crear Clave",
-    "createNew": "Crear nueva clave API",
-    "namePlaceholder": "Nombre de la clave",
-    "name": "Nombre",
-    "key": "Clave",
-    "keyPrefix": "Prefijo",
-    "created": "Creada",
-    "lastUsed": "Último Uso",
-    "empty": "Sin claves API",
-    "copyKey": "Copiar clave"
-  },
-  "providers": {
-    "description": "Configura tus proveedores AI y su estado",
-    "add": "Añadir Proveedor",
-    "addProvider": "Agregar proveedor",
-    "addProviderDescription": "Conecta un nuevo proveedor AI a Rook",
-    "name": "Nombre",
-    "status": "Estado",
-    "latency": "Latencia",
-    "priority": "Prioridad",
-    "active": "Activo",
-    "apiKey": "Clave API",
-    "apiKeyHint": "Obtén tu clave API desde ollama.com/cloud",
-    "baseUrl": "URL base",
-    "priorityHint": "Los números más bajos tienen mayor prioridad (0-255)",
-    "advancedConfig": "Configuración avanzada",
-    "maxConcurrent": "Solicitudes concurrentes máx",
-    "defaultModel": "Modelo por defecto",
-    "testConnection": "Probar conexión",
-    "testSuccess": "Conexión exitosa",
-    "testFailed": "Conexión fallida",
-    "empty": "Sin proveedores aún",
-    "emptyDescription": "Añade tu primer proveedor para empezar a rutear solicitudes AI",
-    "quotes": {
-      "provider": "Proveedor",
-      "model": "Modelo",
-      "inputCost": "Entrada",
-      "outputCost": "Salida",
-      "updated": "Actualizado"
-    },
-    "kind": {
-      "openai": "OpenAI",
-      "anthropic": "Anthropic",
-      "gemini": "Google Gemini",
-      "groq": "Groq",
-      "ollama": "Ollama",
-      "openai.description": "Modelos GPT de OpenAI para chat y razonamiento.",
-      "anthropic.description": "Modelos Claude de Anthropic con razonamiento avanzado.",
-      "gemini.description": "Modelos Gemini de Google con soporte multimodal.",
-      "groq.description": "Inferencia rápida en LPU de Groq para modelos de código abierto.",
-      "ollama.description": "Ejecuta modelos de código abierto localmente con Ollama."
-    },
-    "category": {
-      "apiKey": "API Key",
-      "apiKey.description": "Proveedores en la nube autenticados con una API key.",
-      "oauth": "OAuth",
-      "oauth.description": "Proveedores autenticados mediante flujo OAuth.",
-      "local": "Local",
-      "local.description": "Proveedores auto-hospedados en tu máquina."
-    },
-    "catalog": {
-      "title": "Proveedores",
-      "subtitle": "Conecta y administra tus integraciones de proveedores LLM.",
-      "searchPlaceholder": "Buscar proveedores…",
-      "filterByCategory": "Filtrar por categoría",
-      "filterAll": "Todos",
-      "noResults": "Ningún proveedor coincide con tus filtros.",
-      "addProvider": "Agregar proveedor",
-      "connectionsCount": "{count} conexión | {count} conexiones",
-      "active": "Activo",
-      "notConfigured": "Sin configurar"
-    },
-    "details": {
-      "title": "Conexiones de {providerName}",
-      "subtitle": "Administra todas las conexiones de {providerName}.",
-      "addConnection": "Agregar conexión",
-      "noConnections": "Aún no has agregado conexiones de {providerName}.",
-      "backToCatalog": "← Volver a proveedores",
-      "deleteConfirm": "¿Eliminar esta conexión?",
-      "testSuccess": "Prueba de conexión exitosa.",
-      "testFailure": "Prueba de conexión fallida: {error}"
-    },
-    "quota": {
-      "title": "Cuota de proveedores",
-      "subtitle": "Monitorea el uso de tokens y límites en tus proveedores.",
-      "banner": "El seguimiento de cuota por proveedor está en desarrollo. Cada proveedor expone la cuota de forma distinta. Esta vista mostrará datos en vivo cuando se complete la integración.",
-      "comingSoon": "Próximamente",
-      "followUpIssue": "Seguir la implementación",
-      "noData": "Aún no hay datos de cuota para {providerName}."
-    },
-    "form": {
-      "createTitle": "Agregar conexión de {providerName}",
-      "editTitle": "Editar conexión de {providerName}",
-      "selectProvider": "Selecciona un proveedor",
-      "authType": "Tipo de autenticación",
-      "authTypeApikey": "API Key",
-      "authTypeOauth": "OAuth",
-      "apiKey": "API key",
-      "apiKeyPlaceholder": "sk-…",
-      "baseUrl": "URL base",
-      "baseUrlHelp": "Sobrescribe la URL base por defecto de este proveedor.",
-      "displayName": "Nombre para mostrar",
-      "displayNamePlaceholder": "Mi conexión de {providerName}",
-      "priority": "Prioridad",
-      "priorityHelp": "Conexiones con mayor prioridad se intentan primero.",
-      "models": "Modelos",
-      "modelsHelp": "Lista separada por comas de IDs de modelos que soporta esta conexión.",
-      "modelsPlaceholder": "gpt-4o, gpt-4o-mini",
-      "enabled": "Habilitado",
-      "testCredentials": "Probar conexión",
-      "testing": "Probando…",
-      "testSuccess": "Prueba exitosa",
-      "testFailed": "Prueba fallida",
-      "save": "Guardar",
-      "cancel": "Cancelar",
-      "delete": "Eliminar",
-      "oauthComingSoon": "La autenticación OAuth aún no está soportada en esta versión."
-    }
-  },
-  "combos": {
-    "description": "Crea cadenas de fallover de proveedores AI",
-    "create": "Crear Combo",
-    "createNew": "Crear nuevo combo",
-    "createFirst": "Crea tu primer combo",
-    "empty": "Sin combos aún",
-    "emptyDescription": "Los combos te permiten encadenar proveedores con fallback automático"
-  },
-  "settings": {
-    "description": "Configura tu instancia de Rook",
-    "api": "Configuración de API",
-    "baseUrl": "URL Base Personalizada",
-    "baseUrlAuto": "Usando URL auto-detectada",
-    "baseUrlCustom": "Usando URL personalizada",
-    "port": "Puerto",
-    "security": "Seguridad",
-    "auditLog": "Registro de Auditoría",
-    "auditLogDescription": "Registrar todas las solicitudes API",
-    "metrics": "Métricas",
-    "metricsDescription": "Habilitar recolección de métricas",
-    "general": "General",
-    "logLevel": "Nivel de Log",
-    "maxConcurrent": "Solicitudes Concurrentes Máx",
-    "about": "Acerca de"
-  },
-  "auth": {
-    "title": "Inicio de sesión",
-    "description": "Ingresa con la contraseña de administrador",
-    "field": {
-      "password": "Contraseña"
-    },
-    "submit": "Iniciar sesión",
-    "submitting": "Iniciando sesión…",
-    "showPassword": "Mostrar contraseña",
-    "hidePassword": "Ocultar contraseña",
-    "logout": "Cerrar sesión",
-    "error": {
-      "unknown": "Error de autenticación. Por favor, intenta nuevamente."
-    }
-  },
-  "setup": {
-    "title": "Establecer contraseña de administrador",
-    "description": "Debes establecer la contraseña de administrador antes de usar Rook",
-    "field": {
-      "token": "Token de configuración",
-      "password": "Contraseña",
-      "confirm": "Confirmar contraseña"
-    },
-    "submit": "Establecer contraseña",
-    "submitting": "Estableciendo contraseña…",
-    "error": {
-      "passwordMismatch": "Las contraseñas no coinciden",
-      "passwordTooShort": "La contraseña debe tener al menos 12 caracteres",
-      "unknown": "Error en la configuración. Por favor, intenta nuevamente."
-    }
-  }
+	"nav": {
+		"home": "Inicio",
+		"apiKeys": "Claves API",
+		"apiKeysList": "Listar",
+		"apiKeysCreate": "Crear",
+		"endpoints": "Endpoints",
+		"providers": "Proveedores",
+		"providersCatalog": "Proveedores",
+		"providersQuota": "Cuota",
+		"combos": "Combos",
+		"settings": "Configuración",
+		"support": "Soporte",
+		"issues": "Issues",
+		"feedback": "Comentarios"
+	},
+	"sidebar": {
+		"platform": "Plataforma"
+	},
+	"breadcrumb": {
+		"home": "Inicio",
+		"apiKeys": "Claves API",
+		"apiKeysList": "Listar",
+		"apiKeysCreate": "Crear Nueva Clave",
+		"endpoints": "Endpoints",
+		"providers": "Proveedores",
+		"combos": "Combos",
+		"settings": "Configuración"
+	},
+	"theme": {
+		"toggle": "Cambiar tema",
+		"light": "Cambiar a modo claro",
+		"dark": "Cambiar a modo oscuro"
+	},
+	"common": {
+		"loading": "Cargando...",
+		"error": "Ocurrió un error",
+		"save": "Guardar",
+		"cancel": "Cancelar",
+		"delete": "Eliminar",
+		"edit": "Editar",
+		"create": "Crear",
+		"search": "Buscar",
+		"noResults": "No se encontraron resultados",
+		"logout": "Cerrar sesión",
+		"actions": "Acciones"
+	},
+	"home": {
+		"title": "Panel",
+		"subtitle": "Resumen de tu instancia de Rook",
+		"requestsToday": "Solicitudes Hoy",
+		"activeProviders": "Proveedores Activos",
+		"avgLatency": "Latencia Prom.",
+		"apiKeys": "Claves API",
+		"systemStatus": "Estado del Sistema",
+		"providerStatus": "Estado de Proveedores",
+		"viewEndpoints": "Ver Endpoints",
+		"viewEndpointsDescription": "Ver todos los endpoints disponibles",
+		"manageKeys": "Gestionar Claves",
+		"manageKeysDescription": "Crear y gestionar claves API",
+		"viewProviders": "Ver Proveedores",
+		"viewProvidersDescription": "Configurar tus proveedores AI",
+		"recentActivity": "Actividad Reciente",
+		"noProvidersTitle": "Sin proveedores configurados",
+		"noProvidersDescription": "Añade tu primer proveedor para empezar a rutear solicitudes"
+	},
+	"endpoints": {
+		"title": "Endpoints",
+		"description": "Endpoints disponibles para conectar a Rook",
+		"baseUrl": "URL Base",
+		"copyUrl": "Copiar URL",
+		"copied": "¡Copiado!",
+		"categories": {
+			"core": "APIs Core",
+			"media": "Media y Multi-Modal",
+			"utility": "Utilidades"
+		},
+		"chatCompletions": "Chat completions",
+		"responses": "API de respuestas",
+		"completions": "Completions legacy",
+		"messages": "Mensajes Anthropic",
+		"embeddings": "Creación de embeddings",
+		"imagesGenerations": "Generación de imágenes",
+		"audioTranscriptions": "Transcripción Whisper",
+		"audioSpeech": "Texto a voz",
+		"models": "Catálogo de modelos",
+		"files": "API de archivos",
+		"batches": "Procesamiento por lotes"
+	},
+	"apiKeys": {
+		"description": "Gestiona tus claves API para acceder a Rook",
+		"create": "Crear Clave",
+		"createNew": "Crear nueva clave API",
+		"namePlaceholder": "Nombre de la clave",
+		"name": "Nombre",
+		"key": "Clave",
+		"keyPrefix": "Prefijo",
+		"created": "Creada",
+		"lastUsed": "Último Uso",
+		"empty": "Sin claves API",
+		"copyKey": "Copiar clave"
+	},
+	"providers": {
+		"description": "Configura tus proveedores AI y su estado",
+		"add": "Añadir Proveedor",
+		"addProvider": "Agregar proveedor",
+		"addProviderDescription": "Conecta un nuevo proveedor AI a Rook",
+		"name": "Nombre",
+		"status": "Estado",
+		"latency": "Latencia",
+		"priority": "Prioridad",
+		"active": "Activo",
+		"apiKey": "Clave API",
+		"apiKeyHint": "Obtén tu clave API desde ollama.com/cloud",
+		"baseUrl": "URL base",
+		"priorityHint": "Los números más bajos tienen mayor prioridad (0-255)",
+		"advancedConfig": "Configuración avanzada",
+		"maxConcurrent": "Solicitudes concurrentes máx",
+		"defaultModel": "Modelo por defecto",
+		"testConnection": "Probar conexión",
+		"testSuccess": "Conexión exitosa",
+		"testFailed": "Conexión fallida",
+		"empty": "Sin proveedores aún",
+		"emptyDescription": "Añade tu primer proveedor para empezar a rutear solicitudes AI",
+		"quotes": {
+			"provider": "Proveedor",
+			"model": "Modelo",
+			"inputCost": "Entrada",
+			"outputCost": "Salida",
+			"updated": "Actualizado"
+		},
+		"kind": {
+			"openai": {
+				"name": "OpenAI",
+				"description": "Modelos GPT de OpenAI para chat y razonamiento."
+			},
+			"anthropic": {
+				"name": "Anthropic",
+				"description": "Modelos Claude de Anthropic con razonamiento avanzado."
+			},
+			"gemini": {
+				"name": "Google Gemini",
+				"description": "Modelos Gemini de Google con soporte multimodal."
+			},
+			"groq": {
+				"name": "Groq",
+				"description": "Inferencia rápida en LPU de Groq para modelos de código abierto."
+			},
+			"ollama": {
+				"name": "Ollama",
+				"description": "Ejecuta modelos de código abierto localmente con Ollama."
+			},
+			"ollamaCloud": {
+				"name": "Ollama Cloud",
+				"description": "Ejecuta modelos de código abierto en la nube gestionada de Ollama. Requiere una API key de ollama.com/settings/keys."
+			}
+		},
+		"category": {
+			"apiKey": {
+				"name": "API Key",
+				"description": "Proveedores en la nube autenticados con una API key."
+			},
+			"oauth": {
+				"name": "OAuth",
+				"description": "Proveedores autenticados mediante flujo OAuth."
+			},
+			"local": {
+				"name": "Local",
+				"description": "Proveedores auto-hospedados en tu máquina."
+			}
+		},
+		"catalog": {
+			"title": "Proveedores",
+			"subtitle": "Conecta y administra tus integraciones de proveedores LLM.",
+			"searchPlaceholder": "Buscar proveedores…",
+			"filterByCategory": "Filtrar por categoría",
+			"filterAll": "Todos",
+			"noResults": "Ningún proveedor coincide con tus filtros.",
+			"addProvider": "Agregar proveedor",
+			"connectionsCount": "{count} conexión | {count} conexiones",
+			"active": "Activo",
+			"notConfigured": "Sin configurar"
+		},
+		"details": {
+			"title": "Conexiones de {providerName}",
+			"subtitle": "Administra todas las conexiones de {providerName}.",
+			"addConnection": "Agregar conexión",
+			"noConnections": "Aún no has agregado conexiones de {providerName}.",
+			"backToCatalog": "Volver a proveedores",
+			"deleteConfirm": "¿Eliminar esta conexión?",
+			"testSuccess": "Prueba de conexión exitosa.",
+			"testFailure": "Prueba de conexión fallida: {error}"
+		},
+		"quota": {
+			"title": "Cuota de proveedores",
+			"subtitle": "Monitorea el uso de tokens y límites en tus proveedores.",
+			"banner": "El seguimiento de cuota por proveedor está en desarrollo. Cada proveedor expone la cuota de forma distinta. Esta vista mostrará datos en vivo cuando se complete la integración.",
+			"comingSoon": "Próximamente",
+			"followUpIssue": "Seguir la implementación",
+			"noData": "Aún no hay datos de cuota para {providerName}."
+		},
+		"form": {
+			"createTitle": "Agregar conexión de {providerName}",
+			"editTitle": "Editar conexión de {providerName}",
+			"selectProvider": "Selecciona un proveedor",
+			"authType": "Tipo de autenticación",
+			"authTypeApikey": "API Key",
+			"authTypeOauth": "OAuth",
+			"apiKey": "API key",
+			"apiKeyPlaceholder": "sk-…",
+			"baseUrl": "URL base",
+			"baseUrlHelp": "Sobrescribe la URL base por defecto de este proveedor.",
+			"displayName": "Nombre para mostrar",
+			"displayNamePlaceholder": "Mi conexión de {providerName}",
+			"priority": "Prioridad",
+			"priorityHelp": "Conexiones con mayor prioridad se intentan primero.",
+			"models": "Modelos",
+			"modelsHelp": "Lista separada por comas de IDs de modelos que soporta esta conexión.",
+			"modelsPlaceholder": "gpt-4o, gpt-4o-mini",
+			"enabled": "Habilitado",
+			"testCredentials": "Probar conexión",
+			"testing": "Probando…",
+			"testSuccess": "Prueba exitosa",
+			"testFailed": "Prueba fallida",
+			"save": "Guardar",
+			"cancel": "Cancelar",
+			"delete": "Eliminar",
+			"oauthComingSoon": "La autenticación OAuth aún no está soportada en esta versión."
+		}
+	},
+	"combos": {
+		"description": "Crea cadenas de fallover de proveedores AI",
+		"create": "Crear Combo",
+		"createNew": "Crear nuevo combo",
+		"createFirst": "Crea tu primer combo",
+		"empty": "Sin combos aún",
+		"emptyDescription": "Los combos te permiten encadenar proveedores con fallback automático"
+	},
+	"settings": {
+		"description": "Configura tu instancia de Rook",
+		"api": "Configuración de API",
+		"baseUrl": "URL Base Personalizada",
+		"baseUrlAuto": "Usando URL auto-detectada",
+		"baseUrlCustom": "Usando URL personalizada",
+		"port": "Puerto",
+		"security": "Seguridad",
+		"auditLog": "Registro de Auditoría",
+		"auditLogDescription": "Registrar todas las solicitudes API",
+		"metrics": "Métricas",
+		"metricsDescription": "Habilitar recolección de métricas",
+		"general": "General",
+		"logLevel": "Nivel de Log",
+		"maxConcurrent": "Solicitudes Concurrentes Máx",
+		"about": "Acerca de"
+	},
+	"auth": {
+		"title": "Inicio de sesión",
+		"description": "Ingresa con la contraseña de administrador",
+		"field": {
+			"password": "Contraseña"
+		},
+		"submit": "Iniciar sesión",
+		"submitting": "Iniciando sesión…",
+		"showPassword": "Mostrar contraseña",
+		"hidePassword": "Ocultar contraseña",
+		"logout": "Cerrar sesión",
+		"error": {
+			"unknown": "Error de autenticación. Por favor, intenta nuevamente."
+		}
+	},
+	"setup": {
+		"title": "Establecer contraseña de administrador",
+		"description": "Debes establecer la contraseña de administrador antes de usar Rook",
+		"field": {
+			"token": "Token de configuración",
+			"password": "Contraseña",
+			"confirm": "Confirmar contraseña"
+		},
+		"submit": "Establecer contraseña",
+		"submitting": "Estableciendo contraseña…",
+		"error": {
+			"passwordMismatch": "Las contraseñas no coinciden",
+			"passwordTooShort": "La contraseña debe tener al menos 12 caracteres",
+			"unknown": "Error en la configuración. Por favor, intenta nuevamente."
+		}
+	}
 }

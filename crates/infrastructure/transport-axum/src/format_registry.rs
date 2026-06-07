@@ -139,7 +139,7 @@ impl FormatRegistry {
     /// Returns `None` for unknown kinds so callers can decide the fallback policy.
     pub fn format_for(&self, kind: &str) -> Option<ApiFormat> {
         match kind {
-            "openai" | "ollama" | "gemini" | "groq" => Some(ApiFormat::OpenAI),
+            "openai" | "ollama" | "ollama-cloud" | "gemini" | "groq" => Some(ApiFormat::OpenAI),
             "anthropic" => Some(ApiFormat::Anthropic),
             _ => None,
         }
@@ -194,6 +194,7 @@ mod tests {
     fn openai_compatible_provider_kinds_return_openai_variant() {
         let registry = FormatRegistry::new();
         assert_eq!(registry.format_for("ollama"), Some(ApiFormat::OpenAI));
+        assert_eq!(registry.format_for("ollama-cloud"), Some(ApiFormat::OpenAI));
         assert_eq!(registry.format_for("gemini"), Some(ApiFormat::OpenAI));
         assert_eq!(registry.format_for("groq"), Some(ApiFormat::OpenAI));
     }

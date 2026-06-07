@@ -36,6 +36,10 @@ pub struct OllamaProviderConfig {
     pub base_url: String,
     pub models: Vec<KModelId>,
     pub timeout_secs: u64,
+    /// Optional API key. When set, requests include
+    /// `Authorization: Bearer <key>` — required for Ollama Cloud.
+    /// Local Ollama instances ignore this header.
+    pub api_key: Option<String>,
 }
 
 pub struct OllamaProvider {
@@ -50,6 +54,38 @@ impl OllamaProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
         Ok(Arc::new(Self { config, client }))
+    }
+
+    /// Build a request builder for the Ollama chat endpoint, attaching
+    /// the optional `Authorization: Bearer` header when an API key is
+    /// configured. Local Ollama ignores the header; Ollama Cloud requires
+    /// it.
+    fn chat_request(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
+        let url = format!("{}/api/chat", self.config.base_url);
+        let mut req = self.client.post(url).json(body);
+        if let Some(api_key) = self.config.api_key.as_deref() {
+            if !api_key.is_empty() {
+                req = req.bearer_auth(api_key);
+            }
+        }
+        req
+    }
+
+    /// Build a request builder for `GET /api/tags` (lightweight probe).
+    /// Note: Ollama Cloud's `/api/tags` is publicly accessible (returns
+    /// the same model catalog for everyone, no auth required). So this
+    /// endpoint alone cannot validate credentials — we use it only as
+    /// a "is the host reachable?" check, and follow up with a mini
+    /// chat request to verify the Bearer token.
+    fn tags_request(&self) -> reqwest::RequestBuilder {
+        let url = format!("{}/api/tags", self.config.base_url);
+        let mut req = self.client.get(url);
+        if let Some(api_key) = self.config.api_key.as_deref() {
+            if !api_key.is_empty() {
+                req = req.bearer_auth(api_key);
+            }
+        }
+        req
     }
 
     /// Build the request body JSON for the Ollama chat API.
@@ -72,9 +108,7 @@ impl OllamaProvider {
     }
 
     async fn send_request(&self, body: &serde_json::Value) -> CortexResult<reqwest::Response> {
-        self.client
-            .post(format!("{}/api/chat", self.config.base_url))
-            .json(body)
+        self.chat_request(body)
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
@@ -146,9 +180,88 @@ impl ProviderPort for OllamaProvider {
     }
 
     async fn health_check(&self) -> HealthStatus {
-        HealthStatus::Unknown {
-            provider: self.config.id.clone(),
-            reason: "health_check_not_supported".to_string(),
+        // Two-step probe:
+        // 1. `GET /api/tags` — verify the host is reachable. On local
+        //    Ollama this also confirms the daemon is up; on Ollama
+        //    Cloud this endpoint is public, so 200 here only proves
+        //    reachability, NOT auth.
+        // 2. If the provider has a configured API key, follow up with
+        //    a tiny `POST /api/chat` (one token in, zero tokens out —
+        //    we send `stream: false` and inspect only the HTTP status).
+        //    Ollama Cloud returns 401 on this endpoint when the Bearer
+        //    token is missing or invalid, which is the real "are my
+        //    credentials accepted?" check.
+        let start = std::time::Instant::now();
+        let latency_ms = || start.elapsed().as_millis() as u64;
+
+        // Step 1: reachability.
+        let tags_result = self.tags_request().send().await;
+        match tags_result {
+            Ok(resp) if resp.status().is_success() => {}
+            Ok(resp) => {
+                return HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(latency_ms()),
+                    error: format!("GET /api/tags returned HTTP {}", resp.status()),
+                };
+            }
+            Err(e) => {
+                return HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(latency_ms()),
+                    error: format!("GET /api/tags failed: {e}"),
+                };
+            }
+        }
+
+        // Step 2: credential check (only when a key is configured).
+        if self.config.api_key.as_deref().is_none_or(str::is_empty) {
+            // No key configured — accept reachability as the signal.
+            // (Local Ollama path: no auth, 200 on /api/tags is enough.)
+            return HealthStatus::Healthy {
+                provider: self.config.id.clone(),
+                latency_ms: latency_ms(),
+            };
+        }
+
+        let probe_model = self
+            .config
+            .models
+            .first()
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "gpt-oss:20b".to_string());
+        let probe_body = serde_json::json!({
+            "model": probe_model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": false,
+        });
+        match self.chat_request(&probe_body).send().await {
+            Ok(resp) if resp.status().is_success() => HealthStatus::Healthy {
+                provider: self.config.id.clone(),
+                latency_ms: latency_ms(),
+            },
+            Ok(resp) if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                || resp.status() == reqwest::StatusCode::FORBIDDEN =>
+            {
+                HealthStatus::Unhealthy {
+                    provider: self.config.id.clone(),
+                    latency_ms: Some(latency_ms()),
+                    error: format!(
+                        "auth rejected: HTTP {} — check that your API key is valid and has access to the model",
+                        resp.status()
+                    ),
+                }
+            }
+            Ok(resp) => HealthStatus::Unhealthy {
+                provider: self.config.id.clone(),
+                latency_ms: Some(latency_ms()),
+                error: format!("POST /api/chat returned HTTP {}", resp.status()),
+            },
+            Err(e) => HealthStatus::Unhealthy {
+                provider: self.config.id.clone(),
+                latency_ms: Some(latency_ms()),
+                error: format!("POST /api/chat failed: {e}"),
+            },
         }
     }
 

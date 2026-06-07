@@ -32,6 +32,7 @@ async fn list_covers_every_known_provider_kind() {
         ProviderKind::OpenAI,
         ProviderKind::Anthropic,
         ProviderKind::Ollama,
+        ProviderKind::OllamaCloud,
         ProviderKind::Gemini,
         ProviderKind::Groq,
     ] {

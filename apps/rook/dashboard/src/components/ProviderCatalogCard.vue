@@ -26,6 +26,7 @@ import Sparkles from '@lucide/vue/dist/esm/icons/sparkles.mjs'
 import Brain from '@lucide/vue/dist/esm/icons/brain.mjs'
 import Zap from '@lucide/vue/dist/esm/icons/zap.mjs'
 import Server from '@lucide/vue/dist/esm/icons/server.mjs'
+import Cloud from '@lucide/vue/dist/esm/icons/cloud.mjs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -37,6 +38,7 @@ const ICONS: Record<string, Component> = markRaw({
   Brain,
   Zap,
   Server,
+  Cloud,
 })
 
 const props = defineProps<{
