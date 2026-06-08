@@ -312,5 +312,5 @@ openssl rand -hex 32
 
 # Generate a client API key (for auth.api_keys)
 openssl rand -hex 32
-# Example output: sk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Example output: rk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
