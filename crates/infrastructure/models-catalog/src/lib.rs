@@ -41,7 +41,17 @@ fn catalog() -> Vec<ModelCatalogEntry> {
     // Ollama Cloud serves the same model zoo as local Ollama — the
     // catalog is duplicated to keep the API key restriction UI
     // consistent with the `ProviderKind` taxonomy on the frontend.
-    let ollama_cloud = ["llama3.2", "mistral", "qwen2.5"];
+    let ollama_cloud = [
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "kimi-k2.6",
+        "glm-5.1",
+        "minimax-m2.7",
+        "gemma4:31b",
+        "nemotron-3-super",
+        "qwen3.5:397b",
+        "qwen3-coder-next",
+    ];
     let gemini = ["gemini-1.5-pro", "gemini-1.5-flash"];
     let groq = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"];
 
@@ -66,7 +76,7 @@ fn catalog() -> Vec<ModelCatalogEntry> {
     }
     for m in ollama_cloud {
         out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
+            model_id: format!("ollamacloud/{}", m),
             provider_kind: ProviderKind::OllamaCloud,
         });
     }
