@@ -118,9 +118,17 @@ pub async fn csrf_guard_middleware(
     request: Request,
     next: Next,
 ) -> axum::response::Response {
-    // Only apply to state-changing methods
     let method = request.method().clone();
+
+    // Only apply to state-changing methods
     if !is_state_changing_method(&method) {
+        return next.run(request).await;
+    }
+
+    // Skip CSRF for Client API routes (/v1/*) — these are machine-to-machine
+    // APIs using API key authentication, not browser cookie sessions.
+    let path = request.uri().path();
+    if path.starts_with("/v1/") || path.starts_with("/v1") {
         return next.run(request).await;
     }
 
