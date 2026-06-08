@@ -257,6 +257,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 | Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
 
 (1) Ollama and Ollama Cloud share the same `OllamaProvider` implementation. Local Ollama uses `http://localhost:11434` with no API key; Ollama Cloud uses `https://ollama.com` with Bearer auth configured via `api_key`.
+
 | Gemini        | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 | Groq          | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 
