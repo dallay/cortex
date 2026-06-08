@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { SlidersHorizontal } from '@lucide/vue'
+import { SlidersHorizontal } from "@lucide/vue";
 
-import NavMain from '@/components/NavMain.vue'
-import NavSecondary from '@/components/NavSecondary.vue'
-import NavUser from '@/components/NavUser.vue'
+import NavMain from "@/components/NavMain.vue";
+import NavSecondary from "@/components/NavSecondary.vue";
+import NavUser from "@/components/NavUser.vue";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-} from '@/components/ui/sidebar'
-import { useNavigation } from '@/composables/useNavigation'
+	Sidebar,
+	SidebarContent,
+	SidebarFooter,
+	SidebarHeader,
+} from "@/components/ui/sidebar";
+import { useNavigation } from "@/composables/useNavigation";
 
-const { navMain, navSecondary } = useNavigation()
+const { navMain, navSecondary } = useNavigation();
 </script>
 
 <template>
@@ -24,7 +24,6 @@ const { navMain, navSecondary } = useNavigation()
         </div>
         <div class="grid flex-1 text-left text-sm leading-tight">
           <span class="truncate font-medium">Rook</span>
-          <span class="truncate text-xs text-muted-foreground">API Gateway</span>
         </div>
       </div>
     </SidebarHeader>
