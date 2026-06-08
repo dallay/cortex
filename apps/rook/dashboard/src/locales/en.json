@@ -189,7 +189,8 @@
 			"backToCatalog": "Back to providers",
 			"deleteConfirm": "Delete this connection?",
 			"testSuccess": "Connection test succeeded.",
-			"testFailure": "Connection test failed: {error}"
+			"testFailure": "Connection test failed: {error}",
+			"opensInNewTab": "{providerName} — opens in new tab"
 		},
 		"quota": {
 			"title": "Provider quota",

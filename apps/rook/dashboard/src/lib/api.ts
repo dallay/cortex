@@ -2,7 +2,7 @@
 // API Key types
 // =============================================================================
 
-import type { ProviderKind } from '@/config/providerCatalog'
+import type {ProviderKind} from "@/config/providerCatalog";
 
 /**
  * Wire format for `authType` in API requests/responses.
@@ -15,21 +15,21 @@ import type { ProviderKind } from '@/config/providerCatalog'
  * `WireAuthType` for the API boundary; use `AuthType` for in-component
  * state. The dialog's `wireAuthType()` helper bridges between them.
  */
-export type WireAuthType = 'apiKey' | 'oauth'
+export type WireAuthType = "apiKey" | "oauth";
 
 export interface ApiKeyRecordResponse {
-  id: string
-  label: string
-  keyPrefix: string
-  scopes: string[]
-  tier: string
-  isActive: boolean
-  revokedAt: string | null
-  expiresAt: string | null
-  createdAt: string
-  lastUsedAt: string | null
-  allowedModels: string[]
-  allowedProviders: string[]
+  id: string;
+  label: string;
+  keyPrefix: string;
+  scopes: string[];
+  tier: string;
+  isActive: boolean;
+  revokedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  allowedModels: string[];
+  allowedProviders: string[];
 }
 
 // =============================================================================
@@ -41,10 +41,10 @@ export interface ApiKeyRecordResponse {
  * Returned by `GET /api/models` and consumed by the API key restriction UI.
  */
 export interface ProviderModelsGroup {
-  providerId: string
-  providerName: string
-  providerKind: ProviderKind
-  models: string[]
+  providerId: string;
+  providerName: string;
+  providerKind: ProviderKind;
+  models: string[];
 }
 
 /**
@@ -54,67 +54,67 @@ export interface ProviderModelsGroup {
  * `crates/infrastructure/transport-axum/src/handlers/models_dto.rs`.
  */
 export interface ListModelsResponse {
-  models: ProviderModelsGroup[]
+  models: ProviderModelsGroup[];
 }
 
 export interface CreateApiKeyResponse {
-  key: ApiKeyRecordResponse
-  plaintextKey: string
+  key: ApiKeyRecordResponse;
+  plaintextKey: string;
 }
 
 export interface PaginationResponse {
-  total: number
-  limit: number
-  offset: number
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface ListApiKeysResponse {
-  keys: ApiKeyRecordResponse[]
-  pagination: PaginationResponse
+  keys: ApiKeyRecordResponse[];
+  pagination: PaginationResponse;
 }
 
 export interface TestCredentialsPayload {
-  providerKind: ProviderKind
-  providerRuntimeId: string
-  authType: WireAuthType
+  providerKind: ProviderKind;
+  providerRuntimeId: string;
+  authType: WireAuthType;
   credentials: {
-    apiKey?: string
-    email?: string
-    accessToken?: string
-    refreshToken?: string
-    expiresAt?: number
-    scope?: string
-    idToken?: string
-    projectId?: string
-  }
+    apiKey?: string;
+    email?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    scope?: string;
+    idToken?: string;
+    projectId?: string;
+  };
   config: {
-    maxConcurrent: number
+    maxConcurrent: number;
     quotaWindowThresholds: {
-      warning: number
-      error: number
-    }
-    defaultModel?: string
-    baseUrl?: string
-  }
+      warning: number;
+      error: number;
+    };
+    defaultModel?: string;
+    baseUrl?: string;
+  };
 }
 
 export interface CreateApiKeyRequest {
-  label: string
-  scopes: string[]
-  tier: string
-  expiresAt: string | null
-  allowedModels?: string[]
-  allowedProviders?: string[]
+  label: string;
+  scopes: string[];
+  tier: string;
+  expiresAt: string | null;
+  allowedModels?: string[];
+  allowedProviders?: string[];
 }
 
 export interface UpdateApiKeyRequest {
-  label?: string
-  scopes?: string[]
-  tier?: string
-  isActive?: boolean
-  expiresAt?: string | null
-  allowedModels?: string[]
-  allowedProviders?: string[]
+  label?: string;
+  scopes?: string[];
+  tier?: string;
+  isActive?: boolean;
+  expiresAt?: string | null;
+  allowedModels?: string[];
+  allowedProviders?: string[];
 }
 
 // =============================================================================
@@ -129,131 +129,135 @@ export interface UpdateApiKeyRequest {
  */
 
 export interface HealthResponse {
-  status: 'healthy' | 'degraded' | 'no_providers_configured'
-  providers: ProviderHealth[]
+  status: "healthy" | "degraded" | "no_providers_configured";
+  providers: ProviderHealth[];
 }
 
 export interface ProviderHealth {
-  id: string
-  healthy: boolean
-  latency_ms: number | null
-  last_error: string | null
+  id: string;
+  healthy: boolean;
+  latency_ms: number | null;
+  last_error: string | null;
 }
 
 export interface ProviderConnectionResponse {
-  id: string
-  providerKind: ProviderKind
-  providerRuntimeId: string
-  authType: WireAuthType
-  name: string
-  priority: number
-  isActive: boolean
-  config: ConnectionConfigResponse
-  testStatus: TestStatusResponse
-  createdAt: string
-  updatedAt: string
+  id: string;
+  providerKind: ProviderKind;
+  providerRuntimeId: string;
+  authType: WireAuthType;
+  name: string;
+  priority: number;
+  isActive: boolean;
+  config: ConnectionConfigResponse;
+  testStatus: TestStatusResponse;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ConnectionConfigResponse {
-  maxConcurrent: number
-  quotaWindowThresholds: { warning: number; error: number }
-  defaultModel: string | null
-  baseUrl: string | null
+  maxConcurrent: number;
+  quotaWindowThresholds: { warning: number; error: number };
+  defaultModel: string | null;
+  baseUrl: string | null;
 }
 
 export interface TestStatusResponse {
-  status: 'neverTested' | 'active' | 'unhealthy' | 'expired' | 'unknown'
-  lastTestAt: string | null
-  latencyMs: number | null
-  error: string | null
+  status: "neverTested" | "active" | "unhealthy" | "expired" | "unknown";
+  lastTestAt: string | null;
+  latencyMs: number | null;
+  error: string | null;
 }
 
 export interface BootstrapStatusResponse {
-  is_initialized: boolean
-  admin_user_exists: boolean
+  is_initialized: boolean;
+  admin_user_exists: boolean;
   // NOTE: setup_token is intentionally NOT present in the wire response.
   // It is an out-of-band secret printed only to server logs. Exposing it
   // via HTTP would allow unauthenticated remote takeover of fresh installations.
 }
 
 export interface BootstrapStatus {
-  isInitialized: boolean
-  adminUserExists: boolean
+  isInitialized: boolean;
+  adminUserExists: boolean;
 }
 
 export interface BootstrapSetupRequest {
-  setupToken: string
-  password: string
+  setupToken: string;
+  password: string;
 }
 
 export interface BootstrapSetupResponse {
-  api_key: string
+  api_key: string;
 }
 
 export interface BootstrapSetupResult {
-  apiKey: string
+  apiKey: string;
 }
 
 export interface LoginRequest {
-  username: string
-  password: string
+  username: string;
+  password: string;
 }
 
 export interface LoginResponse {
-  session_id: string
-  expires_at: string
+  session_id: string;
+  expires_at: string;
   /** Present when the session was freshly authenticated — carries the same
    *  csrf_token the backend set as the HttpOnly cookie. Used to seed the
    *  client-side CSRF cache so the first state-changing request after login
    *  has a pre-warmed token. */
-  csrf_token?: string
+  csrf_token?: string;
 }
 
 export interface LoginResult {
-  sessionId: string
-  expiresAt: string
+  sessionId: string;
+  expiresAt: string;
 }
 
 export interface CsrfTokenResponse {
-  csrf_token: string
+  csrf_token: string;
 }
 
 export interface MeResponse {
-  username: string
-  displayName: string
+  username: string;
+  displayName: string;
 }
 
-const STORAGE_KEY = 'rook-api-base-url'
+const STORAGE_KEY = "rook-api-base-url";
 
 function getBaseUrl(): string {
   // Allow override for development/CI
-  if (typeof window !== 'undefined' && (window as unknown as { __ROOK_API_BASE__?: string }).__ROOK_API_BASE__) {
-    return (window as unknown as { __ROOK_API_BASE__: string }).__ROOK_API_BASE__
+  if (
+    typeof window !== "undefined" &&
+    (window as unknown as { __ROOK_API_BASE__?: string }).__ROOK_API_BASE__
+  ) {
+    return (window as unknown as { __ROOK_API_BASE__: string })
+      .__ROOK_API_BASE__;
   }
-  const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored) return stored
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) return stored;
   // In development with Vite proxy, use relative URLs
   // The proxy handles forwarding to the backend
   if (import.meta.env.DEV) {
-    return '' // Relative URLs for dev proxy
+    return ""; // Relative URLs for dev proxy
   }
   // Auto-detect from current origin in production
-  if (typeof window !== 'undefined') {
-    return window.location.origin
+  if (typeof window !== "undefined") {
+    return window.location.origin;
   }
-  return 'http://localhost:8080'
+  return "http://localhost:8080";
 }
 
 export function setApiBaseUrl(url: string | null): void {
   if (url) {
-    localStorage.setItem(STORAGE_KEY, url)
+    localStorage.setItem(STORAGE_KEY, url);
   } else {
-    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(STORAGE_KEY);
   }
 }
 
 function createApiClient() {
-  const baseUrl = getBaseUrl()
+  const baseUrl = getBaseUrl();
 
   // CSRF token cache + retry-on-403 + login-seeded cache.
   // The double-submit cookie pattern requires that every state-changing
@@ -275,35 +279,35 @@ function createApiClient() {
   //
   // Result: WebKit, Chromium, and Firefox all work correctly. The cache also
   // eliminates a per-request round-trip for all browsers, reducing latency.
-  let cachedCsrfToken: string | null = null
+  let cachedCsrfToken: string | null = null;
 
   async function request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
   ): Promise<T> {
-    const url = `${baseUrl}${path}`
+    const url = `${baseUrl}${path}`;
 
     // Extract CSRF token for state-changing requests.
     // The csrf_token cookie is HttpOnly (XSS protection), so it cannot be read
     // from document.cookie. Instead, fetch a fresh token from GET /login which
     // returns it in the response body. The backend validates the double-submit
     // cookie pattern: X-CSRF-Token header must match csrf_token cookie.
-    const method = (options.method || 'GET').toUpperCase()
-    const isStateChanging = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
+    const method = (options.method || "GET").toUpperCase();
+    const isStateChanging = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...options.headers as Record<string, string>,
-    }
+      "Content-Type": "application/json",
+      ...(options.headers as Record<string, string>),
+    };
 
-    if (isStateChanging && !headers['X-CSRF-Token']) {
+    if (isStateChanging && !headers["X-CSRF-Token"]) {
       try {
-        const token = await getCsrfToken()
-        headers['X-CSRF-Token'] = token
+        const token = await getCsrfToken();
+        headers["X-CSRF-Token"] = token;
       } catch (err) {
         // Surface the failure so it shows up in DevTools — the request will
         // likely fail with csrf_missing next, but operators need the root
         // cause (e.g. backend 5xx) to diagnose the real issue. See issue #82.
-        console.warn('[Rook API] Failed to fetch CSRF token:', err)
+        console.warn("[Rook API] Failed to fetch CSRF token:", err);
         // Proceed without CSRF token — request will fail with 403 if required
       }
     }
@@ -311,8 +315,8 @@ function createApiClient() {
     let response = await fetch(url, {
       ...options,
       headers,
-      credentials: 'include', // Include cookies for session auth
-    })
+      credentials: "include", // Include cookies for session auth
+    });
 
     // Retry once on CSRF failure: the cached token may be stale (server
     // rotation) or the cookie may not have landed in the jar yet (WebKit
@@ -320,52 +324,57 @@ function createApiClient() {
     // route's permission check) the body will not mention csrf_missing or
     // csrf_mismatch, so we leave the response alone and let it throw below.
     if (isStateChanging && response.status === 403) {
-      const probe = await response.clone().text().catch(() => '')
-      if (probe.includes('csrf_missing') || probe.includes('csrf_mismatch')) {
-        cachedCsrfToken = null
+      const probe = await response
+        .clone()
+        .text()
+        .catch(() => "");
+      if (probe.includes("csrf_missing") || probe.includes("csrf_mismatch")) {
+        cachedCsrfToken = null;
         try {
-          headers['X-CSRF-Token'] = await getCsrfToken()
+          headers["X-CSRF-Token"] = await getCsrfToken();
           response = await fetch(url, {
             ...options,
             headers,
-            credentials: 'include',
-          })
+            credentials: "include",
+          });
         } catch (err) {
-          console.warn('[Rook API] CSRF token refresh failed:', err)
+          console.warn("[Rook API] CSRF token refresh failed:", err);
           // Fall through to the error path with the 403 response
         }
       }
     }
 
     if (!response.ok) {
-      const error = await response.text().catch(() => 'Unknown error')
-      throw new Error(`API Error ${response.status}: ${error}`)
+      const error = await response.text().catch(() => "Unknown error");
+      throw new Error(`API Error ${response.status}: ${error}`);
     }
 
     // Handle 204 No Content
     if (response.status === 204) {
-      return undefined as T
+      return undefined as T;
     }
 
-    return response.json()
+    return response.json();
   }
 
   async function getCsrfToken(): Promise<string> {
-    if (cachedCsrfToken) return cachedCsrfToken
-    const response = await fetch(`${baseUrl}/login`, { credentials: 'include' })
+    if (cachedCsrfToken) return cachedCsrfToken;
+    const response = await fetch(`${baseUrl}/login`, {
+      credentials: "include",
+    });
     if (!response.ok) {
-      throw new Error(`Failed to fetch CSRF token: HTTP ${response.status}`)
+      throw new Error(`Failed to fetch CSRF token: HTTP ${response.status}`);
     }
-    const body = (await response.json()) as CsrfTokenResponse
-    cachedCsrfToken = body.csrf_token
-    return cachedCsrfToken
+    const body = (await response.json()) as CsrfTokenResponse;
+    cachedCsrfToken = body.csrf_token;
+    return cachedCsrfToken;
   }
 
   /** Overwrite the cached CSRF token directly. Used by login() to
    *  seed the cache from the POST response body so that the very first
    *  state-changing request after login has a pre-warmed token. */
   function seedCsrfCache(token: string): void {
-    cachedCsrfToken = token
+    cachedCsrfToken = token;
   }
 
   return {
@@ -373,151 +382,175 @@ function createApiClient() {
 
     // Public endpoints
     async getHealth(): Promise<HealthResponse> {
-      return request<HealthResponse>('/health')
+      return request<HealthResponse>("/health");
     },
 
     async getBootstrapStatus(): Promise<BootstrapStatus> {
-      const response = await request<BootstrapStatusResponse>('/api/bootstrap/status')
+      const response = await request<BootstrapStatusResponse>(
+        "/api/bootstrap/status",
+      );
       return {
         isInitialized: response.is_initialized,
         adminUserExists: response.admin_user_exists,
-      }
+      };
     },
 
-    async setupBootstrap(data: BootstrapSetupRequest): Promise<BootstrapSetupResult> {
-      const csrfToken = await getCsrfToken()
-      const response = await request<BootstrapSetupResponse>('/api/bootstrap/setup', {
-        method: 'POST',
-        headers: {
-          'X-CSRF-Token': csrfToken,
+    async setupBootstrap(
+      data: BootstrapSetupRequest,
+    ): Promise<BootstrapSetupResult> {
+      const csrfToken = await getCsrfToken();
+      const response = await request<BootstrapSetupResponse>(
+        "/api/bootstrap/setup",
+        {
+          method: "POST",
+          headers: {
+            "X-CSRF-Token": csrfToken,
+          },
+          body: JSON.stringify({
+            setup_token: data.setupToken,
+            password: data.password,
+          }),
         },
-        body: JSON.stringify({
-          setup_token: data.setupToken,
-          password: data.password,
-        }),
-      })
-      return { apiKey: response.api_key }
+      );
+      return {apiKey: response.api_key};
     },
 
     async login(data: LoginRequest): Promise<LoginResult> {
-      const csrfToken = await getCsrfToken()
-      const response = await request<LoginResponse>('/login', {
-        method: 'POST',
+      const csrfToken = await getCsrfToken();
+      const response = await request<LoginResponse>("/login", {
+        method: "POST",
         headers: {
-          'X-CSRF-Token': csrfToken,
+          "X-CSRF-Token": csrfToken,
         },
         body: JSON.stringify(data),
-      })
+      });
       // Seed the cache from the POST response body so the very first
       // state-changing request after login has a pre-warmed token.
       // This eliminates the GET /login round-trip that caused the WebKit
       // cookie-jar race. See issue #82 (suggested fix #2).
       if (response.csrf_token) {
-        seedCsrfCache(response.csrf_token)
+        seedCsrfCache(response.csrf_token);
       }
       return {
         sessionId: response.session_id,
         expiresAt: response.expires_at,
-      }
+      };
     },
 
     async logout(): Promise<void> {
-      const csrfToken = await getCsrfToken()
-      await request<void>('/logout', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken },
-      })
+      const csrfToken = await getCsrfToken();
+      await request<void>("/logout", {
+        method: "POST",
+        headers: {"X-CSRF-Token": csrfToken},
+      });
     },
 
     async getMe(): Promise<MeResponse | null> {
       try {
-        return await request<MeResponse>('/api/me')
+        return await request<MeResponse>("/api/me");
       } catch (err) {
         // Only treat HTTP 401 as "not signed in" — rethrow all other errors
         // so callers can handle them appropriately.
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg.startsWith('API Error 401:')) {
-          return null
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.startsWith("API Error 401:")) {
+          return null;
         }
-        throw err
+        throw err;
       }
     },
 
     // Provider management (requires session auth)
     async getProviders(): Promise<ProviderConnectionResponse[]> {
-      return request<ProviderConnectionResponse[]>('/api/providers')
+      return request<ProviderConnectionResponse[]>("/api/providers");
     },
 
     async getProvider(id: string): Promise<ProviderConnectionResponse> {
-      return request<ProviderConnectionResponse>(`/api/providers/${id}`)
+      return request<ProviderConnectionResponse>(`/api/providers/${id}`);
     },
 
-    async createProvider(data: CreateProviderRequest): Promise<ProviderConnectionResponse> {
-      return request<ProviderConnectionResponse>('/api/providers', {
-        method: 'POST',
+    async createProvider(
+      data: CreateProviderRequest,
+    ): Promise<ProviderConnectionResponse> {
+      return request<ProviderConnectionResponse>("/api/providers", {
+        method: "POST",
         body: JSON.stringify(data),
-      })
+      });
     },
 
-    async updateProvider(id: string, data: UpdateProviderRequest): Promise<ProviderConnectionResponse> {
+    async updateProvider(
+      id: string,
+      data: UpdateProviderRequest,
+    ): Promise<ProviderConnectionResponse> {
       return request<ProviderConnectionResponse>(`/api/providers/${id}`, {
-        method: 'PUT',
+        method: "PUT",
         body: JSON.stringify(data),
-      })
+      });
     },
 
     async deleteProvider(id: string): Promise<void> {
       return request<void>(`/api/providers/${id}`, {
-        method: 'DELETE',
-      })
+        method: "DELETE",
+      });
     },
 
     async testProvider(id: string): Promise<TestConnectionResponse> {
       return request<TestConnectionResponse>(`/api/providers/${id}/test`, {
-        method: 'POST',
-      })
+        method: "POST",
+      });
     },
 
-    async testCredentials(payload: TestCredentialsPayload): Promise<TestConnectionResponse> {
-      return request<TestConnectionResponse>('/api/providers/test-credentials', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
+    async testCredentials(
+      payload: TestCredentialsPayload,
+    ): Promise<TestConnectionResponse> {
+      return request<TestConnectionResponse>(
+        "/api/providers/test-credentials",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      );
     },
 
     // API Key management (requires session auth)
     async getApiKeys(limit = 20, offset = 0): Promise<ListApiKeysResponse> {
-      return request<ListApiKeysResponse>(`/api/api-keys?limit=${limit}&offset=${offset}`)
+      return request<ListApiKeysResponse>(
+        `/api/api-keys?limit=${limit}&offset=${offset}`,
+      );
     },
 
     async getApiKey(id: string): Promise<ApiKeyRecordResponse> {
-      return request<ApiKeyRecordResponse>(`/api/api-keys/${id}`)
+      return request<ApiKeyRecordResponse>(`/api/api-keys/${id}`);
     },
 
-    async createApiKey(data: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
-      return request<CreateApiKeyResponse>('/api/api-keys', {
-        method: 'POST',
+    async createApiKey(
+      data: CreateApiKeyRequest,
+    ): Promise<CreateApiKeyResponse> {
+      return request<CreateApiKeyResponse>("/api/api-keys", {
+        method: "POST",
         body: JSON.stringify(data),
-      })
+      });
     },
 
-    async updateApiKey(id: string, data: UpdateApiKeyRequest): Promise<ApiKeyRecordResponse> {
+    async updateApiKey(
+      id: string,
+      data: UpdateApiKeyRequest,
+    ): Promise<ApiKeyRecordResponse> {
       return request<ApiKeyRecordResponse>(`/api/api-keys/${id}`, {
-        method: 'PUT',
+        method: "PUT",
         body: JSON.stringify(data),
-      })
+      });
     },
 
     async revokeApiKey(id: string): Promise<void> {
       return request<void>(`/api/api-keys/${id}`, {
-        method: 'DELETE',
-      })
+        method: "DELETE",
+      });
     },
 
     async rotateApiKey(id: string): Promise<CreateApiKeyResponse> {
       return request<CreateApiKeyResponse>(`/api/api-keys/${id}/rotate`, {
-        method: 'POST',
-      })
+        method: "POST",
+      });
     },
 
     // Model catalog (requires session auth)
@@ -526,53 +559,53 @@ function createApiClient() {
      * grouped by active provider connection.
      */
     async getAvailableModels(): Promise<ListModelsResponse> {
-      return request<ListModelsResponse>('/api/models')
+      return request<ListModelsResponse>("/api/models");
     },
-  }
+  };
 }
 
 export interface CreateProviderRequest {
-  providerKind: ProviderKind
-  providerRuntimeId: string
-  authType: WireAuthType
-  name: string
-  priority: number
-  isActive: boolean
-  credentials: ApiKeyCredentialsInput | OAuthCredentialsInput
-  config: ConnectionConfigInput
+  providerKind: ProviderKind;
+  providerRuntimeId: string;
+  authType: WireAuthType;
+  name: string;
+  priority: number;
+  isActive: boolean;
+  credentials: ApiKeyCredentialsInput | OAuthCredentialsInput;
+  config: ConnectionConfigInput;
 }
 
 export interface UpdateProviderRequest {
-  expectedUpdatedAt: string
-  providerKind?: ProviderKind
-  providerRuntimeId?: string
-  authType?: WireAuthType
-  name?: string
-  priority?: number
-  isActive?: boolean
-  credentials?: ApiKeyCredentialsInput | OAuthCredentialsInput
-  config?: ConnectionConfigInput
+  expectedUpdatedAt: string;
+  providerKind?: ProviderKind;
+  providerRuntimeId?: string;
+  authType?: WireAuthType;
+  name?: string;
+  priority?: number;
+  isActive?: boolean;
+  credentials?: ApiKeyCredentialsInput | OAuthCredentialsInput;
+  config?: ConnectionConfigInput;
 }
 
 export interface ApiKeyCredentialsInput {
-  apiKey: string
+  apiKey: string;
 }
 
 export interface OAuthCredentialsInput {
-  email: string
-  accessToken: string
-  refreshToken: string
-  expiresAt: number
-  scope: string
-  idToken: string
-  projectId: string
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scope: string;
+  idToken: string;
+  projectId: string;
 }
 
 export interface ConnectionConfigInput {
-  maxConcurrent: number
-  quotaWindowThresholds: { warning: number; error: number }
-  defaultModel?: string
-  baseUrl?: string
+  maxConcurrent: number;
+  quotaWindowThresholds: { warning: number; error: number };
+  defaultModel?: string;
+  baseUrl?: string;
 }
 
 export type TestConnectionStatus =
@@ -580,7 +613,7 @@ export type TestConnectionStatus =
   | "warning"
   | "unhealthy"
   | "unknown"
-  | "expired"
+  | "expired";
 
 export interface TestConnectionResponse {
   /**
@@ -589,32 +622,32 @@ export interface TestConnectionResponse {
    * The dashboard's Save button is enabled iff `valid === true`,
    * regardless of `status` or `warning`.
    */
-  valid: boolean
+  valid: boolean;
   /** One of `"ok" | "warning" | "unhealthy" | "unknown" | "expired"`. */
-  status: TestConnectionStatus
-  latencyMs: number | null
-  error: string | null
+  status: TestConnectionStatus;
+  latencyMs: number | null;
+  error: string | null;
   /**
    * Soft signal surfaced as a yellow alert. Set when credentials are
    * valid but the probe saw a non-fatal condition (HTTP 429, no API
    * key configured, etc.). A warning does not block Save.
    */
-  warning: string | null
+  warning: string | null;
   /**
    * Probe method used to derive this result. Free-form string
    * (`"models_list"`, `"v1beta_models"`, `"tags_reachability"`,
    * `"chat_probe"`, `"not_supported"`, `"oauth_expired"`, ...).
    * Optional: providers that don't probe return `null`.
    */
-  method: string | null
+  method: string | null;
 }
 
 // Singleton instance
-let apiClient: ReturnType<typeof createApiClient> | null = null
+let apiClient: ReturnType<typeof createApiClient> | null = null;
 
 export function useApi(): ReturnType<typeof createApiClient> {
   if (!apiClient) {
-    apiClient = createApiClient()
+    apiClient = createApiClient();
   }
-  return apiClient
+  return apiClient;
 }

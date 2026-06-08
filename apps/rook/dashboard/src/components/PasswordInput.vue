@@ -1,31 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useVModel } from '@vueuse/core'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Eye, EyeOff } from '@lucide/vue'
+import {Eye, EyeOff} from "@lucide/vue";
+import {useVModel} from "@vueuse/core";
+import {ref} from "vue";
+import {Button} from "@/components/ui/button";
+import {Input} from "@/components/ui/input";
 
 const props = defineProps<{
-  id?: string
-  type?: 'current-password' | 'new-password'
-  required?: boolean
-  error?: boolean
-  modelValue?: string
-}>()
+  id?: string;
+  type?: "current-password" | "new-password";
+  required?: boolean;
+  error?: boolean;
+  modelValue?: string;
+}>();
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
-}>()
+  "update:modelValue": [value: string];
+}>();
 
-const model = useVModel(props, 'modelValue', emit, {
+const model = useVModel(props, "modelValue", emit, {
   passive: true,
-})
+});
 
-const showPassword = ref(false)
+const showPassword = ref(false);
 
 const toggleVisibility = () => {
-  showPassword.value = !showPassword.value
-}
+  showPassword.value = !showPassword.value;
+};
 </script>
 
 <template>

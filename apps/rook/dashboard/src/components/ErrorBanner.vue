@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle } from '@lucide/vue'
+import {AlertCircle} from "@lucide/vue";
+import {Alert, AlertDescription} from "@/components/ui/alert";
 
 defineProps<{
-  message: string
-}>()
+  message: string;
+}>();
 
 const emit = defineEmits<{
-  retry: []
-}>()
+  retry: [];
+}>();
 </script>
 
 <template>

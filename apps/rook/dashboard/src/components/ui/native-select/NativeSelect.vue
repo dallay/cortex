@@ -1,26 +1,29 @@
 <script setup lang="ts">
-import type { AcceptableValue } from "reka-ui"
-import type { HTMLAttributes } from "vue"
-import { ChevronDownIcon } from "@lucide/vue"
-import { reactiveOmit, useVModel } from "@vueuse/core"
-import { cn } from "@/lib/utils"
+import {ChevronDownIcon} from "@lucide/vue";
+import {reactiveOmit, useVModel} from "@vueuse/core";
+import type {AcceptableValue} from "reka-ui";
+import type {HTMLAttributes} from "vue";
+import {cn} from "@/lib/utils";
 
 defineOptions({
   inheritAttrs: false,
-})
+});
 
-const props = defineProps<{ modelValue?: AcceptableValue | AcceptableValue[], class?: HTMLAttributes["class"] }>()
+const props = defineProps<{
+  modelValue?: AcceptableValue | AcceptableValue[];
+  class?: HTMLAttributes["class"];
+}>();
 
 const emit = defineEmits<{
-  "update:modelValue": AcceptableValue
-}>()
+  "update:modelValue": AcceptableValue;
+}>();
 
 const modelValue = useVModel(props, "modelValue", emit, {
   passive: true,
   defaultValue: "",
-})
+});
 
-const delegatedProps = reactiveOmit(props, "class")
+const delegatedProps = reactiveOmit(props, "class");
 </script>
 
 <template>

@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
-import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import type {Component} from "vue";
+import {
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 
 defineProps<{
-  items: { title: string; url: string; icon: Component }[]
-}>()
+  items: { title: string; url: string; icon: Component }[];
+}>();
 </script>
 
 <template>

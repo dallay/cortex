@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { LogOut, Settings, User } from '@lucide/vue'
-import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import {LogOut, Settings, User} from "@lucide/vue";
+import {computed} from "vue";
+import {useI18n} from "vue-i18n";
+import {useRouter} from "vue-router";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,26 +10,28 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from '@/components/ui/sidebar'
-import { useAuthStore } from '@/stores/auth'
+} from "@/components/ui/sidebar";
+import {useAuthStore} from "@/stores/auth";
 
-const { t } = useI18n()
-const { isMobile } = useSidebar()
-const auth = useAuthStore()
-const router = useRouter()
+const {t} = useI18n();
+const {isMobile} = useSidebar();
+const auth = useAuthStore();
+const router = useRouter();
 
-const displayName = computed(() => auth.currentUser?.displayName ?? 'Rook Admin')
-const email = computed(() => auth.currentUser?.email ?? 'admin@rook.local')
+const displayName = computed(
+  () => auth.currentUser?.displayName ?? "Rook Admin",
+);
+const email = computed(() => auth.currentUser?.email ?? "admin@rook.local");
 
 async function handleLogout() {
-  await auth.logout()
-  await router.push({ name: 'Login' })
+  await auth.logout();
+  await router.push({name: "Login"});
 }
 </script>
 

@@ -13,63 +13,63 @@
  * flag marks scopes that should render with a visual warning (red badge
  * + shield icon) because they grant privileged access.
  */
-export type ScopeGroup = 'chat' | 'providers' | 'admin'
+export type ScopeGroup = "chat" | "providers" | "admin";
 
 export interface ScopeDef {
   /** The scope value sent to the backend (e.g. `'chat:read'`). */
-  value: string
+  value: string;
   /** Human-readable label rendered in the UI. */
-  label: string
+  label: string;
   /** Short description of what the scope grants. */
-  description: string
+  description: string;
   /** Group used to organize scopes in the form. */
-  group: ScopeGroup
+  group: ScopeGroup;
   /** When true, the scope is rendered with a danger visual indicator. */
-  danger?: boolean
+  danger?: boolean;
   /** Whether the scope should be checked by default in the create form. */
-  defaultChecked: boolean
+  defaultChecked: boolean;
 }
 
 export const SCOPES: readonly ScopeDef[] = [
   {
-    value: 'chat:read',
-    label: 'Chat Read',
-    description: 'Read chat completions and conversation history.',
-    group: 'chat',
+    value: "chat:read",
+    label: "Chat Read",
+    description: "Read chat completions and conversation history.",
+    group: "chat",
     defaultChecked: true,
   },
   {
-    value: 'chat:write',
-    label: 'Chat Write',
-    description: 'Send chat completion requests through the proxy.',
-    group: 'chat',
+    value: "chat:write",
+    label: "Chat Write",
+    description: "Send chat completion requests through the proxy.",
+    group: "chat",
     defaultChecked: true,
   },
   {
-    value: 'providers:read',
-    label: 'Providers Read',
-    description: 'List configured providers and their health status.',
-    group: 'providers',
+    value: "providers:read",
+    label: "Providers Read",
+    description: "List configured providers and their health status.",
+    group: "providers",
     defaultChecked: true,
   },
   {
-    value: 'providers:write',
-    label: 'Providers Write',
-    description: 'Create, update, and delete provider connections.',
-    group: 'providers',
+    value: "providers:write",
+    label: "Providers Write",
+    description: "Create, update, and delete provider connections.",
+    group: "providers",
     defaultChecked: true,
   },
   {
-    value: 'admin',
-    label: 'Admin',
-    description: 'Full administrative access — manage API keys and settings.',
-    group: 'admin',
+    value: "admin",
+    label: "Admin",
+    description: "Full administrative access — manage API keys and settings.",
+    group: "admin",
     danger: true,
     defaultChecked: false,
   },
-] as const
+] as const;
 
 /** Scope values that are checked by default in the create form. */
-export const DEFAULT_SCOPES: readonly string[] = SCOPES.filter((s) => s.defaultChecked).map(
-  (s) => s.value,
-)
+export const DEFAULT_SCOPES: readonly string[] = SCOPES.filter(
+  (s) => s.defaultChecked,
+).map((s) => s.value);

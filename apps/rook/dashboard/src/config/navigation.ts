@@ -7,68 +7,72 @@
  * 3. Icon must be registered in useNavigation.ts iconRegistry
  */
 export interface NavSubItem {
-  titleKey: string
-  url: string
+  titleKey: string;
+  url: string;
 }
 
 export interface NavItem {
-  titleKey: string
-  url: string
-  icon: string
-  items?: NavSubItem[]
-  isActive?: boolean
+  titleKey: string;
+  url: string;
+  icon: string;
+  items?: NavSubItem[];
+  isActive?: boolean;
 }
 
 export interface NavSection {
-  items: NavItem[]
+  items: NavItem[];
 }
 
 export const navigationConfig = {
   main: [
     {
-      titleKey: 'nav.home',
-      url: '/',
-      icon: 'Home',
+      titleKey: "nav.home",
+      url: "/",
+      icon: "Home",
       isActive: true,
     },
     {
-      titleKey: 'nav.apiKeys',
-      url: '/api-keys',
-      icon: 'Key',
+      titleKey: "nav.apiKeys",
+      url: "/api-keys",
+      icon: "Key",
       items: [
-        { titleKey: 'nav.apiKeysList', url: '/api-keys' },
-        { titleKey: 'nav.apiKeysCreate', url: '/api-keys/new' },
+        {titleKey: "nav.apiKeysList", url: "/api-keys"},
+        {titleKey: "nav.apiKeysCreate", url: "/api-keys/new"},
       ],
     },
     {
-      titleKey: 'nav.endpoints',
-      url: '/endpoints',
-      icon: 'ListOrdered',
+      titleKey: "nav.endpoints",
+      url: "/endpoints",
+      icon: "ListOrdered",
     },
     {
-      titleKey: 'nav.providers',
-      url: '/providers',
-      icon: 'Globe',
+      titleKey: "nav.providers",
+      url: "/providers",
+      icon: "Globe",
       items: [
-        { titleKey: 'nav.providersCatalog', url: '/providers' },
-        { titleKey: 'nav.providersQuota', url: '/providers/quota' },
+        {titleKey: "nav.providersCatalog", url: "/providers"},
+        {titleKey: "nav.providersQuota", url: "/providers/quota"},
       ],
     },
     {
-      titleKey: 'nav.combos',
-      url: '/combos',
-      icon: 'CircleDot',
+      titleKey: "nav.combos",
+      url: "/combos",
+      icon: "CircleDot",
     },
     {
-      titleKey: 'nav.settings',
-      url: '/settings',
-      icon: 'Settings',
+      titleKey: "nav.settings",
+      url: "/settings",
+      icon: "Settings",
     },
   ] satisfies NavItem[],
 
   secondary: [
-    { titleKey: 'nav.support', url: '#', icon: 'LifeBuoy' },
-    { titleKey: 'nav.issues', url: 'https://github.com/dallay/cortex/issues', icon: 'FileSliders' },
-    { titleKey: 'nav.feedback', url: '#', icon: 'Send' },
+    {titleKey: "nav.support", url: "#", icon: "LifeBuoy"},
+    {
+      titleKey: "nav.issues",
+      url: "https://github.com/dallay/cortex/issues",
+      icon: "FileSliders",
+    },
+    {titleKey: "nav.feedback", url: "#", icon: "Send"},
   ] satisfies NavItem[],
-} as const
+} as const;

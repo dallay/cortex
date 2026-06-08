@@ -1,27 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Trash2,
+} from "@lucide/vue";
+import {computed, ref, watch} from "vue";
+import {useI18n} from "vue-i18n";
+import PasswordInput from "@/components/PasswordInput.vue";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,119 +18,134 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import PasswordInput from '@/components/PasswordInput.vue'
-import { useProviders } from '@/composables/useProviders'
+} from "@/components/ui/alert-dialog";
+import {Button} from "@/components/ui/button";
 import {
-  PROVIDER_KINDS,
-  findCatalogEntry,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {Input} from "@/components/ui/input";
+import {Label} from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {Switch} from "@/components/ui/switch";
+import {ToggleGroup, ToggleGroupItem} from "@/components/ui/toggle-group";
+import {useProviders} from "@/composables/useProviders";
+import {
   type AuthType,
+  findCatalogEntry,
+  PROVIDER_KINDS,
   type ProviderKind,
-} from '@/config/providerCatalog'
+} from "@/config/providerCatalog";
 import type {
   CreateProviderRequest,
   ProviderConnectionResponse,
   TestConnectionResponse,
   UpdateProviderRequest,
   WireAuthType,
-} from '@/lib/api'
+} from "@/lib/api";
 
-type DialogMode = 'create' | 'edit'
+type DialogMode = "create" | "edit";
 
 const props = withDefaults(
   defineProps<{
     /** v-model:open — controlled by parent */
-    open?: boolean
+    open?: boolean;
     /** When provided, dialog is scoped to this provider (no kind selector) */
-    providerKind?: ProviderKind
+    providerKind?: ProviderKind;
     /** 'create' = new connection, 'edit' = load existing connection */
-    mode?: DialogMode
+    mode?: DialogMode;
     /** Required when mode='edit' */
-    connectionId?: string
+    connectionId?: string;
   }>(),
-  { open: false, mode: 'create' },
-)
+  {open: false, mode: "create"},
+);
 
 const emit = defineEmits<{
-  'update:open': [value: boolean]
-  saved: [connection: ProviderConnectionResponse]
-  deleted: [id: string]
-}>()
+  "update:open": [value: boolean];
+  saved: [connection: ProviderConnectionResponse];
+  deleted: [id: string];
+}>();
 
-const { t } = useI18n()
-const {
-  create,
-  update,
-  remove,
-  testCredentials,
-  fetch,
-  providerById,
-} = useProviders()
+const {t} = useI18n();
+const {create, update, remove, testCredentials, fetch, providerById} =
+  useProviders();
 
 // ---------------------------------------------------------------------------
 // Form state
 // ---------------------------------------------------------------------------
 
 /** Currently selected kind. Defaults to prop or first catalog entry. */
-const kind = ref<ProviderKind>(props.providerKind ?? PROVIDER_KINDS[0].kind)
+const kind = ref<ProviderKind>(props.providerKind ?? PROVIDER_KINDS[0].kind);
 /** Currently selected auth type. OAuth is gated — see supportsOAuth below. */
-const authType = ref<AuthType>('apikey')
+const authType = ref<AuthType>("apikey");
 
 interface FormState {
-  displayName: string
-  apiKey: string
-  baseUrl: string
-  priority: number
-  models: string
-  enabled: boolean
+  displayName: string;
+  apiKey: string;
+  baseUrl: string;
+  priority: number;
+  models: string;
+  enabled: boolean;
 }
 
 function blankForm(): FormState {
   return {
-    displayName: '',
-    apiKey: '',
+    displayName: "",
+    apiKey: "",
     baseUrl: findCatalogEntry(kind.value).defaultBaseUrl,
     priority: 50,
-    models: '',
+    models: "",
     enabled: true,
-  }
+  };
 }
 
-const form = ref<FormState>(blankForm())
-const testing = ref(false)
-const saving = ref(false)
-const deleting = ref(false)
-const testResult = ref<TestConnectionResponse | null>(null)
-const showDeleteConfirm = ref(false)
+const form = ref<FormState>(blankForm());
+const testing = ref(false);
+const saving = ref(false);
+const deleting = ref(false);
+const testResult = ref<TestConnectionResponse | null>(null);
+const showDeleteConfirm = ref(false);
 
 // ---------------------------------------------------------------------------
 // Derived state
 // ---------------------------------------------------------------------------
 
-const isEditMode = computed(() => props.mode === 'edit')
-const showKindSelector = computed(() => props.providerKind === undefined)
-const catalogEntry = computed(() => findCatalogEntry(kind.value))
-const isApikey = computed(() => authType.value === 'apikey')
-const supportsOAuth = computed(() => catalogEntry.value.authTypes.includes('oauth'))
+const isEditMode = computed(() => props.mode === "edit");
+const showKindSelector = computed(() => props.providerKind === undefined);
+const catalogEntry = computed(() => findCatalogEntry(kind.value));
+const isApikey = computed(() => authType.value === "apikey");
+const supportsOAuth = computed(() =>
+  catalogEntry.value.authTypes.includes("oauth"),
+);
 // Managed-cloud providers (e.g. Ollama Cloud) ship with a vendor-fixed
 // base URL — we still send it to the backend, but the user has no reason
 // to edit it and may shoot themselves in the foot if they do. Default
 // to `true` to keep current behavior for every other provider.
 const baseUrlEditable = computed(
   () => catalogEntry.value.baseUrlEditable ?? true,
-)
+);
 
 const canTest = computed(
   () =>
     !testing.value &&
     !saving.value &&
-    form.value.displayName.trim() !== '' &&
-    (isApikey.value ? form.value.apiKey.trim() !== '' : false),
-)
+    form.value.displayName.trim() !== "" &&
+    (isApikey.value ? form.value.apiKey.trim() !== "" : false),
+);
 
 const canSave = computed(
   () => canTest.value && testResult.value?.valid === true && !saving.value,
-)
+);
 
 /**
  * Display message for the test-result block. Derived from the wire
@@ -151,15 +153,15 @@ const canSave = computed(
  * of which variant the backend emitted.
  */
 const testResultMessage = computed(() => {
-  const r = testResult.value
-  if (!r) return ''
-  if (r.warning) return r.warning
-  if (r.error) return r.error
-  if (r.status === 'ok') {
-    return `Connected successfully (${r.latencyMs ?? 0}ms)`
+  const r = testResult.value;
+  if (!r) return "";
+  if (r.warning) return r.warning;
+  if (r.error) return r.error;
+  if (r.status === "ok") {
+    return `Connected successfully (${r.latencyMs ?? 0}ms)`;
   }
-  return `Status: ${r.status}`
-})
+  return `Status: ${r.status}`;
+});
 
 // ---------------------------------------------------------------------------
 // Wire format helpers
@@ -167,32 +169,32 @@ const testResultMessage = computed(() => {
 
 /** Internal `apikey` → wire `apiKey` (backend enum uses camelCase). */
 function wireAuthType(a: AuthType): WireAuthType {
-  return a === 'apikey' ? 'apiKey' : 'oauth'
+  return a === "apikey" ? "apiKey" : "oauth";
 }
 
 function buildTestPayload() {
-  const runtimeId = `${kind.value}-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+  const runtimeId = `${kind.value}-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   return {
     providerKind: kind.value,
     providerRuntimeId: runtimeId,
     authType: wireAuthType(authType.value),
-    credentials: isApikey.value ? { apiKey: form.value.apiKey } : {},
+    credentials: isApikey.value ? {apiKey: form.value.apiKey} : {},
     config: {
       maxConcurrent: 10,
-      quotaWindowThresholds: { warning: 0.8, error: 0.95 },
+      quotaWindowThresholds: {warning: 0.8, error: 0.95},
       defaultModel: firstModel() ?? undefined,
       baseUrl: form.value.baseUrl.trim() || undefined,
     },
-  }
+  };
 }
 
 function firstModel(): string | null {
-  const first = form.value.models.split(',')[0]?.trim() ?? ''
-  return first === '' ? null : first
+  const first = form.value.models.split(",")[0]?.trim() ?? "";
+  return first === "" ? null : first;
 }
 
 function buildCreateRequest(): CreateProviderRequest {
-  const runtimeId = `${kind.value}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+  const runtimeId = `${kind.value}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   return {
     providerKind: kind.value,
     providerRuntimeId: runtimeId,
@@ -201,15 +203,15 @@ function buildCreateRequest(): CreateProviderRequest {
     priority: form.value.priority,
     isActive: form.value.enabled,
     credentials: isApikey.value
-      ? { apiKey: form.value.apiKey }
-      : { apiKey: '' },
+      ? {apiKey: form.value.apiKey}
+      : {apiKey: ""},
     config: {
       maxConcurrent: 10,
-      quotaWindowThresholds: { warning: 0.8, error: 0.95 },
+      quotaWindowThresholds: {warning: 0.8, error: 0.95},
       defaultModel: firstModel() ?? undefined,
       baseUrl: form.value.baseUrl.trim() || undefined,
     },
-  }
+  };
 }
 
 function buildUpdateRequest(
@@ -218,9 +220,9 @@ function buildUpdateRequest(
   // API key is only sent when the user typed a new one (stored secrets
   // are never re-exposed on edit, see spec REQ-3 Scenario "Edit existing").
   const credentials =
-    isApikey.value && form.value.apiKey.trim() !== ''
-      ? { apiKey: form.value.apiKey }
-      : undefined
+    isApikey.value && form.value.apiKey.trim() !== ""
+      ? {apiKey: form.value.apiKey}
+      : undefined;
   return {
     expectedUpdatedAt: existing.updatedAt,
     providerKind: kind.value,
@@ -231,11 +233,11 @@ function buildUpdateRequest(
     credentials,
     config: {
       maxConcurrent: 10,
-      quotaWindowThresholds: { warning: 0.8, error: 0.95 },
+      quotaWindowThresholds: {warning: 0.8, error: 0.95},
       defaultModel: firstModel() ?? undefined,
       baseUrl: form.value.baseUrl.trim() || undefined,
     },
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,148 +245,149 @@ function buildUpdateRequest(
 // ---------------------------------------------------------------------------
 
 function loadFromConnection(conn: ProviderConnectionResponse) {
-  kind.value = conn.providerKind
-  authType.value = conn.authType === 'oauth' ? 'oauth' : 'apikey'
-  form.value.displayName = conn.name
-  form.value.baseUrl = conn.config.baseUrl ?? findCatalogEntry(kind.value).defaultBaseUrl
-  form.value.priority = conn.priority
-  form.value.models = conn.config.defaultModel ?? ''
-  form.value.enabled = conn.isActive
-  form.value.apiKey = '' // never re-expose stored secret
-  testResult.value = null
+  kind.value = conn.providerKind;
+  authType.value = conn.authType === "oauth" ? "oauth" : "apikey";
+  form.value.displayName = conn.name;
+  form.value.baseUrl =
+    conn.config.baseUrl ?? findCatalogEntry(kind.value).defaultBaseUrl;
+  form.value.priority = conn.priority;
+  form.value.models = conn.config.defaultModel ?? "";
+  form.value.enabled = conn.isActive;
+  form.value.apiKey = ""; // never re-expose stored secret
+  testResult.value = null;
 }
 
 function resetForm() {
-  kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind
-  authType.value = 'apikey'
-  form.value = blankForm()
-  testResult.value = null
-  showDeleteConfirm.value = false
+  kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
+  authType.value = "apikey";
+  form.value = blankForm();
+  testResult.value = null;
+  showDeleteConfirm.value = false;
 }
 
 watch(
   () => props.open,
-  async isOpen => {
+  async (isOpen) => {
     if (!isOpen) {
-      resetForm()
-      return
+      resetForm();
+      return;
     }
     if (isEditMode.value && props.connectionId) {
       // Use cache if we already have the connection, otherwise fetch the list.
-      let conn = providerById.value.get(props.connectionId)
+      let conn = providerById.value.get(props.connectionId);
       if (!conn) {
-        await fetch()
-        conn = providerById.value.get(props.connectionId)
+        await fetch();
+        conn = providerById.value.get(props.connectionId);
       }
-      if (conn) loadFromConnection(conn)
+      if (conn) loadFromConnection(conn);
     } else {
       // Create mode — seed from current kind.
-      if (props.providerKind) kind.value = props.providerKind
-      form.value = blankForm()
-      testResult.value = null
+      if (props.providerKind) kind.value = props.providerKind;
+      form.value = blankForm();
+      testResult.value = null;
     }
   },
-  { immediate: true },
-)
+  {immediate: true},
+);
 
 // When the user changes the kind manually (create mode), keep baseUrl in sync
 // with the catalog default so the user always starts from a known-good URL.
-watch(kind, newKind => {
+watch(kind, (newKind) => {
   if (!isEditMode.value) {
-    form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl
+    form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
   }
-})
+});
 
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
 
 function handleOpenChange(value: boolean) {
-  emit('update:open', value)
+  emit("update:open", value);
 }
 
 async function handleTest() {
-  if (!canTest.value) return
-  testing.value = true
-  testResult.value = null
+  if (!canTest.value) return;
+  testing.value = true;
+  testResult.value = null;
   try {
-    const result = await testCredentials(buildTestPayload())
+    const result = await testCredentials(buildTestPayload());
     if (result) {
-      testResult.value = result
+      testResult.value = result;
     } else {
       testResult.value = {
         valid: false,
-        status: 'unhealthy',
+        status: "unhealthy",
         latencyMs: null,
-        error: 'Connection failed',
+        error: "Connection failed",
         warning: null,
         method: null,
-      }
+      };
     }
   } catch (e) {
     testResult.value = {
       valid: false,
-      status: 'unhealthy',
+      status: "unhealthy",
       latencyMs: null,
-      error: e instanceof Error ? e.message : 'Test failed',
+      error: e instanceof Error ? e.message : "Test failed",
       warning: null,
       method: null,
-    }
+    };
   } finally {
-    testing.value = false
+    testing.value = false;
   }
 }
 
 async function handleSave() {
-  if (!canSave.value) return
-  saving.value = true
+  if (!canSave.value) return;
+  saving.value = true;
   try {
     if (isEditMode.value && props.connectionId) {
-      const existing = providerById.value.get(props.connectionId)
+      const existing = providerById.value.get(props.connectionId);
       if (!existing) {
         testResult.value = {
           valid: false,
-          status: 'unhealthy',
+          status: "unhealthy",
           latencyMs: null,
-          error: 'Connection not found',
+          error: "Connection not found",
           warning: null,
           method: null,
-        }
-        return
+        };
+        return;
       }
       const updated = await update(
         props.connectionId,
         buildUpdateRequest(existing),
-      )
+      );
       if (updated) {
-        emit('saved', updated)
-        emit('update:open', false)
+        emit("saved", updated);
+        emit("update:open", false);
       }
     } else {
-      const created = await create(buildCreateRequest())
+      const created = await create(buildCreateRequest());
       if (created) {
-        await fetch()
-        emit('saved', created)
-        emit('update:open', false)
+        await fetch();
+        emit("saved", created);
+        emit("update:open", false);
       }
     }
   } finally {
-    saving.value = false
+    saving.value = false;
   }
 }
 
 async function handleDelete() {
-  if (!isEditMode.value || !props.connectionId) return
-  deleting.value = true
+  if (!isEditMode.value || !props.connectionId) return;
+  deleting.value = true;
   try {
-    const ok = await remove(props.connectionId)
+    const ok = await remove(props.connectionId);
     if (ok) {
-      emit('deleted', props.connectionId)
-      showDeleteConfirm.value = false
-      emit('update:open', false)
+      emit("deleted", props.connectionId);
+      showDeleteConfirm.value = false;
+      emit("update:open", false);
     }
   } finally {
-    deleting.value = false
+    deleting.value = false;
   }
 }
 </script>

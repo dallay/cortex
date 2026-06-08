@@ -151,7 +151,7 @@ The system SHALL provide a reusable `EmptyState` component that wraps the shadcn
 
 ### Requirement: Catalog Metadata Source
 
-The catalog view SHALL derive its kind-level metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconName) from a static `PROVIDER_KINDS` constant in `apps/rook/dashboard/src/config/providerCatalog.ts`. Configured-connection counts per kind SHALL be derived from the live list returned by `GET /api/providers`.
+The catalog view SHALL derive its kind-level metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconFile, brandUrl) from a static `PROVIDER_KINDS` constant in `apps/rook/dashboard/src/config/providerCatalog.ts`. `PROVIDER_KINDS` is the static source of truth for kind-level metadata; configured-connection counts per kind SHALL be derived from the live list returned by `GET /api/providers`.
 
 #### Scenario: Display kind metadata
 
@@ -228,3 +228,77 @@ when present, MUST be shown with the yellow styling.
 - **WHEN** the user clicks "Test connection"
 - **THEN** a red alert appears with text "auth rejected: HTTP 401 — check that your API key is valid and has access to the model"
 - **AND** the Save button is disabled
+
+---
+
+## Delta (2026-06-07) — Provider Detail Polish
+
+> Adds branded provider icons to catalog and detail views, plus title-as-link feature. See `openspec/changes/archive/2026-06-08-provider-detail-polish/specs/` for full delta spec.
+
+### Requirement: Provider Title as External Link
+
+The provider details page (`/providers/:providerKind`) MUST render the provider display name as an external hyperlink to the provider's official key-management or sign-up page. The link MUST use `target="_blank"` with `rel="noopener noreferrer"` for security. The link MUST include an accessible label announcing that it opens in a new tab.
+
+#### Scenario: Title links to provider site
+
+- **GIVEN** user viewing `/providers/gemini`
+- **WHEN** page renders
+- **THEN** `<h1>` is wrapped in `<a href="https://aistudio.google.com/apikey">` with `target="_blank" rel="noopener noreferrer"` and `aria-label="Gemini — opens in new tab"`
+
+#### Scenario: Click opens external tab
+
+- **GIVEN** user viewing `/providers/ollama-cloud`
+- **WHEN** user clicks title
+- **THEN** new tab opens to `https://ollama.com/cloud`, current tab stays on `/providers/ollama-cloud`
+
+#### Scenario: Keyboard accessible
+
+- **GIVEN** user viewing `/providers/openai`
+- **WHEN** user tabs to title and presses Enter
+- **THEN** `https://platform.openai.com/api-keys` opens in new tab
+
+#### Scenario: Screen reader announces external
+
+- **GIVEN** screen reader user navigating `/providers/anthropic`
+- **WHEN** title link is focused
+- **THEN** announces "Anthropic — opens in new tab, link"
+
+---
+
+### Requirement: Branded Provider Icons
+
+The catalog view (`/providers`) and the provider details page (`/providers/:providerKind`) MUST display the original vendor brand mark or logo for each provider kind. Catalog grid cards MUST lazy-load icons to improve initial page load performance. Detail page header icons MUST load eagerly (no lazy loading) as they are above the fold. Every icon MUST declare explicit `width` and `height` attributes to prevent Cumulative Layout Shift (CLS).
+
+#### Scenario: Catalog shows branded icons
+
+- **GIVEN** user navigating `/providers`
+- **WHEN** page renders
+- **THEN** each card shows provider's branded icon (OpenAI wordmark, Anthropic "A", Gemini spark), no Lucide fallback, all with `loading="lazy"`
+
+#### Scenario: Detail header shows icon eagerly
+
+- **GIVEN** user navigating `/providers/ollama-cloud`
+- **WHEN** page renders
+- **THEN** header shows Ollama Cloud icon above title with `loading="eager"`
+
+#### Scenario: Icon prevents CLS
+
+- **GIVEN** catalog or detail page rendering
+- **WHEN** icon loads
+- **THEN** no layout shift occurs; container reserves space via `width` and `height` attributes
+
+#### Scenario: Missing icon fallback
+
+- **GIVEN** provider kind has no asset in `/public/providers/`
+- **WHEN** page attempts to render icon
+- **THEN** neutral Lucide `Server` icon shown, console warning logged in dev mode
+
+#### Scenario: Catalog icon accessibility
+
+- **GIVEN** catalog card rendering
+- **THEN** icon has `aria-hidden="true"` (visible text names provider); screen readers skip icon
+
+#### Scenario: Detail icon accessibility
+
+- **GIVEN** detail page rendering `/providers/groq`
+- **THEN** icon has `role="img"` and `aria-label="Groq"`; screen readers announce "Groq, image"

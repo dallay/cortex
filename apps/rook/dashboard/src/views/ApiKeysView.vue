@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Plus, Key, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
+import {Key, Pencil, Plus, RefreshCw, Trash2} from "@lucide/vue";
+import {computed, onMounted, ref, watch} from "vue";
+import {useI18n} from "vue-i18n";
+import ApiKeyForm, {type ApiKeyFormState} from "@/components/ApiKeyForm.vue";
+import CopyButton from "@/components/CopyButton.vue";
+import ErrorBanner from "@/components/ErrorBanner.vue";
+import KeyDisplayCard from "@/components/KeyDisplayCard.vue";
+import LoadingState from "@/components/LoadingState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import Pagination from "@/components/Pagination.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import {Button} from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,23 +18,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { useApiKeys } from '@/composables/useApiKeys'
-import { useProviders } from '@/composables/useProviders'
-import { useAvailableModels } from '@/composables/useAvailableModels'
-import ApiKeyForm, { type ApiKeyFormState } from '@/components/ApiKeyForm.vue'
-import { SCOPES, DEFAULT_SCOPES } from '@/config/scopes'
-import type { CreateApiKeyRequest, UpdateApiKeyRequest } from '@/lib/api'
-import PageHeader from '@/components/PageHeader.vue'
-import ErrorBanner from '@/components/ErrorBanner.vue'
-import LoadingState from '@/components/LoadingState.vue'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import StatusBadge from '@/components/StatusBadge.vue'
-import CopyButton from '@/components/CopyButton.vue'
-import KeyDisplayCard from '@/components/KeyDisplayCard.vue'
-import Pagination from '@/components/Pagination.vue'
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {useApiKeys} from "@/composables/useApiKeys";
+import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviders} from "@/composables/useProviders";
+import {DEFAULT_SCOPES, SCOPES} from "@/config/scopes";
+import type {CreateApiKeyRequest, UpdateApiKeyRequest} from "@/lib/api";
 
-const { t } = useI18n()
+const {t} = useI18n();
 
 const {
   apiKeys,
@@ -42,99 +49,103 @@ const {
   rotate,
   nextPage,
   prevPage,
-} = useApiKeys()
+} = useApiKeys();
 
 // Tier options are static (driven by the rate limiter in the backend).
 const TIER_OPTIONS = [
-  { value: 'free', label: 'Free', description: '100 req burst / ~10 req/min' },
-  { value: 'pro', label: 'Pro', description: '1,000 req burst / ~100 req/min' },
-  { value: 'enterprise', label: 'Enterprise', description: '10,000 req burst / ~1,000 req/min' },
-]
+  {value: "free", label: "Free", description: "100 req burst / ~10 req/min"},
+  {value: "pro", label: "Pro", description: "1,000 req burst / ~100 req/min"},
+  {
+    value: "enterprise",
+    label: "Enterprise",
+    description: "10,000 req burst / ~1,000 req/min",
+  },
+];
 
 function buildDefaultFormState(): ApiKeyFormState {
   return {
-    label: '',
+    label: "",
     scopes: [...DEFAULT_SCOPES],
-    tier: 'enterprise',
+    tier: "enterprise",
     expiresAt: null,
     allowedModels: [],
     allowedProviders: [],
-  }
+  };
 }
 
 // Create modal state
-const showCreateModal = ref(false)
-const createForm = ref<ApiKeyFormState>(buildDefaultFormState())
-const createError = ref<string | null>(null)
-const newlyCreatedKey = ref<string | null>(null)
+const showCreateModal = ref(false);
+const createForm = ref<ApiKeyFormState>(buildDefaultFormState());
+const createError = ref<string | null>(null);
+const newlyCreatedKey = ref<string | null>(null);
 
 // Edit modal state
-const showEditModal = ref(false)
-const editingKey = ref<string | null>(null)
-const editForm = ref<ApiKeyFormState>(buildDefaultFormState())
-const editError = ref<string | null>(null)
+const showEditModal = ref(false);
+const editingKey = ref<string | null>(null);
+const editForm = ref<ApiKeyFormState>(buildDefaultFormState());
+const editError = ref<string | null>(null);
 
 // Revoke confirmation
-const showRevokeConfirm = ref(false)
-const revokingKeyId = ref<string | null>(null)
-const revokeError = ref<string | null>(null)
+const showRevokeConfirm = ref(false);
+const revokingKeyId = ref<string | null>(null);
+const revokeError = ref<string | null>(null);
 
 // Rotate confirmation
-const showRotateConfirm = ref(false)
-const rotatingKeyId = ref<string | null>(null)
-const rotateError = ref<string | null>(null)
-const newlyRotatedKey = ref<string | null>(null)
-const showRotatedKey = ref(false)
+const showRotateConfirm = ref(false);
+const rotatingKeyId = ref<string | null>(null);
+const rotateError = ref<string | null>(null);
+const newlyRotatedKey = ref<string | null>(null);
+const showRotatedKey = ref(false);
 
 // Providers and available models for the form
-const { providers, fetch: fetchProviders } = useProviders()
-const { modelsByProvider, fetch: fetchAvailableModels } = useAvailableModels()
+const {providers, fetch: fetchProviders} = useProviders();
+const {modelsByProvider, fetch: fetchAvailableModels} = useAvailableModels();
 
 // Visibility toggle for newly created key
-const showNewKey = ref(false)
+const showNewKey = ref(false);
 
 onMounted(async () => {
-  await Promise.all([fetch(), fetchProviders(), fetchAvailableModels()])
-})
+  await Promise.all([fetch(), fetchProviders(), fetchAvailableModels()]);
+});
 
 // Clear ephemeral key state whenever the create modal closes via any path.
 watch(showCreateModal, (isOpen) => {
   if (!isOpen) {
-    newlyCreatedKey.value = null
-    showNewKey.value = false
+    newlyCreatedKey.value = null;
+    showNewKey.value = false;
   }
-})
+});
 
 // Clear ephemeral key state whenever the rotate modal closes via any path.
 watch(showRotateConfirm, (isOpen) => {
   if (!isOpen) {
-    newlyRotatedKey.value = null
-    showRotatedKey.value = false
+    newlyRotatedKey.value = null;
+    showRotatedKey.value = false;
   }
-})
+});
 
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '—'
+  if (!dateStr) return "—";
   return new Date(dateStr).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function maskKey(keyPrefix: string): string {
-  return keyPrefix + '...'
+  return keyPrefix + "...";
 }
 
 async function handleCreate() {
-  createError.value = null
+  createError.value = null;
   if (!createForm.value.label.trim()) {
-    createError.value = 'Label is required'
-    return
+    createError.value = "Label is required";
+    return;
   }
   if (createForm.value.scopes.length === 0) {
-    createError.value = 'At least one scope is required'
-    return
+    createError.value = "At least one scope is required";
+    return;
   }
 
   const submissionData: CreateApiKeyRequest = {
@@ -144,26 +155,26 @@ async function handleCreate() {
     expiresAt: createForm.value.expiresAt,
     allowedModels: createForm.value.allowedModels,
     allowedProviders: createForm.value.allowedProviders,
-  }
+  };
 
-  const result = await create(submissionData)
+  const result = await create(submissionData);
   if (result) {
-    newlyCreatedKey.value = result.plaintextKey
-    showNewKey.value = true
-    createForm.value = buildDefaultFormState()
+    newlyCreatedKey.value = result.plaintextKey;
+    showNewKey.value = true;
+    createForm.value = buildDefaultFormState();
   } else {
-    createError.value = error.value || 'Failed to create API key'
+    createError.value = error.value || "Failed to create API key";
   }
 }
 
 function closeCreateWithKey() {
-  showCreateModal.value = false
-  newlyCreatedKey.value = null
-  showNewKey.value = false
+  showCreateModal.value = false;
+  newlyCreatedKey.value = null;
+  showNewKey.value = false;
 }
 
-function openEditModal(key: typeof apiKeys.value[0]) {
-  editingKey.value = key.id
+function openEditModal(key: (typeof apiKeys.value)[0]) {
+  editingKey.value = key.id;
   editForm.value = {
     label: key.label,
     scopes: [...key.scopes],
@@ -172,13 +183,13 @@ function openEditModal(key: typeof apiKeys.value[0]) {
     expiresAt: key.expiresAt,
     allowedModels: [...(key.allowedModels || [])],
     allowedProviders: [...(key.allowedProviders || [])],
-  }
-  showEditModal.value = true
+  };
+  showEditModal.value = true;
 }
 
 async function handleUpdate() {
-  if (!editingKey.value) return
-  editError.value = null
+  if (!editingKey.value) return;
+  editError.value = null;
 
   const submissionData: UpdateApiKeyRequest = {
     label: editForm.value.label,
@@ -188,69 +199,74 @@ async function handleUpdate() {
     expiresAt: editForm.value.expiresAt,
     allowedModels: editForm.value.allowedModels,
     allowedProviders: editForm.value.allowedProviders,
-  }
+  };
 
-  const result = await update(editingKey.value, submissionData)
+  const result = await update(editingKey.value, submissionData);
   if (result) {
-    showEditModal.value = false
-    editingKey.value = null
-    editForm.value = buildDefaultFormState()
+    showEditModal.value = false;
+    editingKey.value = null;
+    editForm.value = buildDefaultFormState();
   } else {
-    editError.value = error.value || 'Failed to update API key'
+    editError.value = error.value || "Failed to update API key";
   }
 }
 
 function confirmRevoke(keyId: string) {
-  revokingKeyId.value = keyId
-  showRevokeConfirm.value = true
-  revokeError.value = null
+  revokingKeyId.value = keyId;
+  showRevokeConfirm.value = true;
+  revokeError.value = null;
 }
 
 async function handleRevoke() {
-  if (!revokingKeyId.value) return
+  if (!revokingKeyId.value) return;
 
-  const success = await revoke(revokingKeyId.value)
+  const success = await revoke(revokingKeyId.value);
   if (success) {
-    showRevokeConfirm.value = false
-    revokingKeyId.value = null
+    showRevokeConfirm.value = false;
+    revokingKeyId.value = null;
   } else {
-    revokeError.value = error.value || 'Failed to revoke API key'
+    revokeError.value = error.value || "Failed to revoke API key";
   }
 }
 
 function confirmRotate(keyId: string) {
-  rotatingKeyId.value = keyId
-  showRotateConfirm.value = true
-  rotateError.value = null
+  rotatingKeyId.value = keyId;
+  showRotateConfirm.value = true;
+  rotateError.value = null;
 }
 
 async function handleRotate() {
-  if (!rotatingKeyId.value) return
+  if (!rotatingKeyId.value) return;
 
-  const result = await rotate(rotatingKeyId.value)
+  const result = await rotate(rotatingKeyId.value);
   if (result) {
-    newlyRotatedKey.value = result.plaintextKey
-    showRotatedKey.value = true
-    showRotateConfirm.value = false
-    rotatingKeyId.value = null
+    newlyRotatedKey.value = result.plaintextKey;
+    showRotatedKey.value = true;
+    showRotateConfirm.value = false;
+    rotatingKeyId.value = null;
   } else {
-    rotateError.value = error.value || 'Failed to rotate API key'
+    rotateError.value = error.value || "Failed to rotate API key";
   }
 }
 
 function closeRotateWithKey() {
-  showRotateConfirm.value = false
-  newlyRotatedKey.value = null
-  showRotatedKey.value = false
+  showRotateConfirm.value = false;
+  newlyRotatedKey.value = null;
+  showRotatedKey.value = false;
 }
 
-const hasNextPage = computed(() => offset.value + limit.value < total.value)
-const hasPrevPage = computed(() => offset.value > 0)
+const hasNextPage = computed(() => offset.value + limit.value < total.value);
+const hasPrevPage = computed(() => offset.value > 0);
 
-function getKeyStatus(status: 'active' | 'revoked', allowedModels?: string[], allowedProviders?: string[]) {
-  if (status === 'revoked') return 'revoked'
-  if (!allowedModels?.length && !allowedProviders?.length) return 'unrestricted'
-  return 'restricted'
+function getKeyStatus(
+  status: "active" | "revoked",
+  allowedModels?: string[],
+  allowedProviders?: string[],
+) {
+  if (status === "revoked") return "revoked";
+  if (!allowedModels?.length && !allowedProviders?.length)
+    return "unrestricted";
+  return "restricted";
 }
 </script>
 

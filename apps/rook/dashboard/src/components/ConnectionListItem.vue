@@ -13,44 +13,53 @@
  * pure presentational unit. The list is truncated to 3 entries; any
  * overflow is surfaced via a "+N more" badge.
  */
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, Activity, Loader2 } from '@lucide/vue'
-import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import type { ProviderConnectionResponse } from '@/lib/api'
+
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  Trash2,
+} from "@lucide/vue";
+import {computed} from "vue";
+import {useI18n} from "vue-i18n";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Switch} from "@/components/ui/switch";
+import type {ProviderConnectionResponse} from "@/lib/api";
 
 const props = defineProps<{
-  connection: ProviderConnectionResponse
-  models?: readonly string[]
-  testing?: boolean
-  busy?: boolean
-}>()
+  connection: ProviderConnectionResponse;
+  models?: readonly string[];
+  testing?: boolean;
+  busy?: boolean;
+}>();
 
 const emit = defineEmits<{
-  test: [id: string]
-  edit: [id: string]
-  delete: [id: string]
-  toggle: [payload: { id: string; enabled: boolean }]
-}>()
+  test: [id: string];
+  edit: [id: string];
+  delete: [id: string];
+  toggle: [payload: { id: string; enabled: boolean }];
+}>();
 
-const { t } = useI18n()
+const {t} = useI18n();
 
 const statusClass = computed(() => {
-  const status = props.connection.testStatus.status
-  if (status === 'active') return 'text-green-500'
-  if (status === 'unhealthy') return 'text-destructive'
-  return 'text-yellow-500'
-})
+  const status = props.connection.testStatus.status;
+  if (status === "active") return "text-green-500";
+  if (status === "unhealthy") return "text-destructive";
+  return "text-yellow-500";
+});
 
-const visibleModels = computed(() => props.models?.slice(0, 3) ?? [])
+const visibleModels = computed(() => props.models?.slice(0, 3) ?? []);
 
 const overflowCount = computed(() =>
   Math.max((props.models?.length ?? 0) - visibleModels.value.length, 0),
-)
+);
 
-const enabled = computed(() => props.connection.isActive)
+const enabled = computed(() => props.connection.isActive);
 </script>
 
 <template>
