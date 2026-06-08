@@ -156,7 +156,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 **Getting an API key:**
 
-1. Go to [ollama.com/settings/keys](https://ollama.com/settings/keys)
+1. Go to [ollama.com/settings/keys](https://ollama.com/settings/keys) — Sign in required; you'll be redirected to [signin.ollama.com](https://signin.ollama.com) if not authenticated
 2. Generate a new API key
 3. Store it securely (env var, secrets manager, etc.)
 
@@ -173,9 +173,9 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 - `complete()` — ✅ Implemented
 - `stream()` — ✅ Implemented
 
-**Note:** Ollama Cloud reuses the same `OllamaProvider` implementation as local Ollama. The only differences are:
-- Default base URL (`https://ollama.com` vs `http://localhost:11434`)
-- Optional Bearer auth token for cloud authentication
+**Note:** Both local Ollama and Ollama Cloud use the same `providers_ollama::OllamaProvider` adapter, driven by `OllamaProviderConfig`:
+- **Ollama Cloud** (`ProviderKind::OllamaCloud`): `base_url` defaults to `https://ollama.com`, `api_key` set to Bearer token enabling `Authorization: Bearer ...` headers
+- **Local Ollama** (`ProviderKind::Ollama`): `base_url` defaults to `http://localhost:11434`, `api_key` unset (no auth)
 
 ---
 
@@ -251,10 +251,12 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 | Provider      | complete() | stream() | Real health check | Default timeout |
 |---------------|------------|----------|-------------------|-----------------|
-| OpenAI        | ✅          | ❌        | ✅                 | 60s             |
+| OpenAI        | ✅          | ✅        | ✅                 | 60s             |
 | Anthropic     | ❌          | ❌        | ❌ (placeholder)   | 60s             |
-| Ollama        | ✅          | ✅        | ✅ (2-step)        | 300s            |
-| Ollama Cloud  | ✅          | ✅        | ✅ (2-step)        | 300s            |
+| Ollama (1)    | ✅          | ✅        | ✅ (2-step)        | 300s            |
+| Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
+
+(1) Ollama and Ollama Cloud share the same `OllamaProvider` implementation. Local Ollama uses `http://localhost:11434` with no API key; Ollama Cloud uses `https://ollama.com` with Bearer auth configured via `api_key`.
 | Gemini        | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 | Groq          | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 

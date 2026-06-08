@@ -376,7 +376,7 @@ The provider will appear in the list immediately and be available for routing.
 
 **Supported providers:**
 - Ollama Cloud (API Key) — ✅ Implemented
-- OpenAI (API Key / OAuth) — ✅ Implemented (streaming planned)
+- OpenAI (API Key / OAuth) — ✅ Implemented (streaming)
 - Anthropic (API Key / OAuth) — planned
 - Gemini (API Key / OAuth) — planned
 - Ollama Local (no auth) — ✅ Implemented

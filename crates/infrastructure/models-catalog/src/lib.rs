@@ -38,9 +38,9 @@ fn catalog() -> Vec<ModelCatalogEntry> {
         "claude-3-haiku-20240307",
     ];
     let ollama = ["llama3.2", "mistral", "qwen2.5"];
-    // Ollama Cloud serves the same model zoo as local Ollama — the
-    // catalog is duplicated to keep the API key restriction UI
-    // consistent with the `ProviderKind` taxonomy on the frontend.
+    // Ollama Cloud has a distinct, expanded catalog separate from local Ollama.
+    // Both use `ProviderKind` taxonomy so the API key restriction UI remains
+    // consistent: `ollama` (local) vs `ollamacloud/` (cloud) prefixed IDs.
     let ollama_cloud = [
         "deepseek-v4-pro",
         "deepseek-v4-flash",

@@ -1,0 +1,39 @@
+# rook-cloud.toml — Configuration for testing Rook with Ollama Cloud
+#
+# Usage:
+#   ENCRYPTION_PASSPHRASE="your-passphrase" \
+#   ENCRYPTION_SALT="your-salt" \
+#   ROOK_CONFIG=dev/test-configs/rook-cloud.toml \
+#   target/debug/rook
+#
+# Then add a provider via API:
+#   curl -X POST http://localhost:8080/api/providers \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "name": "ollama-cloud-primary",
+#       "provider_kind": "ollama-cloud",
+#       "auth_type": "api_key",
+#       "credentials": { "api_key": "ollama-xxxxxxxxxxxxxxxx" },
+#       "is_active": true,
+#       "priority": 1
+#     }'
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 300
+
+[audit]
+db_path = "/tmp/rook-audit.db"
+
+[database]
+db_path = "/tmp/rook.db"
+
+[provider_crud]
+enabled = true
