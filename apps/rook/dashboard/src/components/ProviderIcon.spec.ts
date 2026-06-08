@@ -63,6 +63,16 @@ describe("ProviderIcon", () => {
     expect(img.attributes("alt")).toBe("");
   });
 
+  it("sets role=img and aria-label on local img when not decorative", () => {
+    const wrapper = mount(ProviderIcon, {
+      props: {kind: "groq", decorative: false},
+    });
+    const img = wrapper.find("img");
+    expect(img.attributes("role")).toBe("img");
+    expect(img.attributes("aria-label")).toBeDefined();
+    expect(img.attributes("aria-label")).not.toBe("");
+  });
+
   it("sets role=img and aria-label on Iconify svg when not decorative", () => {
     const wrapper = mount(ProviderIcon, {
       props: {kind: "openai", decorative: false},
@@ -71,15 +81,6 @@ describe("ProviderIcon", () => {
     expect(svg.attributes("role")).toBe("img");
     expect(svg.attributes("aria-label")).toBeDefined();
     expect(svg.attributes("aria-label")).not.toBe("");
-  });
-
-  it("sets role=img and aria-label on local img when not decorative", () => {
-    const wrapper = mount(ProviderIcon, {
-      props: {kind: "groq", decorative: false},
-    });
-    const img = wrapper.find("img");
-    expect(img.attributes("role")).toBe("img");
-    expect(img.attributes("aria-label")).toBeDefined();
   });
 
   // -------------------------------------------------------------------------

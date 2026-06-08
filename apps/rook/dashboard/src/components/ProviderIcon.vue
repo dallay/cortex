@@ -126,7 +126,7 @@ const ariaAttrs = computed(() =>
 
 /** ariaAttrs for the img branch — alt is sufficient, omit role/aria-label */
 const ariaAttrsForImg = computed(() =>
-  props.decorative ? ({"aria-hidden": "true"} as const) : ({} as const),
+  props.decorative ? ({"aria-hidden": "true"} as const) : ({role: "img", "aria-label": displayName.value} as const),
 );
 
 function onLocalError() {
