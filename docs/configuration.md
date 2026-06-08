@@ -375,10 +375,11 @@ The Rook dashboard provides a web UI for managing provider connections at `http:
 The provider will appear in the list immediately and be available for routing.
 
 **Supported providers:**
-- Ollama Cloud (API Key) — initial implementation
-- OpenAI (API Key / OAuth) — planned
+- Ollama Cloud (API Key) — ✅ Implemented
+- OpenAI (API Key / OAuth) — ✅ Implemented (streaming planned)
 - Anthropic (API Key / OAuth) — planned
 - Gemini (API Key / OAuth) — planned
+- Ollama Local (no auth) — ✅ Implemented
 
 **Multi-account support:**
 
@@ -386,13 +387,14 @@ You can add multiple connections for the same provider kind (e.g., "OpenAI Produ
 
 ### Supported Provider Kinds
 
-| Kind        | Auth required          | base_url default            |
-|-------------|------------------------|-----------------------------|
-| `openai`    | API key or OAuth token | `https://api.openai.com`    |
-| `anthropic` | API key or OAuth token | `https://api.anthropic.com` |
-| `ollama`    | None (local)           | `http://localhost:11434`    |
-| `gemini`    | API key or OAuth token | (uses Google's API)         |
-| `groq`      | API key or OAuth token | (uses Groq's API)           |
+| Kind            | Auth required          | base_url default              |
+|-----------------|------------------------|-------------------------------|
+| `openai`        | API key or OAuth token | `https://api.openai.com`      |
+| `anthropic`     | API key or OAuth token | `https://api.anthropic.com`   |
+| `ollama`        | None (local)           | `http://localhost:11434`      |
+| `ollama-cloud`  | API key (Bearer)       | `https://ollama.com`          |
+| `gemini`        | API key or OAuth token | (uses Google's API)           |
+| `groq`          | API key or OAuth token | (uses Groq's API)             |
 
 ## Routing Strategies
 
