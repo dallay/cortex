@@ -68,20 +68,20 @@ export interface CatalogEntry {
 	 * ever needs to override (e.g. enterprise proxy).
 	 */
 	readonly baseUrlEditable?: boolean;
-  /**
-   * Branded icon asset basename under `public/providers/`
-   * (e.g. `groq.svg`). Only required for kinds not covered by the
-   * Iconify / Simple Icons bundle. `ProviderIcon.vue` checks
-   * `ICONIFY_MAP` first; this field is only read when the kind has
-   * no Iconify entry (currently: `groq`, `ollama-cloud`).
-   */
-  readonly iconFile?: string;
-  /**
-   * Link to the provider's official site — used by the detail view
-   * to render the page title as an external link. Optional so future
-   * kinds without a public vendor page stay compile-safe.
-   */
-  readonly brandUrl?: string;
+	/**
+	 * Branded icon asset basename under `public/providers/`
+	 * (e.g. `groq.svg`). Only required for kinds not covered by the
+	 * Iconify / Simple Icons bundle. `ProviderIcon.vue` checks
+	 * `ICONIFY_MAP` first; this field is only read when the kind has
+	 * no Iconify entry (currently: `groq`, `ollama-cloud`).
+	 */
+	readonly iconFile?: string;
+	/**
+	 * Link to the provider's official site — used by the detail view
+	 * to render the page title as an external link. Optional so future
+	 * kinds without a public vendor page stay compile-safe.
+	 */
+	readonly brandUrl?: string;
 	/** Auth types this provider supports. */
 	readonly authTypes: readonly AuthType[];
 	/** i18n key for the description shown on the catalog card. */
@@ -107,7 +107,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		displayNameKey: "providers.kind.openai.name",
 		category: "api-key",
 		defaultBaseUrl: "https://api.openai.com/v1",
-    brandUrl: "https://platform.openai.com/api-keys",
+		iconFile: "openai.svg",
+		brandUrl: "https://platform.openai.com/api-keys",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.openai.description",
 		docsUrl: "https://platform.openai.com/docs",
@@ -124,7 +125,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		displayNameKey: "providers.kind.anthropic.name",
 		category: "api-key",
 		defaultBaseUrl: "https://api.anthropic.com",
-    brandUrl: "https://console.anthropic.com/settings/keys",
+		iconFile: "anthropic.png",
+		brandUrl: "https://console.anthropic.com/settings/keys",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.anthropic.description",
 		docsUrl: "https://docs.anthropic.com",
@@ -139,7 +141,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		displayNameKey: "providers.kind.gemini.name",
 		category: "api-key",
 		defaultBaseUrl: "https://generativelanguage.googleapis.com",
-    brandUrl: "https://aistudio.google.com/apikey",
+		iconFile: "gemini.svg",
+		brandUrl: "https://aistudio.google.com/apikey",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.gemini.description",
 		docsUrl: "https://ai.google.dev/gemini-api/docs",
@@ -154,8 +157,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		displayNameKey: "providers.kind.groq.name",
 		category: "api-key",
 		defaultBaseUrl: "https://api.groq.com/openai/v1",
-    iconFile: "groq.svg",
-    brandUrl: "https://console.groq.com/keys",
+		iconFile: "groq.svg",
+		brandUrl: "https://console.groq.com/keys",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.groq.description",
 		docsUrl: "https://console.groq.com/docs",
@@ -170,7 +173,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		displayNameKey: "providers.kind.ollama.name",
 		category: "local",
 		defaultBaseUrl: "http://localhost:11434",
-    brandUrl: "https://ollama.com",
+		iconFile: "ollama.svg",
+		brandUrl: "https://ollama.com",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.ollama.description",
 		docsUrl: "https://github.com/ollama/ollama/blob/main/docs/api.md",
@@ -182,9 +186,8 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		category: "api-key",
 		defaultBaseUrl: "https://ollama.com",
 		baseUrlEditable: false,
-    // No separate brand asset — Ollama Cloud is the managed version
-    // of Ollama, same mark. Icon resolved via simple-icons:ollama.
-    brandUrl: "https://ollama.com/cloud",
+		iconFile: "ollama-cloud.svg",
+		brandUrl: "https://ollama.com/cloud",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.ollamaCloud.description",
 		docsUrl: "https://docs.ollama.com/api-reference/chat.md",

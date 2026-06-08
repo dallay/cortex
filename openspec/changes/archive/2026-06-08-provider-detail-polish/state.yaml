@@ -1,0 +1,20 @@
+change: 2026-06-07-provider-detail-polish
+current_phase: verify
+completed:
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+next: archive
+updated: 2026-06-08
+
+verification:
+  status: pass_with_suggestions
+  test_results: "130 passed / 0 failed"
+  spec_compliance: "10/10 scenarios compliant"
+  notes:
+    - Task 11 (browser-verify) requires manual verification
+    - 2 pre-existing TS errors in unrelated components (ChartContainer, ToggleGroupItem)
+    - 1 biome false-positive unused import warning in ProviderCatalogCard
