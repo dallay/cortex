@@ -4,6 +4,7 @@ import type {HTMLAttributes} from "vue";
 import {computed, toRefs} from "vue";
 import type {ChartConfig} from ".";
 import {provideChartContext} from ".";
+import {cn} from "@/lib/utils";
 </script>
 
 <script setup lang="ts">

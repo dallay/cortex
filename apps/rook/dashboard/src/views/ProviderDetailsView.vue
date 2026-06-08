@@ -212,7 +212,7 @@ void byKind;
           :href="entry.brandUrl"
           target="_blank"
           rel="noopener noreferrer"
-          :aria-label="`${providerName} — opens in new tab`"
+          :aria-label="$t('providers.details.opensInNewTab', { providerName })"
           class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
         >
           <ProviderIcon

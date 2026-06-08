@@ -141,7 +141,7 @@ If the `ProviderIcon` component ships a visual bug, ship a feature-flagged fallb
 ## 9. Dependencies
 
 - `tmp/OmniRoute/public/providers/anthropic-m.png` and `tmp/OmniRoute/public/providers/gemini-cli.svg` — copy under a permissive license. Both files are < 6 KB and present in the workspace. `sdd-apply` will confirm the OmniRoute license; if not redistributable, fall back to author-mode SVGs.
-- No new npm packages. No `shadcn-vue add` runs.
+- `@iconify-json/simple-icons` and `@iconify/vue` added to the dashboard package for Iconify icon rendering. No `shadcn-vue add` runs.
 - i18n: no new keys. URLs are not translatable.
 
 ---

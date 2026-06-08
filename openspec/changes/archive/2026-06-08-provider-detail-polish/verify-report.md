@@ -1,7 +1,7 @@
 # Verification Report: Provider Detail Polish
 
 **Change:** `2026-06-07-provider-detail-polish`  
-**Version:** 1.0  
+**Version:** 1.1.0  
 **Verified:** 2026-06-08
 
 ---

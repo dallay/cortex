@@ -6,8 +6,7 @@ import { expect, test } from "@playwright/test";
 
 async function loginIfNeeded(page: import("@playwright/test").Page) {
   await page.goto("/");
-  const loginForm = page.locator("form");
-  if (await loginForm.isVisible()) {
+  if (await page.getByRole("textbox", {name: "Password"}).isVisible()) {
     await page.getByRole("textbox", {name: "Password"}).fill("S3cr3tP@ssw0rd*123");
     await page.getByRole("button", {name: "Sign in"}).click();
     await expect(page).toHaveURL("/");

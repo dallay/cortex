@@ -151,7 +151,7 @@ The system SHALL provide a reusable `EmptyState` component that wraps the shadcn
 
 ### Requirement: Catalog Metadata Source
 
-The catalog view SHALL derive its kind-level metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconName) from a static `PROVIDER_KINDS` constant in `apps/rook/dashboard/src/config/providerCatalog.ts`. Configured-connection counts per kind SHALL be derived from the live list returned by `GET /api/providers`.
+The catalog view SHALL derive its kind-level metadata (displayName, runtimeId, defaultBaseUrl, supportsOAuth, description, iconFile, brandUrl) from a static `PROVIDER_KINDS` constant in `apps/rook/dashboard/src/config/providerCatalog.ts`. `PROVIDER_KINDS` is the static source of truth for kind-level metadata; configured-connection counts per kind SHALL be derived from the live list returned by `GET /api/providers`.
 
 #### Scenario: Display kind metadata
 

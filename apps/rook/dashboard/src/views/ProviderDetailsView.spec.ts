@@ -17,7 +17,7 @@ vi.mock("@/composables/useProviders", () => ({
     loading: {value: false},
     error: {value: null},
     fetch: vi.fn().mockResolvedValue(undefined),
-    test: vi.fn().mockResolvedValue({ok: true}),
+    test: vi.fn().mockResolvedValue({ok: true, valid: true}),
     update: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
   }),

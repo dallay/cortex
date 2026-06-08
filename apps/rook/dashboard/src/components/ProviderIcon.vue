@@ -124,6 +124,11 @@ const ariaAttrs = computed(() =>
     : ({role: "img", "aria-label": displayName.value} as const),
 );
 
+/** ariaAttrs for the img branch — alt is sufficient, omit role/aria-label */
+const ariaAttrsForImg = computed(() =>
+  props.decorative ? ({"aria-hidden": "true"} as const) : ({} as const),
+);
+
 function onLocalError() {
   localFailed.value = true;
   if (import.meta.env.DEV) {
@@ -155,7 +160,7 @@ function onLocalError() {
       :loading="loading"
       decoding="async"
       :alt="decorative ? '' : displayName"
-      v-bind="ariaAttrs"
+      v-bind="ariaAttrsForImg"
       class="object-contain shrink-0"
       @error="onLocalError"
     />
