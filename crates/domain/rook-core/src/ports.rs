@@ -88,12 +88,51 @@ pub trait RouterPort: Send + Sync {
     /// Returns the selected provider, never an error if at least one provider is available.
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
 
+    /// Select the best available provider, excluding those in `excluded`.
+    ///
+    /// Default implementation: calls `select()` and checks if result is in excluded list.
+    /// Efficient implementations (like FallbackRouter) override this.
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        let provider = self.select(req).await?;
+        if excluded.contains(provider.id()) {
+            return Err(shared_kernel::CortexError::all_providers_exhausted());
+        }
+        Ok(provider)
+    }
+
     /// Called when a provider call fails — allows the router to update
     /// internal state (circuit breaker, weights, etc.)
     async fn on_failure(&self, provider: &ProviderId, error: &shared_kernel::CortexError);
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
+}
+
+/// Extension trait for RouterPort providing selection with exclusion list.
+/// This enables retry loops that skip failed providers.
+#[async_trait]
+pub trait RouterPortExt: RouterPort {
+    /// Select the best available provider, excluding those in `excluded`.
+    ///
+    /// This is used by the retry loop in `RouteRequest` to try alternative
+    /// providers when the previously selected provider fails.
+    ///
+    /// # Arguments
+    /// * `req` - The completion request
+    /// * `excluded` - List of provider IDs to exclude from selection
+    ///
+    /// # Returns
+    /// * `Ok(provider)` - The selected provider
+    /// * `Err(CortexError::all_providers_exhausted())` - If no available providers remain
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>>;
 }
 
 // ---------------------------------------------------------------------------

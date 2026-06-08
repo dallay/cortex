@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
 use providers_core::{process_bytes, role_to_string};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
     StreamChunk, TokenUsage,
@@ -112,6 +112,24 @@ impl OllamaProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))
+    }
+
+    /// Extract rate limit info from response headers, if present.
+    /// Ollama Cloud may return Retry-After or X-RateLimit-* headers.
+    fn extract_rate_limit_info(resp: &reqwest::Response) -> (Option<u64>, Option<u64>) {
+        let retry_after_secs = resp
+            .headers()
+            .get("Retry-After")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let reset_at = resp
+            .headers()
+            .get("X-RateLimit-Reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+
+        (retry_after_secs, reset_at)
     }
 
     fn parse_line_to_chunk(
@@ -305,9 +323,26 @@ impl ProviderPort for OllamaProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+
+            // Handle 429 Rate Limited — extract headers BEFORE consuming response
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                let (retry_after_secs, reset_at) = Self::extract_rate_limit_info(&resp);
+                let retry_secs = retry_after_secs.unwrap_or(60);
+                let provider_id = ProviderId::new(self.config.id.as_str());
+                if let Some(reset) = reset_at {
+                    return Err(CortexError::rate_limited_with_reset(
+                        provider_id,
+                        retry_secs,
+                        reset,
+                    ));
+                } else {
+                    return Err(CortexError::rate_limited(provider_id, retry_secs));
+                }
+            }
+
+            let body_text = resp.text().await.unwrap_or_default();
             return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body}"
+                "Ollama error {status}: {body_text}"
             )));
         }
 
@@ -348,9 +383,26 @@ impl ProviderPort for OllamaProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+
+            // Handle 429 Rate Limited — extract headers BEFORE consuming response
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                let (retry_after_secs, reset_at) = Self::extract_rate_limit_info(&resp);
+                let retry_secs = retry_after_secs.unwrap_or(60);
+                let provider_id = ProviderId::new(self.config.id.as_str());
+                if let Some(reset) = reset_at {
+                    return Err(CortexError::rate_limited_with_reset(
+                        provider_id,
+                        retry_secs,
+                        reset,
+                    ));
+                } else {
+                    return Err(CortexError::rate_limited(provider_id, retry_secs));
+                }
+            }
+
+            let body_text = resp.text().await.unwrap_or_default();
             return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body}"
+                "Ollama error {status}: {body_text}"
             )));
         }
 

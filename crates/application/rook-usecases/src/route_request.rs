@@ -24,6 +24,9 @@ use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
 
 use crate::PricingConfig;
 
+/// Maximum number of retry attempts when a provider fails
+const MAX_RETRY_ATTEMPTS: usize = 4;
+
 /// Grouped parameters for success handling to avoid excessive parameter count
 struct SuccessContext {
     req: CompletionRequest,
@@ -146,44 +149,124 @@ impl RouteRequest {
             return Ok(cached);
         }
 
-        // 2. Select provider
-        let provider = self.router.select(&req).await?;
-        let provider_id = provider.id().clone();
-        let connection_id = self.resolve_connection_id(&provider_id).await;
+        // 2. Retry loop: select provider, execute, failover on recoverable errors
+        let mut excluded: Vec<ProviderId> = Vec::new();
+        let total_providers = self.router.providers().len();
+        let max_attempts = MAX_RETRY_ATTEMPTS.min(total_providers.max(1));
 
-        // 2a. Provider restriction check (after selection, before execution)
-        self.check_provider_restriction(&req, &provider_id)?;
+        for attempt in 0..max_attempts {
+            // Create span for this retry attempt
+            let _attempt_span = tracing::info_span!(
+                "router.retry.attempt",
+                attempt = attempt + 1,
+                max_attempts = max_attempts,
+                excluded_count = excluded.len()
+            )
+            .entered();
 
-        let provider_format = provider.api_format();
-        let provider_req = self.format_translator.translate_request(
-            client_format,
-            provider_format,
-            req.clone(),
-        )?;
+            // Select next available provider (excluding failed ones)
+            let _select_span = tracing::debug_span!("router.select_excluding").entered();
+            let provider = match self.router.select_excluding(&req, &excluded).await {
+                Ok(p) => p,
+                Err(e) => return Err(e),
+            };
+            drop(_select_span);
+            let provider_id = provider.id().clone();
+            let connection_id = self.resolve_connection_id(&provider_id).await;
 
-        // 3. Execute
-        let result = provider.complete(&provider_req).await;
-        let latency_ms = start.elapsed().as_millis() as u64;
+            // Provider restriction check (after selection, before execution)
+            self.check_provider_restriction(&req, &provider_id)?;
 
-        match result {
-            Ok(provider_resp) => {
-                self.handle_success(SuccessContext {
-                    req,
-                    provider_resp,
-                    provider_id,
-                    connection_id,
-                    provider_format,
-                    client_format,
-                    cache_key,
-                    latency_ms,
-                })
-                .await
-            }
-            Err(e) => {
-                self.handle_failure(req, provider_id, connection_id, start, e)
-                    .await
+            let provider_format = provider.api_format();
+            let provider_req = match self.format_translator.translate_request(
+                client_format,
+                provider_format,
+                req.clone(),
+            ) {
+                Ok(r) => r,
+                Err(e) => return Err(e),
+            };
+
+            // Execute
+            let result = provider.complete(&provider_req).await;
+            let latency_ms = start.elapsed().as_millis() as u64;
+
+            match result {
+                Ok(provider_resp) => {
+                    // If this is a retry (excluded list is not empty), record successful failover
+                    if !excluded.is_empty() {
+                        tracing::info!(
+                            provider = %provider_id,
+                            attempt = attempt + 1,
+                            excluded_providers = ?excluded,
+                            "failover successful"
+                        );
+                    }
+                    return self
+                        .handle_success(SuccessContext {
+                            req,
+                            provider_resp,
+                            provider_id,
+                            connection_id,
+                            provider_format,
+                            client_format,
+                            cache_key,
+                            latency_ms,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    // Record failure for circuit breaker
+                    self.router.on_failure(&provider_id, &e).await;
+
+                    // Non-retryable errors: fail immediately
+                    if !e.is_retryable() {
+                        return self
+                            .handle_failure(req, provider_id, connection_id, start, e)
+                            .await;
+                    }
+
+                    // Log retry attempt
+                    tracing::warn!(
+                        provider = %provider_id,
+                        attempt = attempt + 1,
+                        max_attempts = max_attempts,
+                        error = %e,
+                        "provider failed, trying next"
+                    );
+
+                    // Record retry attempt metric (via tracing for now)
+                    tracing::debug!(
+                        provider = %provider_id,
+                        attempt = attempt + 1,
+                        "retry attempt"
+                    );
+
+                    // Exclude this provider and retry
+                    excluded.push(provider_id.clone());
+
+                    // If we've exhausted all providers, record usage and return exhausted
+                    if excluded.len() >= total_providers {
+                        // Record exhausted metric (via tracing for now)
+                        tracing::error!(
+                            providers = ?self.router.providers(),
+                            excluded = ?excluded,
+                            "all providers exhausted"
+                        );
+                        // Record the failure for the last provider (for telemetry/audit)
+                        self.router.on_failure(&provider_id, &e).await;
+                        // Record usage for the failed request
+                        let _ = self
+                            .handle_failure(req, provider_id, connection_id, start, e)
+                            .await;
+                        return Err(CortexError::all_providers_exhausted());
+                    }
+                }
             }
         }
+
+        // This should not be reached, but safety fallback
+        Err(CortexError::all_providers_exhausted())
     }
 
     async fn resolve_model_alias(&self, req: &mut CompletionRequest) {

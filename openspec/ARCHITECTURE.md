@@ -138,6 +138,96 @@ The registry is gated behind `provider_crud.enabled = true`. When disabled, `man
 
 ---
 
+## Provider Failover with Retry Loop
+
+When a provider fails (rate-limited, exhausted, or transient error), the router automatically retries with the next available provider.
+
+### Retry Loop Flow
+
+```
+Request
+  ↓
+Cache check (hit → return)
+  ↓
+Retry loop (max 4 attempts or providers.len(), whichever is smaller)
+  ↓
+select_excluding() → provider.complete() → success → return
+  ↓ (on retryable error)
+router.on_failure() → circuit breaker updated
+  ↓
+exclude failed provider → retry with next
+  ↓ (exhausted all)
+Return AllProvidersExhausted error
+```
+
+### Error Classification
+
+`CortexError::is_retryable()` determines if a failure should trigger retry:
+
+| Error Type | `is_retryable()` | Behavior |
+|------------|------------------|----------|
+| `RateLimitedError` (429) | `true` | Retry with backoff |
+| `ProviderError` (5xx, network) | `true` | Retry |
+| `AuthFailedError` (401) | `false` | Fail immediately |
+| `InvalidRequestError` (400) | `false` | Fail immediately |
+| `ForbiddenError` (403) | `false` | Fail immediately |
+
+### Circuit Breaker
+
+`FallbackRouter` maintains a circuit breaker state per provider (`DashMap<ProviderId, CircuitState>`):
+
+- **Threshold**: 3 consecutive failures → circuit opens
+- **Cooldown**: 30 seconds before attempting again
+- **Rate limit handling**: Records `retry_after_secs` from error, opens circuit with backoff
+
+### `select_excluding()` Method
+
+Added to `RouterPort` trait — selects the best available provider excluding specified ones:
+
+```rust
+async fn select_excluding(
+    &self,
+    req: &CompletionRequest,
+    excluded: &[ProviderId],
+) -> CortexResult<Arc<dyn ProviderPort>>;
+```
+
+Filters out:
+1. Providers in `excluded` list
+2. Providers with open circuit breaker
+3. Providers that don't support the requested model
+
+Then applies the routing strategy (Priority, RoundRobin, WeightedRandom, ModelBased).
+
+### Provider 429 Handling
+
+Ollama and other providers return `429 Too Many Requests` on rate limit. The provider layer creates `CortexError::rate_limited()` with `retry_after_secs` and optional `reset_at` timestamp.
+
+### Observability
+
+Tracing spans for retry operations:
+
+| Span | Fields | Description |
+|------|--------|-------------|
+| `router.retry.attempt` | `attempt`, `max_attempts`, `excluded_count` | Each retry iteration |
+| `router.select_excluding` | — | Provider selection with exclusion |
+
+Tracing events for failover outcomes:
+- **Failover success**: provider, attempt, excluded_providers
+- **Retry attempt**: provider, attempt
+- **All exhausted**: providers, excluded list (error level)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `crates/domain/rook-core/src/ports.rs` | `RouterPort` trait with `select_excluding()` |
+| `crates/application/rook-usecases/src/router_impl.rs` | `FallbackRouter` implementation |
+| `crates/application/rook-usecases/src/route_request.rs` | Retry loop in `execute_with_format()` |
+| `crates/infrastructure/providers-ollama/src/lib.rs` | 429 → `CortexError::rate_limited()` |
+
+---
+
 ## Known Gaps (Archived Change)
 
 These items were identified during implementation but not completed:
