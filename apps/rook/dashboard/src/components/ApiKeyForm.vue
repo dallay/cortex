@@ -12,84 +12,88 @@
  * props so this component doesn't hardcode domain knowledge — when
  * the scope registry grows, no template changes are needed.
  */
-import { computed } from 'vue'
-import { Key, AlertTriangle, ShieldAlert } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Badge } from '@/components/ui/badge'
+
+import {AlertTriangle, Key, ShieldAlert} from "@lucide/vue";
+import {computed} from "vue";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Checkbox} from "@/components/ui/checkbox";
+import {Input} from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import type { ProviderConnectionResponse } from '@/lib/api'
-import type { ModelsByProvider } from '@/composables/useAvailableModels'
-import type { ScopeDef, ScopeGroup } from '@/config/scopes'
+} from "@/components/ui/select";
+import type {ModelsByProvider} from "@/composables/useAvailableModels";
+import type {ScopeDef, ScopeGroup} from "@/config/scopes";
+import type {ProviderConnectionResponse} from "@/lib/api";
 
 export interface ApiKeyFormState {
-  label: string
-  scopes: string[]
-  tier: string
-  expiresAt: string | null
-  allowedModels: string[]
-  allowedProviders: string[]
-  isActive?: boolean
+  label: string;
+  scopes: string[];
+  tier: string;
+  expiresAt: string | null;
+  allowedModels: string[];
+  allowedProviders: string[];
+  isActive?: boolean;
 }
 
 interface Props {
-  modelValue: ApiKeyFormState
-  scopes: readonly ScopeDef[]
-  providers: ProviderConnectionResponse[]
-  modelsByProvider: ModelsByProvider[]
-  tierOptions: { value: string; label: string; description: string }[]
+  modelValue: ApiKeyFormState;
+  scopes: readonly ScopeDef[];
+  providers: ProviderConnectionResponse[];
+  modelsByProvider: ModelsByProvider[];
+  tierOptions: { value: string; label: string; description: string }[];
   /** Optional group render order. Defaults to chat, providers, admin. */
-  groupOrder?: readonly ScopeGroup[]
-  error?: string | null
-  submitLabel?: string
-  cancelLabel?: string
-  isEdit?: boolean
+  groupOrder?: readonly ScopeGroup[];
+  error?: string | null;
+  submitLabel?: string;
+  cancelLabel?: string;
+  isEdit?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  groupOrder: () => ['chat', 'providers', 'admin'] as const,
+  groupOrder: () => ["chat", "providers", "admin"] as const,
   error: null,
-  submitLabel: 'Save',
-  cancelLabel: 'Cancel',
+  submitLabel: "Save",
+  cancelLabel: "Cancel",
   isEdit: false,
-})
+});
 
 const emit = defineEmits<{
-  'update:modelValue': [value: ApiKeyFormState]
-  submit: []
-  cancel: []
-}>()
+  "update:modelValue": [value: ApiKeyFormState];
+  submit: [];
+  cancel: [];
+}>();
 
-function update<K extends keyof ApiKeyFormState>(key: K, value: ApiKeyFormState[K]) {
-  emit('update:modelValue', { ...props.modelValue, [key]: value })
+function update<K extends keyof ApiKeyFormState>(
+  key: K,
+  value: ApiKeyFormState[K],
+) {
+  emit("update:modelValue", {...props.modelValue, [key]: value});
 }
 
 function toggleScope(scopeValue: string, checked: boolean) {
   const next = checked
     ? Array.from(new Set([...props.modelValue.scopes, scopeValue]))
-    : props.modelValue.scopes.filter((s) => s !== scopeValue)
-  update('scopes', next)
+    : props.modelValue.scopes.filter((s) => s !== scopeValue);
+  update("scopes", next);
 }
 
 function toggleProvider(providerId: string, checked: boolean) {
   const next = checked
     ? Array.from(new Set([...props.modelValue.allowedProviders, providerId]))
-    : props.modelValue.allowedProviders.filter((p) => p !== providerId)
-  update('allowedProviders', next)
+    : props.modelValue.allowedProviders.filter((p) => p !== providerId);
+  update("allowedProviders", next);
 }
 
 function toggleModel(modelId: string, checked: boolean) {
   const next = checked
     ? Array.from(new Set([...props.modelValue.allowedModels, modelId]))
-    : props.modelValue.allowedModels.filter((m) => m !== modelId)
-  update('allowedModels', next)
+    : props.modelValue.allowedModels.filter((m) => m !== modelId);
+  update("allowedModels", next);
 }
 
 const groupedScopes = computed(() => {
@@ -98,31 +102,31 @@ const groupedScopes = computed(() => {
       group,
       scopes: props.scopes.filter((s) => s.group === group),
     }))
-    .filter((entry) => entry.scopes.length > 0)
-})
+    .filter((entry) => entry.scopes.length > 0);
+});
 
 const groupLabel: Record<ScopeGroup, string> = {
-  chat: 'Chat',
-  providers: 'Providers',
-  admin: 'Administrative',
-}
+  chat: "Chat",
+  providers: "Providers",
+  admin: "Administrative",
+};
 
 function isScopeChecked(scope: ScopeDef): boolean {
-  return props.modelValue.scopes.includes(scope.value)
+  return props.modelValue.scopes.includes(scope.value);
 }
 
 function isProviderChecked(providerId: string): boolean {
-  return props.modelValue.allowedProviders.includes(providerId)
+  return props.modelValue.allowedProviders.includes(providerId);
 }
 
 function isModelChecked(modelId: string): boolean {
-  return props.modelValue.allowedModels.includes(modelId)
+  return props.modelValue.allowedModels.includes(modelId);
 }
 
 /** Slugify a scope value so it is safe for use in a data-testid attribute.
  *  e.g. 'chat:read' -> 'chat-read', 'admin' -> 'admin'. */
 function scopeSlug(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, '-')
+  return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 </script>
 

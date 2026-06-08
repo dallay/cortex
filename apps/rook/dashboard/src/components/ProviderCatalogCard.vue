@@ -17,39 +17,40 @@
  * `<img src="/providers/<iconFile>">` with a Lucide `Server` fallback.
  * Catalog cards are below the fold by default so we use `loading="lazy"`.
  */
-import {computed} from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Plus } from '@lucide/vue'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import type { ProviderCatalogItem } from '@/composables/useProviderCatalog'
-import ProviderIcon from '@/components/ProviderIcon.vue'
+
+import {Plus} from "@lucide/vue";
+import {computed} from "vue";
+import {useI18n} from "vue-i18n";
+import ProviderIcon from "@/components/ProviderIcon.vue";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
+import type {ProviderCatalogItem} from "@/composables/useProviderCatalog";
 
 const props = defineProps<{
-  item: ProviderCatalogItem
-}>()
+  item: ProviderCatalogItem;
+}>();
 
 const emit = defineEmits<{
-  add: [kind: ProviderCatalogItem['kind']]
-}>()
+  add: [kind: ProviderCatalogItem["kind"]];
+}>();
 
-const { t } = useI18n()
+const {t} = useI18n();
 
-const name = computed(() => t(props.item.displayNameKey))
-const description = computed(() => t(props.item.descriptionKey))
+const name = computed(() => t(props.item.displayNameKey));
+const description = computed(() => t(props.item.descriptionKey));
 
 const statusLabel = computed(() =>
   props.item.hasActiveConnections
-    ? t('providers.catalog.active')
-    : t('providers.catalog.notConfigured'),
-)
+    ? t("providers.catalog.active")
+    : t("providers.catalog.notConfigured"),
+);
 
 const statusVariant = computed(() =>
-  props.item.hasActiveConnections ? 'default' : 'secondary',
-)
+  props.item.hasActiveConnections ? "default" : "secondary",
+);
 
-const detailLink = computed(() => `/providers/${props.item.kind}`)
+const detailLink = computed(() => `/providers/${props.item.kind}`);
 </script>
 
 <template>

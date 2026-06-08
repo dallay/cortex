@@ -1,11 +1,25 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import { Activity, Key, Globe, CircleDot, TrendingUp, AlertCircle, CheckCircle2 } from '@lucide/vue'
-import { useHealth } from '@/composables/useHealth'
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle2,
+  CircleDot,
+  Globe,
+  Key,
+  TrendingUp,
+} from "@lucide/vue";
+import {useI18n} from "vue-i18n";
+import {useHealth} from "@/composables/useHealth";
 
-const { t } = useI18n()
+const {t} = useI18n();
 
-const { data: health, loading, error, averageLatency, healthyProviders } = useHealth()
+const {
+  data: health,
+  loading,
+  error,
+  averageLatency,
+  healthyProviders,
+} = useHealth();
 </script>
 
 <template>

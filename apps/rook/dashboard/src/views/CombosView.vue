@@ -1,40 +1,40 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { CircleDot, ArrowRight, Trash2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import PageHeader from '@/components/PageHeader.vue'
-import EmptyState from '@/components/EmptyState.vue'
+import {ArrowRight, CircleDot, Trash2} from "@lucide/vue";
+import {ref} from "vue";
+import {useI18n} from "vue-i18n";
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import {Button} from "@/components/ui/button";
 
-const { t } = useI18n()
+const {t} = useI18n();
 
 // Mock data - combos are fallback chains of models
 const combos = ref([
   {
-    id: '1',
-    name: 'Production Fallback',
-    description: 'Primary with automatic fallback',
+    id: "1",
+    name: "Production Fallback",
+    description: "Primary with automatic fallback",
     steps: [
-      { provider: 'OpenAI', model: 'gpt-4' },
-      { provider: 'Anthropic', model: 'claude-3-opus' },
-      { provider: 'Ollama', model: 'llama2' },
+      {provider: "OpenAI", model: "gpt-4"},
+      {provider: "Anthropic", model: "claude-3-opus"},
+      {provider: "Ollama", model: "llama2"},
     ],
   },
   {
-    id: '2',
-    name: 'Fast Responses',
-    description: 'Optimized for speed',
+    id: "2",
+    name: "Fast Responses",
+    description: "Optimized for speed",
     steps: [
-      { provider: 'OpenAI', model: 'gpt-3.5-turbo' },
-      { provider: 'Anthropic', model: 'claude-3-haiku' },
+      {provider: "OpenAI", model: "gpt-3.5-turbo"},
+      {provider: "Anthropic", model: "claude-3-haiku"},
     ],
   },
-])
+]);
 
-const showCreateForm = ref(false)
+const showCreateForm = ref(false);
 
 function openCreateForm() {
-  showCreateForm.value = true
+  showCreateForm.value = true;
 }
 </script>
 

@@ -31,18 +31,18 @@
  *     for above-the-fold LCP candidates (e.g. detail page header).
  *   - Both paths declare explicit `width`/`height` to prevent CLS.
  */
-import {computed, ref} from 'vue'
-import {Icon} from '@iconify/vue'
-import {addCollection} from '@iconify/vue'
-import simpleIcons from '@iconify-json/simple-icons/icons.json'
-import Server from '@lucide/vue/dist/esm/icons/server.mjs'
-import {PROVIDER_KINDS, type ProviderKind} from '@/config/providerCatalog'
+
+import {addCollection, Icon} from "@iconify/vue";
+import simpleIcons from "@iconify-json/simple-icons/icons.json";
+import Server from "@lucide/vue/dist/esm/icons/server.mjs";
+import {computed, ref} from "vue";
+import {PROVIDER_KINDS, type ProviderKind} from "@/config/providerCatalog";
 
 // Register the full Simple Icons set once at module load time.
 // Vite tree-shakes unused icons in production — only referenced icons
 // end up in the bundle (via the rollup-plugin-purge-iconify or by
 // default Vite static analysis of the `icon` prop string literals).
-addCollection(simpleIcons as Parameters<typeof addCollection>[0])
+addCollection(simpleIcons as Parameters<typeof addCollection>[0]);
 
 /**
  * Maps a ProviderKind to its Simple Icons identifier, or null if
@@ -50,30 +50,30 @@ addCollection(simpleIcons as Parameters<typeof addCollection>[0])
  * back to the local public/providers/<iconFile> asset.
  */
 const ICONIFY_MAP: Partial<Record<ProviderKind, string>> = {
-  openai: 'simple-icons:openai',
-  anthropic: 'simple-icons:anthropic',
-  ollama: 'simple-icons:ollama',
-  'ollama-cloud': 'simple-icons:ollama', // same brand, managed variant
-  gemini: 'simple-icons:googlegemini',
+  openai: "simple-icons:openai",
+  anthropic: "simple-icons:anthropic",
+  ollama: "simple-icons:ollama",
+  "ollama-cloud": "simple-icons:ollama", // same brand, managed variant
+  gemini: "simple-icons:googlegemini",
   // groq — not in simple-icons yet → falls back to local groq.svg
-} as const
+} as const;
 
 // ---------------------------------------------------------------------------
 
 const props = withDefaults(
   defineProps<{
     /** Provider kind — must be one of the 6 known kinds. */
-    kind: ProviderKind
+    kind: ProviderKind;
     /**
      * Loading strategy for the local `<img>` fallback path only.
      * Use `'eager'` for above-the-fold LCP candidates (e.g. detail page
      * header). Iconify SVGs are inline — loading strategy doesn't apply.
      */
-    loading?: 'eager' | 'lazy'
+    loading?: "eager" | "lazy";
     /** Rendered width in px. Declared explicitly to prevent CLS. */
-    width?: number | string
+    width?: number | string;
     /** Rendered height in px. Declared explicitly to prevent CLS. */
-    height?: number | string
+    height?: number | string;
     /**
      * When `true` (default), the icon is purely decorative.
      * Renders `aria-hidden="true"`.
@@ -81,52 +81,56 @@ const props = withDefaults(
      * When `false`, the icon carries meaning on its own.
      * Renders `role="img"` with `aria-label="<DisplayName>"`.
      */
-    decorative?: boolean
+    decorative?: boolean;
   }>(),
   {
-    loading: 'lazy',
+    loading: "lazy",
     width: 32,
     height: 32,
     decorative: true,
   },
-)
+);
 
-const localFailed = ref(false)
+const localFailed = ref(false);
 
-const entry = computed(() => PROVIDER_KINDS.find((p) => p.kind === props.kind) ?? null)
+const entry = computed(
+  () => PROVIDER_KINDS.find((p) => p.kind === props.kind) ?? null,
+);
 
 /** Simple Icons identifier for this kind, or null to use the local asset. */
-const iconifyIcon = computed(() => ICONIFY_MAP[props.kind] ?? null)
+const iconifyIcon = computed(() => ICONIFY_MAP[props.kind] ?? null);
 
 /** Local asset path — only used when iconifyIcon is null. */
 const localSrc = computed(() =>
-  entry.value && !iconifyIcon.value ? `/providers/${entry.value.iconFile}` : null,
-)
+  entry.value && !iconifyIcon.value
+    ? `/providers/${entry.value.iconFile}`
+    : null,
+);
 
 const displayName = computed(() => {
-  if (!entry.value) return props.kind
+  if (!entry.value) return props.kind;
   // Derive a readable name from the i18n key without pulling in the
   // i18n composable (avoids a dependency on the app's i18n instance).
   // The detail view has the properly translated name in its own scope.
-  const parts = entry.value.displayNameKey.split('.')
-  return parts[parts.length - 2] ?? props.kind
-})
+  const parts = entry.value.displayNameKey.split(".");
+  return parts[parts.length - 2] ?? props.kind;
+});
 
-const iconSize = computed(() => Number(props.width) || 32)
+const iconSize = computed(() => Number(props.width) || 32);
 
 const ariaAttrs = computed(() =>
   props.decorative
-    ? ({'aria-hidden': 'true'} as const)
-    : ({role: 'img', 'aria-label': displayName.value} as const),
-)
+    ? ({"aria-hidden": "true"} as const)
+    : ({role: "img", "aria-label": displayName.value} as const),
+);
 
 function onLocalError() {
-  localFailed.value = true
+  localFailed.value = true;
   if (import.meta.env.DEV) {
     console.warn(
       `[ProviderIcon] Failed to load local icon for "${props.kind}": ${localSrc.value}. ` +
       `Check that public/providers/${entry.value?.iconFile} exists.`,
-    )
+    );
   }
 }
 </script>

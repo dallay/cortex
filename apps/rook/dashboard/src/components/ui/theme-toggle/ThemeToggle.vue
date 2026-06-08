@@ -1,45 +1,45 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useThemeStore } from '@/stores/theme'
+import {ref} from "vue";
+import {useThemeStore} from "@/stores/theme";
 
-const theme = useThemeStore()
-const isAnimating = ref(false)
+const theme = useThemeStore();
+const isAnimating = ref(false);
 
-function animateThemeChange(next: 'dark' | 'light') {
+function animateThemeChange(next: "dark" | "light") {
   // Graceful degradation — View Transitions not supported in Firefox < 126, Safari < 18
   if (!document.startViewTransition) {
-    theme.setTheme(next)
-    return
+    theme.setTheme(next);
+    return;
   }
 
   // Respect reduced motion — skip the clip-path wipe
-  if (globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    theme.setTheme(next)
-    return
+  if (globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    theme.setTheme(next);
+    return;
   }
 
-  isAnimating.value = true
+  isAnimating.value = true;
   const transition = document.startViewTransition(() => {
-    theme.setTheme(next)
-  })
+    theme.setTheme(next);
+  });
 
   transition.ready.then(() => {
     document.documentElement.animate(
-      { clipPath: ['inset(0 0 100% 0)', 'inset(0)'] },
+      {clipPath: ["inset(0 0 100% 0)", "inset(0)"]},
       {
         duration: 600,
-        pseudoElement: '::view-transition-new(root)',
+        pseudoElement: "::view-transition-new(root)",
       },
-    )
-  })
+    );
+  });
 
   transition.finished.then(() => {
-    isAnimating.value = false
-  })
+    isAnimating.value = false;
+  });
 }
 
 function handleClick() {
-  animateThemeChange(theme.current === 'dark' ? 'light' : 'dark')
+  animateThemeChange(theme.current === "dark" ? "light" : "dark");
 }
 </script>
 

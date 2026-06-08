@@ -1,31 +1,31 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import { Settings, Globe } from '@lucide/vue'
-import { useBaseUrl } from '@/composables/useBaseUrl'
-import { endpointsConfig } from '@/config/endpoints'
-import PageHeader from '@/components/PageHeader.vue'
-import MethodBadge from '@/components/MethodBadge.vue'
-import CopyButton from '@/components/CopyButton.vue'
+import {Globe, Settings} from "@lucide/vue";
+import {useI18n} from "vue-i18n";
+import CopyButton from "@/components/CopyButton.vue";
+import MethodBadge from "@/components/MethodBadge.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import {useBaseUrl} from "@/composables/useBaseUrl";
+import {endpointsConfig} from "@/config/endpoints";
 
-const { t } = useI18n()
-const { fullBaseUrl, isOverridden, setOverride, clearOverride } = useBaseUrl()
+const {t} = useI18n();
+const {fullBaseUrl, isOverridden, setOverride, clearOverride} = useBaseUrl();
 
 function handleBaseUrlEdit() {
-  const newUrl = prompt('Enter custom base URL:', fullBaseUrl.value)
+  const newUrl = prompt("Enter custom base URL:", fullBaseUrl.value);
   if (newUrl !== null) {
-    if (newUrl === '') {
-      clearOverride()
+    if (newUrl === "") {
+      clearOverride();
     } else {
-      setOverride(newUrl.replace(/\/v1$/, ''))
+      setOverride(newUrl.replace(/\/v1$/, ""));
     }
   }
 }
 
 const categories = [
-  { key: 'core', labelKey: 'endpoints.categories.core' },
-  { key: 'media', labelKey: 'endpoints.categories.media' },
-  { key: 'utility', labelKey: 'endpoints.categories.utility' },
-] as const
+  {key: "core", labelKey: "endpoints.categories.core"},
+  {key: "media", labelKey: "endpoints.categories.media"},
+  {key: "utility", labelKey: "endpoints.categories.utility"},
+] as const;
 </script>
 
 <template>

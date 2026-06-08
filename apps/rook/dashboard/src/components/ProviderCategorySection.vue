@@ -9,21 +9,21 @@
  * the parent decides whether to show a single section at a time or all
  * three.
  */
-import { useI18n } from 'vue-i18n'
-import ProviderCatalogCard from './ProviderCatalogCard.vue'
-import type { CategoryDescriptor } from '@/config/providerCatalog'
-import type { ProviderCatalogItem } from '@/composables/useProviderCatalog'
+import {useI18n} from "vue-i18n";
+import type {ProviderCatalogItem} from "@/composables/useProviderCatalog";
+import type {CategoryDescriptor} from "@/config/providerCatalog";
+import ProviderCatalogCard from "./ProviderCatalogCard.vue";
 
 defineProps<{
-  category: CategoryDescriptor
-  items: readonly ProviderCatalogItem[]
-}>()
+  category: CategoryDescriptor;
+  items: readonly ProviderCatalogItem[];
+}>();
 
 const emit = defineEmits<{
-  add: [kind: ProviderCatalogItem['kind']]
-}>()
+  add: [kind: ProviderCatalogItem["kind"]];
+}>();
 
-const { t } = useI18n()
+const {t} = useI18n();
 </script>
 
 <template>

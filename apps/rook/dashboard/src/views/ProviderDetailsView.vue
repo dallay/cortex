@@ -13,175 +13,181 @@
  * If the `providerKind` route param does not match a known
  * `ProviderKind`, the view redirects to the catalog at `/providers`.
  */
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
-import {ArrowLeft, Plus, ExternalLink} from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { useProviders } from '@/composables/useProviders'
-import { useAvailableModels } from '@/composables/useAvailableModels'
-import { useProviderCatalog } from '@/composables/useProviderCatalog'
+
+import {ArrowLeft, ExternalLink, Plus} from "@lucide/vue";
+import {computed, onMounted, ref, watch} from "vue";
+import {useI18n} from "vue-i18n";
+import {useRoute, useRouter} from "vue-router";
+import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import ConnectionListItem from "@/components/ConnectionListItem.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import ErrorBanner from "@/components/ErrorBanner.vue";
+import LoadingState from "@/components/LoadingState.vue";
+import ProviderIcon from "@/components/ProviderIcon.vue";
+import {Button} from "@/components/ui/button";
+import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviderCatalog} from "@/composables/useProviderCatalog";
+import {useProviders} from "@/composables/useProviders";
 import {
   findCatalogEntry,
   PROVIDER_KINDS,
   type ProviderKind,
-} from '@/config/providerCatalog'
-import LoadingState from '@/components/LoadingState.vue'
-import ErrorBanner from '@/components/ErrorBanner.vue'
-import EmptyState from '@/components/EmptyState.vue'
-import AddProviderDialog from '@/components/AddProviderDialog.vue'
-import ConnectionListItem from '@/components/ConnectionListItem.vue'
-import ProviderIcon from '@/components/ProviderIcon.vue'
+} from "@/config/providerCatalog";
 
-const route = useRoute()
-const router = useRouter()
-const { t } = useI18n()
+const route = useRoute();
+const router = useRouter();
+const {t} = useI18n();
 
-const validKinds = new Set<string>(PROVIDER_KINDS.map(p => p.kind))
+const validKinds = new Set<string>(PROVIDER_KINDS.map((p) => p.kind));
 
 const providerKindParam = computed<ProviderKind | null>(() => {
-  const param = route.params.providerKind
-  if (typeof param === 'string' && validKinds.has(param)) {
-    return param as ProviderKind
+  const param = route.params.providerKind;
+  if (typeof param === "string" && validKinds.has(param)) {
+    return param as ProviderKind;
   }
-  return null
-})
+  return null;
+});
 
 watch(
   providerKindParam,
-  value => {
+  (value) => {
     if (value === null) {
-      router.replace('/providers')
+      router.replace("/providers");
     }
   },
-  { immediate: true },
-)
+  {immediate: true},
+);
 
 const entry = computed(() => {
-  const kind = providerKindParam.value
-  return kind ? findCatalogEntry(kind) : null
-})
+  const kind = providerKindParam.value;
+  return kind ? findCatalogEntry(kind) : null;
+});
 
 const providerName = computed(() =>
-  entry.value ? t(entry.value.displayNameKey) : '',
-)
+  entry.value ? t(entry.value.displayNameKey) : "",
+);
 
-const { providers, loading, error, fetch, test, update, remove } = useProviders()
-const { modelsByProvider, fetch: fetchModels } = useAvailableModels()
-const { byKind } = useProviderCatalog()
+const {providers, loading, error, fetch, test, update, remove} =
+  useProviders();
+const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
+const {byKind} = useProviderCatalog();
 
 onMounted(() => {
-  fetch()
-  fetchModels()
-})
+  fetch();
+  fetchModels();
+});
 
 const connectionIdsForKind = computed(() => {
-  const kind = providerKindParam.value
-  if (!kind) return new Set<string>()
-  return new Set(providers.value.filter(p => p.providerKind === kind).map(p => p.id))
-})
+  const kind = providerKindParam.value;
+  if (!kind) return new Set<string>();
+  return new Set(
+    providers.value.filter((p) => p.providerKind === kind).map((p) => p.id),
+  );
+});
 
 const connections = computed(() =>
-  providers.value.filter(p => connectionIdsForKind.value.has(p.id)),
-)
+  providers.value.filter((p) => connectionIdsForKind.value.has(p.id)),
+);
 
 const modelsByConnection = computed(() => {
-  const map = new Map<string, string[]>()
+  const map = new Map<string, string[]>();
   for (const entry of modelsByProvider.value) {
     if (connectionIdsForKind.value.has(entry.provider.id)) {
-      map.set(entry.provider.id, entry.models)
+      map.set(entry.provider.id, entry.models);
     }
   }
-  return map
-})
+  return map;
+});
 
-const testingIds = ref(new Set<string>())
-const busyIds = ref(new Set<string>())
+const testingIds = ref(new Set<string>());
+const busyIds = ref(new Set<string>());
 
 function isTesting(id: string) {
-  return testingIds.value.has(id)
+  return testingIds.value.has(id);
 }
 
 function isBusy(id: string) {
-  return busyIds.value.has(id)
+  return busyIds.value.has(id);
 }
 
 async function handleTest(id: string) {
-  testingIds.value = new Set([...testingIds.value, id])
+  testingIds.value = new Set([...testingIds.value, id]);
   try {
-    const result = await test(id)
+    const result = await test(id);
     if (result) {
       if (result.valid) {
-        console.info(t('providers.details.testSuccess'))
+        console.info(t("providers.details.testSuccess"));
       } else {
         console.warn(
-          t('providers.details.testFailure', { error: result.error ?? 'unknown' }),
-        )
+          t("providers.details.testFailure", {
+            error: result.error ?? "unknown",
+          }),
+        );
       }
     }
-    await fetch()
+    await fetch();
   } finally {
-    const next = new Set(testingIds.value)
-    next.delete(id)
-    testingIds.value = next
+    const next = new Set(testingIds.value);
+    next.delete(id);
+    testingIds.value = next;
   }
 }
 
 async function handleToggle({ id, enabled }: { id: string; enabled: boolean }) {
-  const conn = providers.value.find(p => p.id === id)
-  if (!conn) return
-  busyIds.value = new Set([...busyIds.value, id])
+  const conn = providers.value.find((p) => p.id === id);
+  if (!conn) return;
+  busyIds.value = new Set([...busyIds.value, id]);
   try {
-    await update(id, { expectedUpdatedAt: conn.updatedAt, isActive: enabled })
+    await update(id, {expectedUpdatedAt: conn.updatedAt, isActive: enabled});
   } finally {
-    const next = new Set(busyIds.value)
-    next.delete(id)
-    busyIds.value = next
+    const next = new Set(busyIds.value);
+    next.delete(id);
+    busyIds.value = next;
   }
 }
 
 async function handleDelete(id: string) {
-  if (!window.confirm(t('providers.details.deleteConfirm'))) return
-  busyIds.value = new Set([...busyIds.value, id])
+  if (!window.confirm(t("providers.details.deleteConfirm"))) return;
+  busyIds.value = new Set([...busyIds.value, id]);
   try {
-    await remove(id)
+    await remove(id);
   } finally {
-    const next = new Set(busyIds.value)
-    next.delete(id)
-    busyIds.value = next
+    const next = new Set(busyIds.value);
+    next.delete(id);
+    busyIds.value = next;
   }
 }
 
 // AddProviderDialog state
-const addDialogOpen = ref(false)
-const editDialogOpen = ref(false)
-const editingId = ref<string | null>(null)
+const addDialogOpen = ref(false);
+const editDialogOpen = ref(false);
+const editingId = ref<string | null>(null);
 
 function openAddDialog() {
-  addDialogOpen.value = true
+  addDialogOpen.value = true;
 }
 
 function openEditDialog(id: string) {
-  editingId.value = id
-  editDialogOpen.value = true
+  editingId.value = id;
+  editDialogOpen.value = true;
 }
 
 function onDialogSaved() {
-  addDialogOpen.value = false
-  editDialogOpen.value = false
-  editingId.value = null
-  fetch()
+  addDialogOpen.value = false;
+  editDialogOpen.value = false;
+  editingId.value = null;
+  fetch();
 }
 
 function onDialogDeleted() {
-  addDialogOpen.value = false
-  editDialogOpen.value = false
-  editingId.value = null
-  fetch()
+  addDialogOpen.value = false;
+  editDialogOpen.value = false;
+  editingId.value = null;
+  fetch();
 }
 
 // Suppress unused byKind reference (kept for future per-kind stats).
-void byKind
+void byKind;
 </script>
 
 <template>

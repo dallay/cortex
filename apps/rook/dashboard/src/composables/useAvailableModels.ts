@@ -17,36 +17,41 @@
  * composable's own reactivity: callers can decide whether to
  * pre-fetch or fetch-on-demand.
  */
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { useApi, type ProviderConnectionResponse, type ProviderModelsGroup } from '@/lib/api'
-import { useProviders } from '@/composables/useProviders'
+import {type ComputedRef, computed, type Ref, ref} from "vue";
+import {useProviders} from "@/composables/useProviders";
+import {
+  type ProviderConnectionResponse,
+  type ProviderModelsGroup,
+  useApi,
+} from "@/lib/api";
 
 export interface ModelsByProvider {
-  provider: ProviderConnectionResponse
-  models: string[]
+  provider: ProviderConnectionResponse;
+  models: string[];
 }
 
 export function useAvailableModels() {
-  const api = useApi()
-  const { providers, fetch: fetchProviders } = useProviders()
+  const api = useApi();
+  const {providers, fetch: fetchProviders} = useProviders();
 
-  const groups = ref<ProviderModelsGroup[]>([])
-  const loading = ref(false)
-  const error = ref<string | null>(null)
-  const fetched = ref(false)
+  const groups = ref<ProviderModelsGroup[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+  const fetched = ref(false);
 
   async function fetch() {
-    loading.value = true
-    error.value = null
+    loading.value = true;
+    error.value = null;
     try {
-      const response = await api.getAvailableModels()
-      groups.value = response.models
-      fetched.value = true
+      const response = await api.getAvailableModels();
+      groups.value = response.models;
+      fetched.value = true;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Failed to fetch available models'
+      error.value =
+        e instanceof Error ? e.message : "Failed to fetch available models";
       // Keep `groups` as-is so the UI degrades gracefully.
     } finally {
-      loading.value = false
+      loading.value = false;
     }
   }
 
@@ -58,22 +63,22 @@ export function useAvailableModels() {
    * stay safe.
    */
   const modelsByProvider: ComputedRef<ModelsByProvider[]> = computed(() => {
-    if (!fetched.value) return []
-    const byId = new Map<string, ProviderModelsGroup>()
+    if (!fetched.value) return [];
+    const byId = new Map<string, ProviderModelsGroup>();
     for (const group of groups.value) {
-      byId.set(group.providerId, group)
+      byId.set(group.providerId, group);
     }
     return providers.value
       .filter((p) => p.isActive)
       .map((provider) => {
-        const group = byId.get(provider.id)
+        const group = byId.get(provider.id);
         return {
           provider,
           models: group?.models ?? [],
-        }
+        };
       })
-      .filter((entry) => entry.models.length > 0)
-  })
+      .filter((entry) => entry.models.length > 0);
+  });
 
   return {
     groups: groups as Ref<ProviderModelsGroup[]>,
@@ -84,5 +89,5 @@ export function useAvailableModels() {
     fetch,
     // Re-exported so callers can pre-fetch providers in parallel.
     fetchProviders,
-  }
+  };
 }

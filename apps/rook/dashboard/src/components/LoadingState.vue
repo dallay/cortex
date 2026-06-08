@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Loader2 } from '@lucide/vue'
+import {Loader2} from "@lucide/vue";
 
 defineProps<{
-  message?: string
-}>()
+  message?: string;
+}>();
 </script>
 
 <template>

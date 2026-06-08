@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from "vue"
-import { DialogClose } from "reka-ui"
-import { cn } from "@/lib/utils"
-import { Button } from '@/components/ui/button'
+import {DialogClose} from "reka-ui";
+import type {HTMLAttributes} from "vue";
+import {Button} from "@/components/ui/button";
+import {cn} from "@/lib/utils";
 
-const props = withDefaults(defineProps<{
-  class?: HTMLAttributes["class"]
-  showCloseButton?: boolean
-}>(), {
-  showCloseButton: false,
-})
+const props = withDefaults(
+  defineProps<{
+    class?: HTMLAttributes["class"];
+    showCloseButton?: boolean;
+  }>(),
+  {
+    showCloseButton: false,
+  },
+);
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
+import type {Component} from "vue";
 import {
   Empty,
   EmptyContent,
@@ -7,13 +7,13 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
+} from "@/components/ui/empty";
 
 defineProps<{
-  title: string
-  description?: string
-  icon?: Component | null
-}>()
+  title: string;
+  description?: string;
+  icon?: Component | null;
+}>();
 </script>
 
 <template>
