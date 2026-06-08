@@ -1,23 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import {PROVIDER_KINDS} from '@/config/providerCatalog'
 
 /**
- * Provider kinds — hardcoded mirror of `apps/rook/dashboard/src/config/providerCatalog.ts`.
- *
- * We intentionally do NOT import `PROVIDER_KINDS` here: the router is
- * bootstrap code and must remain self-contained. Adding a new kind
- * requires updating BOTH the catalog AND this list. Drift would
- * surface as a 404 instead of a developer-facing error, which is the
- * expected (visible) failure mode.
+ * Valid provider kinds — derived from the catalog so this list and
+ * `providerCatalog.ts` can never drift apart. Adding a new kind to
+ * the catalog automatically makes its route valid here.
  */
-const VALID_PROVIDER_KINDS: readonly string[] = [
-  'openai',
-  'anthropic',
-  'ollama',
-  'gemini',
-  'groq',
-]
+const VALID_PROVIDER_KINDS: readonly string[] = PROVIDER_KINDS.map((p) => p.kind)
 
 const routes: RouteRecordRaw[] = [
   {

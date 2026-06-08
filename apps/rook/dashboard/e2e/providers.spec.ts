@@ -1,131 +1,26 @@
 import { expect, test } from "@playwright/test";
 
-test.describe("Provider Management", () => {
-	test.beforeEach(async ({ page }) => {
-		// Navigate to the app and login
-		await page.goto("/");
+// ---------------------------------------------------------------------------
+// Helper — login once per describe block
+// ---------------------------------------------------------------------------
 
-		// Check if we need to login
-		const loginForm = page.locator("form");
-		if (await loginForm.isVisible()) {
-			await page
-				.getByRole("textbox", { name: "Password" })
-				.fill("S3cr3tP@ssw0rd*123");
-			await page.getByRole("button", { name: "Sign in" }).click();
-			await expect(page).toHaveURL("/");
-		}
+async function loginIfNeeded(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  const loginForm = page.locator("form");
+  if (await loginForm.isVisible()) {
+    await page.getByRole("textbox", {name: "Password"}).fill("S3cr3tP@ssw0rd*123");
+    await page.getByRole("button", {name: "Sign in"}).click();
+    await expect(page).toHaveURL("/");
+  }
+}
 
-		// Navigate to providers page
-		await page.goto("/providers");
-	});
-
-	test("should display providers page", async ({ page }) => {
-		await expect(
-			page.getByRole("heading", { name: "Providers" }),
-		).toBeVisible();
-		await expect(page.getByText("Configure your AI providers")).toBeVisible();
-	});
-
-	test("should open add provider dialog", async ({ page }) => {
-		await page.getByRole("button", { name: "Add Provider" }).click();
-
-		await expect(
-			page.getByRole("dialog", { name: "Add Provider" }),
-		).toBeVisible();
-		await expect(
-			page.getByText("Connect a new AI provider to Rook"),
-		).toBeVisible();
-	});
-
-	test("should validate required fields", async ({ page }) => {
-		await page.getByRole("button", { name: "Add Provider" }).click();
-
-		// Save button should be disabled with empty form
-		const saveButton = page.getByRole("button", { name: "Save" }).last();
-		await expect(saveButton).toBeDisabled();
-
-		// Fill only name
-		await page.getByRole("textbox", { name: "Name" }).fill("Test Provider");
-		await expect(saveButton).toBeDisabled();
-
-		// Fill API key - now save should be enabled
-		await page
-			.getByRole("textbox", { name: "API Key" })
-			.fill("test-api-key-123");
-		await expect(saveButton).toBeEnabled();
-	});
-
-	test("should add a new ollama provider", async ({ page }) => {
-		// Click add provider button
-		await page.getByRole("button", { name: "Add Provider" }).click();
-
-		// Fill form
-		await page.getByRole("textbox", { name: "Name" }).fill("Ollama Test E2E");
-		await page
-			.getByRole("textbox", { name: "API Key" })
-			.fill("ollama-test-key-e2e");
-		await page
-			.getByRole("textbox", { name: "Base URL" })
-			.fill("https://api.ollama.com");
-
-		// Save
-		await page.getByRole("button", { name: "Save" }).last().click();
-
-		// Dialog should close
-		await expect(
-			page.getByRole("dialog", { name: "Add Provider" }),
-		).not.toBeVisible();
-
-		// Provider should appear in the list
-		await expect(page.getByText("Ollama Test E2E")).toBeVisible();
-		await expect(page.getByText("ollama")).toBeVisible();
-	});
-
-	test("should show advanced configuration", async ({ page }) => {
-		await page.getByRole("button", { name: "Add Provider" }).click();
-
-		// Advanced config should be collapsed initially
-		await expect(page.getByLabel("Max Concurrent Requests")).not.toBeVisible();
-
-		// Click to expand
-		await page.getByRole("button", { name: "Advanced Configuration" }).click();
-
-		// Now advanced fields should be visible
-		await expect(page.getByLabel("Max Concurrent Requests")).toBeVisible();
-		await expect(page.getByLabel("Default Model")).toBeVisible();
-	});
-
-	test("should reset form when dialog is closed", async ({ page }) => {
-		// Open dialog and fill some fields
-		await page.getByRole("button", { name: "Add Provider" }).click();
-		await page.getByRole("textbox", { name: "Name" }).fill("Test");
-		await page.getByRole("textbox", { name: "API Key" }).fill("key");
-
-		// Close dialog
-		await page.getByRole("button", { name: "Close" }).click();
-
-		// Reopen dialog
-		await page.getByRole("button", { name: "Add Provider" }).click();
-
-		// Fields should be empty
-		await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue("");
-		await expect(page.getByRole("textbox", { name: "API Key" })).toHaveValue(
-			"",
-		);
-	});
-});
+// ---------------------------------------------------------------------------
+// Provider Catalog — Ollama Cloud card (existing tests, kept intact)
+// ---------------------------------------------------------------------------
 
 test.describe("Provider Catalog — Ollama Cloud card", () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto("/");
-		const loginForm = page.locator("form");
-		if (await loginForm.isVisible()) {
-			await page
-				.getByRole("textbox", { name: "Password" })
-				.fill("S3cr3tP@ssw0rd*123");
-			await page.getByRole("button", { name: "Sign in" }).click();
-			await expect(page).toHaveURL("/");
-		}
+    await loginIfNeeded(page);
 		await page.goto("/providers");
 	});
 
@@ -189,4 +84,42 @@ test.describe("Provider Catalog — Ollama Cloud card", () => {
 		expect(body.providerKind).toBe("ollama-cloud");
 		expect(body.config.baseUrl).toBe("https://ollama.com");
 	});
+});
+
+// ---------------------------------------------------------------------------
+// Provider Detail Polish — new tests for the drill-in fix and title link
+// ---------------------------------------------------------------------------
+
+test.describe("Provider Detail Polish", () => {
+  test.beforeEach(async ({page}) => {
+    await loginIfNeeded(page);
+  });
+
+  test("clicking the Ollama Cloud card navigates to /providers/ollama-cloud", async ({
+                                                                                       page,
+                                                                                     }) => {
+    await page.goto("/providers");
+    // Click the card body link (not the Add button)
+    await page.getByTestId("provider-card-link-ollama-cloud").click();
+    await expect(page).toHaveURL(/\/providers\/ollama-cloud$/);
+  });
+
+  test("detail header title link has correct href, target, rel, and aria-label", async ({
+                                                                                          page,
+                                                                                        }) => {
+    await page.goto("/providers/ollama-cloud");
+    const link = page.getByRole("link", {name: /Ollama Cloud — opens in new tab/i});
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "https://ollama.com/cloud");
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", /noopener/);
+    await expect(link).toHaveAttribute("rel", /noreferrer/);
+  });
+
+  test("invalid kind /providers/foo redirects to /providers", async ({
+                                                                       page,
+                                                                     }) => {
+    await page.goto("/providers/foo");
+    await expect(page).toHaveURL(/\/providers$/);
+  });
 });

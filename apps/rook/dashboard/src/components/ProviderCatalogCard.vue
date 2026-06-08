@@ -13,33 +13,18 @@
  * `useProviderCatalog`). The card is purely presentational — all
  * state-changing actions live in the details view.
  *
- * The provider icon is resolved dynamically from `item.logoIconName`
- * (a PascalCase lucide icon name) using a small static map. Dynamic
- * imports (`@lucide/vue/dist/esm/icons/...`) keep the bundle small by
- * only loading the icons actually used by the 5 catalog entries.
+ * The provider icon is rendered by `ProviderIcon.vue` — a branded
+ * `<img src="/providers/<iconFile>">` with a Lucide `Server` fallback.
+ * Catalog cards are below the fold by default so we use `loading="lazy"`.
  */
-import { computed, markRaw, type Component } from 'vue'
+import {computed} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus } from '@lucide/vue'
-import Cpu from '@lucide/vue/dist/esm/icons/cpu.mjs'
-import Sparkles from '@lucide/vue/dist/esm/icons/sparkles.mjs'
-import Brain from '@lucide/vue/dist/esm/icons/brain.mjs'
-import Zap from '@lucide/vue/dist/esm/icons/zap.mjs'
-import Server from '@lucide/vue/dist/esm/icons/server.mjs'
-import Cloud from '@lucide/vue/dist/esm/icons/cloud.mjs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { ProviderCatalogItem } from '@/composables/useProviderCatalog'
-
-const ICONS: Record<string, Component> = markRaw({
-  Cpu,
-  Sparkles,
-  Brain,
-  Zap,
-  Server,
-  Cloud,
-})
+import ProviderIcon from '@/components/ProviderIcon.vue'
 
 const props = defineProps<{
   item: ProviderCatalogItem
@@ -65,10 +50,6 @@ const statusVariant = computed(() =>
 )
 
 const detailLink = computed(() => `/providers/${props.item.kind}`)
-
-const iconComponent = computed<Component>(() => {
-  return ICONS[props.item.logoIconName] ?? ICONS.Cpu
-})
 </script>
 
 <template>
@@ -84,7 +65,14 @@ const iconComponent = computed<Component>(() => {
       <CardHeader class="flex flex-row items-start justify-between gap-3 space-y-0 pb-2">
         <div class="flex items-start gap-3 min-w-0">
           <div class="rounded-lg bg-primary/10 p-2 shrink-0">
-            <component :is="iconComponent" class="h-5 w-5 text-primary" />
+            <ProviderIcon
+              :kind="item.kind"
+              loading="lazy"
+              :width="20"
+              :height="20"
+              :decorative="true"
+              class="text-primary"
+            />
           </div>
           <div class="min-w-0">
             <CardTitle class="text-base">{{ name }}</CardTitle>

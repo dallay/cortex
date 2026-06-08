@@ -16,7 +16,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Plus } from '@lucide/vue'
+import {ArrowLeft, Plus, ExternalLink} from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useProviders } from '@/composables/useProviders'
 import { useAvailableModels } from '@/composables/useAvailableModels'
@@ -31,6 +31,7 @@ import ErrorBanner from '@/components/ErrorBanner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AddProviderDialog from '@/components/AddProviderDialog.vue'
 import ConnectionListItem from '@/components/ConnectionListItem.vue'
+import ProviderIcon from '@/components/ProviderIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -110,7 +111,7 @@ async function handleTest(id: string) {
   try {
     const result = await test(id)
     if (result) {
-      if (result.ok) {
+      if (result.valid) {
         console.info(t('providers.details.testSuccess'))
       } else {
         console.warn(
@@ -199,10 +200,39 @@ void byKind
 
     <div class="flex items-start justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">
-          {{ t('providers.details.title', { providerName }) }}
+        <!-- Title: link to the provider's official site when brandUrl is set -->
+        <a
+          v-if="entry.brandUrl"
+          :href="entry.brandUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          :aria-label="`${providerName} — opens in new tab`"
+          class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
+        >
+          <ProviderIcon
+            :kind="entry.kind"
+            loading="eager"
+            :width="28"
+            :height="28"
+            :decorative="false"
+          />
+          <span>{{ providerName }}</span>
+          <ExternalLink :size="16" class="opacity-60 shrink-0" aria-hidden="true"/>
+        </a>
+        <h1
+          v-else
+          class="text-2xl font-semibold tracking-tight inline-flex items-center gap-1.5"
+        >
+          <ProviderIcon
+            :kind="entry.kind"
+            loading="eager"
+            :width="28"
+            :height="28"
+            :decorative="false"
+          />
+          <span>{{ providerName }}</span>
         </h1>
-        <p class="text-muted-foreground">
+        <p class="text-muted-foreground mt-1">
           {{ t('providers.details.subtitle', { providerName }) }}
         </p>
       </div>
