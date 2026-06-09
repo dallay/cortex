@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import type { WithClassAsProps } from "./interface"
-import { cn } from "@/lib/utils"
-import { useCarousel } from "./useCarousel"
+import {cn} from "@/lib/utils";
+import type {WithClassAsProps} from "./interface";
+import {useCarousel} from "./useCarousel";
 
 defineOptions({
   inheritAttrs: false,
-})
+});
 
-const props = defineProps<WithClassAsProps>()
+const props = defineProps<WithClassAsProps>();
 
 // carouselRef is used in the template via ref="carouselRef"
-// @ts-ignore TS6133
-const { orientation, carouselRef } = useCarousel()
+// @ts-expect-error TS6133
+const {orientation, carouselRef} = useCarousel();
 </script>
 
 <template>

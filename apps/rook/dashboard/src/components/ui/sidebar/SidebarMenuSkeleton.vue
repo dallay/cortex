@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from "vue"
-import { cn } from "@/lib/utils"
-import { Skeleton } from '@/components/ui/skeleton'
+import type {HTMLAttributes} from "vue";
+import {Skeleton} from "@/components/ui/skeleton";
+import {cn} from "@/lib/utils";
 
 const props = defineProps<{
-  showIcon?: boolean
-  class?: HTMLAttributes["class"]
-}>()
+  showIcon?: boolean;
+  class?: HTMLAttributes["class"];
+}>();
 
 // Use a static width range for skeleton - no randomness needed for UI skeleton
-const width = '70%'
+const width = "70%";
 </script>
 
 <template>

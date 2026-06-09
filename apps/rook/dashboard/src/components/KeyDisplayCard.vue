@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { AlertCircle } from '@lucide/vue'
-import CopyButton from '@/components/CopyButton.vue'
+import {AlertCircle} from "@lucide/vue";
+import CopyButton from "@/components/CopyButton.vue";
+import {Alert, AlertDescription} from "@/components/ui/alert";
+import {Button} from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 defineProps<{
-  apiKey: string
-  title?: string
-  description?: string
-  warning?: string
-  onDone?: () => void
-}>()
+  apiKey: string;
+  title?: string;
+  description?: string;
+  warning?: string;
+  onDone?: () => void;
+}>();
 </script>
 
 <template>

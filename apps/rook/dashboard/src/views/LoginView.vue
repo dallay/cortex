@@ -1,62 +1,62 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
-import { Lock, ShieldCheck } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { useAuthStore } from '@/stores/auth'
-import PageHeader from '@/components/PageHeader.vue'
-import PasswordInput from '@/components/PasswordInput.vue'
+import {Lock, ShieldCheck} from "@lucide/vue";
+import {computed, ref} from "vue";
+import {useI18n} from "vue-i18n";
+import {useRouter} from "vue-router";
+import PageHeader from "@/components/PageHeader.vue";
+import PasswordInput from "@/components/PasswordInput.vue";
+import {Button} from "@/components/ui/button";
+import {Input} from "@/components/ui/input";
+import {Label} from "@/components/ui/label";
+import {useAuthStore} from "@/stores/auth";
 
-const { t } = useI18n()
-const router = useRouter()
-const auth = useAuthStore()
+const {t} = useI18n();
+const router = useRouter();
+const auth = useAuthStore();
 
 // ── setup form ─────────────────────────────────────────────────────────────────
-const setupToken = ref('')
-const setupPassword = ref('')
-const setupConfirm = ref('')
-const setupError = ref<string | null>(null)
+const setupToken = ref("");
+const setupPassword = ref("");
+const setupConfirm = ref("");
+const setupError = ref<string | null>(null);
 
 const setupPasswordsMatch = computed(
-  () => setupPassword.value === setupConfirm.value || setupConfirm.value === '',
-)
+  () => setupPassword.value === setupConfirm.value || setupConfirm.value === "",
+);
 
 async function submitSetup() {
-  setupError.value = null
+  setupError.value = null;
 
   if (setupPassword.value !== setupConfirm.value) {
-    setupError.value = t('setup.error.passwordMismatch')
-    return
+    setupError.value = t("setup.error.passwordMismatch");
+    return;
   }
 
   if (setupPassword.value.length < 12) {
-    setupError.value = t('setup.error.passwordTooShort')
-    return
+    setupError.value = t("setup.error.passwordTooShort");
+    return;
   }
 
   try {
-    await auth.setupAdminPassword(setupToken.value, setupPassword.value)
-    await router.push({ name: 'Home' })
+    await auth.setupAdminPassword(setupToken.value, setupPassword.value);
+    await router.push({name: "Home"});
   } catch {
-    setupError.value = auth.error ?? t('setup.error.unknown')
+    setupError.value = auth.error ?? t("setup.error.unknown");
   }
 }
 
 // ── login form ────────────────────────────────────────────────────────────────
-const loginPassword = ref('')
-const loginError = ref<string | null>(null)
+const loginPassword = ref("");
+const loginError = ref<string | null>(null);
 
 async function submitLogin() {
-  loginError.value = null
+  loginError.value = null;
 
   try {
-    await auth.login(loginPassword.value)
-    await router.push({ name: 'Home' })
+    await auth.login(loginPassword.value);
+    await router.push({name: "Home"});
   } catch {
-    loginError.value = auth.error ?? t('auth.error.unknown')
+    loginError.value = auth.error ?? t("auth.error.unknown");
   }
 }
 </script>

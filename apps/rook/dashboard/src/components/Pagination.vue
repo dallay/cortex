@@ -1,34 +1,37 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Button } from '@/components/ui/button'
-import { ChevronLeft, ChevronRight } from '@lucide/vue'
+import {ChevronLeft, ChevronRight} from "@lucide/vue";
+import {computed} from "vue";
+import {Button} from "@/components/ui/button";
 
-const props = withDefaults(defineProps<{
-  offset?: number
-  limit?: number
-  total?: number
-  hasPrev?: boolean
-  hasNext?: boolean
-  onPrev?: () => void
-  onNext?: () => void
-}>(), {
-  offset: 0,
-  limit: 20,
-  total: 0,
-  hasPrev: false,
-  hasNext: false,
-})
+const props = withDefaults(
+  defineProps<{
+    offset?: number;
+    limit?: number;
+    total?: number;
+    hasPrev?: boolean;
+    hasNext?: boolean;
+    onPrev?: () => void;
+    onNext?: () => void;
+  }>(),
+  {
+    offset: 0,
+    limit: 20,
+    total: 0,
+    hasPrev: false,
+    hasNext: false,
+  },
+);
 
-const currentPage = computed(() => Math.floor(props.offset / props.limit) + 1)
-const totalPages = computed(() => Math.ceil(props.total / props.limit) || 1)
+const currentPage = computed(() => Math.floor(props.offset / props.limit) + 1);
+const totalPages = computed(() => Math.ceil(props.total / props.limit) || 1);
 
 const goToPrev = () => {
-  if (props.onPrev) props.onPrev()
-}
+  if (props.onPrev) props.onPrev();
+};
 
 const goToNext = () => {
-  if (props.onNext) props.onNext()
-}
+  if (props.onNext) props.onNext();
+};
 </script>
 
 <template>

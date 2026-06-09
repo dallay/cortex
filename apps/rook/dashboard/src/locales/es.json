@@ -189,7 +189,8 @@
 			"backToCatalog": "Volver a proveedores",
 			"deleteConfirm": "¿Eliminar esta conexión?",
 			"testSuccess": "Prueba de conexión exitosa.",
-			"testFailure": "Prueba de conexión fallida: {error}"
+			"testFailure": "Prueba de conexión fallida: {error}",
+			"opensInNewTab": "{providerName} — abre en nueva pestaña"
 		},
 		"quota": {
 			"title": "Cuota de proveedores",

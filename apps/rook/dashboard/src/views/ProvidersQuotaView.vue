@@ -13,26 +13,34 @@
  * connections and which models are configured per provider?" without
  * showing actual token usage.
  */
-import { onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Fuel, Info, ExternalLink } from '@lucide/vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useProviders } from '@/composables/useProviders'
-import { useAvailableModels } from '@/composables/useAvailableModels'
-import { useProviderCatalog } from '@/composables/useProviderCatalog'
 
-const { t } = useI18n()
+import {ExternalLink, Fuel, Info} from "@lucide/vue";
+import {onMounted} from "vue";
+import {useI18n} from "vue-i18n";
+import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
+import {Badge} from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviderCatalog} from "@/composables/useProviderCatalog";
+import {useProviders} from "@/composables/useProviders";
 
-const { fetch, loading } = useProviders()
-const { fetch: fetchModels } = useAvailableModels()
-const { items } = useProviderCatalog()
+const {t} = useI18n();
+
+const {fetch, loading} = useProviders();
+const {fetch: fetchModels} = useAvailableModels();
+const {items} = useProviderCatalog();
 
 onMounted(() => {
-  fetch()
-  fetchModels()
-})
+  fetch();
+  fetchModels();
+});
 
 // TODO(issue #132): replace with the real per-provider quota data once the
 // backend exposes a QuotaPort. See:

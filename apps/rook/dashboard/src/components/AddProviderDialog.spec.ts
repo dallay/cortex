@@ -740,9 +740,9 @@ describe("AddProviderDialog — test before save", () => {
 
 		expect(mockState.testCredentialsImpl).toHaveBeenCalled();
 		expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true);
-		expect(
-			wrapper.find('[data-testid="test-result-icon-ok"]').exists(),
-		).toBe(true);
+    expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
+      true,
+    );
 
 		const saveButton = wrapper.find<HTMLButtonElement>(
 			'[data-testid="save-button"]',
@@ -809,9 +809,9 @@ describe("AddProviderDialog — test before save", () => {
 		expect(
 			wrapper.find('[data-testid="test-result-icon-warning"]').exists(),
 		).toBe(true);
-		expect(
-			wrapper.find('[data-testid="test-result-icon-ok"]').exists(),
-		).toBe(false);
+    expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
+      false,
+    );
 		expect(
 			wrapper.find('[data-testid="test-result-icon-error"]').exists(),
 		).toBe(false);
@@ -968,9 +968,7 @@ describe("AddProviderDialog — Ollama Cloud (e2e)", () => {
 		const baseUrlInput = wrapper.find<HTMLInputElement>(
 			'[data-testid="input-baseUrl"]',
 		);
-		expect(baseUrlInput.exists(), "baseUrl input should be hidden").toBe(
-			false,
-		);
+    expect(baseUrlInput.exists(), "baseUrl input should be hidden").toBe(false);
 	});
 
 	it("shows the baseUrl field for self-hosted Ollama (user can override)", async () => {
@@ -979,9 +977,7 @@ describe("AddProviderDialog — Ollama Cloud (e2e)", () => {
 		const baseUrlInput = wrapper.find<HTMLInputElement>(
 			'[data-testid="input-baseUrl"]',
 		);
-		expect(baseUrlInput.exists(), "baseUrl input should be visible").toBe(
-			true,
-		);
+    expect(baseUrlInput.exists(), "baseUrl input should be visible").toBe(true);
 		expect(baseUrlInput.element.value).toBe("http://localhost:11434");
 	});
 

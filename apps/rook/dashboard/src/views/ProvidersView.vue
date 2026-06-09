@@ -12,84 +12,85 @@
  * provider kind. Click the card body to drill into the per-kind
  * details view at `/providers/:kind`.
  */
-import { computed, onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { SearchX } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import PageHeader from '@/components/PageHeader.vue'
-import ErrorBanner from '@/components/ErrorBanner.vue'
-import LoadingState from '@/components/LoadingState.vue'
-import EmptyState from '@/components/EmptyState.vue'
-import AddProviderDialog from '@/components/AddProviderDialog.vue'
+
+import {SearchX} from "@lucide/vue";
+import {computed, onMounted, ref} from "vue";
+import {useI18n} from "vue-i18n";
+import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import ErrorBanner from "@/components/ErrorBanner.vue";
+import LoadingState from "@/components/LoadingState.vue";
+import PageHeader from "@/components/PageHeader.vue";
 import ProviderCatalogFilter, {
   type CategoryFilter,
-} from '@/components/ProviderCatalogFilter.vue'
-import ProviderCategorySection from '@/components/ProviderCategorySection.vue'
-import { useProviders } from '@/composables/useProviders'
-import { useAvailableModels } from '@/composables/useAvailableModels'
-import { useProviderCatalog } from '@/composables/useProviderCatalog'
-import { CATEGORIES, type ProviderKind } from '@/config/providerCatalog'
+} from "@/components/ProviderCatalogFilter.vue";
+import ProviderCategorySection from "@/components/ProviderCategorySection.vue";
+import {Button} from "@/components/ui/button";
+import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviderCatalog} from "@/composables/useProviderCatalog";
+import {useProviders} from "@/composables/useProviders";
+import {CATEGORIES, type ProviderKind} from "@/config/providerCatalog";
 
-const { t } = useI18n()
+const {t} = useI18n();
 
-const { fetch, loading, error } = useProviders()
-const { fetch: fetchModels } = useAvailableModels()
-const { items, byCategory } = useProviderCatalog()
+const {fetch, loading, error} = useProviders();
+const {fetch: fetchModels} = useAvailableModels();
+const {items, byCategory} = useProviderCatalog();
 
-const searchQuery = ref('')
-const activeCategory = ref<CategoryFilter>('all')
+const searchQuery = ref("");
+const activeCategory = ref<CategoryFilter>("all");
 
 onMounted(() => {
-  fetch()
-  fetchModels()
-})
+  fetch();
+  fetchModels();
+});
 
 const filteredByCategory = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
+  const query = searchQuery.value.trim().toLowerCase();
   const matches = (kind: ProviderKind, displayNameKey: string) =>
-    query === '' ||
+    query === "" ||
     kind.toLowerCase().includes(query) ||
-    displayNameKey.toLowerCase().includes(query)
-  return CATEGORIES.map(category => ({
+    displayNameKey.toLowerCase().includes(query);
+  return CATEGORIES.map((category) => ({
     category,
-    items: byCategory(category.kind).value.filter(item =>
+    items: byCategory(category.kind).value.filter((item) =>
       matches(item.kind, item.displayNameKey),
     ),
-  }))
-})
+  }));
+});
 
 const totalMatches = computed(() =>
   filteredByCategory.value.reduce((sum, entry) => sum + entry.items.length, 0),
-)
+);
 
 const isFiltering = computed(
-  () => searchQuery.value.trim() !== '' || activeCategory.value !== 'all',
-)
+  () => searchQuery.value.trim() !== "" || activeCategory.value !== "all",
+);
 
 const visibleSections = computed(() => {
-  if (activeCategory.value === 'all') {
-    return filteredByCategory.value
+  if (activeCategory.value === "all") {
+    return filteredByCategory.value;
   }
   return filteredByCategory.value.filter(
-    entry => entry.category.kind === activeCategory.value,
-  )
-})
+    (entry) => entry.category.kind === activeCategory.value,
+  );
+});
 
 // AddProviderDialog state
-const addDialogOpen = ref(false)
-const addDialogKind = ref<ProviderKind | undefined>(undefined)
+const addDialogOpen = ref(false);
+const addDialogKind = ref<ProviderKind | undefined>(undefined);
 
 function openAddDialog(kind: ProviderKind) {
-  addDialogKind.value = kind
-  addDialogOpen.value = true
+  addDialogKind.value = kind;
+  addDialogOpen.value = true;
 }
 
 function onSaved() {
-  addDialogOpen.value = false
+  addDialogOpen.value = false;
 }
 
 function onDeleted() {
-  addDialogOpen.value = false
+  addDialogOpen.value = false;
 }
 </script>
 

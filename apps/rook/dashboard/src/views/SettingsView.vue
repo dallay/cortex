@@ -1,29 +1,30 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Globe, Key, Bell, Shield } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { useBaseUrl } from '@/composables/useBaseUrl'
+import {Bell, Globe, Key, Shield} from "@lucide/vue";
+import {ref} from "vue";
+import {useI18n} from "vue-i18n";
+import {Button} from "@/components/ui/button";
+import {Input} from "@/components/ui/input";
+import {useBaseUrl} from "@/composables/useBaseUrl";
 
-const { t } = useI18n()
-const { baseUrl, fullBaseUrl, isOverridden, setOverride, clearOverride } = useBaseUrl()
+const {t} = useI18n();
+const {baseUrl, fullBaseUrl, isOverridden, setOverride, clearOverride} =
+  useBaseUrl();
 
 // Settings state
 const settings = ref({
-  customBaseUrl: isOverridden.value ? baseUrl.value : '',
-  port: '8080',
-  logLevel: 'info',
+  customBaseUrl: isOverridden.value ? baseUrl.value : "",
+  port: "8080",
+  logLevel: "info",
   maxConcurrentRequests: 100,
   enableAuditLog: true,
   enableMetrics: true,
-})
+});
 
 function saveApiSettings() {
   if (settings.value.customBaseUrl) {
-    setOverride(settings.value.customBaseUrl)
+    setOverride(settings.value.customBaseUrl);
   } else {
-    clearOverride()
+    clearOverride();
   }
 }
 

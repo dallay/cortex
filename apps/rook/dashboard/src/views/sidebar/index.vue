@@ -13,39 +13,40 @@
  * the opt-in, every 2-level page (`/combos`, `/settings`,
  * `/providers`, `/providers/quota`) keeps its existing 2-level shape.
  */
-import { computed } from 'vue'
-import type { RouteLocationRaw } from 'vue-router'
-import { useRoute, RouterLink } from 'vue-router'
-import { useI18n } from 'vue-i18n'
-import AppSidebar from '@/components/AppSidebar.vue'
-import ThemeToggle from '@/components/ui/theme-toggle/ThemeToggle.vue'
-import { LocaleSwitcher } from '@/components/ui/locale-switcher'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import type { RouteLocationRaw } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
+import AppSidebar from "@/components/AppSidebar.vue";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb'
-import { Separator } from '@/components/ui/separator'
+	Breadcrumb,
+	BreadcrumbItem,
+	BreadcrumbLink,
+	BreadcrumbList,
+	BreadcrumbPage,
+	BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { LocaleSwitcher } from "@/components/ui/locale-switcher";
+import { Separator } from "@/components/ui/separator";
 import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from '@/components/ui/sidebar'
+	SidebarInset,
+	SidebarProvider,
+	SidebarTrigger,
+} from "@/components/ui/sidebar";
+import ThemeToggle from "@/components/ui/theme-toggle/ThemeToggle.vue";
+import { findCatalogEntry } from "@/config/providerCatalog";
 
 interface Crumb {
-  /** Resolved label (already passed through `t()`). */
-  label: string
-  /** Router target. The last crumb typically points to the current route. */
-  to: RouteLocationRaw
-  /** `true` for the last crumb — renders as `BreadcrumbPage`, not a link. */
-  isCurrent: boolean
+	/** Resolved label (already passed through `t()`). */
+	label: string;
+	/** Router target. The last crumb typically points to the current route. */
+	to: RouteLocationRaw;
+	/** `true` for the last crumb — renders as `BreadcrumbPage`, not a link. */
+	isCurrent: boolean;
 }
 
-const route = useRoute()
-const { t } = useI18n()
+const route = useRoute();
+const { t } = useI18n();
 
 /**
  * Resolve the label for the *last* crumb in the breadcrumb.
@@ -57,15 +58,20 @@ const { t } = useI18n()
  * i18n keys, which already exist for every `ProviderKind`.
  */
 function lastCrumbLabel(): string {
-  if (route.meta.breadcrumb === true) {
-    const kind = route.params.providerKind
-    if (typeof kind === 'string' && kind.length > 0) {
-      return t(`providers.kind.${kind}`)
-    }
-  }
-  const titleKey = route.meta.title as string | undefined
-  if (titleKey) return t(titleKey)
-  return (route.name as string | undefined) ?? t('nav.home')
+	if (route.meta.breadcrumb === true) {
+		const kind = route.params.providerKind;
+		if (typeof kind === "string" && kind.length > 0) {
+			try {
+				const entry = findCatalogEntry(kind as Parameters<typeof findCatalogEntry>[0]);
+				return t(entry.displayNameKey);
+			} catch {
+				// Fall through to route.name if kind is not in catalog
+			}
+		}
+	}
+	const titleKey = route.meta.title as string | undefined;
+	if (titleKey) return t(titleKey);
+	return (route.name as string | undefined) ?? t("nav.home");
 }
 
 /**
@@ -74,34 +80,38 @@ function lastCrumbLabel(): string {
  * by setting both `title` and `breadcrumb: true` on its children.
  */
 function sectionCrumbLabel(): string {
-  // matched[0] = Sidebar layout, matched[1] = provider section parent
-  const sectionMeta = route.matched[1]?.meta
-  const titleKey = (sectionMeta?.title as string | undefined)
-    ?? 'nav.providersCatalog'
-  return t(titleKey)
+	// matched[0] = Sidebar layout, matched[1] = provider section parent
+	const sectionMeta = route.matched[1]?.meta;
+	const titleKey =
+		(sectionMeta?.title as string | undefined) ?? "nav.providersCatalog";
+	return t(titleKey);
 }
 
 const breadcrumbs = computed<Crumb[]>(() => {
-  // Root page — no breadcrumb at all.
-  if (route.matched.length <= 1) return []
+	// Root page — no breadcrumb at all.
+	if (route.matched.length <= 1) return [];
 
-  const wantsThreeLevels =
-    route.matched.length >= 3 && route.meta.breadcrumb === true
+	const wantsThreeLevels =
+		route.matched.length >= 3 && route.meta.breadcrumb === true;
 
-  if (wantsThreeLevels) {
-    return [
-      { label: t('nav.home'), to: { name: 'Home' }, isCurrent: false },
-      { label: sectionCrumbLabel(), to: { name: 'Providers' }, isCurrent: false },
-      { label: lastCrumbLabel(), to: route, isCurrent: true },
-    ]
-  }
+	if (wantsThreeLevels) {
+		return [
+			{ label: t("nav.home"), to: { name: "Home" }, isCurrent: false },
+			{
+				label: sectionCrumbLabel(),
+				to: { name: "Providers" },
+				isCurrent: false,
+			},
+			{ label: lastCrumbLabel(), to: route, isCurrent: true },
+		];
+	}
 
-  // 2-level — Home + current page.
-  return [
-    { label: t('nav.home'), to: { name: 'Home' }, isCurrent: false },
-    { label: lastCrumbLabel(), to: route, isCurrent: true },
-  ]
-})
+	// 2-level — Home + current page.
+	return [
+		{ label: t("nav.home"), to: { name: "Home" }, isCurrent: false },
+		{ label: lastCrumbLabel(), to: route, isCurrent: true },
+	];
+});
 </script>
 
 <template>

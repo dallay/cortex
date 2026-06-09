@@ -10,34 +10,35 @@
  * `CategoryKind | 'all'` discriminated string so the parent can
  * early-out when `'all'` is selected.
  */
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Search } from '@lucide/vue'
-import { Input } from '@/components/ui/input'
-import { CATEGORIES, type CategoryKind } from '@/config/providerCatalog'
 
-export type CategoryFilter = CategoryKind | 'all'
+import {Search} from "@lucide/vue";
+import {computed} from "vue";
+import {useI18n} from "vue-i18n";
+import {Input} from "@/components/ui/input";
+import {CATEGORIES, type CategoryKind} from "@/config/providerCatalog";
+
+export type CategoryFilter = CategoryKind | "all";
 
 const props = defineProps<{
-  searchQuery: string
-  activeCategory: CategoryFilter
-}>()
+  searchQuery: string;
+  activeCategory: CategoryFilter;
+}>();
 
 const emit = defineEmits<{
-  'update:searchQuery': [value: string]
-  'update:activeCategory': [value: CategoryFilter]
-}>()
+  "update:searchQuery": [value: string];
+  "update:activeCategory": [value: CategoryFilter];
+}>();
 
-const { t } = useI18n()
+const {t} = useI18n();
 
 const chips = computed(() => [
-  { value: 'all' as const, label: t('providers.catalog.filterAll') },
-  ...CATEGORIES.map(c => ({ value: c.kind, label: t(c.displayNameKey) })),
-])
+  {value: "all" as const, label: t("providers.catalog.filterAll")},
+  ...CATEGORIES.map((c) => ({value: c.kind, label: t(c.displayNameKey)})),
+]);
 
 function onSearchInput(event: Event) {
-  const target = event.target as HTMLInputElement
-  emit('update:searchQuery', target.value)
+  const target = event.target as HTMLInputElement;
+  emit("update:searchQuery", target.value);
 }
 </script>
 

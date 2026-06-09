@@ -1,9 +1,10 @@
 <script lang="ts">
-import type { HTMLAttributes } from "vue"
-import type { ChartConfig } from "."
-import { useId } from "reka-ui"
-import { computed, toRefs } from "vue"
-import { provideChartContext } from "."
+import {useId} from "reka-ui";
+import type {HTMLAttributes} from "vue";
+import {computed, toRefs} from "vue";
+import type {ChartConfig} from ".";
+import {provideChartContext} from ".";
+import {cn} from "@/lib/utils";
 </script>
 
 <script setup lang="ts">

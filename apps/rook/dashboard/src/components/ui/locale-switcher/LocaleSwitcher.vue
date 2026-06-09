@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import { setLocale } from '@/i18n'
-import type { AcceptableValue } from 'reka-ui'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type {AcceptableValue} from "reka-ui";
+import {useI18n} from "vue-i18n";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {setLocale} from "@/i18n";
 
-const { locale } = useI18n()
+const {locale} = useI18n();
 
 const locales = [
-  { code: 'en', label: 'English' },
-  { code: 'es', label: 'Español' },
-] as const
+  {code: "en", label: "English"},
+  {code: "es", label: "Español"},
+] as const;
 
 function handleChange(value: AcceptableValue) {
-  if (typeof value === 'string') {
-    setLocale(value as 'en' | 'es')
+  if (typeof value === "string") {
+    setLocale(value as "en" | "es");
   }
 }
 </script>

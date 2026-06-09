@@ -117,16 +117,65 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 **Health check behavior:**
 
-- Placeholder: always returns `HealthStatus::Unknown { reason: "health_check_not_supported" }`
-- Per `HealthStatus::is_healthy()`, this yields `is_healthy() === false` and the `/health` endpoint renders `healthy: false`
-- TODO: real health check (e.g., `GET /api/tags`)
+- Two-step probe:
+  1. `GET /api/tags` — verify host reachability
+  2. `POST /api/chat` (if API key configured) — verify credentials
+- Returns `HealthStatus::Warning` if no API key configured (for Ollama Cloud use cases)
 
 **Implementation status:**
 
-- `complete()` — ❌ Not yet implemented
-- `stream()` — ❌ Not yet implemented
+- `complete()` — ✅ Implemented
+- `stream()` — ✅ Implemented
 
-**Note:** Ollama uses an OpenAI-compatible API format (`/v1/chat/completions`), so the OpenAI adapter in `transport-axum` can translate requests to Ollama's format.
+**Note:** Ollama uses its native API format (`/api/chat`), NOT the OpenAI-compatible endpoint.
+
+---
+
+## Ollama Cloud
+
+**Kind:** `ollama-cloud`
+
+**Auth:** API key (Bearer token)
+
+**Default base URL:** `https://ollama.com`
+
+**Default timeout:** 300s (cloud models may take longer than standard API providers)
+
+**API example:**
+
+```json
+{
+  "name": "ollama-cloud-primary",
+  "provider_kind": "ollama-cloud",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${OLLAMA_CLOUD_API_KEY}" },
+  "is_active": true,
+  "priority": 1
+}
+```
+
+**Getting an API key:**
+
+1. Go to [ollama.com/settings/keys](https://ollama.com/settings/keys) — Sign in required; you'll be redirected to [signin.ollama.com](https://signin.ollama.com) if not authenticated
+2. Generate a new API key
+3. Store it securely (env var, secrets manager, etc.)
+
+**Health check behavior:**
+
+- Two-step probe:
+  1. `GET /api/tags` — verify `ollama.com` is reachable (public endpoint)
+  2. `POST /api/chat` with Bearer auth — verify API key is valid
+- Returns `HealthStatus::Warning` if API key is missing (provider still works but credentials aren't validated)
+- Returns `HealthStatus::Unhealthy` with error if auth is rejected (401/403)
+
+**Implementation status:**
+
+- `complete()` — ✅ Implemented
+- `stream()` — ✅ Implemented
+
+**Note:** Both local Ollama and Ollama Cloud use the same `providers_ollama::OllamaProvider` adapter, driven by `OllamaProviderConfig`:
+- **Ollama Cloud** (`ProviderKind::OllamaCloud`): `base_url` defaults to `https://ollama.com`, `api_key` set to Bearer token enabling `Authorization: Bearer ...` headers
+- **Local Ollama** (`ProviderKind::Ollama`): `base_url` defaults to `http://localhost:11434`, `api_key` unset (no auth)
 
 ---
 
@@ -200,13 +249,17 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 ## Provider Capability Matrix
 
-| Provider  | complete() | stream() | Real health check | Default timeout |
-|-----------|------------|----------|-------------------|-----------------|
-| OpenAI    | ✅          | ❌        | ✅                 | 60s             |
-| Anthropic | ❌          | ❌        | ❌ (placeholder)   | 60s             |
-| Ollama    | ❌          | ❌        | ❌ (placeholder)   | 300s            |
-| Gemini    | ❌          | ❌        | ❌ (placeholder)   | 60s             |
-| Groq      | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Provider      | complete() | stream() | Real health check | Default timeout |
+|---------------|------------|----------|-------------------|-----------------|
+| OpenAI        | ✅          | ✅        | ✅                 | 60s             |
+| Anthropic     | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Ollama (1)    | ✅          | ✅        | ✅ (2-step)        | 300s            |
+| Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
+
+(1) Ollama and Ollama Cloud share the same `OllamaProvider` implementation. Local Ollama uses `http://localhost:11434` with no API key; Ollama Cloud uses `https://ollama.com` with Bearer auth configured via `api_key`.
+
+| Gemini        | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Groq          | ❌          | ❌        | ❌ (placeholder)   | 60s             |
 
 ## Circuit Breaker
 

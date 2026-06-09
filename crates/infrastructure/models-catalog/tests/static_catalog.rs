@@ -87,6 +87,7 @@ async fn list_returns_at_least_one_entry_per_supported_provider_kind() {
         ProviderKind::OpenAI,
         ProviderKind::Anthropic,
         ProviderKind::Ollama,
+        ProviderKind::OllamaCloud,
         ProviderKind::Gemini,
         ProviderKind::Groq,
     ] {
@@ -102,4 +103,66 @@ async fn list_returns_at_least_one_entry_per_supported_provider_kind() {
             "provider kind {kind:?} must appear in catalog"
         );
     }
+}
+
+/// Ollama Cloud models — must include the 9 models from OmniRoute registry.
+/// This verifies the expanded catalog is working correctly.
+const OLLAMA_CLOUD_EXPECTED_MODEL_IDS: &[&str] = &[
+    "ollamacloud/deepseek-v4-pro",
+    "ollamacloud/deepseek-v4-flash",
+    "ollamacloud/kimi-k2.6",
+    "ollamacloud/glm-5.1",
+    "ollamacloud/minimax-m2.7",
+    "ollamacloud/gemma4:31b",
+    "ollamacloud/nemotron-3-super",
+    "ollamacloud/qwen3.5:397b",
+    "ollamacloud/qwen3-coder-next",
+];
+
+#[tokio::test]
+async fn ollama_cloud_has_expanded_model_list() {
+    let catalog = StaticModelCatalog::new();
+    let entries = catalog.list().await;
+
+    let ollama_cloud_entries: Vec<_> = entries
+        .iter()
+        .filter(|e| e.provider_kind == ProviderKind::OllamaCloud)
+        .collect();
+
+    let actual_ids: HashSet<_> = ollama_cloud_entries
+        .iter()
+        .map(|e| e.model_id.as_str())
+        .collect();
+
+    let expected_ids: HashSet<_> = OLLAMA_CLOUD_EXPECTED_MODEL_IDS.iter().copied().collect();
+
+    assert_eq!(
+        actual_ids.len(),
+        expected_ids.len(),
+        "OllamaCloud must have exactly {} models, got {}",
+        expected_ids.len(),
+        actual_ids.len()
+    );
+
+    for expected_id in OLLAMA_CLOUD_EXPECTED_MODEL_IDS {
+        assert!(
+            actual_ids.contains(expected_id),
+            "missing OllamaCloud model: {expected_id}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ollama_cloud_qwen3_coder_next_is_present() {
+    let catalog = StaticModelCatalog::new();
+    let entries = catalog.list().await;
+
+    let has_qwen3_coder = entries.iter().any(|e| {
+        e.provider_kind == ProviderKind::OllamaCloud && e.model_id == "ollamacloud/qwen3-coder-next"
+    });
+
+    assert!(
+        has_qwen3_coder,
+        "ollamacloud/qwen3-coder-next must be present in catalog for OpenCode compatibility"
+    );
 }

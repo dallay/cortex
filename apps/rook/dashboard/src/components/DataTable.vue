@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import {
-  Table,
-} from '@/components/ui/table'
+import {Table} from "@/components/ui/table";
 </script>
 
 <template>

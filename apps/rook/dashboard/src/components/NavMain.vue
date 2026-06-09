@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import type { Component } from 'vue'
-import { ChevronRight } from '@lucide/vue'
+import {ChevronRight} from "@lucide/vue";
+import type {Component} from "vue";
+import {useI18n} from "vue-i18n";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+} from "@/components/ui/collapsible";
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -17,22 +17,22 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-} from '@/components/ui/sidebar'
+} from "@/components/ui/sidebar";
 
-const { t } = useI18n()
+const {t} = useI18n();
 
 defineProps<{
   items: {
-    title: string
-    url: string
-    icon: Component
-    isActive?: boolean
+    title: string;
+    url: string;
+    icon: Component;
+    isActive?: boolean;
     items?: {
-      title: string
-      url: string
-    }[]
-  }[]
-}>()
+      title: string;
+      url: string;
+    }[];
+  }[];
+}>();
 </script>
 
 <template>

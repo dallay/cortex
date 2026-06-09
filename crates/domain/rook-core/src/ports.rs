@@ -88,6 +88,13 @@ pub trait RouterPort: Send + Sync {
     /// Returns the selected provider, never an error if at least one provider is available.
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
 
+    /// Select the best available provider, excluding those in `excluded`.
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>>;
+
     /// Called when a provider call fails — allows the router to update
     /// internal state (circuit breaker, weights, etc.)
     async fn on_failure(&self, provider: &ProviderId, error: &shared_kernel::CortexError);
