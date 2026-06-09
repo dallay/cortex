@@ -310,7 +310,7 @@ jobs:
           exit-code: '1'
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/trivy/trivy-pr.sarif
           category: trivy-fs
@@ -346,7 +346,7 @@ jobs:
             --exit-code 1
       - name: Upload Gitleaks SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/gitleaks/gitleaks-pr.sarif
           category: gitleaks-pr
@@ -387,7 +387,7 @@ jobs:
           fi
       - name: Upload Semgrep SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/semgrep/semgrep-pr.sarif
           category: semgrep-pr
@@ -418,7 +418,7 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         with:
           files: lcov.info
           flags: backend
@@ -451,7 +451,7 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json --coverage.reportsDirectory=coverage
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         with:
           files: apps/rook/dashboard/coverage/lcov.info
           flags: frontend
