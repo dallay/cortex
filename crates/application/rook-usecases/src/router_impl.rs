@@ -140,7 +140,7 @@ impl FallbackRouter {
             .filter(|p| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
-                !circuit.is_open() && p.supports_model(model)
+                !circuit.is_open() && p.supports_model(model) && p.is_available()
             })
             .cloned()
             .collect()
@@ -286,6 +286,68 @@ impl RouterPort for FallbackRouter {
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
 
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        use std::collections::HashSet;
+        let excluded_set: HashSet<_> = excluded.iter().collect();
+        let candidates = self.available_providers(&req.model);
+        // Filter out excluded providers and those with open circuit breaker
+        let available: Vec<_> = candidates
+            .into_iter()
+            .filter(|p| !excluded_set.contains(p.id()))
+            .collect();
+
+        if available.is_empty() {
+            return Err(CortexError::all_providers_exhausted());
+        }
+
+        // Apply strategy to remaining candidates
+        let selected = match &self.strategy {
+            RoutingStrategy::Priority => {
+                // Return first candidate (assumes sorted by priority)
+                available.first().cloned()
+            }
+            RoutingStrategy::RoundRobin => {
+                let mut index = self.round_robin_index.write().await;
+                let idx = *index % available.len();
+                *index = (idx + 1) % available.len();
+                available.get(idx).cloned()
+            }
+            RoutingStrategy::WeightedRandom(weights) => {
+                // Pair providers with weights, filter to available, then weighted selection
+                let providers_guard = self.providers.read();
+                let paired: Vec<_> = providers_guard
+                    .iter()
+                    .filter(|p| available.iter().any(|a| a.id() == p.id()))
+                    .zip(weights.iter())
+                    .map(|(p, &w)| (p.clone(), w))
+                    .collect();
+                drop(providers_guard);
+
+                if paired.is_empty() {
+                    available.first().cloned()
+                } else {
+                    let total: f32 = paired.iter().map(|(_, w)| *w).sum();
+                    let mut rng = rand::rng();
+                    let r = rng.random::<f32>() * total;
+                    let mut sum = 0.0_f32;
+                    paired
+                        .iter()
+                        .find(|(_, w)| {
+                            sum += *w;
+                            sum >= r
+                        })
+                        .map(|(p, _)| p.clone())
+                }
+            }
+            RoutingStrategy::ModelBased => available.first().cloned(),
+        };
+        selected.ok_or_else(CortexError::all_providers_exhausted)
+    }
+
     async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
         let mut state = self.circuits.entry(provider.clone()).or_default();
 
@@ -329,8 +391,9 @@ mod tests {
     use super::*;
     use futures::stream::BoxStream;
     use rook_core::{
-        ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, Message, ModelId,
-        ProviderId, ProviderPort, Role, StreamChunk, TokenUsage,
+        ApiFormat, ApiKeyRestrictions, CompletionRequest, CompletionResponse, HealthStatus,
+        Message, ModelId, ProviderId, ProviderPort, RequestId, RequestMetadata, Role, StreamChunk,
+        TokenUsage,
     };
 
     struct StubProvider {
@@ -344,6 +407,31 @@ mod tests {
                 id: ProviderId::new(id),
                 models: models.iter().map(|model| ModelId::new(*model)).collect(),
             })
+        }
+    }
+
+    fn make_test_request(model: &str) -> CompletionRequest {
+        CompletionRequest {
+            id: RequestId::new(),
+            model: ModelId::new(model),
+            messages: vec![Message {
+                role: Role::User,
+                content: "test".into(),
+            }],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: RequestMetadata {
+                origin: "test".to_string(),
+                cacheable: true,
+                priority: 1,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: ApiKeyRestrictions::default(),
         }
     }
 
@@ -868,5 +956,85 @@ mod tests {
         );
         assert!(router.get(&ProviderId::new("p1")).is_none());
         assert!(router.get(&ProviderId::new("p2")).is_some());
+    }
+
+    // 5.6 — select_excluding returns available provider excluding specified ones
+    #[tokio::test]
+    async fn select_excluding_returns_non_excluded_provider() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        let p2 = StubProvider::new("p2", &["model-a"]);
+        router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
+        let req = make_test_request("model-a");
+
+        // Exclude p1, should return p2
+        let selected = router
+            .select_excluding(&req, &[ProviderId::new("p1")])
+            .await
+            .expect("should return available provider");
+        assert_eq!(selected.id().as_str(), "p2");
+    }
+
+    // 5.7 — select_excluding returns error when all providers excluded
+    #[tokio::test]
+    async fn select_excluding_returns_error_when_all_excluded() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        router.replace_all(vec![p1.clone()]).unwrap();
+        let req = make_test_request("model-a");
+
+        // Exclude the only provider
+        let result = router
+            .select_excluding(&req, &[ProviderId::new("p1")])
+            .await;
+        assert!(
+            result.is_err(),
+            "should return error when all providers excluded"
+        );
+    }
+
+    // 5.8 — select_excluding with empty exclusion list works like select
+    #[tokio::test]
+    async fn select_excluding_with_empty_list_returns_first_available() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        let p2 = StubProvider::new("p2", &["model-a"]);
+        router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
+        let req = make_test_request("model-a");
+
+        // Empty exclusion list should return first available (p1 with priority strategy)
+        let selected = router
+            .select_excluding(&req, &[])
+            .await
+            .expect("should return available provider");
+        assert_eq!(selected.id().as_str(), "p1");
+    }
+
+    // 5.9 — select_excluding skips providers with open circuit breaker
+    #[tokio::test]
+    async fn select_excluding_skips_open_circuit_provider() {
+        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let p1 = StubProvider::new("p1", &["model-a"]);
+        let p2 = StubProvider::new("p2", &["model-a"]);
+        router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
+
+        // Open circuit for p1 by recording failures
+        for _ in 0..3 {
+            router
+                .on_failure(
+                    &ProviderId::new("p1"),
+                    &shared_kernel::CortexError::provider("test failure"),
+                )
+                .await;
+        }
+
+        let req = make_test_request("model-a");
+
+        // p1 circuit is open, should return p2
+        let selected = router
+            .select_excluding(&req, &[])
+            .await
+            .expect("should return available provider");
+        assert_eq!(selected.id().as_str(), "p2");
     }
 }
