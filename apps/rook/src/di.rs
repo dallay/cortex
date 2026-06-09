@@ -18,9 +18,9 @@ use provider_sqlite::SqliteProviderRepository;
 use providers_ollama::OllamaProvider;
 use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
-    ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, PasswordHasher,
-    ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort,
-    RouterPort, SessionRepositoryPort, UsageRecorderPort,
+    ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, ModelCatalogPort,
+    PasswordHasher, ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort,
+    ProviderRepositoryPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -97,6 +97,9 @@ impl RookContainer {
             Arc::new(SqliteSessionRepository::new(&config.database.db_path)?);
         let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2idHasher::new());
 
+        // Model catalog — shared across DynamicProviderBuilder and RookUsecases
+        let model_catalog: Arc<dyn ModelCatalogPort> = Arc::new(StaticModelCatalog::new());
+
         // 5. Build ValidateSession for middleware
         let validate_session = Arc::new(ValidateSession::new(
             session_repo.clone(),
@@ -151,7 +154,7 @@ impl RookContainer {
                     .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
             );
             let repo = provider_repo.clone();
-            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder);
+            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
             Some(ManageConnections::new(
                 repo,
                 registry.clone(),
@@ -286,7 +289,7 @@ impl RookContainer {
                 logout,
                 Arc::new(tokio::sync::RwLock::new(None)),
                 session_repo.clone(),
-                Arc::new(StaticModelCatalog::new()),
+                model_catalog.clone(),
                 fallback_router.clone(),
             ));
 
@@ -758,6 +761,7 @@ pub fn build_provider_from_connection(
     kind: ProviderKind,
     credentials: &DecryptedCredentials,
     base_url_override: Option<String>,
+    models: Vec<ModelId>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
@@ -775,7 +779,7 @@ pub fn build_provider_from_connection(
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
                 base_url: base_url_override.unwrap_or_else(|| "https://api.openai.com".to_string()),
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 60,
             };
             Arc::new(
@@ -789,7 +793,7 @@ pub fn build_provider_from_connection(
                 api_key,
                 base_url: base_url_override
                     .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 60,
             };
             providers_anthropic::AnthropicProvider::new(config)
@@ -800,7 +804,7 @@ pub fn build_provider_from_connection(
             let config = providers_ollama::OllamaProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 base_url,
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 300,
                 api_key: None,
             };
@@ -816,7 +820,7 @@ pub fn build_provider_from_connection(
             let config = providers_ollama::OllamaProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 base_url,
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 300,
                 api_key: if api_key.is_empty() {
                     None
@@ -832,7 +836,7 @@ pub fn build_provider_from_connection(
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
                 base_url: base_url_override,
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 60,
             };
             providers_gemini::GeminiProvider::new(config)
@@ -843,7 +847,7 @@ pub fn build_provider_from_connection(
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
                 base_url: None,
-                models: Vec::new(),
+                models: models.clone(),
                 timeout_secs: 60,
             };
             providers_groq::GroqProvider::new(config)
@@ -855,7 +859,15 @@ pub fn build_provider_from_connection(
 }
 
 #[derive(Clone)]
-struct DynamicProviderBuilder;
+struct DynamicProviderBuilder {
+    catalog: Arc<dyn ModelCatalogPort>,
+}
+
+impl DynamicProviderBuilder {
+    fn new(catalog: Arc<dyn ModelCatalogPort>) -> Self {
+        Self { catalog }
+    }
+}
 
 #[async_trait]
 impl ProviderBuilderPort for DynamicProviderBuilder {
@@ -863,11 +875,20 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         &self,
         input: ProviderBuildInput,
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
+        // Query model catalog for models matching this provider kind
+        let catalog_entries = self.catalog.list().await;
+        let models: Vec<ModelId> = catalog_entries
+            .into_iter()
+            .filter(|e| e.provider_kind == input.provider_kind)
+            .map(|e| ModelId::new(e.model_id))
+            .collect();
+
         build_provider_from_connection(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
             input.base_url,
+            models,
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
     }

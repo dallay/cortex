@@ -29,7 +29,7 @@ fn build_provider_from_connection_openai_uses_default_base_url() {
         api_key: "sk-test-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None);
+    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
     let provider = result.expect("expected Ok for OpenAI with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -43,7 +43,7 @@ fn build_provider_from_connection_openai_uses_override() {
     let id = conn_id();
     let override_url = "https://custom.openai.example.com/v1".to_string();
     let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, Some(override_url));
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, Some(override_url), Vec::new());
     let provider = result.expect("expected Ok for OpenAI with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -55,7 +55,7 @@ fn build_provider_from_connection_ollama_requires_base_url() {
         api_key: String::new(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None);
+    let result = build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None, Vec::new());
     let err = match result {
         Ok(provider) => panic!(
             "expected OllamaRequiresBaseUrl error, got Ok({:?})",
@@ -82,6 +82,7 @@ fn build_provider_from_connection_ollama_uses_override() {
         ProviderKind::Ollama,
         &creds,
         Some("http://localhost:11434".to_string()),
+        Vec::new(),
     );
     let provider = result.expect("expected Ok for Ollama with base_url override");
     assert_eq!(provider.id().as_str(), id.to_string());
@@ -100,7 +101,7 @@ fn build_provider_from_connection_oauth_access_token_used_as_api_key() {
         project_id: "project".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None);
+    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
     assert!(
         result.is_ok(),
         "expected Ok — OAuth access_token should work as api_key"
@@ -116,7 +117,7 @@ fn build_provider_from_connection_ollama_cloud_uses_default_base_url() {
         api_key: "ollama-cloud-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None);
+    let result = build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None, Vec::new());
     let provider = result.expect("expected Ok for OllamaCloud with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -133,6 +134,7 @@ fn build_provider_from_connection_ollama_cloud_uses_override() {
         ProviderKind::OllamaCloud,
         &creds,
         Some("https://staging.ollama.example.com".to_string()),
+        Vec::new(),
     );
     let provider = result.expect("expected Ok for OllamaCloud with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
