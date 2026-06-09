@@ -60,10 +60,7 @@ impl ProviderPort for RateLimitedProvider {
 
     async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
         // Return rate limited error - this is retryable
-        Err(CortexError::rate_limited(
-            ProviderId::new(self.id.as_str()),
-            60,
-        ))
+        Err(CortexError::rate_limited(self.id.clone(), 60))
     }
 
     async fn stream(
@@ -116,10 +113,14 @@ impl ProviderPort for SuccessfulProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        let model = self
+            .models
+            .first()
+            .ok_or_else(|| CortexError::invalid_request("SuccessfulProvider has no models"))?;
         Ok(CompletionResponse {
             id: req.id.clone(),
             provider: self.id.clone(),
-            model: self.models[0].clone(),
+            model: model.clone(),
             content: "successful response".to_string(),
             content_blocks: vec![MessageContent::Text("successful response".to_string())],
             usage: TokenUsage {
@@ -245,7 +246,7 @@ impl RouterPort for CyclingRouter {
         // Apply RoundRobin to available providers
         let mut index = self.round_robin_index.lock().unwrap();
         let idx = *index % available.len();
-        *index = idx + 1;
+        *index = (idx + 1) % available.len();
         Ok(available[idx].clone())
     }
 
@@ -488,7 +489,7 @@ async fn retry_loop_non_retryable_error_fails_immediately() {
 }
 
 #[tokio::test]
-async fn retry_loop_respects_max_retry_attempts() {
+async fn retry_loop_exhausts_all_providers() {
     // Setup: 3 providers, all fail with rate limit
     let p1 = Arc::new(RateLimitedProvider::new("p1", vec!["model-a"]));
     let p2 = Arc::new(RateLimitedProvider::new("p2", vec!["model-a"]));

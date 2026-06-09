@@ -213,7 +213,7 @@ curl http://localhost:8080/api/telemetry/summary
 - [ ] Generate and securely store `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT`
 - [ ] Use a persistent database path (not in-memory)
 - [ ] Enable `auth.api_keys` for production if exposing to network
-- [ ] Configure rate limiting if needed
+- [ ] Configure rate-limiting if needed
 - [ ] Set up monitoring/log aggregation
 - [ ] Use a reverse proxy (nginx, Caddy, etc.) for TLS termination
 - [ ] Consider adding health checks and auto-restart policies

@@ -109,6 +109,14 @@ impl RouterPort for FakeRouter {
         Ok(self.provider.clone())
     }
 
+    async fn select_excluding(
+        &self,
+        _req: &CompletionRequest,
+        _excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        Ok(self.provider.clone())
+    }
+
     async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
 
     fn providers(&self) -> Vec<ProviderId> {

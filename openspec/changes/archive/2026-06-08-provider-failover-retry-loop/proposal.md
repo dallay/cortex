@@ -71,13 +71,17 @@
 // Exclusion list per request — bounded, stack-allocated
 type ExcludedProviders = SmallVec<[ProviderId; 4]>;
 
-// RouterPort extension
-trait RouterPortExt {
+// RouterPort trait includes select_excluding
+#[async_trait]
+trait RouterPort: Send + Sync {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
     async fn select_excluding(
-        &self, 
+        &self,
         req: &CompletionRequest,
         excluded: &[ProviderId]
     ) -> CortexResult<Arc<dyn ProviderPort>>;
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError);
+    fn providers(&self) -> Vec<ProviderId>;
 }
 ```
 

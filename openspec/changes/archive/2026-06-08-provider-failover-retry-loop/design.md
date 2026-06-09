@@ -29,23 +29,26 @@
 
 ### Key Components
 
-#### 1. `RouterPortExt` Trait Extension
+#### 1. `RouterPort::select_excluding` Method
 
 ```rust
-// In router_impl.rs
+// In ports.rs
 
-/// Extension trait providing select with exclusion
 #[async_trait]
-pub trait RouterPortExt: RouterPort {
+pub trait RouterPort: Send + Sync {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
+
     async fn select_excluding(
         &self,
         req: &CompletionRequest,
         excluded: &[ProviderId],
     ) -> CortexResult<Arc<dyn ProviderPort>>;
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError);
+    fn providers(&self) -> Vec<ProviderId>;
 }
 
-#[async_trait]
-impl RouterPortExt for FallbackRouter {
+impl RouterPort for FallbackRouter {
     async fn select_excluding(
         &self,
         req: &CompletionRequest,
@@ -230,7 +233,7 @@ No new global state required. State is:
 | File | Changes |
 |------|---------|
 | `shared-kernel/src/error.rs` | Add `is_retryable()`, `is_rate_limited()` |
-| `rook-core/src/ports.rs` | Add `RouterPortExt` trait |
+| `rook-core/src/ports.rs` | Add `select_excluding()` to `RouterPort` trait |
 | `rook-usecases/src/router_impl.rs` | Implement `select_excluding()` |
 | `rook-usecases/src/route_request.rs` | Add retry loop in `execute_with_format()` |
 | `providers-ollama/src/lib.rs` | Implement quota tracking in `is_available()` |
@@ -309,7 +312,7 @@ cooldown_secs = 30
 
 ### Phase 1: Core Implementation
 1. Add `is_retryable()` to `CortexError`
-2. Add `RouterPortExt::select_excluding()`
+2. Add `select_excluding()` to `RouterPort` trait
 3. Implement in `FallbackRouter`
 4. Add retry loop to `RouteRequest`
 

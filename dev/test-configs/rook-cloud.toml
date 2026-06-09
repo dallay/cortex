@@ -7,13 +7,13 @@
 #   target/debug/rook
 #
 # Then add a provider via API:
-#   curl -X POST http://localhost:8080/api/providers \
-#     -H "Content-Type: application/json" \
-#     -d '{
+#     curl -X POST http://localhost:8080/api/providers \
+#       -H "Content-Type: application/json" \
+#       -d '{
 #       "name": "ollama-cloud-primary",
 #       "provider_kind": "ollama-cloud",
 #       "auth_type": "api_key",
-#       "credentials": { "api_key": "ollama-xxxxxxxxxxxxxxxx" },
+#       "credentials": { "api_key": "YOUR_API_KEY_HERE" },
 #       "is_active": true,
 #       "priority": 1
 #     }'
@@ -30,7 +30,6 @@ enabled = false
 ttl_secs = 300
 
 [audit]
-db_path = "/tmp/rook-audit.db"
 
 [database]
 db_path = "/tmp/rook.db"

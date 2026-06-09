@@ -313,26 +313,34 @@ impl RouterPort for FallbackRouter {
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % available.len();
-                *index = idx + 1;
+                *index = (idx + 1) % available.len();
                 available.get(idx).cloned()
             }
             RoutingStrategy::WeightedRandom(weights) => {
-                if weights.len() != available.len() {
+                // Pair providers with weights, filter to available, then weighted selection
+                let providers_guard = self.providers.read();
+                let paired: Vec<_> = providers_guard
+                    .iter()
+                    .filter(|p| available.iter().any(|a| a.id() == p.id()))
+                    .zip(weights.iter())
+                    .map(|(p, &w)| (p.clone(), w))
+                    .collect();
+                drop(providers_guard);
+
+                if paired.is_empty() {
                     available.first().cloned()
                 } else {
+                    let total: f32 = paired.iter().map(|(_, w)| *w).sum();
                     let mut rng = rand::rng();
-                    let total: f32 = weights.iter().sum();
                     let r = rng.random::<f32>() * total;
                     let mut sum = 0.0_f32;
-                    available
+                    paired
                         .iter()
-                        .zip(weights.iter())
-                        .find(|(_, &w)| {
-                            sum += w;
+                        .find(|(_, w)| {
+                            sum += *w;
                             sum >= r
                         })
-                        .map(|(p, _)| p)
-                        .cloned()
+                        .map(|(p, _)| p.clone())
                 }
             }
             RoutingStrategy::ModelBased => available.first().cloned(),

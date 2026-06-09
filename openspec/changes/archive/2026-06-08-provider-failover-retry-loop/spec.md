@@ -82,7 +82,7 @@ Returns `false` for:
 - `Priority`: Returns first non-excluded, sorted by priority
 - `RoundRobin`: Advances counter, skips excluded
 - `WeightedRandom`: Weighted random among non-excluded
-- `LeastUsed`: Returns non-excluded with lowest usage
+- `ModelBased`: Returns first non-excluded matching model prefix
 
 ### R4: Provider Availability Tracking
 
@@ -189,12 +189,14 @@ Result: Success via different provider
 
 ## 3. API Changes
 
-### New Trait Method: `RouterPortExt::select_excluding`
+### New Trait Method: `RouterPort::select_excluding`
 
 ```rust
-/// Extension trait for provider selection with exclusion
+/// RouterPort trait — extended with select_excluding
 #[async_trait]
-pub trait RouterPortExt: RouterPort {
+pub trait RouterPort: Send + Sync {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
+
     /// Select the best available provider, excluding those in `excluded`.
     /// Returns error if no available provider exists.
     async fn select_excluding(
@@ -202,6 +204,9 @@ pub trait RouterPortExt: RouterPort {
         req: &CompletionRequest,
         excluded: &[ProviderId],
     ) -> CortexResult<Arc<dyn ProviderPort>>;
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError);
+    fn providers(&self) -> Vec<ProviderId>;
 }
 ```
 

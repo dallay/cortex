@@ -98,8 +98,8 @@ cargo clippy -p shared-kernel -p rook-core -p rook-usecases --all-targets -- -D 
 
 | Decision | Followed? | Notes |
 |----------|-----------|-------|
-| Use `SmallVec<[ProviderId; 4]>` for exclusion list | ⚠️ Deviated | Used `Vec<ProviderId>` instead (line 153); functionally equivalent, no heap allocation for small lists |
-| `RouterPortExt` extension trait | ✅ Yes | `RouterPortExt::select_excluding()` in ports.rs line 118 |
+| Use `SmallVec<[ProviderId; 4]>` for exclusion list | ⚠️ Deviated | Used `Vec<ProviderId>` instead; functionally equivalent, heap allocation only occurs when excluded.len() > 1 |
+| `select_excluding()` on `RouterPort` trait | ✅ Yes | `RouterPort::select_excluding()` in ports.rs |
 | `FallbackRouter` implements `select_excluding()` | ✅ Yes | router_impl.rs line 289 |
 | Retry loop in `RouteRequest::execute_with_format()` | ✅ Yes | route_request.rs lines 152-270 |
 | Circuit breaker integration via `on_failure()` | ✅ Yes | route_request.rs line 220 |

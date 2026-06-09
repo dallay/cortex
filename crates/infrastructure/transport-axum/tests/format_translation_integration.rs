@@ -301,6 +301,14 @@ impl RouterPort for RegistryTestRouter {
         Ok(self.provider.clone())
     }
 
+    async fn select_excluding(
+        &self,
+        _req: &CompletionRequest,
+        _excluded: &[ProviderId],
+    ) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
+        Ok(self.provider.clone())
+    }
+
     async fn on_failure(&self, _provider: &ProviderId, _error: &shared_kernel::CortexError) {}
 
     fn providers(&self) -> Vec<ProviderId> {

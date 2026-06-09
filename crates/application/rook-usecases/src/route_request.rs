@@ -214,14 +214,29 @@ impl RouteRequest {
                         .await;
                 }
                 Err(e) => {
-                    // Record failure for circuit breaker
+                    // Record failure for circuit breaker (before checking retryability)
                     self.router.on_failure(&provider_id, &e).await;
+                    let final_latency = start.elapsed().as_millis() as u64;
 
-                    // Non-retryable errors: fail immediately
+                    // Non-retryable errors: record audit/usage/telemetry and return
                     if !e.is_retryable() {
-                        return self
-                            .handle_failure(req, provider_id, connection_id, start, e)
-                            .await;
+                        self.record_failure_audit_usage(
+                            &req,
+                            &provider_id,
+                            connection_id,
+                            final_latency,
+                            &e,
+                        )
+                        .await;
+                        if let Some(telemetry) = &self.telemetry {
+                            telemetry.record_observation(
+                                provider_id,
+                                final_latency,
+                                None,
+                                ObservationStatus::Failure,
+                            );
+                        }
+                        return Err(e);
                     }
 
                     // Log retry attempt
@@ -243,20 +258,29 @@ impl RouteRequest {
                     // Exclude this provider and retry
                     excluded.push(provider_id.clone());
 
-                    // If we've exhausted all providers, record usage and return exhausted
+                    // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
                     if excluded.len() >= total_providers {
-                        // Record exhausted metric (via tracing for now)
                         tracing::error!(
                             providers = ?self.router.providers(),
                             excluded = ?excluded,
                             "all providers exhausted"
                         );
-                        // Record the failure for the last provider (for telemetry/audit)
-                        self.router.on_failure(&provider_id, &e).await;
-                        // Record usage for the failed request
-                        let _ = self
-                            .handle_failure(req, provider_id, connection_id, start, e)
-                            .await;
+                        self.record_failure_audit_usage(
+                            &req,
+                            &provider_id,
+                            connection_id,
+                            final_latency,
+                            &e,
+                        )
+                        .await;
+                        if let Some(telemetry) = &self.telemetry {
+                            let status = if e.is_rate_limited() {
+                                ObservationStatus::RateLimited
+                            } else {
+                                ObservationStatus::Failure
+                            };
+                            telemetry.record_observation(provider_id, final_latency, None, status);
+                        }
                         return Err(CortexError::all_providers_exhausted());
                     }
                 }
@@ -385,31 +409,6 @@ impl RouteRequest {
         }
 
         Ok(resp)
-    }
-
-    async fn handle_failure(
-        &self,
-        req: CompletionRequest,
-        provider_id: ProviderId,
-        connection_id: Option<ConnectionId>,
-        start: Instant,
-        e: CortexError,
-    ) -> Result<CompletionResponse, CortexError> {
-        let final_latency = start.elapsed().as_millis() as u64;
-        self.record_failure(&req, &provider_id, connection_id, final_latency, &e)
-            .await;
-
-        // Record telemetry failure
-        if let Some(telemetry) = &self.telemetry {
-            let status = if e.is_rate_limited() {
-                ObservationStatus::RateLimited
-            } else {
-                ObservationStatus::Failure
-            };
-            telemetry.record_observation(provider_id, final_latency, None, status);
-        }
-
-        Err(e)
     }
 
     pub async fn execute_stream(
@@ -1022,7 +1021,7 @@ impl RouteRequest {
         }
     }
 
-    async fn record_failure(
+    async fn record_failure_audit_usage(
         &self,
         req: &CompletionRequest,
         provider_id: &ProviderId,
@@ -1030,10 +1029,6 @@ impl RouteRequest {
         latency_ms: u64,
         error: &CortexError,
     ) {
-        // Notify router of failure (circuit breaker update)
-        self.router.on_failure(provider_id, error).await;
-
-        // Audit failure
         let status = if error.is_rate_limited() {
             RequestStatus::RateLimited
         } else {
@@ -1214,6 +1209,14 @@ mod tests {
     #[async_trait]
     impl RouterPort for TestRouter {
         async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            Ok(self.provider.clone())
+        }
+
+        async fn select_excluding(
+            &self,
+            _req: &CompletionRequest,
+            _excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
             Ok(self.provider.clone())
         }
 

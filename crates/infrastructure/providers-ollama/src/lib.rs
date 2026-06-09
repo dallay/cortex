@@ -340,6 +340,22 @@ impl ProviderPort for OllamaProvider {
                 }
             }
 
+            // Handle 400 Bad Request — typed error for invalid request
+            if status == StatusCode::BAD_REQUEST {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(CortexError::invalid_request(format!(
+                    "Ollama bad request: {body_text}"
+                )));
+            }
+
+            // Handle 401 Unauthorized — typed error for auth failure
+            if status == StatusCode::UNAUTHORIZED {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(CortexError::auth_failed(format!(
+                    "Ollama auth failed: {body_text}"
+                )));
+            }
+
             let body_text = resp.text().await.unwrap_or_default();
             return Err(CortexError::provider(format!(
                 "Ollama error {status}: {body_text}"
@@ -398,6 +414,22 @@ impl ProviderPort for OllamaProvider {
                 } else {
                     return Err(CortexError::rate_limited(provider_id, retry_secs));
                 }
+            }
+
+            // Handle 400 Bad Request — typed error for invalid request
+            if status == StatusCode::BAD_REQUEST {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(CortexError::invalid_request(format!(
+                    "Ollama bad request: {body_text}"
+                )));
+            }
+
+            // Handle 401 Unauthorized — typed error for auth failure
+            if status == StatusCode::UNAUTHORIZED {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(CortexError::auth_failed(format!(
+                    "Ollama auth failed: {body_text}"
+                )));
             }
 
             let body_text = resp.text().await.unwrap_or_default();

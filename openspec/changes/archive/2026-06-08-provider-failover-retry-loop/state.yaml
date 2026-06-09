@@ -33,10 +33,10 @@ metadata:
   stakeholder: kerrigan
 
 artifacts:
-  proposal: openspec/changes/provider-failover-retry-loop/proposal.md
-  spec: openspec/changes/provider-failover-retry-loop/spec.md
-  design: openspec/changes/provider-failover-retry-loop/design.md
-  tasks: openspec/changes/provider-failover-retry-loop/tasks.md
+  proposal: openspec/changes/archive/2026-06-08-provider-failover-retry-loop/proposal.md
+  spec: openspec/changes/archive/2026-06-08-provider-failover-retry-loop/spec.md
+  design: openspec/changes/archive/2026-06-08-provider-failover-retry-loop/design.md
+  tasks: openspec/changes/archive/2026-06-08-provider-failover-retry-loop/tasks.md
 
 # Implementation complete:
 # Phase 1: Error classification (is_retryable, is_rate_limited, retry_after_secs)

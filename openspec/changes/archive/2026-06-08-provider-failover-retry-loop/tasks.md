@@ -39,12 +39,12 @@
 
 ## Phase 2: Router Extension
 
-### Task 2.1: Add `RouterPortExt` trait
+### Task 2.1: Add `select_excluding()` to `RouterPort` trait
 
 **File**: `crates/domain/rook-core/src/ports.rs`
 
 **Steps**:
-- [ ] Define `RouterPortExt` trait with `select_excluding()` method
+- [ ] Add `select_excluding()` method to `RouterPort` trait
 - [ ] Add documentation for the method
 
 **Verification**: Trait compiles
@@ -212,7 +212,7 @@
 
 **Changes**:
 - [ ] Add section on retry loop and failover behavior
-- [ ] Document `RouterPortExt` trait
+- [ ] Document `select_excluding()` on `RouterPort` trait
 - [ ] Document retryable error classification
 
 ---
