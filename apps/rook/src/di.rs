@@ -154,7 +154,8 @@ impl RookContainer {
                     .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
             );
             let repo = provider_repo.clone();
-            let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
+            let builder: Arc<dyn ProviderBuilderPort> =
+                Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
             Some(ManageConnections::new(
                 repo,
                 registry.clone(),

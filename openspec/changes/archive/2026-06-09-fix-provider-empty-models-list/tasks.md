@@ -44,6 +44,6 @@
 
 ## Phase 5: Verification
 
-- [ ] 5.1 Start local Rook with `ollamacloud/qwen3-coder-next` model
-- [ ] 5.2 Confirm "all providers exhausted" is gone on first request
-- [ ] 5.3 Confirm health check still returns healthy status
+- [x] 5.1 Start local Rook with `ollamacloud/qwen3-coder-next` model
+- [x] 5.2 Confirm "all providers exhausted" is gone on first request
+- [x] 5.3 Confirm health check still returns healthy status

@@ -1,7 +1,7 @@
 // Integration tests for the rook DI container and provider builder
 
 use rook::di::build_provider_from_connection;
-use rook_core::{ConnectionId, DecryptedCredentials, ProviderKind};
+use rook_core::{ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
@@ -29,7 +29,8 @@ fn build_provider_from_connection_openai_uses_default_base_url() {
         api_key: "sk-test-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
     let provider = result.expect("expected Ok for OpenAI with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -42,8 +43,13 @@ fn build_provider_from_connection_openai_uses_override() {
     };
     let id = conn_id();
     let override_url = "https://custom.openai.example.com/v1".to_string();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, Some(override_url), Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        ProviderKind::OpenAI,
+        &creds,
+        Some(override_url),
+        Vec::new(),
+    );
     let provider = result.expect("expected Ok for OpenAI with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -55,7 +61,8 @@ fn build_provider_from_connection_ollama_requires_base_url() {
         api_key: String::new(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None, Vec::new());
+    let result =
+        build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None, Vec::new());
     let err = match result {
         Ok(provider) => panic!(
             "expected OllamaRequiresBaseUrl error, got Ok({:?})",
@@ -101,7 +108,8 @@ fn build_provider_from_connection_oauth_access_token_used_as_api_key() {
         project_id: "project".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
     assert!(
         result.is_ok(),
         "expected Ok — OAuth access_token should work as api_key"
@@ -117,7 +125,8 @@ fn build_provider_from_connection_ollama_cloud_uses_default_base_url() {
         api_key: "ollama-cloud-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None, Vec::new());
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None, Vec::new());
     let provider = result.expect("expected Ok for OllamaCloud with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -138,4 +147,85 @@ fn build_provider_from_connection_ollama_cloud_uses_override() {
     );
     let provider = result.expect("expected Ok for OllamaCloud with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
+}
+
+// Fix verification: models passed to build_provider_from_connection are exposed via supported_models()
+
+#[test]
+fn build_provider_from_connection_passes_models_to_openai_provider() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "sk-test-key".to_string(),
+    };
+    let id = conn_id();
+    let models = vec![ModelId::new("gpt-4o"), ModelId::new("gpt-4o-mini")];
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, models.clone());
+    let provider = result.expect("expected Ok");
+    let supported = provider.supported_models();
+    assert_eq!(
+        supported.len(),
+        2,
+        "expected 2 models, got {}",
+        supported.len()
+    );
+    assert!(
+        supported.contains(&ModelId::new("gpt-4o")),
+        "expected gpt-4o in supported_models"
+    );
+    assert!(
+        supported.contains(&ModelId::new("gpt-4o-mini")),
+        "expected gpt-4o-mini in supported_models"
+    );
+}
+
+#[test]
+fn build_provider_from_connection_passes_models_to_ollama_cloud_provider() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "ollama-cloud-key".to_string(),
+    };
+    let id = conn_id();
+    let models = vec![
+        ModelId::new("ollamacloud/qwen3-coder-next"),
+        ModelId::new("ollamacloud/deepseek-v4-pro"),
+    ];
+    let result = build_provider_from_connection(
+        &id,
+        ProviderKind::OllamaCloud,
+        &creds,
+        None,
+        models.clone(),
+    );
+    let provider = result.expect("expected Ok for OllamaCloud");
+    let supported = provider.supported_models();
+    assert_eq!(
+        supported.len(),
+        2,
+        "expected 2 models, got {}",
+        supported.len()
+    );
+    assert!(
+        supported.contains(&ModelId::new("ollamacloud/qwen3-coder-next")),
+        "expected ollamacloud/qwen3-coder-next in supported_models"
+    );
+    assert!(
+        supported.contains(&ModelId::new("ollamacloud/deepseek-v4-pro")),
+        "expected ollamacloud/deepseek-v4-pro in supported_models"
+    );
+}
+
+#[test]
+fn build_provider_from_connection_empty_models_list() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "sk-test-key".to_string(),
+    };
+    let id = conn_id();
+    let result =
+        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let provider = result.expect("expected Ok");
+    let supported = provider.supported_models();
+    assert!(
+        supported.is_empty(),
+        "expected empty supported_models for empty input, got {} models",
+        supported.len()
+    );
 }
