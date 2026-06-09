@@ -166,7 +166,7 @@ impl ProviderRegistryPort for FakeProviderRegistry {
 // --- Test Cases ---
 
 #[tokio::test]
-async fn create_with_unknown_provider_returns_validation_error() {
+async fn create_with_unknown_provider_filters_stale_providers() {
     let repo = Arc::new(FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
     let usecase = ManageApiKeys::new(repo, "test-secret", registry);
@@ -177,18 +177,21 @@ async fn create_with_unknown_provider_returns_validation_error() {
         tier: ApiKeyTier::Free,
         expires_at: None,
         allowed_models: vec![],
+        // "fake-provider" does not exist in registry - should be silently filtered
         allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("fake-provider")],
     };
 
     let result = usecase.create(request).await;
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("unknown provider"));
-    assert!(err_msg.contains("fake-provider"));
+    // Should succeed - unknown providers are filtered, not rejected
+    assert!(result.is_ok());
+    let (record, _) = result.unwrap();
+    // Only "openai" remains; "fake-provider" was filtered out
+    assert_eq!(record.allowed_providers.len(), 1);
+    assert_eq!(record.allowed_providers[0].as_str(), "openai");
 }
 
 #[tokio::test]
-async fn update_with_unknown_provider_returns_validation_error() {
+async fn update_with_unknown_provider_filters_stale_providers() {
     let repo = Arc::new(FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
     let usecase = ManageApiKeys::new(repo.clone(), "test-secret", registry);
@@ -204,7 +207,7 @@ async fn update_with_unknown_provider_returns_validation_error() {
     };
     let (record, _) = usecase.create(create_req).await.unwrap();
 
-    // Try to update with unknown provider
+    // Update with unknown provider - should be silently filtered
     let update_req = UpdateApiKeyRequest {
         label: None,
         scopes: None,
@@ -216,10 +219,11 @@ async fn update_with_unknown_provider_returns_validation_error() {
     };
 
     let result = usecase.update(&record.id, update_req).await;
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("unknown provider"));
-    assert!(err_msg.contains("unknown-provider"));
+    // Should succeed - unknown providers are filtered, not rejected
+    assert!(result.is_ok());
+    let updated = result.unwrap();
+    // "unknown-provider" was filtered out, leaving empty list (unrestricted)
+    assert!(updated.allowed_providers.is_empty());
 }
 
 #[tokio::test]
@@ -244,9 +248,9 @@ async fn create_with_empty_allowed_providers_passes() {
 }
 
 #[tokio::test]
-async fn create_when_registry_is_empty_and_allowed_providers_non_empty_fails() {
+async fn create_when_registry_is_empty_filters_all_providers() {
     let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::empty());
+    let registry = Arc::new(FakeProviderRegistry::empty()); // No providers in registry
     let usecase = ManageApiKeys::new(repo, "test-secret", registry);
 
     let request = CreateApiKeyRequest {
@@ -255,14 +259,16 @@ async fn create_when_registry_is_empty_and_allowed_providers_non_empty_fails() {
         tier: ApiKeyTier::Free,
         expires_at: None,
         allowed_models: vec![],
+        // "openai" does not exist in empty registry - should be silently filtered
         allowed_providers: vec![ProviderId::new("openai")],
     };
 
     let result = usecase.create(request).await;
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("unknown provider"));
-    assert!(err_msg.contains("openai"));
+    // Should succeed - unknown providers are filtered, resulting in unrestricted key
+    assert!(result.is_ok());
+    let (record, _) = result.unwrap();
+    // All providers filtered out, so unrestricted
+    assert!(record.allowed_providers.is_empty());
 }
 
 #[tokio::test]

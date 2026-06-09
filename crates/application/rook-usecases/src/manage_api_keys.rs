@@ -80,8 +80,8 @@ impl ManageApiKeys {
         // Validate all requested scopes are canonical.
         validate_scopes(&request.scopes)?;
 
-        // Validate all requested providers exist in the registry.
-        self.validate_providers(&request.allowed_providers)?;
+        // Filter to only providers that exist in the registry (remove stale IDs).
+        let allowed_providers = self.filter_valid_providers(&request.allowed_providers);
 
         let raw_key = generate_api_key();
         let key_hash = hash_api_key(&raw_key, &self.hash_secret);
@@ -102,7 +102,7 @@ impl ManageApiKeys {
             created_at: now,
             last_used_at: None,
             allowed_models: request.allowed_models,
-            allowed_providers: request.allowed_providers,
+            allowed_providers,
         };
 
         self.repo.create(&record).await?;
@@ -130,10 +130,11 @@ impl ManageApiKeys {
             None => existing.scopes,
         };
 
-        // Validate incoming providers before applying the update.
-        if let Some(ref providers) = request.allowed_providers {
-            self.validate_providers(providers)?;
-        }
+        // Filter incoming providers to only those that exist in the registry.
+        let allowed_providers = request
+            .allowed_providers
+            .map(|p| self.filter_valid_providers(&p))
+            .unwrap_or_else(|| existing.allowed_providers.clone());
 
         let tier = request.tier.unwrap_or(existing.tier);
         let is_active = request.is_active.unwrap_or(existing.is_active);
@@ -164,9 +165,7 @@ impl ManageApiKeys {
             created_at: existing.created_at,
             last_used_at: existing.last_used_at,
             allowed_models: request.allowed_models.unwrap_or(existing.allowed_models),
-            allowed_providers: request
-                .allowed_providers
-                .unwrap_or(existing.allowed_providers),
+            allowed_providers,
         };
 
         self.repo.update(&updated).await?;
@@ -279,29 +278,19 @@ fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
 }
 
 impl ManageApiKeys {
-    /// Validates that every provider ID in the requested list exists in the provider registry.
-    /// Empty list is always valid (unrestricted). Non-empty list must be a subset of the registry.
-    fn validate_providers(&self, requested: &[ProviderId]) -> ManageApiKeysResult<()> {
+    /// Filters the requested provider IDs to only those that exist in the provider registry.
+    /// Unknown/stale provider IDs are silently removed — they may have been deleted after
+    /// the API key was created. Empty list means "unrestricted".
+    fn filter_valid_providers(&self, requested: &[ProviderId]) -> Vec<ProviderId> {
         if requested.is_empty() {
-            return Ok(()); // unrestricted is always valid
+            return vec![];
         }
         let available = self.provider_registry.providers();
-        let unknown: Vec<_> = requested
+        requested
             .iter()
-            .filter(|id| !available.contains(id))
-            .collect();
-        if !unknown.is_empty() {
-            let ids = unknown
-                .iter()
-                .map(|id| id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(ManageApiKeysError::Validation(format!(
-                "unknown provider(s): {}",
-                ids
-            )));
-        }
-        Ok(())
+            .filter(|id| available.contains(id))
+            .cloned()
+            .collect()
     }
 }
 
