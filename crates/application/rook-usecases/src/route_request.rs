@@ -161,16 +161,14 @@ impl RouteRequest {
                 attempt = attempt + 1,
                 max_attempts = max_attempts,
                 excluded_count = excluded.len()
-            )
-            .entered();
+            );
 
             // Select next available provider (excluding failed ones)
-            let _select_span = tracing::debug_span!("router.select_excluding").entered();
+            let _select_span = tracing::debug_span!("router.select_excluding");
             let provider = match self.router.select_excluding(&req, &excluded).await {
                 Ok(p) => p,
                 Err(e) => return Err(e),
             };
-            drop(_select_span);
             let provider_id = provider.id().clone();
             let connection_id = self.resolve_connection_id(&provider_id).await;
 
