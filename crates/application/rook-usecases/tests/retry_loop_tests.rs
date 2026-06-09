@@ -17,78 +17,46 @@ use shared_kernel::{CacheKey, RequestId};
 
 // --- Fake Providers ---
 
-/// Provider that fails with a retryable error (rate limited).
+/// Behavior for the test provider's `complete()` method.
 #[derive(Clone)]
-struct RateLimitedProvider {
-    id: ProviderId,
-    models: Vec<ModelId>,
+enum TestCompleteBehavior {
+    RateLimited,
+    Success,
+    AuthFailed,
 }
 
-impl RateLimitedProvider {
-    fn new(id: &str, models: Vec<&str>) -> Self {
+/// Test provider with configurable behavior.
+#[derive(Clone)]
+struct TestProvider {
+    id: ProviderId,
+    models: Vec<ModelId>,
+    behavior: TestCompleteBehavior,
+}
+
+impl TestProvider {
+    fn new(id: &str, models: Vec<&str>, behavior: TestCompleteBehavior) -> Self {
         Self {
             id: ProviderId::new(id),
             models: models.into_iter().map(ModelId::new).collect(),
+            behavior,
         }
+    }
+
+    fn rate_limited(id: &str, models: Vec<&str>) -> Self {
+        Self::new(id, models, TestCompleteBehavior::RateLimited)
+    }
+
+    fn successful(id: &str, models: Vec<&str>) -> Self {
+        Self::new(id, models, TestCompleteBehavior::Success)
+    }
+
+    fn auth_failed(id: &str, models: Vec<&str>) -> Self {
+        Self::new(id, models, TestCompleteBehavior::AuthFailed)
     }
 }
 
 #[async_trait]
-impl ProviderPort for RateLimitedProvider {
-    fn id(&self) -> &ProviderId {
-        &self.id
-    }
-
-    fn supported_models(&self) -> &[ModelId] {
-        &self.models
-    }
-
-    fn api_format(&self) -> ApiFormat {
-        ApiFormat::OpenAI
-    }
-
-    fn is_available(&self) -> bool {
-        true
-    }
-
-    async fn health_check(&self) -> HealthStatus {
-        HealthStatus::Healthy {
-            provider: self.id.clone(),
-            latency_ms: 10,
-        }
-    }
-
-    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        // Return rate limited error - this is retryable
-        Err(CortexError::rate_limited(self.id.clone(), 60))
-    }
-
-    async fn stream(
-        &self,
-        _req: &CompletionRequest,
-    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        Err(CortexError::provider("streaming not supported"))
-    }
-}
-
-/// Provider that succeeds with a response.
-#[derive(Clone)]
-struct SuccessfulProvider {
-    id: ProviderId,
-    models: Vec<ModelId>,
-}
-
-impl SuccessfulProvider {
-    fn new(id: &str, models: Vec<&str>) -> Self {
-        Self {
-            id: ProviderId::new(id),
-            models: models.into_iter().map(ModelId::new).collect(),
-        }
-    }
-}
-
-#[async_trait]
-impl ProviderPort for SuccessfulProvider {
+impl ProviderPort for TestProvider {
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -113,82 +81,36 @@ impl ProviderPort for SuccessfulProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        let model = self
-            .models
-            .first()
-            .ok_or_else(|| CortexError::invalid_request("SuccessfulProvider has no models"))?;
-        Ok(CompletionResponse {
-            id: req.id.clone(),
-            provider: self.id.clone(),
-            model: model.clone(),
-            content: "successful response".to_string(),
-            content_blocks: vec![MessageContent::Text("successful response".to_string())],
-            usage: TokenUsage {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
-                cache_read_tokens: None,
-                cache_creation_tokens: None,
-                reasoning_tokens: None,
-                estimated_cost_usd: None,
-            },
-            latency_ms: 10,
-            cache_hit: None,
-        })
-    }
-
-    async fn stream(
-        &self,
-        _req: &CompletionRequest,
-    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        Err(CortexError::provider("streaming not supported"))
-    }
-}
-
-/// Provider that fails with a non-retryable error (auth failed).
-#[derive(Clone)]
-struct AuthFailedProvider {
-    id: ProviderId,
-    models: Vec<ModelId>,
-}
-
-impl AuthFailedProvider {
-    fn new(id: &str, models: Vec<&str>) -> Self {
-        Self {
-            id: ProviderId::new(id),
-            models: models.into_iter().map(ModelId::new).collect(),
+        match self.behavior {
+            TestCompleteBehavior::RateLimited => {
+                Err(CortexError::rate_limited(self.id.clone(), 60))
+            }
+            TestCompleteBehavior::Success => {
+                let model = self
+                    .models
+                    .first()
+                    .ok_or_else(|| CortexError::invalid_request("TestProvider has no models"))?;
+                Ok(CompletionResponse {
+                    id: req.id.clone(),
+                    provider: self.id.clone(),
+                    model: model.clone(),
+                    content: "successful response".to_string(),
+                    content_blocks: vec![MessageContent::Text("successful response".to_string())],
+                    usage: TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                        cache_read_tokens: None,
+                        cache_creation_tokens: None,
+                        reasoning_tokens: None,
+                        estimated_cost_usd: None,
+                    },
+                    latency_ms: 10,
+                    cache_hit: None,
+                })
+            }
+            TestCompleteBehavior::AuthFailed => Err(CortexError::auth_failed("invalid API key")),
         }
-    }
-}
-
-#[async_trait]
-impl ProviderPort for AuthFailedProvider {
-    fn id(&self) -> &ProviderId {
-        &self.id
-    }
-
-    fn supported_models(&self) -> &[ModelId] {
-        &self.models
-    }
-
-    fn api_format(&self) -> ApiFormat {
-        ApiFormat::OpenAI
-    }
-
-    fn is_available(&self) -> bool {
-        true
-    }
-
-    async fn health_check(&self) -> HealthStatus {
-        HealthStatus::Healthy {
-            provider: self.id.clone(),
-            latency_ms: 10,
-        }
-    }
-
-    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        // Return auth failed error - this is NOT retryable
-        Err(CortexError::auth_failed("invalid API key"))
     }
 
     async fn stream(
@@ -429,8 +351,8 @@ fn make_route_request(router: Arc<dyn RouterPort>) -> RouteRequest {
 #[tokio::test]
 async fn retry_loop_first_provider_fails_second_succeeds() {
     // Setup: first provider fails with rate limit, second succeeds
-    let p1 = Arc::new(RateLimitedProvider::new("p1", vec!["model-a"]));
-    let p2 = Arc::new(SuccessfulProvider::new("p2", vec!["model-a"]));
+    let p1 = Arc::new(TestProvider::rate_limited("p1", vec!["model-a"]));
+    let p2 = Arc::new(TestProvider::successful("p2", vec!["model-a"]));
     let router = Arc::new(CyclingRouter::new(vec![p1, p2]));
     let route_request = make_route_request(router);
 
@@ -449,8 +371,8 @@ async fn retry_loop_first_provider_fails_second_succeeds() {
 #[tokio::test]
 async fn retry_loop_all_providers_fail_returns_exhausted_error() {
     // Setup: both providers fail with rate limit
-    let p1 = Arc::new(RateLimitedProvider::new("p1", vec!["model-a"]));
-    let p2 = Arc::new(RateLimitedProvider::new("p2", vec!["model-a"]));
+    let p1 = Arc::new(TestProvider::rate_limited("p1", vec!["model-a"]));
+    let p2 = Arc::new(TestProvider::rate_limited("p2", vec!["model-a"]));
     let router = Arc::new(CyclingRouter::new(vec![p1, p2]));
     let route_request = make_route_request(router);
 
@@ -472,8 +394,8 @@ async fn retry_loop_all_providers_fail_returns_exhausted_error() {
 #[tokio::test]
 async fn retry_loop_non_retryable_error_fails_immediately() {
     // Setup: provider fails with auth error (not retryable)
-    let p1 = Arc::new(AuthFailedProvider::new("p1", vec!["model-a"]));
-    let p2 = Arc::new(SuccessfulProvider::new("p2", vec!["model-a"]));
+    let p1 = Arc::new(TestProvider::auth_failed("p1", vec!["model-a"]));
+    let p2 = Arc::new(TestProvider::successful("p2", vec!["model-a"]));
     let router = Arc::new(CyclingRouter::new(vec![p1, p2]));
     let route_request = make_route_request(router);
 
@@ -491,9 +413,9 @@ async fn retry_loop_non_retryable_error_fails_immediately() {
 #[tokio::test]
 async fn retry_loop_exhausts_all_providers() {
     // Setup: 3 providers, all fail with rate limit
-    let p1 = Arc::new(RateLimitedProvider::new("p1", vec!["model-a"]));
-    let p2 = Arc::new(RateLimitedProvider::new("p2", vec!["model-a"]));
-    let p3 = Arc::new(RateLimitedProvider::new("p3", vec!["model-a"]));
+    let p1 = Arc::new(TestProvider::rate_limited("p1", vec!["model-a"]));
+    let p2 = Arc::new(TestProvider::rate_limited("p2", vec!["model-a"]));
+    let p3 = Arc::new(TestProvider::rate_limited("p3", vec!["model-a"]));
     let router = Arc::new(CyclingRouter::new(vec![p1, p2, p3]));
     let route_request = make_route_request(router);
 
@@ -515,7 +437,7 @@ async fn retry_loop_exhausts_all_providers() {
 #[tokio::test]
 async fn retry_loop_empty_exclusion_list_works() {
     // Setup: single provider succeeds
-    let p1 = Arc::new(SuccessfulProvider::new("p1", vec!["model-a"]));
+    let p1 = Arc::new(TestProvider::successful("p1", vec!["model-a"]));
     let router = Arc::new(CyclingRouter::new(vec![p1]));
     let route_request = make_route_request(router);
 

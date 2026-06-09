@@ -180,6 +180,22 @@ impl OllamaProvider {
         }
         complete_lines
     }
+
+    /// Map HTTP error status to typed CortexError.
+    ///
+    /// Handles 400 Bad Request and 401 Unauthorized with specific error types.
+    /// All other non-success statuses become generic provider errors.
+    fn map_status_to_error(status: StatusCode, body_text: &str) -> CortexError {
+        match status {
+            StatusCode::BAD_REQUEST => {
+                CortexError::invalid_request(format!("Ollama bad request: {body_text}"))
+            }
+            StatusCode::UNAUTHORIZED => {
+                CortexError::auth_failed(format!("Ollama auth failed: {body_text}"))
+            }
+            _ => CortexError::provider(format!("Ollama error {status}: {body_text}")),
+        }
+    }
 }
 
 #[async_trait]
@@ -340,26 +356,9 @@ impl ProviderPort for OllamaProvider {
                 }
             }
 
-            // Handle 400 Bad Request — typed error for invalid request
-            if status == StatusCode::BAD_REQUEST {
-                let body_text = resp.text().await.unwrap_or_default();
-                return Err(CortexError::invalid_request(format!(
-                    "Ollama bad request: {body_text}"
-                )));
-            }
-
-            // Handle 401 Unauthorized — typed error for auth failure
-            if status == StatusCode::UNAUTHORIZED {
-                let body_text = resp.text().await.unwrap_or_default();
-                return Err(CortexError::auth_failed(format!(
-                    "Ollama auth failed: {body_text}"
-                )));
-            }
-
+            // Map non-success status to typed error (handles 400, 401, etc.)
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body_text}"
-            )));
+            return Err(Self::map_status_to_error(status, &body_text));
         }
 
         let parsed: OllamaChatResponse = resp
@@ -416,26 +415,9 @@ impl ProviderPort for OllamaProvider {
                 }
             }
 
-            // Handle 400 Bad Request — typed error for invalid request
-            if status == StatusCode::BAD_REQUEST {
-                let body_text = resp.text().await.unwrap_or_default();
-                return Err(CortexError::invalid_request(format!(
-                    "Ollama bad request: {body_text}"
-                )));
-            }
-
-            // Handle 401 Unauthorized — typed error for auth failure
-            if status == StatusCode::UNAUTHORIZED {
-                let body_text = resp.text().await.unwrap_or_default();
-                return Err(CortexError::auth_failed(format!(
-                    "Ollama auth failed: {body_text}"
-                )));
-            }
-
+            // Map non-success status to typed error (handles 400, 401, etc.)
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(CortexError::provider(format!(
-                "Ollama error {status}: {body_text}"
-            )));
+            return Err(Self::map_status_to_error(status, &body_text));
         }
 
         let request_id = req.id.clone();
