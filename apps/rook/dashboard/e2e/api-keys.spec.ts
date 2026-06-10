@@ -4,8 +4,14 @@ import { test, expect, Page, TestInfo } from '@playwright/test'
 // Test Configuration
 // =============================================================================
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
-const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://localhost:5173'
+// Use 127.0.0.1 for API (Docker proxy on macOS only forwards IPv4)
+// DASHBOARD_URL uses localhost since Vite dev server runs on localhost:4747
+const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8081'
+// Vite serves the app at /dashboard/ (with trailing slash). Strip trailing slash
+// from DASHBOARD_URL for concatenation with relative paths like "/api-keys".
+const DASHBOARD_URL_BASE = process.env.DASHBOARD_URL || 'http://localhost:4747/dashboard'
+// DASHBOARD_URL for navigation (includes trailing slash since Vite serves at /dashboard/)
+const DASHBOARD_URL = DASHBOARD_URL_BASE + '/'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
 
 function cookieValue(setCookie: string | null, name: string): string | null {
@@ -179,7 +185,7 @@ test.describe('API Keys - List View', () => {
     await loginAsAdmin(page)
 
     // Navigate to API keys page
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
   })
 
@@ -210,7 +216,7 @@ test.describe('API Keys - Create Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke only OUR worker's label — avoids touching keys from concurrent workers.
@@ -288,7 +294,7 @@ test.describe('API Keys - Edit Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke any leftover key for this worker, then create a fresh one.
@@ -369,7 +375,7 @@ test.describe('API Keys - Revoke Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke only OUR worker's label — avoids touching keys belonging to
@@ -525,7 +531,7 @@ test.describe('API Keys - Provider Restrictions', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Clean up any existing key with our label
@@ -600,7 +606,7 @@ test.describe('API Keys - Provider Restrictions', () => {
     expect(keyJson.allowedProviders).toEqual([])
 
     // Now navigate to the API keys page and try to edit this key
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Wait for table to load
@@ -650,7 +656,7 @@ test.describe('API Keys - Provider Restrictions', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Clean up
@@ -754,7 +760,7 @@ test.describe('API Keys - Provider Restrictions', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Clean up
@@ -776,12 +782,18 @@ test.describe('API Keys - Provider Restrictions', () => {
 
       await expect(page.getByRole('dialog')).toBeVisible()
 
-      // Uncheck all provider checkboxes to clear restrictions
+      // Uncheck all provider checkboxes to clear restrictions.
+      // The reka-ui Checkbox uses a visually-hidden <input> with role="checkbox"
+      // on the visible button. Click on the role=checkbox element (the visible
+      // button), NOT the hidden input — clicking the hidden input doesn't
+      // dispatch the events the reka-ui Checkbox listens for.
       const providersSection = page.locator('[data-testid="api-key-providers"]')
-      const checkboxes = providersSection.locator('[data-testid^="provider-checkbox-"]')
+      const checkboxes = providersSection.getByRole('checkbox')
       const count = await checkboxes.count()
       for (let i = 0; i < count; i++) {
-        await checkboxes.nth(i).setChecked(false)
+        if (await checkboxes.nth(i).getAttribute('data-state') === 'checked') {
+          await checkboxes.nth(i).click()
+        }
       }
 
       // Save
@@ -817,7 +829,7 @@ test.describe('API Keys - Pagination', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // If there are keys, pagination should be visible
