@@ -446,7 +446,17 @@ async function getProvidersViaApi(page: Page): Promise<Array<{ id: string; name:
     return []
   }
 
+  const contentType = response.headers()['content-type'] ?? ''
+  if (!contentType.includes('application/json')) {
+    // API returned HTML (e.g. 404 page, redirect) — return empty list
+    return []
+  }
+
   const data = await response.json()
+  // API may return { providers: [...] } wrapper or direct array
+  if (data && typeof data === 'object' && 'providers' in data) {
+    return (data as { providers: Array<{ id: string; name: string; providerKind: string }> }).providers
+  }
   return data as Array<{ id: string; name: string; providerKind: string }>
 }
 
