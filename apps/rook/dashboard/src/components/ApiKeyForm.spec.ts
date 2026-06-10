@@ -157,6 +157,31 @@ vi.mock("@/components/ui/select", () => ({
   }),
 }));
 
+vi.mock("@/components/ui/accordion", () => ({
+  Accordion: defineComponent({
+    props: {type: String, class: String},
+    setup(_props, {slots}) {
+      return () => h("div", {class: _props.class}, slots.default?.());
+    },
+  }),
+  AccordionItem: defineComponent({
+    props: {value: String},
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+  AccordionTrigger: defineComponent({
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+  AccordionContent: defineComponent({
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+}));
+
 vi.mock("@lucide/vue", () => {
   const icon = defineComponent({
     setup: () => () => h("span", {"data-testid": "icon"}),
@@ -170,6 +195,7 @@ vi.mock("@lucide/vue", () => {
     RefreshCw: icon,
     Pencil: icon,
     Trash2: icon,
+    ChevronDown: icon,
   };
 });
 
