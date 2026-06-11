@@ -389,6 +389,7 @@ pub fn classify_route(method: &Method, path: &str) -> AuthTier {
         || path == "/login"
         || path == "/logout"
         || path == "/index.html"
+        || path == "/dashboard"
         || path == "/api/bootstrap/status"
         || path == "/api/bootstrap/setup"
         || path.starts_with("/assets/")
@@ -1069,6 +1070,7 @@ mod tests {
             AuthTier::Management
         );
         // Dashboard routes are now Public — SPA handles auth internally
+        assert_eq!(classify_route(&Method::GET, "/dashboard"), AuthTier::Public);
         assert_eq!(
             classify_route(&Method::GET, "/dashboard/providers"),
             AuthTier::Public

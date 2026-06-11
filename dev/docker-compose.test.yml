@@ -38,7 +38,7 @@ services:
     tmpfs:
       - /app/data:mode=0777
     healthcheck:
-      test: [ "CMD", "curl", "-sf", "http://localhost:3773/health" ]
+      test: ["CMD", "curl", "-sf", "http://localhost:3773/health"]
       interval: 5s
       timeout: 3s
       retries: 10

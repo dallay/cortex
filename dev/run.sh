@@ -72,7 +72,6 @@ is_built() {
 TEST_COMPOSE_FILE="dev/docker-compose.test.yml"
 TEST_IMAGE_SERVER="rook:test-server"
 TEST_IMAGE_CLIENT="rook:test-client"
-TEST_SERVER="rook-test-server"
 TEST_CLIENT="rook-test-client"
 TEST_SERVER_PORT=3773
 TEST_HEALTH_URL="http://127.0.0.1:${TEST_SERVER_PORT}/health"

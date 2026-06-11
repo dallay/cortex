@@ -15,8 +15,10 @@ CONFIG_TARGET="/root/.config/opencode/opencode.json"
 # If there's an original config and an API key file, inject the key
 if [ -f "$CONFIG_SOURCE" ] && [ -f "$API_KEY_FILE" ]; then
     API_KEY=$(cat "$API_KEY_FILE")
-    cp "$CONFIG_SOURCE" "$CONFIG_TARGET"
-    sed -i "s|PLACEHOLDER_API_KEY|${API_KEY}|g" "$CONFIG_TARGET"
+    mkdir -p "$(dirname "$CONFIG_TARGET")"
+    jq --arg api_key "$API_KEY" \
+        '.provider.rook.options.apiKey = $api_key' \
+        "$CONFIG_SOURCE" > "$CONFIG_TARGET"
     echo "[entrypoint] Updated opencode.json with API key from secrets"
 fi
 

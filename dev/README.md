@@ -125,8 +125,8 @@ Log in at `http://localhost:4747` with:
 
 ### Config used
 
-`dev/test-configs/rook-api-keys-test.toml` — auth API keys enabled, cache disabled,
-DB at `/tmp/rook-e2e.db` (inside container), no provider CRUD.
+`dev/test-configs/rook-api-keys-test.toml` — auth API keys enabled, provider CRUD enabled,
+cache disabled, DB at `/tmp/rook-e2e.db` (inside container).
 
 ### Dockerfile used
 

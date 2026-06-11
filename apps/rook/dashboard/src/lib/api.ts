@@ -234,7 +234,7 @@ function getBaseUrl(): string {
     return (window as unknown as { __ROOK_API_BASE__: string })
       .__ROOK_API_BASE__;
   }
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
   if (stored) return stored;
   // In development with Vite proxy, use relative URLs
   // The proxy handles forwarding to the backend
@@ -245,7 +245,7 @@ function getBaseUrl(): string {
   if (typeof window !== "undefined") {
     return window.location.origin;
   }
-  return "http://localhost:3773";
+  return "http://127.0.0.1:3773";
 }
 
 export function setApiBaseUrl(url: string | null): void {

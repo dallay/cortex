@@ -153,9 +153,9 @@ db-reset:
     @rm -f ~/.local/share/cortex/rook/rook.db{,-wal,-shm}
     @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
 
-# Kill any process occupying port 8080 (stale rook instance)
+# Kill any process occupying port 3773 (stale rook instance)
 kill-backend:
-    @lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :8080{{RESET}}" || echo "{{YELLOW}}Nothing running on :8080{{RESET}}"
+    @lsof -ti :3773 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :3773{{RESET}}" || echo "{{YELLOW}}Nothing running on :3773{{RESET}}"
 
 # One-shot first-time setup: install dashboard deps + verify Rust toolchain
 setup:

@@ -12,7 +12,7 @@ services:
     volumes:
       - ./test-configs/rook-minimal.toml:/app/rook.toml:ro
     healthcheck:
-      test: [ "CMD", "curl", "-sf", "http://localhost:3773/health" ]
+      test: ["CMD", "curl", "-sf", "http://localhost:3773/health"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -32,7 +32,7 @@ services:
     volumes:
       - ./test-configs/rook-minimal.toml:/app/rook.toml:ro
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:3773/health" ]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3773/health"]
       interval: 5s
       timeout: 3s
       retries: 10
