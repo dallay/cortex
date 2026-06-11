@@ -13,7 +13,7 @@ Rook looks for config in this order:
 ```toml
 [server]
 host = "127.0.0.1"   # default: "127.0.0.1"
-port = 8080          # default: 8080
+port = 3773          # default: 3773
 
 [routing]
 strategy = "priority"  # "priority" | "round-robin" | "model-based"
@@ -64,10 +64,10 @@ requests_per_minute = 30
 
 ### `[server]`
 
-| Field                        | Type  | Default | Description                                 |
-|------------------------------|-------|---------|---------------------------------------------|
-| `host`                       | string | `"127.0.0.1"` | Bind address                            |
-| `port`                       | u16    | `8080`        | Listen port                             |
+| Field                        | Type   | Default       | Description                                 |
+|------------------------------|--------|---------------|---------------------------------------------|
+| `host`                       | string | `"127.0.0.1"` | Bind address                                |
+| `port`                       | u16    | `3773`        | Listen port                                 |
 | `health_check_interval_secs` | u64    | `30`          | Background health check interval in seconds |
 
 ### `[routing]`
@@ -347,7 +347,7 @@ If the initial refresh fails (e.g., encrypted connections with an incorrect key)
 
 ### Provider Management Dashboard
 
-The Rook dashboard provides a web UI for managing provider connections at `http://localhost:8080/providers` (or your configured host/port).
+The Rook dashboard provides a web UI for managing provider connections at `http://localhost:3773/providers` (or your configured host/port).
 
 **Features:**
 - View all configured providers with status, latency, and priority
@@ -419,7 +419,7 @@ Selects provider by model ID prefix. Not yet fully implemented (falls back to pr
 ```toml
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 3773
 
 [routing]
 strategy = "priority"
@@ -439,7 +439,7 @@ enabled = true
 
 > Providers are added via the CRUD API after Rook starts:
 > ```bash
-> curl -X POST http://localhost:8080/api/providers \
+> curl -X POST http://localhost:3773/api/providers \
 >   -H "Content-Type: application/json" \
 >   -d '{
 >     "name": "openai-primary",
@@ -475,7 +475,7 @@ There is no minimum provider requirement at startup — the registry starts empt
    # dev/test-configs/rook-e2e.toml
    [server]
    host = "0.0.0.0"
-   port = 8080
+   port = 3773
 
    [database]
    db_path = "/tmp/rook-e2e.db"
@@ -488,7 +488,7 @@ There is no minimum provider requirement at startup — the registry starts empt
 3. Start the container and seed the admin password:
    ```bash
    docker run -d --name rook-e2e \
-     -p 8080:8080 \
+     -p 3773:3773 \
      -v $(pwd)/dev/test-configs/rook-e2e.toml:/app/rook.toml:ro \
      -e ROOK_CONFIG=/app/rook.toml \
      -e API_KEY_HASH_SECRET="test-secret" \
@@ -498,7 +498,7 @@ There is no minimum provider requirement at startup — the registry starts empt
    docker exec rook-e2e rook seed-admin admin123
 
    # Test health
-   curl http://localhost:8080/health
+   curl http://localhost:3773/health
    ```
 
 4. Run E2E tests:

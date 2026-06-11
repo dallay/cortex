@@ -16,9 +16,9 @@
 
 ### Incomplete Tasks
 
-| # | Task | Status |
-|---|------|--------|
-| 11 | Browser-verify | **PENDING** — Manual verification required (dev server on :5173). All code implementation complete. |
+| #  | Task           | Status                                                                                              |
+|----|----------------|-----------------------------------------------------------------------------------------------------|
+| 11 | Browser-verify | **PENDING** — Manual verification required (dev server on :4747). All code implementation complete. |
 
 ---
 

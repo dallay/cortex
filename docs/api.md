@@ -1,6 +1,6 @@
 # API Reference
 
-Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default: `127.0.0.1:8080`).
+Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default: `127.0.0.1:3773`).
 
 ## Endpoints
 
@@ -317,10 +317,10 @@ All state-changing requests (`POST`, `PUT`, `DELETE`) require CSRF protection vi
 
 ```bash
 # 1. Get CSRF token
-curl -c cookies.txt http://localhost:8080/login
+curl -c cookies.txt http://localhost:3773/login
 
 # 2. Login (extract token from response body or cookies.txt)
-curl -X POST http://localhost:8080/login \
+curl -X POST http://localhost:3773/login \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: <token-from-step-1>" \
   -b cookies.txt \

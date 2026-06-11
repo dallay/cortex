@@ -264,12 +264,14 @@ impl ProviderPort for OllamaProvider {
             };
         }
 
-        let probe_model = self
-            .config
-            .models
-            .first()
-            .map(|m| m.to_string())
-            .unwrap_or_else(|| "gpt-oss:20b".to_string());
+        // Use a known free-tier model for the probe. The catalog may have
+        // subscription-gated models (e.g. deepseek-v4-pro) which return 404,
+        // so we explicitly use gpt-oss:20b which works on Ollama Cloud's free tier.
+        // Also strip any provider-prefix from the model name (e.g.
+        // "ollamacloud/deepseek-v4-pro" → "deepseek-v4-pro") since the API
+        // expects just the raw model ID.
+        let raw_model = "gpt-oss:20b";
+        let probe_model = raw_model.strip_prefix("ollamacloud/").unwrap_or(raw_model);
         let probe_body = serde_json::json!({
             "model": probe_model,
             "messages": [{"role": "user", "content": "hi"}],

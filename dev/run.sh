@@ -66,6 +66,108 @@ is_built() {
 }
 
 # =============================================================================
+# Test container commands
+# =============================================================================
+
+TEST_COMPOSE_FILE="dev/docker-compose.test.yml"
+TEST_IMAGE_SERVER="rook:test-server"
+TEST_IMAGE_CLIENT="rook:test-client"
+TEST_SERVER="rook-test-server"
+TEST_CLIENT="rook-test-client"
+TEST_SERVER_PORT=3773
+TEST_HEALTH_URL="http://127.0.0.1:${TEST_SERVER_PORT}/health"
+TEST_HEALTH_TIMEOUT=60
+
+cmd_test_build() {
+    log_info "Building test images..."
+    docker compose -f "$TEST_COMPOSE_FILE" build
+    log_info "Build complete: $TEST_IMAGE_SERVER + $TEST_IMAGE_CLIENT"
+}
+
+cmd_test_up() {
+    if ! docker image inspect "$TEST_IMAGE_SERVER" > /dev/null 2>&1; then
+        log_warn "Image $TEST_IMAGE_SERVER not found. Building it first..."
+        cmd_test_build
+    fi
+
+    log_info "Starting test environment (rook-server + test client)..."
+    docker compose -f "$TEST_COMPOSE_FILE" up -d
+
+    log_info "Waiting for rook server to be healthy..."
+    local attempt=1
+    while [[ $attempt -le $TEST_HEALTH_TIMEOUT ]]; do
+        if curl -sf "$TEST_HEALTH_URL" > /dev/null 2>&1; then
+            log_info "rook server is healthy!"
+            break
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+        echo -n "."
+    done
+    echo ""
+
+    if [[ $attempt -gt $TEST_HEALTH_TIMEOUT ]]; then
+        log_error "rook server did not become healthy in ${TEST_HEALTH_TIMEOUT}s."
+        log_error "Check logs with: $0 test-logs"
+        return 1
+    fi
+
+    log_info ""
+    log_info "Test environment ready!"
+    log_info "  Rook server: http://127.0.0.1:${TEST_SERVER_PORT}"
+    log_info "  Dashboard:   http://127.0.0.1:${TEST_SERVER_PORT}/dashboard/"
+    log_info ""
+    log_info "Get API key:"
+    echo "    docker exec rook-test-server cat /run/secrets/api_key"
+    log_info ""
+    log_info "Other commands:"
+    echo "    $0 test-logs     # tail container logs"
+    echo "    $0 test-shell    # shell into test client container"
+    echo "    $0 test-down     # stop and remove"
+}
+
+cmd_test_down() {
+    log_info "Stopping test containers..."
+    docker compose -f "$TEST_COMPOSE_FILE" down
+    log_info "Done."
+}
+
+cmd_test_logs() {
+    docker compose -f "$TEST_COMPOSE_FILE" logs -f
+}
+
+cmd_test_shell() {
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${TEST_CLIENT}$"; then
+        log_error "$TEST_CLIENT is not running. Start it with: $0 test-up"
+        exit 1
+    fi
+    docker exec -it "$TEST_CLIENT" /bin/bash
+}
+
+cmd_test_status() {
+    log_info "Test environment status:"
+    docker compose -f "$TEST_COMPOSE_FILE" ps
+
+    echo ""
+    log_info "Rook server /health:"
+    if curl -sf "$TEST_HEALTH_URL" 2>/dev/null | python3 -m json.tool 2>/dev/null; then
+        :
+    else
+        log_warn "(/health not responding yet)"
+    fi
+
+    echo ""
+    log_info "Test client configuration:"
+    docker exec "$TEST_CLIENT" cat /root/.config/opencode/opencode.json 2>/dev/null || log_warn "(test client not running)"
+}
+
+cmd_test_clean() {
+    log_info "Removing test containers and images..."
+    docker compose -f "$TEST_COMPOSE_FILE" down --rmi local --remove-orphans 2>/dev/null || true
+    log_info "Clean complete."
+}
+
+# =============================================================================
 # Commands
 # =============================================================================
 
@@ -159,7 +261,7 @@ show_help() {
     cat << 'EOF'
 dev/run.sh — Run rook in a local Docker container (no host pollution)
 
-Commands:
+Dev commands (single rook server):
   dev/run.sh build         Build the rook:dev image
   dev/run.sh up            Start the container (waits until /health is OK)
   dev/run.sh down          Stop and remove the container
@@ -169,14 +271,28 @@ Commands:
   dev/run.sh status        Show container + /health response
   dev/run.sh clean         Remove image and container
 
-The container uses dev/test-configs/rook-dev.toml and is fully ephemeral
+Test commands (rook server + opencode client):
+  dev/run.sh test-build     Build test images (rook server + opencode client)
+  dev/run.sh test-up        Start test environment and wait for healthy
+  dev/run.sh test-down      Stop and remove test containers
+  dev/run.sh test-logs      Tail test container logs
+  dev/run.sh test-shell     Open a shell in the test client container
+  dev/run.sh test-status    Show test environment status
+  dev/run.sh test-clean     Remove test images and containers
+
+The dev container uses dev/test-configs/rook-dev.toml and is fully ephemeral
 (in-memory DB). It exposes port ${DEFAULT_PORT} on the host (127.0.0.1).
 
+The test container uses dev/test-configs/rook-test.toml with a persistent
+file-based DB and opencode pre-configured to use the rook server.
+
 Examples:
-  dev/run.sh up            # Start and wait until healthy
+  dev/run.sh up            # Start dev container and wait until healthy
   curl http://127.0.0.1:${DEFAULT_PORT}/health
-  dev/run.sh logs          # Watch logs in real time
-  dev/run.sh down          # Stop and remove
+  dev/run.sh test-up       # Start test environment with opencode
+  dev/run.sh test-shell    # Bash into test client to run opencode
+  dev/run.sh down          # Stop dev container
+  dev/run.sh test-down     # Stop test containers
 EOF
 }
 
@@ -184,14 +300,21 @@ CMD="${1:-help}"
 shift || true
 
 case "$CMD" in
-    build)   cmd_build ;;
-    up)      cmd_up ;;
-    down)    cmd_down ;;
-    logs)    cmd_logs ;;
-    shell)   cmd_shell ;;
-    restart) cmd_restart ;;
-    status)  cmd_status ;;
-    clean)   cmd_clean ;;
+    build)       cmd_build ;;
+    up)          cmd_up ;;
+    down)        cmd_down ;;
+    logs)        cmd_logs ;;
+    shell)       cmd_shell ;;
+    restart)     cmd_restart ;;
+    status)      cmd_status ;;
+    clean)       cmd_clean ;;
+    test-build)  cmd_test_build ;;
+    test-up)     cmd_test_up ;;
+    test-down)   cmd_test_down ;;
+    test-logs)   cmd_test_logs ;;
+    test-shell)  cmd_test_shell ;;
+    test-status) cmd_test_status ;;
+    test-clean)  cmd_test_clean ;;
     help|--help|-h) show_help ;;
     *)       log_error "Unknown command: $CMD"; show_help; exit 1 ;;
 esac

@@ -3,6 +3,8 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
+use axum::routing::get;
+
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -51,7 +53,14 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         container.csrf_guard.clone(),
         container.rate_limit_store.clone(),
     )
-    .merge(crate::dashboard::dashboard_routes());
+        .route(
+            "/dashboard",
+            get(|| async { axum::response::Redirect::permanent("/dashboard/") }),
+        )
+        .nest("/dashboard/", crate::dashboard::dashboard_routes())
+        // Serve dashboard SPA at root path (/) for convenience
+        // This allows accessing the dashboard at http://host/ directly
+        .fallback(crate::dashboard::root_handler);
 
     info!(addr = %addr, "starting rook server");
 

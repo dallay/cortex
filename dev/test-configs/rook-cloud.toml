@@ -7,7 +7,7 @@
 #   target/debug/rook
 #
 # Then add a provider via API:
-#     curl -X POST http://localhost:8080/api/providers \
+#     curl -X POST http://localhost:3773/api/providers \
 #       -H "Content-Type: application/json" \
 #       -d '{
 #       "name": "ollama-cloud-primary",
@@ -20,7 +20,7 @@
 
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 3773
 
 [routing]
 strategy = "priority"

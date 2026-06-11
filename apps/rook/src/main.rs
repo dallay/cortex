@@ -260,7 +260,7 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
 /// regardless of token length.
 fn build_bootstrap_banner(sanitized_token: &str) -> String {
     let header = "ROOK -- BOOTSTRAP MODE ACTIVE";
-    let dash_url = "http://localhost:5173";
+    let dash_url = "http://localhost:4747";
     let instruction = "To complete setup, open the dashboard at";
     let token_label = "Setup token:";
 

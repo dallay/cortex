@@ -1,0 +1,46 @@
+# =============================================================================
+# dev/Dockerfile.test-client — Test container with opencode + rook config
+#
+# Based on Ubuntu with opencode CLI pre-installed and configured.
+# The opencode.json is mounted from test-configs/ but we also include a
+# seed script to ensure the API key is created on first run.
+#
+# Usage:
+#   docker compose -f dev/docker-compose.test.yml build test
+#   docker compose -f dev/docker-compose.test.yml up -d
+# =============================================================================
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    jq \
+    ca-certificates \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install opencode (script handles everything)
+RUN curl -fsSL https://opencode.ai/install | bash
+
+# Add opencode to PATH
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Copy opencode.json configuration to the right place (as .orig for injection)
+COPY dev/test-configs/opencode-test.json /root/.config/opencode/opencode.json.orig
+
+# Copy and set up entrypoint
+COPY dev/docker/test-client-entrypoint.sh /usr/local/bin/test-client-entrypoint.sh
+RUN chmod +x /usr/local/bin/test-client-entrypoint.sh
+
+# Default command - keep container alive
+ENTRYPOINT ["/usr/local/bin/test-client-entrypoint.sh"]
+CMD ["tail", "-f", "/dev/null"]
+
+# Default command - keep container alive
+CMD ["tail", "-f", "/dev/null"]

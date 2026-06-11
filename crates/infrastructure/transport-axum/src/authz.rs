@@ -193,7 +193,7 @@ impl CorsConfig {
     fn from_env() -> Self {
         let allowed_origins = std::env::var("ALLOWED_ORIGINS")
             .unwrap_or_else(|_| {
-                "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000".to_string()
+                "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
             })
             .split(',')
             .map(str::trim)
@@ -383,14 +383,17 @@ pub async fn middleware(
 
 pub fn classify_route(method: &Method, path: &str) -> AuthTier {
     if method == Method::OPTIONS
+        || path == "/"
         || path == "/health"
         || path == "/status"
         || path == "/login"
         || path == "/logout"
+        || path == "/index.html"
         || path == "/api/bootstrap/status"
         || path == "/api/bootstrap/setup"
         || path.starts_with("/assets/")
         || path.starts_with("/static/")
+        || path.starts_with("/dashboard/")
     {
         AuthTier::Public
     } else if path.starts_with("/v1/") {
@@ -833,7 +836,7 @@ fn rejection_response(path: &str, route_class: AuthTier, outcome: AuthOutcome) -
         )
     {
         let mut headers = HeaderMap::new();
-        headers.insert(LOCATION, HeaderValue::from_static("/login"));
+        headers.insert(LOCATION, HeaderValue::from_static("/dashboard/"));
         return (StatusCode::SEE_OTHER, headers, Body::empty()).into_response();
     }
 
@@ -1065,9 +1068,10 @@ mod tests {
             classify_route(&Method::GET, "/api/providers"),
             AuthTier::Management
         );
+        // Dashboard routes are now Public — SPA handles auth internally
         assert_eq!(
             classify_route(&Method::GET, "/dashboard/providers"),
-            AuthTier::Management
+            AuthTier::Public
         );
     }
 
@@ -1247,7 +1251,11 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_auth_failures_redirect_to_login() {
+    fn dashboard_auth_failures_redirect_to_dashboard() {
+        // Dashboard routes are classified as Public, so this scenario only
+        // occurs when explicitly testing Management-tier behavior.
+        // When it does, unauthenticated requests redirect to /dashboard/
+        // (the SPA entry point) rather than /login.
         let response = rejection_response(
             "/dashboard/providers",
             AuthTier::Management,
@@ -1257,7 +1265,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response.headers().get("location"),
-            Some(&HeaderValue::from_static("/login"))
+            Some(&HeaderValue::from_static("/dashboard/"))
         );
     }
 

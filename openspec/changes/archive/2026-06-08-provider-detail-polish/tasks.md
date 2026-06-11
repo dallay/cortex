@@ -63,4 +63,4 @@ Chain strategy: pending
 
 - [ ] Start `pnpm dev` in `dashboard` (if not running). `/providers` — 6 branded cards. Click Ollama Cloud — `/providers/ollama-cloud` renders; header shows icon + "Ollama Cloud" link + `ExternalLink`; right-click → Copy Link returns `https://ollama.com/cloud`; tab focus has a ring.
 - Acceptance: visual + a11y (Lighthouse ≥ 95) gut-check passes.
-- **Status**: Code implementation complete. Manual browser verification required (dev server running on :5173).
+- **Status**: Code implementation complete. Manual browser verification required (dev server running on :4747).
