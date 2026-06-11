@@ -678,7 +678,7 @@ test.describe('API Keys - Provider Restrictions', () => {
     const firstProvider = providers[0]
 
     // Create key restricted to first provider via API
-    await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [firstProvider.id])
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [firstProvider.id])
 
     // Reload and edit
     await page.reload()
@@ -694,12 +694,11 @@ test.describe('API Keys - Provider Restrictions', () => {
       const secondProvider = providers[1]
       const providersSection = page.locator('[data-testid="api-key-providers"]')
 
-      // Find and check the second provider checkbox
-      const checkboxes = providersSection.locator('input[type="checkbox"]')
-      const count = await checkboxes.count()
-      if (count > 1) {
-        await checkboxes.nth(1).check()
-      }
+      // Click the second provider's checkbox by its data-testid
+      const secondCheckbox = providersSection.locator(
+        `[data-testid="provider-checkbox-${secondProvider.id}"]`,
+      )
+      await secondCheckbox.check()
     }
 
     // Save
@@ -709,8 +708,8 @@ test.describe('API Keys - Provider Restrictions', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 })
 
     // Verify the saved API key has the newly added provider
-    const secondProviderId = providers.length > 1 ? providers[1].id : null
-    if (secondProviderId) {
+    if (providers.length > 1) {
+      const secondProviderId = providers[1].id
       const csrf = await getCsrfToken(page)
       const cookies = await page.context().cookies(DASHBOARD_URL)
       const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
