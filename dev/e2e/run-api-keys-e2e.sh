@@ -47,8 +47,16 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 cleanup() {
     log_info "Cleaning up..."
+    # Kill background dashboard process if running
+    if [ -n "${DASHBOARD_PID:-}" ] && kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        kill "$DASHBOARD_PID" 2>/dev/null || true
+    fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    rm -f /tmp/rook-e2e-cookies.txt 2>/dev/null || true
 }
+
+# Always run cleanup on exit, error, or interrupt — regardless of set -e
+trap cleanup EXIT ERR INT
 
 # Parse arguments
 MODE="${1:-}"
@@ -81,7 +89,7 @@ docker run -d \
 
 log_info "Waiting for server to be ready..."
 for i in {1..30}; do
-    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', $API_PORT)); s.close(); exit(0)" 2>/dev/null; then
+    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', $API_PORT)); s.close(); exit(0)" 2>/dev/null; then
         log_info "Server is ready on port $API_PORT"
         break
     fi

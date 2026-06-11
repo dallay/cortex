@@ -184,7 +184,7 @@ dev/e2e-test.sh clean
 | File | Used by | DB | Notes |
 |------|---------|----|-------|
 | `test-configs/rook-dev.toml` | Path 1 (smoke test) | `:memory:` | No auth, no CRUD |
-| `test-configs/rook-api-keys-test.toml` | Path 2 (Playwright E2E) | `/tmp/rook-e2e.db` | Auth enabled, no CRUD |
+| `test-configs/rook-api-keys-test.toml` | Path 2 (Playwright E2E) | `/tmp/rook-e2e.db` | Auth enabled, CRUD enabled, cache disabled |
 | `test-configs/rook-minimal.toml` | Manual / custom | configurable | Base for experiments |
 
 ---
