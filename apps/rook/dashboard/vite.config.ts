@@ -9,7 +9,12 @@ import { codecovVitePlugin } from '@codecov/vite-plugin'
 // a non-default port like 8081).
 const API_TARGET = process.env.API_TARGET ?? 'http://localhost:8080'
 
+// Base path: serve dashboard from /dashboard/ prefix
+// This ensures assets are generated with correct /dashboard/assets/ paths
+const BASE_PATH = process.env.BASE_PATH ?? '/dashboard/'
+
 export default defineConfig({
+  base: BASE_PATH,
   plugins: [
     vue(),
     tailwindcss(),
@@ -35,6 +40,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 4747,
     proxy: {
       '/api/': {
         target: API_TARGET,

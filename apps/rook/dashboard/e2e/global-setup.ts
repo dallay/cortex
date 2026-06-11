@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
-const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://localhost:5173'
+// Use 127.0.0.1 for API (Docker proxy on macOS only forwards IPv4)
+// DASHBOARD_URL uses localhost since Vite dev server runs on localhost:4747
+const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8081'
+const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://localhost:4747/dashboard'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
 
 export const AUTH_STATE_PATH = path.join(__dirname, '.auth', 'admin.json')
@@ -47,7 +49,7 @@ async function saveAuthState(): Promise<void> {
     throw new Error(`[globalSetup] saveAuthState login failed: ${loginRes.status()} ${await loginRes.text()}`)
   }
 
-  // The auth_token is issued by the backend (port 8080).  The frontend (Vite, port 5173)
+  // The auth_token is issued by the backend (port 3773).  The frontend (Vite, port 4747)
   // proxies /api/* to the backend, so the cookie must be registered for the FRONTEND
   // origin — otherwise the browser won't send it with proxied API requests.
   const authToken = loginRes.headers()['set-cookie']?.match(/auth_token=([^;]+)/)?.[1]
@@ -60,7 +62,12 @@ async function saveAuthState(): Promise<void> {
     {
       name: 'auth_token',
       value: authToken,
-      url: DASHBOARD_URL,
+      // Set domain + path explicitly (NOT `url:`) so the cookie is sent with
+      // ALL requests to the frontend origin — including Vite-proxied API
+      // calls like /api/me. Using `url: DASHBOARD_URL` would infer path
+      // `/dashboard`, blocking cookies from being sent to /api/* routes.
+      domain: 'localhost',
+      path: '/',
       httpOnly: true,
       sameSite: 'Lax',
       secure: false,

@@ -157,6 +157,31 @@ vi.mock("@/components/ui/select", () => ({
   }),
 }));
 
+vi.mock("@/components/ui/accordion", () => ({
+  Accordion: defineComponent({
+    props: {type: String, class: String},
+    setup(_props, {slots}) {
+      return () => h("div", {class: _props.class}, slots.default?.());
+    },
+  }),
+  AccordionItem: defineComponent({
+    props: {value: String},
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+  AccordionTrigger: defineComponent({
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+  AccordionContent: defineComponent({
+    setup(_props, {slots}) {
+      return () => h("div", slots.default?.());
+    },
+  }),
+}));
+
 vi.mock("@lucide/vue", () => {
   const icon = defineComponent({
     setup: () => () => h("span", {"data-testid": "icon"}),
@@ -170,6 +195,7 @@ vi.mock("@lucide/vue", () => {
     RefreshCw: icon,
     Pencil: icon,
     Trash2: icon,
+    ChevronDown: icon,
   };
 });
 
@@ -389,6 +415,27 @@ describe("ApiKeyForm", () => {
       const emitted = wrapper.emitted("update:modelValue")!;
       const last = (emitted.at(-1) as unknown as [ApiKeyFormState])[0];
       expect(last.allowedProviders).toContain("p1");
+    });
+
+    it("toggles all providers of a kind when the group checkbox is clicked", async () => {
+      // Start with no providers selected
+      const wrapper = makeWrapper(makeFormState({ allowedProviders: [] }));
+      const groupCb = wrapper.find<HTMLInputElement>(
+        '[data-testid="provider-kind-checkbox-openai"]',
+      );
+      expect(groupCb.exists(), "group checkbox should exist").toBe(true);
+
+      // Click group checkbox to check all openai providers (p1)
+      await groupCb.setValue(true);
+      const emittedOn = wrapper.emitted("update:modelValue")!;
+      const stateOn = (emittedOn.at(-1) as unknown as [ApiKeyFormState])[0];
+      expect(stateOn.allowedProviders).toContain("p1");
+
+      // Click again to uncheck all openai providers
+      await groupCb.setValue(false);
+      const emittedOff = wrapper.emitted("update:modelValue")!;
+      const stateOff = (emittedOff.at(-1) as unknown as [ApiKeyFormState])[0];
+      expect(stateOff.allowedProviders).not.toContain("p1");
     });
   });
 

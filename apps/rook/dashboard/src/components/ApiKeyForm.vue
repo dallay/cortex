@@ -13,11 +13,17 @@
  * the scope registry grows, no template changes are needed.
  */
 
-import {AlertTriangle, Key, ShieldAlert} from "@lucide/vue";
+import {AlertTriangle, ChevronDown, Key, ShieldAlert} from "@lucide/vue";
 import {computed} from "vue";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Checkbox} from "@/components/ui/checkbox";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {Input} from "@/components/ui/input";
 import {
   Select,
@@ -26,6 +32,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  PROVIDER_KINDS,
+  type ProviderKind,
+} from "@/config/providerCatalog";
 import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import type {ScopeDef, ScopeGroup} from "@/config/scopes";
 import type {ProviderConnectionResponse} from "@/lib/api";
@@ -104,6 +114,62 @@ const groupedScopes = computed(() => {
     }))
     .filter((entry) => entry.scopes.length > 0);
 });
+
+/** Group providers by their providerKind for collapsible display. */
+const providersByKind = computed(() => {
+  const groups = new Map<ProviderKind, ProviderConnectionResponse[]>();
+  for (const provider of props.providers) {
+    const kind = provider.providerKind;
+    if (!groups.has(kind)) {
+      groups.set(kind, []);
+    }
+    groups.get(kind)!.push(provider);
+  }
+  return groups;
+});
+
+/** Get catalog metadata for a provider kind (display name, icon, etc). */
+function getCatalogEntry(kind: ProviderKind) {
+  return PROVIDER_KINDS.find((p) => p.kind === kind) ?? null;
+}
+
+/** Toggle all providers in a specific kind group. */
+function toggleKindGroup(kind: ProviderKind, checked: boolean) {
+  const providersOfKind = providersByKind.value.get(kind) ?? [];
+  const providerIds = providersOfKind.map((p) => p.id);
+  if (checked) {
+    // Add all provider IDs of this kind
+    const newSet = Array.from(
+      new Set([...props.modelValue.allowedProviders, ...providerIds]),
+    );
+    update("allowedProviders", newSet);
+  } else {
+    // Remove all provider IDs of this kind
+    const newSet = props.modelValue.allowedProviders.filter(
+      (id) => !providerIds.includes(id),
+    );
+    update("allowedProviders", newSet);
+  }
+}
+
+/** Check if all providers of a given kind are selected. */
+function isKindGroupChecked(kind: ProviderKind): boolean {
+  const providersOfKind = providersByKind.value.get(kind) ?? [];
+  if (providersOfKind.length === 0) return false;
+  return providersOfKind.every((p) =>
+    props.modelValue.allowedProviders.includes(p.id),
+  );
+}
+
+/** Check if some (but not all) providers of a kind are selected. */
+function isKindGroupIndeterminate(kind: ProviderKind): boolean {
+  const providersOfKind = providersByKind.value.get(kind) ?? [];
+  if (providersOfKind.length === 0) return false;
+  const checkedCount = providersOfKind.filter((p) =>
+    props.modelValue.allowedProviders.includes(p.id),
+  ).length;
+  return checkedCount > 0 && checkedCount < providersOfKind.length;
+}
 
 const groupLabel: Record<ScopeGroup, string> = {
   chat: "Chat",
@@ -224,7 +290,7 @@ function scopeSlug(value: string): string {
       </p>
     </div>
 
-    <!-- Allowed Providers -->
+    <!-- Allowed Providers (grouped by providerKind) -->
     <div class="space-y-2" data-testid="api-key-providers">
       <p class="text-sm font-medium">Allowed providers</p>
       <p class="text-xs text-muted-foreground">
@@ -233,22 +299,55 @@ function scopeSlug(value: string): string {
       <div v-if="providers.length === 0" class="text-xs text-muted-foreground italic">
         No providers configured.
       </div>
-      <div v-else class="space-y-2 pt-1">
-        <label
-          v-for="provider in providers"
-          :key="provider.id"
-          class="flex items-center gap-2"
-          :data-testid="`provider-row-${provider.id}`"
+      <Accordion v-else type="multiple" class="w-full">
+        <AccordionItem
+          v-for="[kind, kindProviders] in providersByKind"
+          :key="kind"
+          :value="kind"
         >
-          <Checkbox
-            :model-value="isProviderChecked(provider.id)"
-            :data-testid="`provider-checkbox-${provider.id}`"
-            @update:model-value="(v) => toggleProvider(provider.id, v === true)"
-          />
-          <span class="text-sm">{{ provider.name }}</span>
-          <code class="text-xs text-muted-foreground">({{ provider.providerKind }})</code>
-        </label>
-      </div>
+          <AccordionTrigger class="py-2">
+            <div class="flex items-center gap-2 w-full pr-2">
+              <!-- Group-level select all checkbox -->
+              <Checkbox
+                :model-value="isKindGroupChecked(kind)"
+                :indeterminate="isKindGroupIndeterminate(kind)"
+                :data-testid="`provider-kind-checkbox-${kind}`"
+                @update:model-value="(checked: boolean | 'indeterminate') => { if (typeof checked === 'boolean') toggleKindGroup(kind, checked); }"
+              />
+              <span class="text-sm font-medium">
+                {{ getCatalogEntry(kind)?.displayNameKey
+                    ? $t(getCatalogEntry(kind)!.displayNameKey)
+                    : kind }}
+              </span>
+              <Badge variant="secondary" class="text-xs">
+                {{ kindProviders.length }}
+              </Badge>
+              <!-- Show selected count -->
+              <span class="text-xs text-muted-foreground ml-auto">
+                {{ kindProviders.filter(p => isProviderChecked(p.id)).length }}/{{ kindProviders.length }}
+              </span>
+              <ChevronDown class="h-4 w-4 text-muted-foreground shrink-0" />
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div class="pl-6 space-y-1 py-2">
+              <label
+                v-for="provider in kindProviders"
+                :key="provider.id"
+                class="flex items-center gap-2 cursor-pointer"
+                :data-testid="`provider-row-${provider.id}`"
+              >
+                <Checkbox
+                  :model-value="isProviderChecked(provider.id)"
+                  :data-testid="`provider-checkbox-${provider.id}`"
+                  @update:model-value="(v) => toggleProvider(provider.id, v === true)"
+                />
+                <span class="text-sm">{{ provider.name }}</span>
+              </label>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
 
     <!-- Allowed Models -->

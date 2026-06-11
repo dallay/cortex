@@ -4,8 +4,14 @@ import { test, expect, Page, TestInfo } from '@playwright/test'
 // Test Configuration
 // =============================================================================
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
-const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://localhost:5173'
+// Use 127.0.0.1 for API (Docker proxy on macOS only forwards IPv4)
+// DASHBOARD_URL uses localhost since Vite dev server runs on localhost:4747
+const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8081'
+// Vite serves the app at /dashboard/ (with trailing slash). Strip trailing slash
+// from DASHBOARD_URL for concatenation with relative paths like "/api-keys".
+const DASHBOARD_URL_BASE = (process.env.DASHBOARD_URL || 'http://localhost:4747/dashboard').replace(/\/+$/, '')
+// DASHBOARD_URL for navigation (includes trailing slash since Vite serves at /dashboard/)
+const DASHBOARD_URL = DASHBOARD_URL_BASE + '/'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
 
 function cookieValue(setCookie: string | null, name: string): string | null {
@@ -179,7 +185,7 @@ test.describe('API Keys - List View', () => {
     await loginAsAdmin(page)
 
     // Navigate to API keys page
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
   })
 
@@ -210,7 +216,7 @@ test.describe('API Keys - Create Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke only OUR worker's label — avoids touching keys from concurrent workers.
@@ -288,7 +294,7 @@ test.describe('API Keys - Edit Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke any leftover key for this worker, then create a fresh one.
@@ -369,7 +375,7 @@ test.describe('API Keys - Revoke Flow', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // Revoke only OUR worker's label — avoids touching keys belonging to
@@ -422,6 +428,428 @@ test.describe('API Keys - Revoke Flow', () => {
 })
 
 // =============================================================================
+// Helper: Get all providers from the registry via API
+// =============================================================================
+
+async function getProvidersViaApi(page: Page): Promise<Array<{ id: string; name: string; providerKind: string }>> {
+  const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
+  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+  const response = await page.request.get(`${API_BASE_URL}/api/providers`, {
+    headers: {
+      'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`
+    }
+  })
+
+  if (!response.ok()) {
+    return []
+  }
+
+  const contentType = response.headers()['content-type'] ?? ''
+  if (!contentType.includes('application/json')) {
+    // API returned HTML (e.g. 404 page, redirect) — return empty list
+    return []
+  }
+
+  const data = await response.json()
+  // API may return { providers: [...] } wrapper or direct array
+  if (data && typeof data === 'object' && 'providers' in data) {
+    return (data as { providers: Array<{ id: string; name: string; providerKind: string }> }).providers
+  }
+  return data as Array<{ id: string; name: string; providerKind: string }>
+}
+
+// =============================================================================
+// Helper: Create API key with specific provider restrictions via API
+// =============================================================================
+
+async function createApiKeyWithProvidersViaApi(
+  page: Page,
+  label: string,
+  scopes: string[] = ['chat:read'],
+  tier: string = 'free',
+  allowedProviders: string[] = []
+): Promise<{ id: string; plaintextKey: string }> {
+  const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
+  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+  const response = await page.request.post(`${API_BASE_URL}/api/api-keys`, {
+    data: { label, scopes, tier, expiresAt: null, allowedProviders },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': csrf.token,
+      'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`
+    }
+  })
+
+  if (!response.ok()) {
+    throw new Error(`Failed to create API key with providers: ${response.status()} ${await response.text()}`)
+  }
+
+  const data = await response.json()
+  return { id: data.key.id, plaintextKey: data.plaintextKey }
+}
+
+// =============================================================================
+// Helper: Update API key provider restrictions via API
+// =============================================================================
+
+async function updateApiKeyProvidersViaApi(
+  page: Page,
+  keyId: string,
+  allowedProviders: string[]
+): Promise<void> {
+  const csrf = await getCsrfToken(page)
+  const cookies = await page.context().cookies(DASHBOARD_URL)
+  const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+  const response = await page.request.put(`${API_BASE_URL}/api/api-keys/${keyId}`, {
+    data: { allowedProviders },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': csrf.token,
+      'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`
+    }
+  })
+
+  if (!response.ok()) {
+    throw new Error(`Failed to update API key providers: ${response.status()} ${await response.text()}`)
+  }
+}
+
+// =============================================================================
+// Test: API Keys - Provider Restrictions
+//
+// Regression tests for the stale provider ID bug:
+// When a provider is deleted from the registry but still referenced in an
+// API key's allowedProviders list, saving the key should silently filter
+// out the stale ID instead of failing with "unknown provider(s)" error.
+// =============================================================================
+
+test.describe('API Keys - Provider Restrictions', () => {
+  // ---------------------------------------------------------------------------
+  // Test: Create API key with provider restrictions
+  // ---------------------------------------------------------------------------
+  test('creates API key with provider restrictions via UI', async ({ page, browserName }) => {
+    // Skip WebKit due to CSRF race condition (tracked separately)
+    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+
+    const keyLabel = `key-with-providers-${test.info().workerIndex}`
+
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await loginAsAdmin(page)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
+    await page.waitForLoadState('networkidle')
+
+    // Clean up any existing key with our label
+    await revokeKeysByLabelViaApi(page, keyLabel)
+
+    // Get available providers
+    const providers = await getProvidersViaApi(page)
+    if (providers.length === 0) {
+      test.skip('No providers available in the registry — skipping')
+    }
+
+    // Open create modal
+    await page.getByRole('button', { name: /create api key/i }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Fill label
+    await page.getByLabel(/label/i).fill(keyLabel)
+
+    // Select at least one provider in the restrictions section
+    // The providers section in the form should show available providers
+    const providersSection = page.locator('[data-testid="api-key-providers"]')
+    if (await providersSection.isVisible()) {
+      // Click on the first available provider checkbox
+      const firstProvider = providersSection.locator('input[type="checkbox"]').first()
+      if (await firstProvider.isVisible()) {
+        await firstProvider.check()
+      }
+    }
+
+    // Submit
+    await page.getByRole('button', { name: /create key/i }).click()
+
+    // Should succeed and show the key
+    await expect(page.getByRole('heading', { name: /api key created/i })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText(keyLabel)).toBeVisible()
+
+    // Close modal
+    await page.getByRole('button', { name: /done/i }).click({ timeout: 10000 })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test: Editing API key with stale provider IDs does not fail
+  //
+  // This is the PRIMARY regression test for the bug where:
+  // 1. API key has allowedProviders: ["stale-id-123"]
+  // 2. Registry only has providers ["valid-id-456"]
+  // 3. User opens edit modal, changes something, clicks Save
+  // 4. Bug: Backend returned "unknown provider(s): stale-id-123"
+  // 5. Fix: Backend silently filters stale-id-123, saves successfully
+  // ---------------------------------------------------------------------------
+  test('edit API key with stale provider IDs succeeds (stale IDs filtered)', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+
+    const keyLabel = `key-with-stale-providers-${test.info().workerIndex}`
+
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await loginAsAdmin(page)
+
+    // Clean up any existing key with our label
+    await revokeKeysByLabelViaApi(page, keyLabel)
+
+    // Create a key with a FAKE (non-existent) provider ID to simulate the bug scenario
+    // This simulates what happens when a provider is deleted but the API key still references it
+    const fakeProviderId = `00000000-0000-0000-0000-000000000000`
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [fakeProviderId])
+
+    // Verify the key was created (backend accepts fake IDs and filters them)
+    const keyData = await page.request.get(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+      headers: { 'Cookie': `auth_token=${(await page.context().cookies(DASHBOARD_URL)).find(c => c.name === 'auth_token')?.value}` }
+    })
+    const keyJson = await keyData.json()
+    // The stale fake provider should have been filtered (empty = unrestricted)
+    expect(keyJson.allowedProviders).toEqual([])
+
+    // Now navigate to the API keys page and try to edit this key
+    await page.goto(`${DASHBOARD_URL}api-keys`)
+    await page.waitForLoadState('networkidle')
+
+    // Wait for table to load
+    await page.waitForSelector('tbody tr', { timeout: 10000 })
+
+    // Find and edit the key - use getByRole for more reliable selection
+    const rows = page.locator('tbody tr')
+    const rowCount = await rows.count()
+    expect(rowCount).toBeGreaterThan(0)
+
+    // Find the row containing our key label
+    // The table cell with the label contains our keyLabel text
+    const row = page.locator('tbody tr').filter({ hasText: keyLabel }).first()
+    await expect(row).toBeVisible({ timeout: 10000 })
+
+    // Click the first button in the row (edit button)
+    await row.locator('button').first().click()
+
+    // Edit modal should open
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByText(/edit api key/i)).toBeVisible()
+
+    // Change the label (any change triggers a save)
+    const labelInput = page.getByLabel(/label/i)
+    await labelInput.fill(`${keyLabel}-updated`)
+
+    // Save changes - THIS IS WHERE THE BUG MANIFESTED
+    // Before the fix: backend returned "unknown provider(s): 00000000-..."
+    // After the fix: backend silently filters the stale ID and succeeds
+    await page.getByRole('button', { name: /save changes/i }).click()
+
+    // Modal should close successfully
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 })
+
+    // Key should show the updated label (use first() to avoid strict mode violation with duplicates)
+    await expect(page.getByText(`${keyLabel}-updated`).first()).toBeVisible()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test: Update API key to add valid provider to existing restrictions
+  // ---------------------------------------------------------------------------
+  test('adds new provider to restricted API key via UI', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+
+    const keyLabel = `key-to-add-provider-${test.info().workerIndex}`
+
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await loginAsAdmin(page)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
+    await page.waitForLoadState('networkidle')
+
+    // Clean up
+    await revokeKeysByLabelViaApi(page, keyLabel)
+
+    // Get available providers
+    const providers = await getProvidersViaApi(page)
+    if (providers.length === 0) {
+      test.skip('No providers available in the registry — skipping')
+    }
+    const firstProvider = providers[0]
+
+    // Create key restricted to first provider via API
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [firstProvider.id])
+
+    // Reload and edit
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+
+    const row = page.locator('tbody tr').filter({ hasText: keyLabel })
+    await row.locator('button').first().click()
+
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // If there are more providers, try to add another one
+    if (providers.length > 1) {
+      const secondProvider = providers[1]
+      const providersSection = page.locator('[data-testid="api-key-providers"]')
+
+      // Click the second provider's checkbox by its data-testid
+      const secondCheckbox = providersSection.locator(
+        `[data-testid="provider-checkbox-${secondProvider.id}"]`,
+      )
+      await secondCheckbox.check()
+    }
+
+    // Save
+    await page.getByRole('button', { name: /save changes/i }).click()
+
+    // Should succeed
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 })
+
+    // Verify the saved API key has the newly added provider
+    if (providers.length > 1) {
+      const secondProviderId = providers[1].id
+      const csrf = await getCsrfToken(page)
+      const cookies = await page.context().cookies(DASHBOARD_URL)
+      const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+      const keyResponse = await page.request.get(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+        headers: { 'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}` }
+      })
+      expect(keyResponse.ok()).toBe(true)
+      const savedKey = await keyResponse.json()
+      expect(savedKey.allowedProviders).toContain(secondProviderId)
+    }
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test: API-level verification of stale provider filtering
+  //
+  // Direct API test to verify the backend correctly filters stale provider IDs
+  // ---------------------------------------------------------------------------
+  test('API accepts update with stale provider IDs (filters silently)', async ({ page }) => {
+    const keyLabel = `api-test-stale-providers-${test.info().workerIndex}`
+
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await loginAsAdmin(page)
+
+    // Clean up
+    await revokeKeysByLabelViaApi(page, keyLabel)
+
+    // Create a key first
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [])
+
+    // Get providers to find a valid ID
+    const providers = await getProvidersViaApi(page)
+    const validProviderId = providers.length > 0 ? providers[0].id : null
+
+    // Update with mix of valid and INVALID (stale) provider IDs
+    const staleProviderId = '11111111-1111-1111-1111-111111111111'
+    const providersToSet = validProviderId ? [staleProviderId, validProviderId] : [staleProviderId]
+
+    // This should succeed - stale IDs are filtered
+    await updateApiKeyProvidersViaApi(page, key.id, providersToSet)
+
+    // Verify the key was updated (stale filtered, valid kept)
+    const csrf = await getCsrfToken(page)
+    const cookies = await page.context().cookies(DASHBOARD_URL)
+    const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+    const response = await page.request.get(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+      headers: { 'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}` }
+    })
+
+    expect(response.ok()).toBe(true)
+    const updatedKey = await response.json()
+
+    // Stale provider should be filtered out
+    expect(updatedKey.allowedProviders).not.toContain(staleProviderId)
+
+    // If we had a valid provider, it should be in the list
+    if (validProviderId) {
+      expect(updatedKey.allowedProviders).toContain(validProviderId)
+    }
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test: Clear all provider restrictions (set to unrestricted)
+  // ---------------------------------------------------------------------------
+  test('clears provider restrictions via UI', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+
+    const keyLabel = `key-to-clear-restrictions-${test.info().workerIndex}`
+
+    await page.goto(DASHBOARD_URL)
+    await page.waitForLoadState('networkidle')
+    await loginAsAdmin(page)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
+    await page.waitForLoadState('networkidle')
+
+    // Clean up
+    await revokeKeysByLabelViaApi(page, keyLabel)
+
+    // Get providers
+    const providers = await getProvidersViaApi(page)
+    if (providers.length === 0) {
+      test.skip('No providers available in the registry — skipping')
+    }
+
+    // Create key with restrictions - capture the key ID
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [providers[0].id])
+
+    // Reload and edit
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+
+    const row = page.locator('tbody tr').filter({ hasText: keyLabel })
+    await row.locator('button').first().click()
+
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Uncheck all provider checkboxes to clear restrictions.
+    // The reka-ui Checkbox uses a visually-hidden <input> with role="checkbox"
+    // on the visible button. Click on the role=checkbox element (the visible
+    // button), NOT the hidden input — clicking the hidden input doesn't
+    // dispatch the events the reka-ui Checkbox listens for.
+    const providersSection = page.locator('[data-testid="api-key-providers"]')
+    const checkboxes = providersSection.getByRole('checkbox')
+    const count = await checkboxes.count()
+    for (let i = 0; i < count; i++) {
+      if (await checkboxes.nth(i).getAttribute('data-state') === 'checked') {
+        await checkboxes.nth(i).click()
+      }
+    }
+
+    // Save
+    await page.getByRole('button', { name: /save changes/i }).click()
+
+    // Should succeed and key should now be unrestricted
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 })
+
+    // Verify via API that restrictions were cleared using getApiKey
+    const csrf = await getCsrfToken(page)
+    const cookies = await page.context().cookies(DASHBOARD_URL)
+    const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+    const keyResponse = await page.request.get(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+      headers: {
+        'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}`
+      }
+    })
+
+    expect(keyResponse.ok()).toBe(true)
+    const updatedKey = await keyResponse.json()
+    expect(updatedKey.allowedProviders).toEqual([])
+  })
+})
+
+// =============================================================================
 // Test: API Keys - Pagination (if more than 20 keys exist)
 // =============================================================================
 
@@ -430,7 +858,7 @@ test.describe('API Keys - Pagination', () => {
     await page.goto(DASHBOARD_URL)
     await page.waitForLoadState('networkidle')
     await loginAsAdmin(page)
-    await page.goto(`${DASHBOARD_URL}/api-keys`)
+    await page.goto(`${DASHBOARD_URL}api-keys`)
     await page.waitForLoadState('networkidle')
 
     // If there are keys, pagination should be visible
