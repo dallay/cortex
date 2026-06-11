@@ -149,7 +149,7 @@ Chain strategy: stacked-to-main
 - [ ] **6.2** Run `just fmt` and `just clippy`. All green.
 - [ ] **6.3** Run `cargo test --workspace --all-features` for the final pre-merge pass.
 - [ ] **6.4** Run `cd apps/rook/dashboard && pnpm exec vitest run` for the dashboard unit tests.
-- [ ] **6.5** Run real-world e2e test: start a fresh rook on `:8080`, log in, hit `/api/providers/test-credentials` with:
+- [ ] **6.5** Run real-world e2e test: start a fresh rook on `:3773`, log in, hit `/api/providers/test-credentials` with:
     - A valid Ollama Cloud key at quota limit → expect `valid: true, status: "warning"`.
     - A valid Ollama Cloud key on a free tier with quota available → expect `valid: true, status: "ok"` (or `unknown` if no quota issues).
     - An invalid Ollama Cloud key → expect `valid: false, status: "unhealthy", error: contains "auth rejected"`.

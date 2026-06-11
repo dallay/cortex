@@ -187,7 +187,7 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		defaultBaseUrl: "https://ollama.com",
 		baseUrlEditable: false,
 		iconFile: "ollama-cloud.svg",
-		brandUrl: "https://ollama.com/cloud",
+    brandUrl: "https://ollama.com/settings/keys",
 		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.ollamaCloud.description",
 		docsUrl: "https://docs.ollama.com/api-reference/chat.md",

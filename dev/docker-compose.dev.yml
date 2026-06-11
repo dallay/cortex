@@ -22,7 +22,7 @@ services:
     image: rook:dev
     container_name: rook-dev
     ports:
-      - "8090:8080"
+      - "8090:3773"
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1

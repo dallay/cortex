@@ -1,6 +1,6 @@
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 3773
 
 [routing]
 strategy = "priority"
@@ -16,7 +16,7 @@ db_path = ":memory:"
 db_path = "/tmp/rook-e2e.db"
 
 [provider_crud]
-enabled = false
+enabled = true
 
 [auth.api_keys]
 enabled = true

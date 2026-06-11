@@ -34,6 +34,10 @@ Thumbs.db
 *.swp
 *.swo
 *.bak
+
+# === Runtime indexes ===
+.codegraph/
+
 # START AI Agent Symlinks
 .agent/commands
 .agent/commands.bak

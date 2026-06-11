@@ -21,7 +21,7 @@ Fastest path. Builds rook in **debug mode** (no dashboard) and confirms the API
 layer works. Use this when you only need to verify the backend, health check, or
 API routing without any UI.
 
-**Port**: `8090` on host → `8080` in container  
+**Port**: `8090` on host → `3773` in container  
 **Database**: in-memory (`:memory:`) — ephemeral, clean slate on every restart  
 **Dashboard**: NOT available (Vue SPA is not built in debug mode → `/dashboard` returns 404)
 
@@ -68,9 +68,9 @@ just dev-clean         # or: dev/run.sh clean
 Full-stack E2E: backend runs in Docker (isolated DB on disk inside container),
 dashboard runs locally via `pnpm dev`, Playwright drives Chromium + Firefox + WebKit.
 
-**Port**: `8081` on host → `8080` in container  
+**Port**: `3773` on host → `3773` in container  
 **Database**: `/tmp/rook-e2e.db` inside the container (tmpfs-backed, gone when container is removed)  
-**Dashboard**: `http://localhost:5173` (Vite dev server on your machine)  
+**Dashboard**: `http://localhost:4747` (Vite dev server on your machine)  
 **Admin password**: `Admin123456-` (seeded automatically via `rook seed-admin`)
 
 ### Prerequisites
@@ -90,7 +90,7 @@ dev/e2e/run-api-keys-e2e.sh --test
 
 This does everything in one shot:
 1. Builds `rook:e2e-api-keys` from `Dockerfile.dev` (repo root)
-2. Starts the container on port `8081`
+2. Starts the container on port `3773`
 3. Seeds the admin account inside the container
 4. Starts `pnpm dev` for the dashboard in the background
 5. Runs `playwright test e2e/api-keys.spec.ts`
@@ -107,7 +107,7 @@ just test-e2e-dev
 # or: dev/e2e/run-api-keys-e2e.sh
 
 # In a second terminal — start the dashboard
-just run-dashboard   # http://localhost:5173
+just run-dashboard   # http://localhost:4747
 
 # In a third terminal — run specific tests
 cd apps/rook/dashboard
@@ -119,14 +119,14 @@ just test-e2e-cleanup
 # or: dev/e2e/run-api-keys-e2e.sh --cleanup
 ```
 
-Log in at `http://localhost:5173` with:
+Log in at `http://localhost:4747` with:
 - **Email**: `admin@rook.local`
 - **Password**: `Admin123456-`
 
 ### Config used
 
-`dev/test-configs/rook-api-keys-test.toml` — auth API keys enabled, cache disabled,
-DB at `/tmp/rook-e2e.db` (inside container), no provider CRUD.
+`dev/test-configs/rook-api-keys-test.toml` — auth API keys enabled, provider CRUD enabled,
+cache disabled, DB at `/tmp/rook-e2e.db` (inside container).
 
 ### Dockerfile used
 
@@ -184,7 +184,7 @@ dev/e2e-test.sh clean
 | File | Used by | DB | Notes |
 |------|---------|----|-------|
 | `test-configs/rook-dev.toml` | Path 1 (smoke test) | `:memory:` | No auth, no CRUD |
-| `test-configs/rook-api-keys-test.toml` | Path 2 (Playwright E2E) | `/tmp/rook-e2e.db` | Auth enabled, no CRUD |
+| `test-configs/rook-api-keys-test.toml` | Path 2 (Playwright E2E) | `/tmp/rook-e2e.db` | Auth enabled, CRUD enabled, cache disabled |
 | `test-configs/rook-minimal.toml` | Manual / custom | configurable | Base for experiments |
 
 ---

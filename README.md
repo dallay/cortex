@@ -83,7 +83,7 @@ Download pre-built binaries from [Releases](https://github.com/dallay/cortex/rel
    ```toml
    [server]
    host = "127.0.0.1"
-   port = 8080
+   port = 3773
 
    [providers.openai]
    api_key = "sk-..."
@@ -101,7 +101,7 @@ Download pre-built binaries from [Releases](https://github.com/dallay/cortex/rel
 
 3. **Test the proxy**:
    ```bash
-   curl http://localhost:8080/v1/chat/completions \
+   curl http://localhost:3773/v1/chat/completions \
      -H "Content-Type: application/json" \
      -d '{
        "model": "gpt-4",
@@ -123,7 +123,7 @@ chain = ["openai/gpt-4", "anthropic/claude-3-opus"]
 
 ### Dashboard Access
 Cortex comes with a built-in dashboard for management.
-On a fresh database, Rook enters **bootstrap mode**. Check the logs for a setup token and open the dashboard (if running locally, typically `http://localhost:5173` if you run it via `just run-dashboard`).
+On a fresh database, Rook enters **bootstrap mode**. Check the logs for a setup token and open the dashboard (if running locally, typically `http://localhost:4747` if you run it via `just run-dashboard`).
 
 ## ⚙️ Configuration
 

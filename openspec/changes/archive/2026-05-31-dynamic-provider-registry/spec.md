@@ -56,7 +56,7 @@ timeout_secs = 60
 
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 3773
 
 [routing]
 strategy = "priority"   # priority | round-robin | model-based

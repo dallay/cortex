@@ -1,0 +1,50 @@
+# =============================================================================
+# dev/Dockerfile.test-client — Test container with opencode + rook config
+#
+# Based on Ubuntu with opencode CLI pre-installed and configured.
+# The opencode.json is mounted from test-configs/ but we also include a
+# seed script to ensure the API key is created on first run.
+#
+# Usage:
+#   docker compose -f dev/docker-compose.test.yml build test
+#   docker compose -f dev/docker-compose.test.yml up -d
+# =============================================================================
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    jq \
+    ca-certificates \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install opencode from a pinned release artifact.
+ARG OPENCODE_VERSION=1.0.180
+ARG OPENCODE_SHA256=d0fb7e00ecdcb0679d796396809b8725aa6f58955c79faa5fc56d6a0723dbebd
+RUN mkdir -p /root/.opencode/bin \
+    && curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" -o /tmp/opencode.tar.gz \
+    && echo "${OPENCODE_SHA256}  /tmp/opencode.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/opencode.tar.gz -C /root/.opencode/bin opencode \
+    && chmod 755 /root/.opencode/bin/opencode \
+    && rm -f /tmp/opencode.tar.gz
+
+# Add opencode to PATH
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Copy opencode.json configuration to the right place (as .orig for injection)
+COPY dev/test-configs/opencode-test.json /root/.config/opencode/opencode.json.orig
+
+# Copy and set up entrypoint
+COPY dev/docker/test-client-entrypoint.sh /usr/local/bin/test-client-entrypoint.sh
+RUN chmod +x /usr/local/bin/test-client-entrypoint.sh
+
+# Default command - keep container alive
+ENTRYPOINT ["/usr/local/bin/test-client-entrypoint.sh"]
+CMD ["tail", "-f", "/dev/null"]

@@ -17,7 +17,6 @@ pub fn dashboard_routes() -> Router {
     Router::new()
         .route("/", get(serve_index))
         .route("/{*path}", get(serve_assets))
-        .fallback(serve_index_fallback)
 }
 
 async fn serve_index() -> impl IntoResponse {
@@ -28,14 +27,18 @@ async fn serve_assets(Path(path): Path<String>) -> impl IntoResponse {
     serve_dashboard_asset(&path)
 }
 
-async fn serve_index_fallback() -> impl IntoResponse {
+/// Root path handler — serves the dashboard SPA at the root URL (/)
+/// This allows accessing the dashboard at http://host/ directly instead of /dashboard/
+pub async fn root_handler() -> impl IntoResponse {
     serve_dashboard_asset("index.html")
 }
 
-fn serve_dashboard_asset(path: &str) -> impl IntoResponse {
-    match DashboardAssets::get(path) {
+pub fn serve_dashboard_asset(path: &str) -> impl IntoResponse {
+    // Strip leading slash — RustEmbed stores paths without leading slash
+    let normalized = path.strip_prefix('/').unwrap_or(path);
+    match DashboardAssets::get(normalized) {
         Some(asset) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            let mime = mime_guess::from_path(normalized).first_or_octet_stream();
             (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, mime.as_ref())],

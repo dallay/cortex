@@ -134,7 +134,7 @@ build-targets:
 
 # Run the backend (rook) in dev mode
 run:
-    cargo run -p rook
+    ROOK_CONFIG=$HOME/.config/cortex/rook.toml cargo run -p rook
 
 # Run the Vue dashboard dev server (requires pnpm install first)
 run-dashboard:
@@ -153,9 +153,9 @@ db-reset:
     @rm -f ~/.local/share/cortex/rook/rook.db{,-wal,-shm}
     @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
 
-# Kill any process occupying port 8080 (stale rook instance)
+# Kill any process occupying port 3773 (stale rook instance)
 kill-backend:
-    @lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :8080{{RESET}}" || echo "{{YELLOW}}Nothing running on :8080{{RESET}}"
+    @lsof -ti :3773 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :3773{{RESET}}" || echo "{{YELLOW}}Nothing running on :3773{{RESET}}"
 
 # One-shot first-time setup: install dashboard deps + verify Rust toolchain
 setup:
@@ -168,7 +168,7 @@ setup:
 # === Quality ===
 
 audit:
-    cargo audit
+    cargo audit --no-fetch
 
 outdated:
     cargo outdated -r
@@ -241,7 +241,7 @@ ci-doc: (_ci-header "7/9 cargo doc...")
     @RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps
 
 ci-audit: (_ci-header "8/9 cargo audit...")
-    @cargo audit || true
+    @cargo audit --no-fetch || true
 
 ci-e2e: (_ci-header "9/9 e2e (Playwright)...")
     @./dev/e2e/run-api-keys-e2e.sh --test
@@ -285,7 +285,7 @@ ci-local:
     run_step "5/9 cargo test"      cargo test --workspace --all-features
     run_step "6/9 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
     run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
-    run_step "8/9 cargo audit"     bash -c 'cargo audit || true'
+    run_step "8/9 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     run_step "9/9 e2e"             ./dev/e2e/run-api-keys-e2e.sh --test
     TOTAL=$(( SECONDS - TOTAL_START ))
     echo ""
@@ -347,7 +347,7 @@ ci-ci:
     run_step "5/8 cargo test"      cargo test --workspace --all-features
     run_step "6/8 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
     run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
-    run_step "8/8 cargo audit"     bash -c 'cargo audit || true'
+    run_step "8/8 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     TOTAL=$(( SECONDS - TOTAL_START ))
     echo ""
     echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
@@ -397,12 +397,12 @@ help:
     @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
     @echo "  just dev             - Watch mode with check+test+clippy"
     @echo "  just run             - Run rook backend"
-    @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:5173)"
+    @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
     @echo "  just dashboard-install - Install dashboard npm dependencies"
     @echo ""
     @echo "DB:"
     @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"
-    @echo "  just kill-backend    - Kill stale process on port 8080"
+    @echo "  just kill-backend    - Kill stale process on port 3773"
     @echo ""
     @echo "Dev Container (Docker — no host pollution):"
     @echo "  just dev-run      - Build image + start container (waits for /health)"

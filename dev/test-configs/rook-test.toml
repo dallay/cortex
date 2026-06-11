@@ -9,8 +9,16 @@ strategy = "priority"
 enabled = false
 ttl_secs = 300
 
+# File-based DB at /app/data/rook.db (tmpfs mount)
+[database]
+db_path = "/app/data/rook.db"
+
 [audit]
 db_path = ":memory:"
 
 [provider_crud]
 enabled = true
+
+[auth.api_keys]
+enabled = true
+allow_env_fallback = true

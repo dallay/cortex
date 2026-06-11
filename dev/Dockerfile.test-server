@@ -1,0 +1,76 @@
+# =============================================================================
+# dev/Dockerfile.test-server — Rook server for testing
+#
+# Builds rook in debug mode with dashboard embedded, and seeds an API key
+# for testing. The hash secret is set via environment variable for reproducibility.
+#
+# Usage:
+#   docker compose -f dev/docker-compose.test.yml build rook-server
+# =============================================================================
+
+# Stage 1: Build
+FROM rust:1.89-bookworm AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 and pnpm
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.lock* ./
+COPY Cargo.toml ./
+COPY rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+# Build dashboard first (needed for embed)
+RUN cd apps/rook/dashboard && pnpm install && pnpm build
+
+# Clean and rebuild to ensure fresh embed of dashboard assets
+RUN cargo clean && cargo build --bin rook 2>&1
+
+# Stage 2: Minimal runtime
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libsqlite3-0 \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/debug/rook /usr/local/bin/rook
+COPY dev/test-configs/rook-test.toml /app/rook.toml
+COPY dev/docker/test-server-entrypoint.sh /usr/local/bin/entrypoint.sh
+
+RUN chmod +x /usr/local/bin/entrypoint.sh && \
+    groupadd --system non-root \
+    && useradd --system --gid non-root --home-dir /app --no-create-home non-root \
+    && chown -R non-root:non-root /usr/local/bin/rook /app /usr/local/bin/entrypoint.sh \
+    && mkdir -p /app/data /run/secrets && chown non-root:non-root /app/data /run/secrets
+
+ENV ROOK_CONFIG=/app/rook.toml
+
+# IMPORTANT: Use a stable hash secret for testing
+ENV API_KEY_HASH_SECRET=test-secret-for-dev-only-do-not-use-in-production
+
+EXPOSE 3773
+
+USER non-root
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD []

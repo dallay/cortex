@@ -28,6 +28,9 @@ ENCRYPTION_SALT="Z3G83UBdTUkfGGWr-QDnQg"
 API_KEY_HASH_SECRET="your-hash-secret-here"
 ```
 
+> **⚠️ CRITICAL**: This secret MUST remain stable. If it changes, ALL existing API keys become invalid.
+> See [API Key Troubleshooting](api-key-troubleshooting.md) for recovery steps if this happens.
+
 ### Optional
 
 ```bash
@@ -61,7 +64,7 @@ mkdir -p rook-config
 cat > rook-config/rook.toml << 'EOF'
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 3773
 
 [routing]
 strategy = "priority"
@@ -84,7 +87,7 @@ EOF
 # Run the container
 docker run -d \
   --name rook \
-  -p 8080:8080 \
+  -p 3773:3773 \
   -v $(pwd)/rook-config:/app/config:ro \
   -v rook-data:/app/data \
   -e ENCRYPTION_PASSPHRASE="your-secure-passphrase-min-12-chars" \
@@ -93,7 +96,7 @@ docker run -d \
   rook:latest
 
 # Verify it's running
-curl http://localhost:8080/health
+curl http://localhost:3773/health
 ```
 
 ### Docker Compose Example
@@ -105,7 +108,7 @@ services:
   rook:
     image: rook:latest
     ports:
-      - "8080:8080"
+      - "3773:3773"
     volumes:
       - ./rook-config/rook.toml:/app/config/rook.toml:ro
       - rook-data:/app/data
@@ -114,7 +117,7 @@ services:
       - ENCRYPTION_SALT=${ENCRYPTION_SALT}
       - RUST_LOG=info
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:3773/health" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -145,7 +148,7 @@ After Rook is running, add providers via the REST API:
 
 ```bash
 # Add Ollama Cloud provider
-curl -X POST http://localhost:8080/api/providers \
+curl -X POST http://localhost:3773/api/providers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "ollama-cloud-primary",
@@ -159,12 +162,12 @@ curl -X POST http://localhost:8080/api/providers \
   }'
 
 # Verify provider was added
-curl http://localhost:8080/api/providers
+curl http://localhost:3773/api/providers
 ```
 
 ### Via Dashboard
 
-1. Navigate to `http://localhost:8080/providers`
+1. Navigate to `http://localhost:3773/providers`
 2. Click "Add Provider"
 3. Select "Ollama Cloud"
 4. Enter your API key from [ollama.com/settings/keys](https://ollama.com/settings/keys)
@@ -175,11 +178,11 @@ curl http://localhost:8080/api/providers
 
 ```bash
 # List available models
-curl http://localhost:8080/v1/models \
+curl http://localhost:3773/v1/models \
   -H "Authorization: Bearer your-client-api-key"
 
 # Non-streaming request
-curl -X POST http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:3773/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-client-api-key" \
   -d '{
@@ -188,7 +191,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 
 # Streaming request
-curl -X POST http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:3773/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-client-api-key" \
   -d '{
@@ -202,10 +205,10 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 ```bash
 # Overall health
-curl http://localhost:8080/health
+curl http://localhost:3773/health
 
 # Per-provider health (after providers are added)
-curl http://localhost:8080/api/telemetry/summary
+curl http://localhost:3773/api/telemetry/summary
 ```
 
 ## Production Checklist
@@ -239,7 +242,7 @@ spec:
         - name: rook
           image: rook:latest
           ports:
-            - containerPort: 8080
+            - containerPort: 3773
           env:
             - name: ENCRYPTION_PASSPHRASE
               valueFrom:
@@ -269,13 +272,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 3773
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 3773
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
@@ -294,7 +297,7 @@ spec:
   type: LoadBalancer
   ports:
     - port: 80
-      targetPort: 8080
+      targetPort: 3773
   selector:
     app: rook
 ```

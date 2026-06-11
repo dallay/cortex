@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "gentle-orchestrator": {
+      "description": "Gentle AI SDD Orchestrator - coordinates sub-agents",
+      "mode": "primary",
+      "model": "opencode/gpt-5.5",
+      "tools": {
+        "bash": true,
+        "delegate": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    }
+  },
+  "provider": {
+    "rook": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "rook",
+      "options": {
+        "baseURL": "http://rook-server:3773/v1",
+        "apiKey": "PLACEHOLDER_API_KEY"
+      },
+      "models": {
+        "qwen3-coder-next": {
+          "name": "ollamacloud/qwen3-coder-next"
+        },
+        "gemma4:31b": {
+          "name": "ollamacloud/gemma4:31b"
+        },
+        "gpt-4o": {
+          "name": "openai/gpt-4o"
+        }
+      }
+    }
+  }
+}

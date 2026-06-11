@@ -8,6 +8,7 @@ import {
   Key,
   TrendingUp,
 } from "@lucide/vue";
+import {RouterLink} from "vue-router";
 import {useI18n} from "vue-i18n";
 import {useHealth} from "@/composables/useHealth";
 
@@ -106,32 +107,32 @@ const {
 
     <!-- Quick Actions -->
     <div class="grid gap-4 md:grid-cols-3">
-      <a
-        href="/endpoints"
+      <RouterLink
+        to="/endpoints"
         class="rounded-lg border bg-card p-4 hover:bg-muted/30 transition-colors group"
       >
         <CircleDot class="h-6 w-6 text-primary mb-2" />
         <h3 class="font-medium mb-1">{{ t('home.viewEndpoints') }}</h3>
         <p class="text-sm text-muted-foreground">{{ t('home.viewEndpointsDescription') }}</p>
-      </a>
+      </RouterLink>
 
-      <a
-        href="/api-keys"
+      <RouterLink
+        to="/api-keys"
         class="rounded-lg border bg-card p-4 hover:bg-muted/30 transition-colors group"
       >
         <Key class="h-6 w-6 text-primary mb-2" />
         <h3 class="font-medium mb-1">{{ t('home.manageKeys') }}</h3>
         <p class="text-sm text-muted-foreground">{{ t('home.manageKeysDescription') }}</p>
-      </a>
+      </RouterLink>
 
-      <a
-        href="/providers"
+      <RouterLink
+        to="/providers"
         class="rounded-lg border bg-card p-4 hover:bg-muted/30 transition-colors group"
       >
         <Globe class="h-6 w-6 text-primary mb-2" />
         <h3 class="font-medium mb-1">{{ t('home.viewProviders') }}</h3>
         <p class="text-sm text-muted-foreground">{{ t('home.viewProvidersDescription') }}</p>
-      </a>
+      </RouterLink>
     </div>
 
     <!-- Provider Status -->
@@ -165,12 +166,12 @@ const {
       <Globe class="h-12 w-12 mx-auto text-muted-foreground mb-4" />
       <h3 class="font-medium mb-2">{{ t('home.noProvidersTitle') }}</h3>
       <p class="text-sm text-muted-foreground mb-4">{{ t('home.noProvidersDescription') }}</p>
-      <a
-        href="/providers"
+      <RouterLink
+        to="/providers"
         class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
       >
         {{ t('providers.add') }}
-      </a>
+      </RouterLink>
     </div>
   </div>
 </template>

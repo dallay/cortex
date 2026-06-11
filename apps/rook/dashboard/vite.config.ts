@@ -7,7 +7,7 @@ import { codecovVitePlugin } from '@codecov/vite-plugin'
 // Backend target for the Vite dev server proxy. Override via the API_TARGET
 // env var (e.g. set it in dev/e2e/run-api-keys-e2e.sh when the backend is on
 // a non-default port like 8081).
-const API_TARGET = process.env.API_TARGET ?? 'http://localhost:8080'
+const API_TARGET = process.env.API_TARGET ?? 'http://127.0.0.1:3773'
 
 // Base path: serve dashboard from /dashboard/ prefix
 // This ensures assets are generated with correct /dashboard/assets/ paths

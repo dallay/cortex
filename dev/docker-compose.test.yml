@@ -1,0 +1,70 @@
+# =============================================================================
+# dev/docker-compose.test.yml — Test container with opencode + rook client
+#
+# Spins up a container with:
+#   - opencode CLI configured to use rook as a provider
+#   - Rook server running with known API key and hash secret
+#   - Ready for testing AI SDK integrations
+#
+# Usage:
+#   docker compose -f dev/docker-compose.test.yml up -d
+#   docker compose -f dev/docker-compose.test.yml exec test bash
+#   docker compose -f dev/docker-compose.test.yml down
+#
+# Or via the wrapper:
+#   dev/run.sh test-up
+#   dev/run.sh test-shell
+#   dev/run.sh test-down
+# =============================================================================
+
+services:
+  rook-server:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.test-server
+    image: rook:test-server
+    container_name: rook-test-server
+    ports:
+      - "3773:3773"
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+      - API_KEY_HASH_SECRET=test-secret-for-dev-only-do-not-use-in-production
+      - ENCRYPTION_PASSPHRASE=test-encryption-passphrase-for-e2e-tests-only
+      - ENCRYPTION_SALT=St7xmpfwUTbsXGBHIlYjvg
+    volumes:
+      - ./test-configs/rook-test.toml:/app/rook.toml:ro
+      - api-key:/run/secrets
+    tmpfs:
+      - /app/data:mode=0777
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3773/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - rook-test-net
+
+  test:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.test-client
+    image: rook:test-client
+    container_name: rook-test-client
+    depends_on:
+      rook-server:
+        condition: service_healthy
+    environment:
+      - ROOK_SERVER_URL=http://rook-server:3773
+    volumes:
+      - ./test-configs/opencode-test.json:/tmp/opencode-test.json:ro
+      - api-key:/run/secrets:ro
+    networks:
+      - rook-test-net
+
+networks:
+  rook-test-net:
+    driver: bridge
+
+volumes:
+  api-key:
