@@ -416,6 +416,27 @@ describe("ApiKeyForm", () => {
       const last = (emitted.at(-1) as unknown as [ApiKeyFormState])[0];
       expect(last.allowedProviders).toContain("p1");
     });
+
+    it("toggles all providers of a kind when the group checkbox is clicked", async () => {
+      // Start with no providers selected
+      const wrapper = makeWrapper(makeFormState({ allowedProviders: [] }));
+      const groupCb = wrapper.find<HTMLInputElement>(
+        '[data-testid="provider-kind-checkbox-openai"]',
+      );
+      expect(groupCb.exists(), "group checkbox should exist").toBe(true);
+
+      // Click group checkbox to check all openai providers (p1)
+      await groupCb.setValue(true);
+      const emittedOn = wrapper.emitted("update:modelValue")!;
+      const stateOn = (emittedOn.at(-1) as unknown as [ApiKeyFormState])[0];
+      expect(stateOn.allowedProviders).toContain("p1");
+
+      // Click again to uncheck all openai providers
+      await groupCb.setValue(false);
+      const emittedOff = wrapper.emitted("update:modelValue")!;
+      const stateOff = (emittedOff.at(-1) as unknown as [ApiKeyFormState])[0];
+      expect(stateOff.allowedProviders).not.toContain("p1");
+    });
   });
 
   describe("allowed models", () => {

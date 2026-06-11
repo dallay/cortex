@@ -9,7 +9,7 @@ import { test, expect, Page, TestInfo } from '@playwright/test'
 const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8081'
 // Vite serves the app at /dashboard/ (with trailing slash). Strip trailing slash
 // from DASHBOARD_URL for concatenation with relative paths like "/api-keys".
-const DASHBOARD_URL_BASE = process.env.DASHBOARD_URL || 'http://localhost:4747/dashboard'
+const DASHBOARD_URL_BASE = (process.env.DASHBOARD_URL || 'http://localhost:4747/dashboard').replace(/\/+$/, '')
 // DASHBOARD_URL for navigation (includes trailing slash since Vite serves at /dashboard/)
 const DASHBOARD_URL = DASHBOARD_URL_BASE + '/'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
@@ -707,6 +707,21 @@ test.describe('API Keys - Provider Restrictions', () => {
 
     // Should succeed
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 })
+
+    // Verify the saved API key has the newly added provider
+    const secondProviderId = providers.length > 1 ? providers[1].id : null
+    if (secondProviderId) {
+      const csrf = await getCsrfToken(page)
+      const cookies = await page.context().cookies(DASHBOARD_URL)
+      const authCookie = cookies.find(c => c.name === 'auth_token')?.value || ''
+
+      const keyResponse = await page.request.get(`${API_BASE_URL}/api/api-keys/${key.id}`, {
+        headers: { 'Cookie': `csrf_token=${csrf.cookie}; auth_token=${authCookie}` }
+      })
+      expect(keyResponse.ok()).toBe(true)
+      const savedKey = await keyResponse.json()
+      expect(savedKey.allowedProviders).toContain(secondProviderId)
+    }
   })
 
   // ---------------------------------------------------------------------------
@@ -778,10 +793,10 @@ test.describe('API Keys - Provider Restrictions', () => {
 
     // Get providers
     const providers = await getProvidersViaApi(page)
+    expect(providers.length).toBeGreaterThan(0)
 
-    if (providers.length > 0) {
-      // Create key with restrictions - capture the key ID
-      const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [providers[0].id])
+    // Create key with restrictions - capture the key ID
+    const key = await createApiKeyWithProvidersViaApi(page, keyLabel, ['chat:read'], 'free', [providers[0].id])
 
       // Reload and edit
       await page.reload()
@@ -826,7 +841,6 @@ test.describe('API Keys - Provider Restrictions', () => {
       expect(keyResponse.ok()).toBe(true)
       const updatedKey = await keyResponse.json()
       expect(updatedKey.allowedProviders).toEqual([])
-    }
   })
 })
 
