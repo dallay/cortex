@@ -37,6 +37,9 @@ paths = [
   '''crates/infrastructure/transport-axum/tests/.*''',
   '''crates/infrastructure/providers-anthropic/tests/.*''',
   '''dev/e2e/.*''',
+  '''dev/test-configs/.*''',
+  '''dev/Dockerfile\.test-server''',
+  '''dev/docker-compose\.test\.yml''',
   '''apps/rook/dashboard/.*\.spec\.ts''',
   '''apps/rook/dashboard/.*\.test\.ts''',
 ]
