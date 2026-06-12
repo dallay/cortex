@@ -1,6 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# E2E Test Runner for API Key CRUD
+# E2E Test Runner — Full Playwright Suite
+#
+# Starts a rook server container, seeds admin + provider, then runs all
+# Playwright e2e specs: api-keys, providers, login, and vue.
 #
 # Prerequisites:
 #   - Docker must be running
@@ -9,7 +12,7 @@
 #
 # Usage:
 #   ./dev/e2e/run-api-keys-e2e.sh           # Start container for manual testing
-#   ./dev/e2e/run-api-keys-e2e.sh --test     # Run tests automatically
+#   ./dev/e2e/run-api-keys-e2e.sh --test     # Run all e2e tests automatically
 #   ./dev/e2e/run-api-keys-e2e.sh --cleanup # Clean up only
 # =============================================================================
 
@@ -216,9 +219,9 @@ if [ "$MODE" = "--test" ]; then
         exit 1
     fi
 
-    # Run Playwright tests
+    # Run all Playwright e2e tests (api-keys, providers, login, vue)
     cd "$DASHBOARD_DIR"
-    if ADMIN_PASSWORD="$ADMIN_PASSWORD" pnpm playwright test e2e/api-keys.spec.ts; then
+    if ADMIN_PASSWORD="$ADMIN_PASSWORD" pnpm playwright test e2e/; then
         log_info "Tests passed!"
         TEST_RESULT=0
     else

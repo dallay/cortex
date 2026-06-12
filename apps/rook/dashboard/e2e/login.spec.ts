@@ -33,6 +33,7 @@ test.describe('Login page — proxy bypass', () => {
 })
 
 test.describe('Login page — rendering', () => {
+  test.use({ storageState: { cookies: [], origins: [] } })
   test('shows a login form on /login', async ({ page }) => {
     await page.goto('/login')
     await page.waitForLoadState('networkidle')
@@ -54,6 +55,7 @@ test.describe('Login page — rendering', () => {
 })
 
 ;(skipBackend ? test.describe.skip : test.describe)('Login page — route guard', () => {
+  test.use({ storageState: { cookies: [], origins: [] } })
   test('unauthenticated visit to / redirects to /login', async ({ page }) => {
     // Clear cookies to ensure unauthenticated state
     await page.context().clearCookies()
