@@ -24,12 +24,12 @@ onMounted(() => {
 
 const UNKNOWN_PROVIDER_FALLBACK = {
   kind: "unknown",
-  displayNameKey: "providers.kind.openai.name",
+  displayNameKey: "providers.quota.unknownProvider",
   category: "api-key" as const,
   defaultBaseUrl: "",
   defaultModels: [],
   authTypes: ["apikey"] as const,
-  descriptionKey: "providers.kind.openai.description",
+  descriptionKey: "providers.quota.unknownProvider",
 };
 
 function safeFindCatalogEntry(kind: string) {
@@ -51,9 +51,11 @@ const rows = computed(() =>
             ? "outline"
             : "default";
 
+    const isKnown = PROVIDER_KINDS.some((p) => p.kind === item.providerKind);
+
     return {
       ...item,
-      displayName: t(catalog.displayNameKey),
+      displayName: isKnown ? t(catalog.displayNameKey) : item.providerKind,
       statusVariant,
       usagePercent:
         item.warningThreshold && item.warningThreshold > 0

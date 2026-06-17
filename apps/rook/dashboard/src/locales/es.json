@@ -193,6 +193,7 @@
 			"opensInNewTab": "{providerName} — abre en nueva pestaña"
 		},
 		"quota": {
+			"unknownProvider": "Proveedor desconocido",
 			"title": "Cuota de proveedores",
 			"subtitle": "Monitorea uso observado, rate limits y tendencias de costo en tus proveedores.",
 			"generatedAt": "Actualizado {date}",

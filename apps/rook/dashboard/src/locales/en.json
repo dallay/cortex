@@ -193,6 +193,7 @@
 			"opensInNewTab": "{providerName} — opens in new tab"
 		},
 		"quota": {
+			"unknownProvider": "Unknown provider",
 			"title": "Provider quota",
 			"subtitle": "Track observed usage, rate limits, and spend trends across your providers.",
 			"generatedAt": "Updated {date}",
