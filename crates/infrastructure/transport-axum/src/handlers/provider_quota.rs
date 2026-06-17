@@ -144,10 +144,21 @@ async fn build_trend(
 
     for days_ago in (0..7).rev() {
         let day_start = (generated_at - Duration::days(days_ago)).date_naive();
-        let start = day_start.and_hms_opt(0, 0, 0).expect("valid time").and_utc();
+        let start = day_start
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| HttpError {
+                status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR",
+                message: "invalid time".to_string(),
+            })?
+            .and_utc();
         let end = (day_start + Duration::days(1))
             .and_hms_opt(0, 0, 0)
-            .expect("valid time")
+            .ok_or_else(|| HttpError {
+                status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR",
+                message: "invalid time".to_string(),
+            })?
             .and_utc();
         let window = summarize_window(usage_recorder, connection_ids, Some(start), Some(end)).await?;
         trend.push(ProviderQuotaTrendPointResponse {
@@ -157,7 +168,6 @@ async fn build_trend(
             total_tokens: window.total_tokens,
             cost_usd: window.cost_usd,
         });
-
     }
 
     Ok(trend)
