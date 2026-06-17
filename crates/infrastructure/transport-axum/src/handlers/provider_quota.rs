@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use axum::{
-    extract::State,
-    Json,
-};
+use axum::{extract::State, Json};
 use chrono::{Duration, Utc};
-use rook_core::{ConnectionId, ProviderConnection, ProviderKind, RequestStatus, UsageFilters, UsageSummary};
+use rook_core::{
+    ConnectionId, ProviderConnection, ProviderKind, RequestStatus, UsageFilters, UsageSummary,
+};
 
 use crate::{
     provider_dto::{
@@ -58,13 +57,18 @@ pub async fn list_provider_quota(
             .collect::<Vec<ConnectionId>>();
 
         let all_time = summarize_window(usage_recorder, &connection_ids, None, None).await?;
-        let last_24h = summarize_window(usage_recorder, &connection_ids, last_24h_start, None).await?;
-        let last_7d = summarize_window(usage_recorder, &connection_ids, last_7d_start, None).await?;
+        let last_24h =
+            summarize_window(usage_recorder, &connection_ids, last_24h_start, None).await?;
+        let last_7d =
+            summarize_window(usage_recorder, &connection_ids, last_7d_start, None).await?;
 
         let trend = build_trend(usage_recorder, &connection_ids, generated_at).await?;
 
         let connection_count = kind_connections.len() as u32;
-        let active_connection_count = kind_connections.iter().filter(|conn| conn.is_active).count() as u32;
+        let active_connection_count = kind_connections
+            .iter()
+            .filter(|conn| conn.is_active)
+            .count() as u32;
         let (warning_threshold, error_threshold) = aggregate_thresholds(&kind_connections);
         let observed_ratio = rate_limited_ratio(&last_7d);
         let warning_level = classify_warning_level(
@@ -92,7 +96,10 @@ pub async fn list_provider_quota(
         });
     }
 
-    Ok(Json(ProvidersQuotaResponse { generated_at, items }))
+    Ok(Json(ProvidersQuotaResponse {
+        generated_at,
+        items,
+    }))
 }
 
 async fn summarize_window(
@@ -110,7 +117,10 @@ async fn summarize_window(
             end,
             ..UsageFilters::default()
         };
-        let summary = usage_recorder.summary(filters.clone()).await.map_err(internal_error)?;
+        let summary = usage_recorder
+            .summary(filters.clone())
+            .await
+            .map_err(internal_error)?;
         let rate_limited_requests = usage_recorder
             .count(UsageFilters {
                 status: Some(RequestStatus::RateLimited),
@@ -118,8 +128,15 @@ async fn summarize_window(
             })
             .await
             .map_err(internal_error)?;
-        let cost_breakdown = usage_recorder.cost_breakdown(filters).await.map_err(internal_error)?;
-        let window = window_from_parts(summary, rate_limited_requests, cost_breakdown.total_cost_usd);
+        let cost_breakdown = usage_recorder
+            .cost_breakdown(filters)
+            .await
+            .map_err(internal_error)?;
+        let window = window_from_parts(
+            summary,
+            rate_limited_requests,
+            cost_breakdown.total_cost_usd,
+        );
 
         total.requests += window.requests;
         total.rate_limited_requests += window.rate_limited_requests;
@@ -160,7 +177,8 @@ async fn build_trend(
                 message: "invalid time".to_string(),
             })?
             .and_utc();
-        let window = summarize_window(usage_recorder, connection_ids, Some(start), Some(end)).await?;
+        let window =
+            summarize_window(usage_recorder, connection_ids, Some(start), Some(end)).await?;
         trend.push(ProviderQuotaTrendPointResponse {
             date: day_start.format("%Y-%m-%d").to_string(),
             requests: window.requests,
@@ -291,4 +309,3 @@ fn all_provider_kinds() -> [ProviderKind; 6] {
         ProviderKind::OllamaCloud,
     ]
 }
-
