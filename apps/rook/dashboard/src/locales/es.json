@@ -193,11 +193,26 @@
 			"opensInNewTab": "{providerName} — abre en nueva pestaña"
 		},
 		"quota": {
+			"unknownProvider": "Proveedor desconocido",
 			"title": "Cuota de proveedores",
-			"subtitle": "Monitorea el uso de tokens y límites en tus proveedores.",
-			"banner": "El seguimiento de cuota por proveedor está en desarrollo. Cada proveedor expone la cuota de forma distinta. Esta vista mostrará datos en vivo cuando se complete la integración.",
-			"comingSoon": "Próximamente",
-			"followUpIssue": "Seguir la implementación",
+			"subtitle": "Monitorea uso observado, rate limits y tendencias de costo en tus proveedores.",
+			"generatedAt": "Actualizado {date}",
+			"support": "Fuente de cuota",
+			"last24hTokens": "Tokens 24h",
+			"last7dCost": "Costo 7d",
+			"rateLimited": "Rate-limited 7d",
+			"connections": "{configured} configuradas · {active} activas",
+			"level": {
+				"ok": "Saludable",
+				"warning": "Advertencia",
+				"critical": "Crítico",
+				"not_configured": "Sin configurar"
+			},
+			"supportValue": {
+				"usage_only": "Basado en uso",
+				"local_or_header_based": "Local / observado",
+				"not_configured": "Sin conexiones"
+			},
 			"noData": "Aún no hay datos de cuota para {providerName}."
 		},
 		"form": {

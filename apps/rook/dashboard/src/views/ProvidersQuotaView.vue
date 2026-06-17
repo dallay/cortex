@@ -1,21 +1,6 @@
 <script setup lang="ts">
-/**
- * ProvidersQuotaView — placeholder for per-provider quota tracking.
- *
- * Per the design (`openspec/changes/providers-ui-3-screen-refactor/design.md`
- * §D7), the quota view is a low-effort placeholder until the backend
- * exposes a quota endpoint. The page makes the "coming soon" status
- * explicit so users land here and understand why the data is missing.
- *
- * It also renders a per-kind summary table sourced from
- * `useProviderCatalog` so the view is not entirely empty while the
- * real integration is pending. The summary answers "how many
- * connections and which models are configured per provider?" without
- * showing actual token usage.
- */
-
-import {ExternalLink, Fuel, Info} from "@lucide/vue";
-import {onMounted} from "vue";
+import {Fuel} from "@lucide/vue";
+import {computed, onMounted} from "vue";
 import {useI18n} from "vue-i18n";
 import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
 import {Badge} from "@/components/ui/badge";
@@ -27,26 +12,66 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {useAvailableModels} from "@/composables/useAvailableModels";
-import {useProviderCatalog} from "@/composables/useProviderCatalog";
-import {useProviders} from "@/composables/useProviders";
+import {PROVIDER_KINDS} from "@/config/providerCatalog";
+import {useProvidersQuota} from "@/composables/useProvidersQuota";
 
-const {t} = useI18n();
-
-const {fetch, loading} = useProviders();
-const {fetch: fetchModels} = useAvailableModels();
-const {items} = useProviderCatalog();
+const {t, d, n} = useI18n();
+const {items, generatedAt, loading, error, fetch} = useProvidersQuota();
 
 onMounted(() => {
   fetch();
-  fetchModels();
 });
 
-// TODO(issue #132): replace with the real per-provider quota data once the
-// backend exposes a QuotaPort. See:
-// https://github.com/dallay/cortex/issues/132
-// Spec: openspec/changes/providers-ui-3-screen-refactor/specs/providers-ui/spec.md (REQ-8)
-// Design: openspec/changes/providers-ui-3-screen-refactor/design.md (D7)
+const UNKNOWN_PROVIDER_FALLBACK = {
+  kind: "unknown",
+  displayNameKey: "providers.quota.unknownProvider",
+  category: "api-key" as const,
+  defaultBaseUrl: "",
+  defaultModels: [],
+  authTypes: ["apikey"] as const,
+  descriptionKey: "providers.quota.unknownProvider",
+};
+
+function safeFindCatalogEntry(kind: string) {
+  return (
+    PROVIDER_KINDS.find((p) => p.kind === kind) ??
+    ({...UNKNOWN_PROVIDER_FALLBACK, kind})
+  );
+}
+
+const rows = computed(() =>
+  items.value.map((item) => {
+    const catalog = safeFindCatalogEntry(item.providerKind);
+    const statusVariant: "default" | "destructive" | "outline" | "secondary" =
+      item.warningLevel === "critical"
+        ? "destructive"
+        : item.warningLevel === "warning"
+          ? "secondary"
+          : item.warningLevel === "not_configured"
+            ? "outline"
+            : "default";
+
+    const isKnown = PROVIDER_KINDS.some((p) => p.kind === item.providerKind);
+
+    return {
+      ...item,
+      displayName: isKnown ? t(catalog.displayNameKey) : item.providerKind,
+      statusVariant,
+      usagePercent:
+        item.warningThreshold && item.warningThreshold > 0
+          ? Math.round((item.observedRateLimitedRatio / item.warningThreshold) * 100)
+          : null,
+    };
+  }),
+);
+
+function formatUsd(value: number): string {
+  return n(value, {style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4});
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
 </script>
 
 <template>
@@ -59,23 +84,14 @@ onMounted(() => {
       <p class="text-muted-foreground">
         {{ t('providers.quota.subtitle') }}
       </p>
+      <p v-if="generatedAt" class="text-xs text-muted-foreground mt-1">
+        {{ t('providers.quota.generatedAt', { date: d(new Date(generatedAt), 'short') }) }}
+      </p>
     </div>
 
-    <Alert>
-      <Info class="h-4 w-4" />
-      <AlertTitle>{{ t('providers.quota.comingSoon') }}</AlertTitle>
-      <AlertDescription>
-        {{ t('providers.quota.banner') }}
-        <a
-          href="https://github.com/dallay/cortex/issues/132"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="underline ml-1 inline-flex items-center gap-1"
-        >
-          {{ t('providers.quota.followUpIssue') }}
-          <ExternalLink class="h-3 w-3" />
-        </a>
-      </AlertDescription>
+    <Alert v-if="error" variant="destructive">
+      <AlertTitle>{{ t('common.error') }}</AlertTitle>
+      <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
     <div class="rounded-md border">
@@ -85,49 +101,66 @@ onMounted(() => {
             <TableHead class="px-4 py-3 text-left text-sm font-medium">
               {{ t('providers.name') }}
             </TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">
+              {{ t('providers.quota.support') }}
+            </TableHead>
+            <TableHead class="px-4 py-3 text-right text-sm font-medium">
+              {{ t('providers.quota.last24hTokens') }}
+            </TableHead>
+            <TableHead class="px-4 py-3 text-right text-sm font-medium">
+              {{ t('providers.quota.last7dCost') }}
+            </TableHead>
+            <TableHead class="px-4 py-3 text-right text-sm font-medium">
+              {{ t('providers.quota.rateLimited') }}
+            </TableHead>
             <TableHead class="px-4 py-3 text-right text-sm font-medium">
               {{ t('providers.status') }}
-            </TableHead>
-            <TableHead class="px-4 py-3 text-left text-sm font-medium">
-              {{ t('providers.form.models') }}
             </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          <template v-if="loading && items.length === 0">
+          <template v-if="loading && rows.length === 0">
             <TableRow>
-              <TableCell colspan="3" class="px-4 py-8 text-center text-sm text-muted-foreground">
+              <TableCell colspan="6" class="px-4 py-8 text-center text-sm text-muted-foreground">
                 {{ t('common.loading') }}
               </TableCell>
             </TableRow>
           </template>
           <template v-else>
             <TableRow
-              v-for="item in items"
-              :key="item.kind"
-              class="hover:bg-muted/30"
-              :data-testid="`quota-row-${item.kind}`"
+              v-for="item in rows"
+              :key="item.providerKind"
+              class="hover:bg-muted/30 align-top"
+              :data-testid="`quota-row-${item.providerKind}`"
             >
-              <TableCell class="px-4 py-3 font-medium">
-                {{ t(item.displayNameKey) }}
+              <TableCell class="px-4 py-3">
+                <div class="font-medium">{{ item.displayName }}</div>
+                <div class="text-xs text-muted-foreground">
+                  {{ t('providers.quota.connections', { configured: item.connectionCount, active: item.activeConnectionCount }) }}
+                </div>
+              </TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground max-w-sm">
+                <div>{{ item.note }}</div>
+              </TableCell>
+              <TableCell class="px-4 py-3 text-right font-mono text-xs">
+                {{ item.last24h.totalTokens.toLocaleString() }}
+              </TableCell>
+              <TableCell class="px-4 py-3 text-right font-mono text-xs">
+                {{ formatUsd(item.last7d.costUsd) }}
               </TableCell>
               <TableCell class="px-4 py-3 text-right">
-                <Badge :variant="item.hasActiveConnections ? 'default' : 'secondary'">
-                  {{
-                    item.hasActiveConnections
-                      ? t('providers.catalog.active')
-                      : t('providers.catalog.notConfigured')
-                  }}
-                </Badge>
+                <div class="font-mono text-xs">{{ formatPercent(item.observedRateLimitedRatio) }}</div>
+                <div class="text-[11px] text-muted-foreground">
+                  {{ item.last7d.rateLimitedRequests }}/{{ item.last7d.requests }}
+                </div>
               </TableCell>
-              <TableCell class="px-4 py-3 text-sm text-muted-foreground">
-                <span v-if="item.configuredModels.length > 0" class="font-mono text-xs">
-                  {{ item.configuredModels.slice(0, 3).join(', ') }}
-                  <span v-if="item.configuredModels.length > 3">
-                    +{{ item.configuredModels.length - 3 }}
-                  </span>
-                </span>
-                <span v-else>—</span>
+              <TableCell class="px-4 py-3 text-right space-y-2">
+                <Badge :variant="item.statusVariant">
+                  {{ t(`providers.quota.level.${item.warningLevel}`) }}
+                </Badge>
+                <div class="text-[11px] text-muted-foreground">
+                  {{ t(`providers.quota.supportValue.${item.support}`) }}
+                </div>
               </TableCell>
             </TableRow>
           </template>

@@ -965,6 +965,10 @@ fn usage_routes(usecases: Usecases) -> Router {
         .route("/api/usage", get(handlers::usage::list_usage))
         .route("/api/usage/summary", get(handlers::usage::usage_summary))
         .route("/api/usage/cost", get(handlers::usage::usage_cost))
+        .route(
+            "/api/providers/quota",
+            get(handlers::provider_quota::list_provider_quota),
+        )
         .with_state(usecases)
 }
 
