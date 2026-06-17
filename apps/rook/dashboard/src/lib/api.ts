@@ -161,47 +161,6 @@ export interface ConnectionConfigResponse {
   baseUrl: string | null;
 }
 
-export interface ProviderQuotaWindowResponse {
-  requests: number;
-  rateLimitedRequests: number;
-  promptTokens: number;
-  completionTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  costUsd: number;
-}
-
-export interface ProviderQuotaTrendPointResponse {
-  date: string;
-  requests: number;
-  rateLimitedRequests: number;
-  totalTokens: number;
-  costUsd: number;
-}
-
-export interface ProviderQuotaSummaryResponse {
-  providerKind: ProviderKind;
-  connectionCount: number;
-  activeConnectionCount: number;
-  warningThreshold: number | null;
-  errorThreshold: number | null;
-  support: string;
-  note: string;
-  allTime: ProviderQuotaWindowResponse;
-  last24h: ProviderQuotaWindowResponse;
-  last7d: ProviderQuotaWindowResponse;
-  observedRateLimitedRatio: number;
-  warningLevel: "ok" | "warning" | "critical" | "not_configured";
-  trend: ProviderQuotaTrendPointResponse[];
-}
-
-export interface ProvidersQuotaResponse {
-  generatedAt: string;
-  items: ProviderQuotaSummaryResponse[];
-}
-
 export interface TestStatusResponse {
   status: "neverTested" | "active" | "unhealthy" | "expired" | "unknown";
   lastTestAt: string | null;
@@ -550,10 +509,6 @@ function createApiClient() {
           body: JSON.stringify(payload),
         },
       );
-    },
-
-    async getProvidersQuota(): Promise<ProvidersQuotaResponse> {
-      return request<ProvidersQuotaResponse>("/api/providers/quota");
     },
 
     // API Key management (requires session auth)

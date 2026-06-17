@@ -194,24 +194,10 @@
 		},
 		"quota": {
 			"title": "Provider quota",
-			"subtitle": "Track observed usage, rate limits, and spend trends across your providers.",
-			"generatedAt": "Updated {date}",
-			"support": "Quota source",
-			"last24hTokens": "24h tokens",
-			"last7dCost": "7d cost",
-			"rateLimited": "7d rate-limited",
-			"connections": "{configured} configured · {active} active",
-			"level": {
-				"ok": "Healthy",
-				"warning": "Warning",
-				"critical": "Critical",
-				"not_configured": "Not configured"
-			},
-			"supportValue": {
-				"usage_only": "Usage-based",
-				"local_or_header_based": "Local / observed",
-				"not_configured": "No connections"
-			},
+			"subtitle": "Track token usage and limits across your providers.",
+			"banner": "Per-provider quota tracking is in development. Each provider exposes quota differently. This view will show live data once the integration is complete.",
+			"comingSoon": "Coming soon",
+			"followUpIssue": "Track the implementation",
 			"noData": "Quota data is not yet available for {providerName}."
 		},
 		"form": {
