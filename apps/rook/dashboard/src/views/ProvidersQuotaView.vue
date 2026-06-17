@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {findCatalogEntry} from "@/config/providerCatalog";
+import {PROVIDER_KINDS} from "@/config/providerCatalog";
 import {useProvidersQuota} from "@/composables/useProvidersQuota";
 
 const {t, d, n} = useI18n();
@@ -22,9 +22,26 @@ onMounted(() => {
   fetch();
 });
 
+const UNKNOWN_PROVIDER_FALLBACK = {
+  kind: "unknown",
+  displayNameKey: "providers.kind.openai.name",
+  category: "api-key" as const,
+  defaultBaseUrl: "",
+  defaultModels: [],
+  authTypes: ["apikey"] as const,
+  descriptionKey: "providers.kind.openai.description",
+};
+
+function safeFindCatalogEntry(kind: string) {
+  return (
+    PROVIDER_KINDS.find((p) => p.kind === kind) ??
+    ({...UNKNOWN_PROVIDER_FALLBACK, kind})
+  );
+}
+
 const rows = computed(() =>
   items.value.map((item) => {
-    const catalog = findCatalogEntry(item.providerKind);
+    const catalog = safeFindCatalogEntry(item.providerKind);
     const statusVariant: "default" | "destructive" | "outline" | "secondary" =
       item.warningLevel === "critical"
         ? "destructive"

@@ -1,12 +1,11 @@
 import {computed, ref} from "vue";
 import {type ProvidersQuotaResponse, useApi} from "@/lib/api";
 
-const quota = ref<ProvidersQuotaResponse | null>(null);
-const loading = ref(false);
-const error = ref<string | null>(null);
-
 export function useProvidersQuota() {
   const api = useApi();
+  const quota = ref<ProvidersQuotaResponse | null>(null);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   async function fetch() {
     loading.value = true;
