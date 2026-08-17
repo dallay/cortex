@@ -12,7 +12,7 @@
     "release:bootstrap": "release-please bootstrap --token=$GITHUB_TOKEN --repo-url=dallay/cortex --release-type=rust"
   },
   "devDependencies": {
-    "lefthook": "^2.1.9",
-    "markdownlint-cli2": "^0.22.1"
+    "lefthook": "^2.1.10",
+    "markdownlint-cli2": "^0.23.2"
   }
 }
