@@ -15,6 +15,7 @@ tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { workspace = true, features = ["stream"] }
 bytes = "1"
+libc = "0.2"
 rusqlite.workspace = true
 uuid.workspace = true
 rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-child-process"] }

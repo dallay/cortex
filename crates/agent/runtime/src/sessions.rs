@@ -10,7 +10,6 @@ use std::{
 
 pub struct SqliteSessions {
     connection: Mutex<Connection>,
-    locks: PathBuf,
 }
 /// Cross-process advisory lock held for the duration of a conversation.
 /// It is released by the operating system even if the process crashes.
@@ -44,10 +43,8 @@ impl SqliteSessions {
         }
         connection.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); PRAGMA user_version=1; COMMIT;")
             .map_err(db_error)?;
-        let locks = lock_directory()?;
         Ok(Self {
             connection: Mutex::new(connection),
-            locks,
         })
     }
     pub fn lease(&self, id: &str) -> Result<SessionLease> {
@@ -64,50 +61,30 @@ impl SqliteSessions {
         }
         let uuid = uuid::Uuid::parse_str(id)
             .map_err(|_| AgentError::Session("invalid session id".into()))?;
+        let path = session_lock_path(&uuid);
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
-        let file = options.open(self.locks.join(format!("{}.lock", uuid.as_hyphenated())))?;
+        let file = options.open(path)?;
         file.try_lock_exclusive()
             .map_err(|_| AgentError::Session("session is in use by another process".into()))?;
         Ok(SessionLease { _file: file })
     }
 }
-fn lock_directory() -> Result<PathBuf> {
-    let user = ["USER", "USERNAME", "HOME", "USERPROFILE"]
-        .into_iter()
-        .find_map(std::env::var_os)
-        .ok_or_else(|| AgentError::Session("current user identity is unavailable".into()))?;
-    let user_key = user
-        .as_encoded_bytes()
-        .iter()
-        .fold(0xcbf29ce484222325_u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-        });
-    let locks = std::env::temp_dir().join(format!("cortex-agent-session-locks-{user_key:016x}"));
+fn session_lock_path(uuid: &uuid::Uuid) -> PathBuf {
+    let filename = format!("cortex-agent-session-{}.lock", uuid.as_hyphenated());
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-
-        match std::fs::DirBuilder::new().mode(0o700).create(&locks) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-        let metadata = std::fs::symlink_metadata(&locks)?;
-        if !metadata.file_type().is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-            return Err(AgentError::Session(
-                "session lock directory must be a private directory".into(),
-            ));
-        }
+        Path::new("/tmp").join(filename)
     }
     #[cfg(not(unix))]
-    std::fs::create_dir_all(&locks)?;
-    Ok(locks)
+    {
+        std::env::temp_dir().join(filename)
+    }
 }
 fn db_error(error: rusqlite::Error) -> AgentError {
     AgentError::Session(error.to_string())

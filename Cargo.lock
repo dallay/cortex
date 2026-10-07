@@ -61,6 +61,7 @@ dependencies = [
  "bytes",
  "fs2",
  "futures",
+ "libc",
  "process-wrap",
  "reqwest 0.12.28",
  "rmcp",
