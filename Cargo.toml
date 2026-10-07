@@ -95,7 +95,7 @@ ttl_cache = "0.5"
 rusqlite = { version = "0.38", features = ["bundled"] }
 
 # HTTP clients
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls-tls"], default-features = false }
 
 # Config
 toml = "1.1"
