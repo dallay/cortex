@@ -199,7 +199,7 @@ async fn main() -> anyhow::Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({"workspace":session.workspace,
             "database":config.db,"provider":config.provider,"mcp_servers":config.mcp.iter().map(|c|&c.name).collect::<Vec<_>>(),
-            "services":supervisor.diagnostics(),"rook_compatibility":"unverified"}))?
+            "services":supervisor.diagnostics(),"rook_compatibility":"unsupported"}))?
         );
         supervisor.shutdown().await;
         return Ok(());
