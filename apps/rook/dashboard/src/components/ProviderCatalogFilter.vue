@@ -46,7 +46,9 @@ function onSearchInput(event: Event) {
   <div class="space-y-3">
     <div class="relative">
       <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <label for="catalog-search" class="sr-only">{{ t('providers.catalog.searchPlaceholder') }}</label>
       <Input
+        id="catalog-search"
         :model-value="searchQuery"
         :placeholder="t('providers.catalog.searchPlaceholder')"
         class="pl-9"
