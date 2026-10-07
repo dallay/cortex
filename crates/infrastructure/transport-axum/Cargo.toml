@@ -47,7 +47,7 @@ hex = "0.4"
 dashmap = "6"
 
 [dev-dependencies]
-axum-test = "20"
+axum-test = "21"
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
 
