@@ -70,8 +70,10 @@ async fn http_adapter_sends_auth_and_assembles_tool_calls() {
         2,
     )
     .unwrap();
+    let mut model_request = request();
+    model_request.messages = vec![agent_core::Message::text(agent_core::Role::User, "fixture")];
     let deltas: Vec<_> = provider
-        .stream(request(), CancellationToken::new())
+        .stream(model_request, CancellationToken::new())
         .await
         .unwrap()
         .collect()
@@ -81,6 +83,10 @@ async fn http_adapter_sends_auth_and_assembles_tool_calls() {
     assert_eq!(
         seen.lock().unwrap().as_ref().unwrap()["model"],
         "fixture-model"
+    );
+    assert_eq!(
+        seen.lock().unwrap().as_ref().unwrap()["messages"][0]["role"],
+        "user"
     );
     task.abort();
 }
@@ -120,10 +126,51 @@ async fn http_errors_timeout_and_cancellation_do_not_leak_credentials() {
     ));
     task.abort();
 }
+
+#[tokio::test]
+async fn active_response_stream_can_exceed_the_header_timeout() {
+    use axum::body::Body;
+    use bytes::Bytes;
+    use futures::stream;
+    use std::convert::Infallible;
+
+    let (url, task) = server(Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            let chunks = stream::unfold(0, |index| async move {
+                if index == 3 {
+                    return None;
+                }
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                let chunk = match index {
+                    0 => Bytes::from_static(b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"),
+                    1 => Bytes::from_static(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n"),
+                    _ => Bytes::from_static(b"data: [DONE]\n\n"),
+                };
+                Some((Ok::<_, Infallible>(chunk), index + 1))
+            });
+            ([ ("content-type", "text/event-stream") ], Body::from_stream(chunks))
+        }),
+    )).await;
+    let provider = OpenAiProvider::new(&url, "m".into(), None, 1).unwrap();
+    let deltas: Vec<_> = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+    assert!(deltas
+        .iter()
+        .any(|delta| matches!(delta, Ok(ModelDelta::Text(text)) if text == "ok")));
+    assert!(deltas
+        .iter()
+        .any(|delta| matches!(delta, Ok(ModelDelta::Finished))));
+    task.abort();
+}
 fn mcp_config(marker: &std::path::Path) -> ServerConfig {
     ServerConfig {
         name: "fixture".into(),
-        command: "/usr/bin/python3".into(),
+        command: "python3".into(),
         args: vec![format!(
             "{}/tests/fixtures/mcp_server.py",
             env!("CARGO_MANIFEST_DIR")
@@ -131,6 +178,56 @@ fn mcp_config(marker: &std::path::Path) -> ServerConfig {
         env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
         env_from: BTreeMap::new(),
     }
+}
+
+#[tokio::test]
+async fn mcp_protocol_error_does_not_cancel_server_for_later_calls() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker");
+    let registry = Registry::native(1).unwrap();
+    let policy = Approvals {
+        allow: true,
+        seen: Mutex::new(vec![]),
+    };
+    let mut clients = McpClients::connect(
+        &[mcp_config(&marker)],
+        temp.path(),
+        &registry,
+        &policy,
+        CancellationToken::new(),
+        3,
+    )
+    .await
+    .unwrap();
+    let tool = registry.get("mcp_fixture_0").unwrap();
+    let ctx = agent_core::ToolContext {
+        workspace: temp.path().into(),
+        cancellation: CancellationToken::new(),
+    };
+    let protocol_error_call = ToolCall {
+        id: "call-protocol-error".into(),
+        name: "mcp_fixture_0".into(),
+        arguments: json!({"mode":"protocol_error"}),
+    };
+    let prepared = tool.prepare(&protocol_error_call, &ctx).await.unwrap();
+    let error = tool.execute(prepared, &ctx).await.unwrap_err();
+    assert!(error.to_string().contains("MCP error"));
+    let next_call = ToolCall {
+        id: "call-ok".into(),
+        name: "mcp_fixture_0".into(),
+        arguments: json!({"mode":"ok"}),
+    };
+    let prepared = tool.prepare(&next_call, &ctx).await.unwrap();
+    assert!(tool
+        .execute(prepared, &ctx)
+        .await
+        .unwrap()
+        .contains("fixture result"));
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap(),
+        "started\ncalled\ncalled\n"
+    );
+    clients.shutdown().await.unwrap();
 }
 #[tokio::test]
 async fn mcp_denied_launch_and_approved_discovery_call_and_shutdown() {

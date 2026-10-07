@@ -52,6 +52,17 @@ impl SqliteSessions {
         })
     }
     pub fn lease(&self, id: &str) -> Result<SessionLease> {
+        if id.len() != 36
+            || !id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+        {
+            return Err(AgentError::Session("invalid session id".into()));
+        }
         let uuid = uuid::Uuid::parse_str(id)
             .map_err(|_| AgentError::Session("invalid session id".into()))?;
         let mut options = OpenOptions::new();
@@ -61,7 +72,7 @@ impl SqliteSessions {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let file = options.open(self.locks.join(format!("{uuid}.lock")))?;
+        let file = options.open(self.locks.join(format!("{}.lock", uuid.as_hyphenated())))?;
         file.try_lock_exclusive()
             .map_err(|_| AgentError::Session("session is in use by another process".into()))?;
         Ok(SessionLease { _file: file })

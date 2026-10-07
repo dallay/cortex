@@ -45,3 +45,38 @@ fn json_read_only_turn_lists_and_resumes_a_session() {
     let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
     assert_eq!(doctor["rook_compatibility"], "unverified");
 }
+
+#[test]
+fn invalid_runtime_config_fails_before_database_creation() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let config = config_dir.path().join("invalid.toml");
+    std::fs::write(&config, "provider = \"openai\"\n").unwrap();
+    let db = data.path().join("sessions.db");
+    let invoke = |command: &str| {
+        Command::new(env!("CARGO_BIN_EXE_agent"))
+            .args(["--config"])
+            .arg(&config)
+            .args(["--db"])
+            .arg(&db)
+            .arg(command)
+            .env_remove("AGENT_BASE_URL")
+            .env_remove("AGENT_MODEL")
+            .output()
+            .unwrap()
+    };
+
+    let invalid = invoke("doctor");
+    assert!(!invalid.status.success());
+    assert!(
+        !db.exists(),
+        "invalid config must not create the session database"
+    );
+
+    let sessions = invoke("sessions");
+    assert!(
+        sessions.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+}

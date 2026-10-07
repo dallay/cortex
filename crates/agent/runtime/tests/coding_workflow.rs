@@ -181,6 +181,35 @@ async fn denied_edit_does_not_modify_the_file() {
         .any(|m| m.role == Role::Tool && m.content.contains("denied")));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn newly_written_files_use_the_shared_readable_default_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("write_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().to_path_buf(),
+        cancellation: CancellationToken::new(),
+    };
+    let call = ToolCall {
+        id: "new-file".into(),
+        name: "write_file".into(),
+        arguments: json!({"path":"new.txt","content":"shared"}),
+    };
+    let action = tool.prepare(&call, &ctx).await.unwrap();
+    tool.execute(action, &ctx).await.unwrap();
+    assert_eq!(
+        std::fs::metadata(workspace.path().join("new.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
+}
+
 #[tokio::test]
 async fn stale_diff_and_symlink_escape_are_rejected() {
     let workspace = tempfile::tempdir().unwrap();
@@ -270,6 +299,7 @@ async fn session_lock_and_recovery_prevent_concurrent_or_replayed_effects() {
     let store = SqliteSessions::open(&dir.path().join("sessions.db")).unwrap();
     let mut session = Session::new(dir.path().canonicalize().unwrap());
     session.interrupted = true;
+    assert!(store.lease("../../escape").is_err());
     session.messages.push(Message {
         role: Role::Assistant,
         content: String::new(),
@@ -292,6 +322,36 @@ async fn session_lock_and_recovery_prevent_concurrent_or_replayed_effects() {
         .contains("completion is unknown"));
     recover(&mut session);
     assert_eq!(session.messages.len(), 2);
+}
+
+#[test]
+fn recovery_places_missing_tool_results_before_later_user_messages() {
+    let mut session = Session::new(std::env::current_dir().unwrap());
+    session.messages = vec![
+        Message {
+            role: Role::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![
+                ToolCall {
+                    id: "first".into(),
+                    name: "one".into(),
+                    arguments: json!({}),
+                },
+                ToolCall {
+                    id: "second".into(),
+                    name: "two".into(),
+                    arguments: json!({}),
+                },
+            ],
+        },
+        Message::text(Role::User, "next turn"),
+        Message::tool("first".into(), "completed".into()),
+    ];
+    recover(&mut session);
+    assert_eq!(session.messages[1].tool_call_id.as_deref(), Some("first"));
+    assert_eq!(session.messages[2].tool_call_id.as_deref(), Some("second"));
+    assert_eq!(session.messages[3].role, Role::User);
 }
 
 #[tokio::test]
@@ -399,6 +459,21 @@ fn root_and_nested_instructions_are_scoped_and_symlinks_are_contained() {
     )
     .unwrap();
     assert!(agent_runtime::instructions::load(workspace.path()).is_err());
+}
+
+#[test]
+fn instruction_errors_name_non_file_and_oversized_targets() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("AGENTS.md")).unwrap();
+    let error = agent_runtime::instructions::load(workspace.path()).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("AGENTS.md is not a regular file"));
+
+    std::fs::remove_dir(workspace.path().join("AGENTS.md")).unwrap();
+    std::fs::write(workspace.path().join("AGENTS.md"), vec![b'x'; 65_537]).unwrap();
+    let error = agent_runtime::instructions::load(workspace.path()).unwrap_err();
+    assert!(error.to_string().contains("AGENTS.md exceeds 64 KiB"));
 }
 
 #[tokio::test]

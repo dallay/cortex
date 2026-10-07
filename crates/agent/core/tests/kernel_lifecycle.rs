@@ -132,6 +132,65 @@ async fn failed_activation_rolls_back_services_and_owned_tasks() {
 }
 
 #[tokio::test]
+async fn failed_activation_rolls_back_this_start_pass_and_blocks_remaining_plugins() {
+    let log = Arc::new(Mutex::new(vec![]));
+    let base = ServiceId::new("test:base", 1);
+    let failed = ServiceId::new("test:failed", 1);
+    let provider = plugin("a-provider", vec![base.clone()], vec![], &log);
+    let provider_cleaned = provider.cleaned.clone();
+    let mut failing = plugin("b-failing", vec![failed.clone()], vec![base.clone()], &log);
+    failing.fail = true;
+    let mut supervisor = Supervisor::default();
+    supervisor.register(Box::new(provider)).unwrap();
+    supervisor.register(Box::new(failing)).unwrap();
+    supervisor
+        .register(Box::new(plugin(
+            "c-unrun",
+            vec![],
+            vec![failed.clone()],
+            &log,
+        )))
+        .unwrap();
+
+    assert!(supervisor.start().await.is_err());
+
+    assert!(supervisor.resolve::<u64>(&base).is_err());
+    assert!(supervisor.resolve::<u64>(&failed).is_err());
+    assert!(provider_cleaned.load(Ordering::SeqCst));
+    let diagnostics = supervisor.diagnostics();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .find(|d| d.manifest.id == "a-provider")
+            .unwrap()
+            .state,
+        State::Blocked
+    );
+    let failure = diagnostics
+        .iter()
+        .find(|d| d.manifest.id == "b-failing")
+        .unwrap();
+    assert_eq!(failure.state, State::Failed);
+    assert!(failure
+        .last_error
+        .as_deref()
+        .unwrap()
+        .contains("fixture activation failure"));
+    assert_eq!(
+        diagnostics
+            .iter()
+            .find(|d| d.manifest.id == "c-unrun")
+            .unwrap()
+            .state,
+        State::Blocked
+    );
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["start a-provider", "start b-failing", "stop a-provider"]
+    );
+}
+
+#[tokio::test]
 async fn ambiguity_cycles_and_major_version_mismatch_are_explicit() {
     let log = Arc::new(Mutex::new(vec![]));
     let a = ServiceId::new("test:a", 1);

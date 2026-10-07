@@ -15,4 +15,3 @@ jobs:
     with:
       sync-labels: true
       configuration-path: '.github/labeler.yml'
-    secrets: inherit

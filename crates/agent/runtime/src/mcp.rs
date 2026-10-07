@@ -85,6 +85,7 @@ impl McpClients {
                 .args(&config.args)
                 .current_dir(workspace)
                 .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
                 .envs(&config.env);
             for (child_name, source_name) in &config.env_from {
                 let value = std::env::var_os(source_name).ok_or_else(|| {
@@ -233,9 +234,19 @@ impl Tool for McpTool {
         let mut guard = CancelCall(Some(client.cancellation_token()));
         let response = tokio::select! {
             _=ctx.cancellation.cancelled()=>{client.cancellation_token().cancel();return Err(AgentError::Cancelled);},
-            result=tokio::time::timeout(Duration::from_secs(self.timeout_secs),client.call_tool(params))=>result
-                .map_err(|_|{client.cancellation_token().cancel();AgentError::Tool("MCP call timed out; completion may be unknown".into())})?
-                .map_err(|_|AgentError::Tool("MCP call failed; completion may be unknown".into()))?,
+            result=tokio::time::timeout(Duration::from_secs(self.timeout_secs),client.call_tool(params))=>match result {
+                Err(_) => {
+                    client.cancellation_token().cancel();
+                    return Err(AgentError::Tool("MCP call timed out; completion may be unknown".into()));
+                }
+                Ok(Err(rmcp::service::ServiceError::McpError(error))) => {
+                    // A JSON-RPC error means the server answered and the transport is still healthy.
+                    guard.0 = None;
+                    return Err(AgentError::Tool(bounded_text(format!("MCP error: {error}"))));
+                }
+                Ok(Err(_)) => return Err(AgentError::Tool("MCP call failed; completion may be unknown".into())),
+                Ok(Ok(response)) => response,
+            },
         };
         guard.0 = None;
         drop(client);

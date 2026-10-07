@@ -9,7 +9,7 @@
 # Usage:
 #   ./scripts/agent-linux-smoke.sh
 #
-# Writes a one-line record to docs/agent/.linux-smoke.log on success. Failure
+# Writes a one-line record to docs/agent/linux-smoke.log on success. Failure
 # exits non-zero without touching the log.
 
 set -euo pipefail

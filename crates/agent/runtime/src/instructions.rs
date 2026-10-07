@@ -42,8 +42,17 @@ pub fn load(workspace: &Path) -> Result<String> {
             .map_err(|_| AgentError::Configuration("instruction outside workspace".into()))?;
         let resolved = resolve_path(&workspace, &relative.to_string_lossy(), false)?;
         let metadata = std::fs::metadata(&resolved)?;
-        if !metadata.is_file() || metadata.len() > 65_536 {
-            return Err(AgentError::Configuration("AGENTS.md exceeds 64 KiB".into()));
+        if !metadata.is_file() {
+            return Err(AgentError::Configuration(format!(
+                "{} is not a regular file",
+                relative.display()
+            )));
+        }
+        if metadata.len() > 65_536 {
+            return Err(AgentError::Configuration(format!(
+                "{} exceeds 64 KiB",
+                relative.display()
+            )));
         }
         let content = std::fs::read_to_string(resolved)?;
         output.push_str(&format!(

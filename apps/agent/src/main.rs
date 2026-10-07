@@ -78,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
     if let Some(value) = cli.db {
         config.db = value;
     }
+    // The sessions subcommand only reads the database and must work without model settings.
+    if !matches!(cli.command, Some(Commands::Sessions)) {
+        config.validate()?;
+    }
     let sessions = Arc::new(SqliteSessions::open(&config.db)?);
     if matches!(cli.command, Some(Commands::Sessions)) {
         for session in sessions.list().await? {
@@ -123,7 +127,6 @@ async fn main() -> anyhow::Result<()> {
     };
     anyhow::ensure!(session.workspace.is_dir(), "saved workspace is unavailable");
     let _lease = sessions.lease(&session.id)?;
-    config.validate()?;
     let is_doctor = matches!(cli.command, Some(Commands::Doctor));
     let interactive = prompt.is_none() && !is_doctor;
     if interactive {

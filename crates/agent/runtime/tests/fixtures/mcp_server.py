@@ -27,6 +27,10 @@ for line in sys.stdin:
             sys.exit(1)
         if mode == "timeout":
             time.sleep(30)
+        if mode == "protocol_error":
+            print(json.dumps({"jsonrpc": "2.0", "id": request["id"],
+                              "error": {"code": -32602, "message": "invalid params"}}), flush=True)
+            continue
         result = {"content": [{"type": "text", "text": "fixture result"}], "isError": False}
     elif method == "ping":
         result = {}

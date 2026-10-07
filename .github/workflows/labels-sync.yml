@@ -15,4 +15,3 @@ jobs:
     uses: dallay/common-actions/.github/workflows/labels-sync.yml@v2.2.1
     with:
       labels-file: '.github/labels.yml'
-    secrets: inherit

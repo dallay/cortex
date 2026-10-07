@@ -15,6 +15,7 @@ pub struct OpenAiProvider {
     url: String,
     model: String,
     key: Option<String>,
+    timeout_secs: u64,
 }
 impl OpenAiProvider {
     pub fn new(
@@ -38,7 +39,7 @@ impl OpenAiProvider {
         }
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(timeout_secs))
+            .read_timeout(Duration::from_secs(timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| AgentError::Configuration("cannot construct HTTP client".into()))?;
@@ -47,6 +48,7 @@ impl OpenAiProvider {
             url: format!("{}/chat/completions", base_url.trim_end_matches('/')),
             model,
             key,
+            timeout_secs,
         })
     }
 }
@@ -82,7 +84,9 @@ impl ModelProvider for OpenAiProvider {
         }
         let response = tokio::select! {
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            response = builder.send() => response.map_err(|_| AgentError::Model("HTTP request failed (check endpoint/network)".into()))?,
+            response = tokio::time::timeout(Duration::from_secs(self.timeout_secs), builder.send()) => response
+                .map_err(|_| AgentError::Model("HTTP response headers timed out".into()))?
+                .map_err(|_| AgentError::Model("HTTP request failed (check endpoint/network)".into()))?,
         };
         if !response.status().is_success() {
             // Do not echo provider bodies or authenticated request URLs into session history.

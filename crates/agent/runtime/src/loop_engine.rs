@@ -5,7 +5,10 @@ use agent_core::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 #[derive(Clone)]
 pub struct LoopConfig {
@@ -338,21 +341,40 @@ impl StandardLoop {
 
 /// Repair only protocol pairings. A missing result has unknown completion; no effect is replayed.
 pub fn recover(session: &mut Session) {
-    let results: BTreeSet<_> = session
+    let call_ids: BTreeSet<_> = session
         .messages
         .iter()
-        .filter_map(|m| m.tool_call_id.clone())
+        .flat_map(|message| message.tool_calls.iter().map(|call| call.id.clone()))
         .collect();
-    let missing: Vec<_> = session
+    let mut existing: BTreeMap<_, _> = session
         .messages
         .iter()
-        .flat_map(|m| &m.tool_calls)
-        .filter(|c| !results.contains(&c.id))
-        .map(|c| c.id.clone())
+        .filter_map(|message| {
+            message
+                .tool_call_id
+                .as_ref()
+                .filter(|id| call_ids.contains(*id))
+                .map(|id| (id.clone(), message.clone()))
+        })
         .collect();
-    for id in missing {
-        session.messages.push(Message::tool(id,"Interrupted operation: completion is unknown. Nothing was replayed. Inspect current repository state before requesting any new effect.".into()));
+    let mut repaired = Vec::with_capacity(session.messages.len() + call_ids.len());
+    for message in std::mem::take(&mut session.messages) {
+        if message
+            .tool_call_id
+            .as_ref()
+            .is_some_and(|id| call_ids.contains(id))
+        {
+            continue;
+        }
+        let calls = message.tool_calls.clone();
+        repaired.push(message);
+        for call in calls {
+            repaired.push(existing.remove(&call.id).unwrap_or_else(|| {
+                Message::tool(call.id,"Interrupted operation: completion is unknown. Nothing was replayed. Inspect current repository state before requesting any new effect.".into())
+            }));
+        }
     }
+    session.messages = repaired;
 }
 #[async_trait]
 impl AgentLoop for StandardLoop {

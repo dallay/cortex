@@ -312,6 +312,16 @@ impl Tool for NativeTool {
                     file.sync_all().await?;
                     if let Ok(metadata) = tokio::fs::metadata(&path).await {
                         tokio::fs::set_permissions(&temp, metadata.permissions()).await?;
+                    } else {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            tokio::fs::set_permissions(
+                                &temp,
+                                std::fs::Permissions::from_mode(0o644),
+                            )
+                            .await?;
+                        }
                     }
                     tokio::fs::rename(&temp, &path).await?;
                     Ok::<_, AgentError>(())

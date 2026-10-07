@@ -145,6 +145,7 @@ impl Supervisor {
             .ok_or_else(|| AgentError::Composition(format!("unavailable service {}", id.0)))
     }
     pub async fn start(&mut self) -> Result<()> {
+        let order_start = self.order.len();
         let mut owners = BTreeMap::new();
         for (id, entry) in &self.plugins {
             for service in &entry.diagnostic.manifest.provides {
@@ -244,6 +245,17 @@ impl Supervisor {
                         ctx.cleanup().await;
                         e.diagnostic.state = State::Failed;
                         e.diagnostic.last_error = Some(err.to_string());
+                        let activated: Vec<_> =
+                            self.order[order_start..].iter().rev().cloned().collect();
+                        for activated in activated {
+                            self.stop_entry(&activated, State::Blocked).await;
+                        }
+                        self.order.truncate(order_start);
+                        for entry in self.plugins.values_mut() {
+                            if !matches!(entry.diagnostic.state, State::Active | State::Failed) {
+                                entry.diagnostic.state = State::Blocked;
+                            }
+                        }
                         return Err(err);
                     }
                 }

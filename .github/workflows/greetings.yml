@@ -14,4 +14,3 @@ jobs:
   greeting:
     name: 👋 Welcome Contributor
     uses: dallay/common-actions/.github/workflows/greetings.yml@v2.2.1
-    secrets: inherit
