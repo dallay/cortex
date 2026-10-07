@@ -299,7 +299,7 @@ jobs:
       - name: Run Trivy filesystem + dependency scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          version: v0.70.0
+          version: v0.75.0
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig
