@@ -113,7 +113,7 @@ clap = { version = "4", features = ["derive", "env"] }
 # Encryption
 aes-gcm = "0.10"
 argon2 = "0.5"
-base64 = "0.22"
+base64 = "0.23"
 
 # Dev tools (installed via cargo install or as dependencies)
 # cargo install cargo-hack cargo-udeps cargo-audit cargo-outdated cargo-llvm-cov cargo-spellcheck
