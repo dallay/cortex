@@ -418,7 +418,7 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: lcov.info
           flags: backend
@@ -451,7 +451,7 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json --coverage.reportsDirectory=coverage
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: apps/rook/dashboard/coverage/lcov.info
           flags: frontend
