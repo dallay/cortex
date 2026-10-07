@@ -31,15 +31,16 @@ only counts sessions that started on a green smoke.
 ## Workflow — copy, paste, annotate
 
 Run each step in order, in a real repository of your choice (any small project
-works). Replace `<workspace>` with an absolute path.
+works). Replace the example workspace with an absolute path.
 
 ```bash
-WS=<workspace>
-AGENT_BASE_URL=https://your-endpoint.example/v1 \
-AGENT_MODEL=your-model \
-AGENT_API_KEY=sk-... \
+WS="/absolute/path/to/disposable-repository"
 agent --workspace "$WS" doctor
 ```
+
+Set `AGENT_BASE_URL`, `AGENT_MODEL` and the credential environment variable in
+the invoking shell before starting. Keep credentials out of the acceptance record.
+`doctor` checks local configuration; it does not establish endpoint compatibility.
 
 **Note:** _doctor result here (services green / red, what was missing)._
 
@@ -50,25 +51,29 @@ agent --workspace "$WS" run "List the files in src/ and summarise their purpose.
 **Note:** _response quality, latency to first token, any tool errors._
 
 ```bash
-# Edit flow — pick any small text-only change. The diff must display before approval.
-agent --workspace "$WS" run "In README.md, fix the first typo you find and show the diff."
+# Start an interactive session for edits and commands requiring approval.
+agent --workspace "$WS" chat
+# Prompt: In README.md, fix the first typo you find.
 ```
 
-Approve the diff when prompted. **Note:** _diff rendered correctly? Approval
+Use a disposable repository or branch with a known typo. Approve the displayed
+diff when prompted. `run` denies effects without explicit `--allow` grants;
+use `chat` here to exercise individual approval prompts.
+
+**Note:** _diff rendered correctly? Approval
 flow clear? File written atomically?_
 
 ```bash
-# Shell — must require separate approval. Pick something cheap and observable.
-agent --workspace "$WS" run "Run 'cargo fmt --check' and report the result."
+# In the same chat, request a test appropriate to this repository.
+# For a Rust project: Run 'cargo fmt --check' and report the result.
 ```
 
 **Note:** _approval asked before execution? Output truncated sensibly? Exit
 code returned to the model? Ctrl+C cancelled the process group?_
 
 ```bash
-# Stop here. Do NOT exit cleanly — drop the connection or Ctrl+C mid-turn on the next one.
-agent --workspace "$WS" chat
-# ...give it one prompt, then while it is mid-turn: Ctrl+C
+# In the same chat, give it another prompt and press Ctrl+C mid-turn.
+# Then enter /quit to leave the chat and restart the process for the resume check.
 ```
 
 **Note:** _did the session save cleanly? Was the in-flight tool call marked as
@@ -86,10 +91,14 @@ fresh approval for any effectful action?_
 ```bash
 # Context — drive a longer conversation that should trigger compaction.
 agent --workspace "$WS" chat
-# Send 8–10 substantive prompts in a single session. Topics are not important;
-# length and varied tool calls are. Watch for the 'compacted' JSON event in
-# --json mode if you want to confirm the path was hit.
+# Continue with substantive prompts and varied tool calls until compaction occurs.
+# Use --json before chat to observe the 'compacted' event.
 ```
+
+Prompt count alone does not guarantee compaction. If the default context budget
+is too large for a short acceptance run, use a separate TOML configuration with
+a smaller valid `context_tokens` budget and `max_output_tokens` below half that
+budget. Record those values and whether compaction actually occurred.
 
 **Note:** _did compaction fire? Did the original history stay intact (re-run
 `agent sessions` and inspect, or query the SQLite record directly)? If

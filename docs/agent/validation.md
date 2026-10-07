@@ -29,8 +29,8 @@ continuing without Semgrep, retaining Rust checks and just ci-local.
 
 ## Remaining acceptance
 
-- Real-model smoke test: use a tool-capable Chat Completions endpoint, approve a
-  small code edit and its tests, then restart and resume the session.
+- Real-model coding and restart/resume smoke: **passed on macOS 2026-10-07**;
+  see the record below. Interactive approval usability still needs human daily use.
 - Linux daily use: deterministic coding and MCP fixtures passed; repeat the
   interactive workflow with a real model on a Linux host. **Checklist and
   smoke harness are ready** — see "Linux daily-use record" below. Five `ok`
@@ -39,6 +39,47 @@ continuing without Semgrep, retaining Rust checks and just ci-local.
   support.~~ **Closed 2026-10-06 — not supported as a backend.**
   See "Rook compatibility result" below.
 - Public packaging and release tags follow the personal MVP.
+
+## Real-model smoke record — 2026-10-07
+
+Host: macOS, Rust 1.89.0. Endpoint: `https://omnirouter.ahome.quest/v1`.
+Requested model route: `auto/best-coding-fast`; the underlying model was not
+identified. This result establishes the tested route's compatibility for this
+workflow, not every model or endpoint.
+
+A temporary terminal harness drove the actual CLI in a disposable Python
+workspace. It answered each displayed approval prompt with `y`; it did not use
+`--allow`. The temporary API credential was provided in the process environment,
+never in configuration, fixture files or this record.
+
+- Coding: two `read_file` calls inspected a broken addition function and its
+  unittest. `edit_file` displayed a diff and received approval before replacing
+  subtraction with addition. A separately approved `shell` call ran
+  `python3 -m unittest -v` successfully. An independent test execution also passed.
+- Interruption: a separately approved shell command waited 30 seconds before
+  creating a marker file. SIGINT after approval interrupted the turn; the saved
+  session retained its interrupted state and the marker was absent.
+- Restart/resume: a new CLI process resumed the interrupted session, completed
+  a read-only inspection and retained an unknown-completion recovery result for
+  the interrupted call. The marker remained absent; the command was not replayed.
+- Regression checks: all 28 agent tests passed (4 kernel, 16 coding workflow,
+  6 transport, 2 CLI). `doctor` now reports Rook as `unsupported`, matching the
+  compatibility record. The Linux checklist uses `chat` for individual approvals,
+  explains restarting after cancellation and requires observed compaction.
+
+The user authorized omitting unavailable Semgrep tools for this change. Real-model
+compaction, human approval UX and Linux daily use remain unvalidated by this smoke.
+
+Workspace verification: `just ci-local` passed stages 1–8, including workspace
+Rust tests, 175 Vitest tests and documentation. The audit reported the existing
+`anyhow` unsoundness and yanked `chacha20` warnings; no lockfile was changed.
+Stage 9 built the Docker image but could not start the container because the
+daemon cannot bind-mount the configuration file under this host's `.codex` path.
+The unmodified gate therefore did not pass. A temporary copy of the same E2E
+runner uses a Docker volume containing that configuration instead of the host
+bind mount: **83 E2E tests passed, 7 skipped** across Chromium, Firefox and WebKit.
+No runner changes are included. Markdown lint and diff whitespace checks also
+passed after updating this record.
 
 ## Rook compatibility result
 
