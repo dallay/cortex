@@ -27,7 +27,7 @@ COPY apps apps
 
 # Install dashboard deps FIRST (before any further COPY overwrites node_modules)
 WORKDIR /app/apps/rook/dashboard
-RUN pnpm install --include=dev --ignore-scripts
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build the project
 WORKDIR /app

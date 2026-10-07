@@ -16,7 +16,7 @@
 #   ./dev/e2e/run-api-keys-e2e.sh --cleanup # Clean up only
 # =============================================================================
 
-set -e
+set -eo pipefail
 
 # Resolve repo root relative to script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +63,9 @@ trap cleanup EXIT ERR INT
 
 # Parse arguments
 MODE="${1:-}"
+if [ "$MODE" = "--test" ]; then
+    export PLAYWRIGHT_HEADLESS="${PLAYWRIGHT_HEADLESS:-1}"
+fi
 
 if [ "$MODE" = "--cleanup" ]; then
     cleanup

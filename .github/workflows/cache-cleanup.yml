@@ -27,4 +27,3 @@ jobs:
     with:
       retention-days: 7
       cache-types: ${{ inputs.cache-type || 'all' }}
-    secrets: inherit
