@@ -9,7 +9,7 @@ minimumReleaseAgeExclude:
 
 overrides:
   nanoid@3: '3.3.18'
-  postcss: '8.5.18'
+  postcss: '8.5.23'
   source-map-js: '1.2.2'
   'vue': 'beta'
   '@vue/compiler-core': 'beta'
