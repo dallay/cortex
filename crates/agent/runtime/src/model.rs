@@ -168,6 +168,9 @@ impl SseParser {
             let Some((end, len)) = delimiter else {
                 break;
             };
+            if end + len > 1_048_576 {
+                return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
+            }
             let event: Vec<_> = self.buffer.drain(..end + len).collect();
             let text = std::str::from_utf8(&event)
                 .map_err(|_| AgentError::Model("invalid UTF-8 in SSE event".into()))?;
