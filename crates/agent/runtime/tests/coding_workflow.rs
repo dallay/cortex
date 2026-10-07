@@ -438,6 +438,7 @@ async fn cancellation_keeps_an_interrupted_record_and_does_not_execute_tools() {
     assert!(store.load(&session.id).await.unwrap().interrupted);
 }
 
+#[cfg(unix)]
 #[test]
 fn root_and_nested_instructions_are_scoped_and_symlinks_are_contained() {
     let workspace = tempfile::tempdir().unwrap();
@@ -642,6 +643,7 @@ async fn denied_mcp_call_never_reaches_the_started_server() {
     clients.shutdown().await.unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn traversal_skips_unix_sockets_and_sse_accepts_mixed_line_endings() {
     let workspace = tempfile::tempdir().unwrap();

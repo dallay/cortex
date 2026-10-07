@@ -451,8 +451,14 @@ async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Resul
         .stderr()
         .take()
         .ok_or_else(|| AgentError::Tool("missing stderr".into()))?;
+    // Each stream gets its own budget so stderr stays visible when stdout is full.
+    // Reserve space for the "Exit/stdout/stderr" header; `bounded_text` remains
+    // the final safety limit for the combined output.
     // Keep draining after the cap so a verbose child cannot block on a full pipe.
-    async fn drain(mut reader: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
+    async fn drain(
+        mut reader: impl tokio::io::AsyncRead + Unpin,
+        cap: usize,
+    ) -> std::io::Result<Vec<u8>> {
         let mut result = Vec::new();
         let mut buffer = [0; 8192];
         loop {
@@ -460,7 +466,7 @@ async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Resul
             if n == 0 {
                 break;
             }
-            let room = MAX_OUTPUT_BYTES.saturating_sub(result.len());
+            let room = cap.saturating_sub(result.len());
             result.extend_from_slice(&buffer[..n.min(room)]);
         }
         Ok(result)
@@ -475,9 +481,10 @@ async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Resul
             self.stderr.abort();
         }
     }
+    let stream_cap = MAX_OUTPUT_BYTES.saturating_sub(1024) / 2;
     let mut readers = Readers {
-        stdout: tokio::spawn(drain(stdout)),
-        stderr: tokio::spawn(drain(stderr)),
+        stdout: tokio::spawn(drain(stdout, stream_cap)),
+        stderr: tokio::spawn(drain(stderr, stream_cap)),
     };
     let status = tokio::select! {
         _=ctx.cancellation.cancelled()=>Err(AgentError::Cancelled),

@@ -150,9 +150,6 @@ impl SseParser {
             return Ok(vec![]);
         }
         self.buffer.extend_from_slice(bytes);
-        if self.buffer.len() > 1_048_576 {
-            return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
-        }
         let mut result = vec![];
         loop {
             let delimiter = self
@@ -246,6 +243,9 @@ impl SseParser {
                     self.finished = true;
                 }
             }
+        }
+        if self.buffer.len() > 1_048_576 {
+            return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
         }
         Ok(result)
     }
