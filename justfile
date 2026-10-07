@@ -132,6 +132,13 @@ build-targets:
 
 # === Run ===
 
+# Run the personal coding agent (e.g. just agent-run --provider mock run "list files")
+agent-run *args:
+    cargo run -p cortex-agent -- "$@"
+
+agent-test:
+    cargo test -p agent-core -p agent-runtime -p cortex-agent
+
 # Run the backend (rook) in dev mode
 run:
     ROOK_CONFIG=$HOME/.config/cortex/rook.toml cargo run -p rook

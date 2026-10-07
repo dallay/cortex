@@ -66,7 +66,9 @@ test.describe('Login page — rendering', () => {
 
   test('unauthenticated visit to /api-keys redirects to /login', async ({ page }) => {
     await page.context().clearCookies()
-    await page.goto('/api-keys')
+    // The dashboard is served from /dashboard/; use a relative path so the
+    // navigation stays inside the Vite base URL and reaches Vue Router.
+    await page.goto('api-keys')
     await page.waitForURL(/\/login/, { timeout: 15_000 })
     await expect(page).toHaveURL(/\/login/)
   })

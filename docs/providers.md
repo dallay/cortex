@@ -54,6 +54,13 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 - `complete()` — ✅ Implemented
 - `stream()` — ❌ Not yet implemented
 
+> **Compatibility note (2026-10-06):** the streaming path drops the
+> `tool_calls` delta (see `providers-openai/src/provider.rs:151-161`). Plain-text
+> chat works through a Rook gateway, but tool-driven workflows do not. The
+> Cortex agent's MVP depends on tool calls and cannot use Rook as a backend
+> until this path is implemented. See
+> `docs/agent/validation.md` § Rook compatibility result.
+
 ---
 
 ## Anthropic

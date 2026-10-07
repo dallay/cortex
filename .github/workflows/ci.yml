@@ -606,6 +606,15 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run tests
+        if: runner.os != 'Windows'
         run: cargo test --workspace --all-features
+      # The personal agent MVP targets macOS/Linux; keep Rook's Windows gates.
+      - name: Run Windows tests
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --all-features --exclude agent-core --exclude agent-runtime --exclude cortex-agent
       - name: Run clippy
+        if: runner.os != 'Windows'
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run Windows clippy
+        if: runner.os == 'Windows'
+        run: cargo clippy --workspace --all-targets --exclude agent-core --exclude agent-runtime --exclude cortex-agent -- -D warnings

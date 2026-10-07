@@ -1,0 +1,47 @@
+use std::process::Command;
+
+#[test]
+fn json_read_only_turn_lists_and_resumes_a_session() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("hello.txt"), "hello").unwrap();
+    let db = data.path().join("sessions.db");
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_agent"))
+            .args(["--provider", "mock", "--workspace"])
+            .arg(workspace.path())
+            .arg("--db")
+            .arg(&db)
+            .arg("--json")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let output = invoke(&["run", "list files"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|e| e["type"] == "tool_finished"));
+    assert!(events.iter().any(|e| e["type"] == "turn_finished"));
+    let listed = invoke(&["sessions"]);
+    assert!(listed.status.success());
+    let info: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let id = info["id"].as_str().unwrap();
+    let resumed = invoke(&["resume", id, "--prompt", "continue"]);
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let doctor = invoke(&["doctor"]);
+    assert!(doctor.status.success());
+    let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["rook_compatibility"], "unverified");
+}

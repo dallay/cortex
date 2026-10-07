@@ -35,8 +35,8 @@ export default defineConfig({
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
 
-    /* Only on CI systems run the tests headless */
-    headless: !!process.env.CI,
+    /* Automated E2E runs use headless; direct local runs keep visible browsers. */
+    headless: !!process.env.CI || process.env.PLAYWRIGHT_HEADLESS === '1',
 
     /* Reuse the authenticated session saved by globalSetup — avoids per-test logins. */
     storageState: 'e2e/.auth/admin.json',
