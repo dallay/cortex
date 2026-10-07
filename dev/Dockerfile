@@ -11,7 +11,7 @@
 #   docker build -f dev/Dockerfile.alpine   -t rook:e2e-alpine .
 # =============================================================================
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
