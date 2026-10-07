@@ -23,7 +23,7 @@ COPY apps apps
 RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime
-FROM alpine:3.20
+FROM alpine:3.24
 
 WORKDIR /app
 
