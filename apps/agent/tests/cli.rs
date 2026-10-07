@@ -43,7 +43,7 @@ fn json_read_only_turn_lists_and_resumes_a_session() {
     let doctor = invoke(&["doctor"]);
     assert!(doctor.status.success());
     let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
-    assert_eq!(doctor["rook_compatibility"], "unverified");
+    assert_eq!(doctor["rook_compatibility"], "unsupported");
 }
 
 #[test]
