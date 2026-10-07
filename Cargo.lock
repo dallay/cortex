@@ -2481,9 +2481,9 @@ dependencies = [
 
 [[package]]
 name = "refinery"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee5133e5b207e5703c2a4a9dc9bd8c8f2cc74c4ac04ca5510acaa907012c77ac"
+checksum = "8e48a123dfddb4e33b888a233e3dd8f428d0dadbe8a2302177fcad504b9fb0e3"
 dependencies = [
  "refinery-core",
  "refinery-macros",
@@ -2491,11 +2491,10 @@ dependencies = [
 
 [[package]]
 name = "refinery-core"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023a2a96d959c9b5b5da78e965bfdb1363b365bf5e84531a67d0eee827a702a3"
+checksum = "c5357919ea1ec6b73b47471c5182cdb8fa09f679b0bcebc435066df5539a8081"
 dependencies = [
- "async-trait",
  "cfg-if",
  "log",
  "regex",
@@ -2504,16 +2503,16 @@ dependencies = [
  "siphasher",
  "thiserror",
  "time",
- "toml 0.8.23",
+ "toml 1.1.2+spec-1.1.0",
  "url",
  "walkdir",
 ]
 
 [[package]]
 name = "refinery-macros"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c56c2e960c8e47c7c5c30ad334afea8b5502da796a59e34d640d6239d876d924"
+checksum = "623c53cdc704ababffe5361be8cb726f874fcd4e97b945741aa69b15d0406f36"
 dependencies = [
  "proc-macro2",
  "quote",

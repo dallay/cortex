@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 rusqlite = { workspace = true }
-refinery = { version = "0.9", features = ["rusqlite"] }
+refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
