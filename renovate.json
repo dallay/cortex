@@ -1,0 +1,67 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+  "timezone": "America/Havana",
+  "schedule": ["* 17-23,0-6 * * 1-5", "* * * * 0,6"],
+  "assignees": ["yacosta738"],
+  "reviewers": ["team:dbwh", "yacosta738"],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 10,
+  "semanticCommits": "enabled",
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 17-23,0-6 * * 1-5", "* * * * 0,6"]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "rust dependencies",
+      "semanticCommitScope": "deps-rust",
+      "labels": ["dependencies", "rust"]
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "rust major",
+      "semanticCommitScope": "deps-rust",
+      "labels": ["dependencies", "rust"]
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "javascript dependencies",
+      "semanticCommitScope": "deps-js",
+      "labels": ["dependencies", "javascript"],
+      "postUpdateOptions": ["pnpmDedupe"]
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "javascript major",
+      "semanticCommitScope": "deps-js",
+      "labels": ["dependencies", "javascript"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "semanticCommitScope": "deps-actions",
+      "labels": ["dependencies", "github-actions"]
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker",
+      "semanticCommitScope": "deps-docker",
+      "labels": ["dependencies", "docker"]
+    },
+    {
+      "matchManagers": ["rust-toolchain"],
+      "groupName": "rust-toolchain",
+      "semanticCommitScope": "deps-rust",
+      "labels": ["dependencies", "rust"]
+    }
+  ]
+}
