@@ -1,11 +1,48 @@
-# Labeler config - maps paths to labels
-# https://github.com/actions/labeler
+# PR file-path labeler for the Cortex multi-product monorepo.
+# Product labels identify the affected code owner; multiple products may apply to a PR.
+# Issue labels are assigned from issue scope, not inferred from paths.
+
+product/rook:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/rook/**'
+          - 'crates/application/rook-usecases/**'
+          - 'crates/domain/rook-core/**'
+          - 'crates/infrastructure/**'
+          - 'docs/c4/**'
+          - 'docs/providers.md'
+          - 'docs/api.md'
+
+product/agent:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/agent/**'
+          - 'crates/agent/**'
+          - 'docs/agent/**'
+          - 'scripts/agent-*.sh'
+
+product/shared:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/domain/shared-kernel/**'
+          - '.github/**'
+          - 'Cargo.toml'
+          - 'Cargo.lock'
+          - 'rust-toolchain.toml'
+          - 'justfile'
+          - 'renovate.json'
+          - 'lefthook.yml'
+          - 'pnpm-workspace.yaml'
+          - 'pnpm-lock.yaml'
 
 area/ci:
   - changed-files:
-      - any-glob-to-any-file: '.github/workflows/*'
-      - any-glob-to-any-file: 'justfile'
-      - any-glob-to-any-file: 'Cargo.toml'
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/labeler.yml'
+          - '.github/labels.yml'
+          - 'justfile'
+          - 'lefthook.yml'
 
 area/docs:
   - changed-files:
@@ -16,14 +53,69 @@ area/docs:
 area/core:
   - changed-files:
       - any-glob-to-any-file:
-          - 'rook-core/**'
-          - 'shared-kernel/**'
+          - 'crates/domain/**'
+          - 'crates/application/**'
+          - 'crates/agent/core/**'
 
 area/providers:
   - changed-files:
-      - any-glob-to-any-file: 'providers-*/**'
+      - any-glob-to-any-file:
+          - 'crates/infrastructure/providers-*/**'
+          - 'crates/infrastructure/providers-core/**'
+          - 'crates/infrastructure/provider-utils/**'
+
+area/dashboard:
+  - changed-files:
+      - any-glob-to-any-file: 'apps/rook/dashboard/**'
+
+area/runtime:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/agent/runtime/**'
+          - 'apps/agent/src/**'
+
+area/transport:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/infrastructure/transport-axum/**'
+          - 'crates/infrastructure/sse-stream/**'
+
+area/auth:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/infrastructure/auth-sqlite/**'
+
+area/storage:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/infrastructure/*-sqlite/**'
+          - 'crates/infrastructure/cache-memory/**'
+
+area/observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'crates/infrastructure/observability/**'
+          - 'crates/infrastructure/audit-sqlite/**'
+
+area/release:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/release.yml'
+          - 'release-please-config.json'
+          - '.release-please-manifest.json'
+
+area/dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Cargo.lock'
+          - 'pnpm-lock.yaml'
+          - '**/pnpm-lock.yaml'
+          - 'renovate.json'
 
 area/testing:
   - changed-files:
-      - any-glob-to-any-file: '**/*test*.rs'
-      - any-glob-to-any-file: '**/tests/**'
+      - any-glob-to-any-file:
+          - '**/tests/**'
+          - '**/*test*.rs'
+          - '**/*.test.ts'
+          - '**/*.spec.ts'
+          - 'dev/e2e/**'
