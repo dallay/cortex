@@ -123,4 +123,4 @@ completion. Flaky SQLite tests may need an isolated re-run.
 - [Configuration](docs/configuration.md) — TOML schema, provider examples
 - [Providers](docs/providers.md) — per-provider config, timeouts, health checks
 - [API Reference](docs/api.md) — endpoints, wire formats
-- `openspec/` — SDD change artifacts
+- `sdd` — SDD change artifacts
