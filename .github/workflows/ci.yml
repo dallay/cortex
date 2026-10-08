@@ -39,6 +39,7 @@ jobs:
           filters: |
             docs:
               - 'docs/**'
+              - 'docs/*.md'
               - '*.md'
               - 'README.md'
             backend:
@@ -50,12 +51,14 @@ jobs:
               - 'rust-toolchain.toml'
             frontend:
               - 'apps/rook/dashboard/**'
-              - '!apps/rook/dashboard/e2e/**'
             docker:
               - 'Dockerfile*'
               - 'dev/e2e/**'
+              - 'apps/rook/dashboard/e2e/**'
             github:
               - '.github/workflows/**'
+              - 'sonar-project.properties'
+              - '.github/scripts/ci-required*.cjs'
             labeler:
               - '.github/scripts/issue-labeler.*'
               - '.github/issue-labeler-rules.json'
@@ -232,8 +235,8 @@ jobs:
     if: |
       always() &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.github == 'true') &&
-      needs.test.result != 'failure' &&
-      needs.test-frontend.result != 'failure'
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped')
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -486,30 +489,142 @@ jobs:
   sonar:
     name: SonarCloud
     runs-on: ubuntu-latest
-    needs: [changes, test, test-frontend]
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
+    needs: [changes, test, test-frontend, build-dashboard]
+    # Sonar se ejecuta cuando la ruta lo requiere y las dependencias están en success o skipped.
+    # Fallos, cancelaciones y faltas de credencial en PRs internas bloquean el job.
+    if: |
+      always() &&
+      needs.changes.result == 'success' &&
+      needs.build-dashboard.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') && (
+        needs.changes.outputs.backend == 'true' ||
+        needs.changes.outputs.frontend == 'true' ||
+        needs.changes.outputs.github == 'true'
+      )
     permissions:
       contents: read
     steps:
+      - name: SonarCloud credentials policy
+        id: sonar-policy
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork || false }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "SONAR_TOKEN is available; analysis is required."
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ] && { [ "$IS_FORK" = "true" ] || [ "$GITHUB_ACTOR" = "dependabot[bot]" ]; }; then
+            echo "::notice::Skipping SonarCloud for fork/Dependabot PR: repository secrets are unavailable by policy."
+            echo "sonar_exempt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::SONAR_TOKEN is required for SonarCloud analysis on this change."
+            exit 1
+          fi
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0 # Historial completo: lo exige Sonar para blame y decoracion de PRs
           persist-credentials: false
+      - name: Cache SonarQube packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           cache: 'pnpm'
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install dependencies
         run: pnpm install
       - name: Generate frontend coverage
-        if: needs.changes.outputs.frontend == 'true'
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
+      - name: Generate Rust coverage
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --workspace --all-features --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
-        if: env.SONAR_TOKEN != ''
+        if: steps.sonar-policy.outputs.sonar_exempt != 'true'
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  test-ci-policy:
+    name: Test (CI policy)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.github == 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Test required-check policy
+        run: node --test .github/scripts/ci-required.test.cjs
+
+  # Aggregate merge gate. Individual jobs keep their path filters; this job
+  # accepts skips only when the corresponding change category is absent.
+  required:
+    name: CI / Required
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - changes
+      - build-dashboard
+      - fmt
+      - markdown
+      - test-labeler
+      - clippy
+      - check
+      - test
+      - test-frontend
+      - test-e2e
+      - doc
+      - audit
+      - trivy-fs
+      - gitleaks-pr
+      - semgrep-pr
+      - sonar
+      - test-ci-policy
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Validate required CI outcomes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork || false }}
+          SONAR_TOKEN_PRESENT: ${{ secrets.SONAR_TOKEN != '' }}
+          CHANGES_BACKEND: ${{ needs.changes.outputs.backend }}
+          CHANGES_FRONTEND: ${{ needs.changes.outputs.frontend }}
+          CHANGES_DOCKER: ${{ needs.changes.outputs.docker }}
+          CHANGES_GITHUB: ${{ needs.changes.outputs.github }}
+          CHANGES_DOCS: ${{ needs.changes.outputs.docs }}
+          CHANGES_LABELER: ${{ needs.changes.outputs.labeler }}
+          RESULT_CHANGES: ${{ needs.changes.result }}
+          RESULT_BUILD_DASHBOARD: ${{ needs.build-dashboard.result }}
+          RESULT_FMT: ${{ needs.fmt.result }}
+          RESULT_MARKDOWN: ${{ needs.markdown.result }}
+          RESULT_TEST_LABELER: ${{ needs.test-labeler.result }}
+          RESULT_CLIPPY: ${{ needs.clippy.result }}
+          RESULT_CHECK: ${{ needs.check.result }}
+          RESULT_TEST: ${{ needs.test.result }}
+          RESULT_TEST_FRONTEND: ${{ needs.test-frontend.result }}
+          RESULT_TEST_E2E: ${{ needs.test-e2e.result }}
+          RESULT_DOC: ${{ needs.doc.result }}
+          RESULT_AUDIT: ${{ needs.audit.result }}
+          RESULT_TRIVY_FS: ${{ needs.trivy-fs.result }}
+          RESULT_GITLEAKS_PR: ${{ needs.gitleaks-pr.result }}
+          RESULT_SEMGREP_PR: ${{ needs.semgrep-pr.result }}
+          RESULT_SONAR: ${{ needs.sonar.result }}
+          RESULT_TEST_CI_POLICY: ${{ needs.test-ci-policy.result }}
+        run: node .github/scripts/ci-required-run.cjs
 
   # === Cross-compile validation (only on main/develop push, not PRs) ===
   build-targets:

@@ -8,26 +8,14 @@ describe("ProviderIcon", () => {
   // These render as inline <svg> via @iconify/vue — no <img>, no HTTP request.
   // -------------------------------------------------------------------------
 
-  it("renders an inline <svg> for openai (Iconify bundle path)", () => {
-    const wrapper = mount(ProviderIcon, {props: {kind: "openai"}});
-    expect(wrapper.find("svg").exists()).toBe(true);
-    expect(wrapper.find("img").exists()).toBe(false);
-  });
-
-  it("renders an inline <svg> for anthropic (Iconify bundle path)", () => {
-    const wrapper = mount(ProviderIcon, {props: {kind: "anthropic"}});
-    expect(wrapper.find("svg").exists()).toBe(true);
-  });
-
-  it("renders an inline <svg> for ollama (Iconify bundle path)", () => {
-    const wrapper = mount(ProviderIcon, {props: {kind: "ollama"}});
-    expect(wrapper.find("svg").exists()).toBe(true);
-  });
-
-  it("renders an inline <svg> for gemini (Iconify bundle path)", () => {
-    const wrapper = mount(ProviderIcon, {props: {kind: "gemini"}});
-    expect(wrapper.find("svg").exists()).toBe(true);
-  });
+  it.each(["openai", "anthropic", "ollama", "gemini"] as const)(
+    "renders an inline <svg> for %s (Iconify bundle path)",
+    (kind) => {
+      const wrapper = mount(ProviderIcon, {props: {kind}});
+      expect(wrapper.find("svg").exists()).toBe(true);
+      expect(wrapper.find("img").exists()).toBe(false);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // Strategy 2: local <img> (groq, ollama-cloud — not in simple-icons yet)

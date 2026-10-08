@@ -4,6 +4,8 @@ Este documento describe la configuración de protección de la rama `main` para 
 
 ## Reglas Activas
 
+> Estado de migración DALLAY-628: el ruleset #17001295 NO se modifica con el cambio de código. Añadir `CI / Required` como required check solo después de validar el gate en ejecuciones reales y probar un fallo bloqueante desde una identidad sin bypass. Mantener intactos los checks actuales durante toda la transición.
+
 ### 1. Protección Básica de Rama
 - ✅ **Deletion**: No se puede eliminar la rama `main`
 - ✅ **Non-fast-forward**: No se permiten force pushes
@@ -16,6 +18,14 @@ Este documento describe la configuración de protección de la rama `main` para 
 - **Thread resolution**: Todos los comentarios deben estar resueltos
 
 ### 3. Required Status Checks (Obligatorios para Merge)
+
+#### Plan de transición — ruleset #17001295 (pendiente de validación)
+1. No retirar ni reemplazar ninguno de los checks ya obligatorios.
+2. Ejecutar PRs representativas (docs, frontend, backend y workflows) hasta confirmar `CI / Required` verde, y una PR controlada con check requerido fallido que deje el gate rojo.
+3. Probar que esa PR no puede fusionarse con una identidad que no esté en bypass.
+4. Solo entonces añadir `CI / Required` a los required checks; mantener los checks existentes al menos durante la transición y retirarlos únicamente en un cambio posterior con evidencia.
+5. Revisar bypass `OrganizationAdmin` y `Integration` ID `915548` (confirmar identidad antes de cambiar); ambos aparecen con `bypass_mode: always`. No eliminarlos hasta resolver el acceso de revisión humana.
+6. El ruleset requiere una aprobación humana y aprobación del último push. Para un solo mantenedor, mantener por ahora la política actual y documentar el bloqueo operativo; alternativa a acordar antes de eliminar bypass: quitar la aprobación obligatoria o designar un reviewer independiente. Nunca simular la aprobación mediante bypass administrativo.
 
 #### Fast Checks (Linting & Formatting)
 - ✅ **Format** - Rust formatting con `cargo fmt`
