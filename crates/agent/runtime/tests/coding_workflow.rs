@@ -183,31 +183,57 @@ async fn denied_edit_does_not_modify_the_file() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn newly_written_files_use_the_shared_readable_default_mode() {
-    use std::os::unix::fs::PermissionsExt;
+async fn newly_written_files_respect_umask_in_an_isolated_process() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
 
-    let workspace = tempfile::tempdir().unwrap();
-    let registry = Registry::native(2).unwrap();
-    let tool = registry.get("write_file").unwrap();
-    let ctx = ToolContext {
-        workspace: workspace.path().to_path_buf(),
-        cancellation: CancellationToken::new(),
-    };
-    let call = ToolCall {
-        id: "new-file".into(),
-        name: "write_file".into(),
-        arguments: json!({"path":"new.txt","content":"shared"}),
-    };
-    let action = tool.prepare(&call, &ctx).await.unwrap();
-    tool.execute(action, &ctx).await.unwrap();
-    assert_eq!(
-        std::fs::metadata(workspace.path().join("new.txt"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o644
-    );
+    const UMASK_ENV: &str = "DALLAY_625_TEST_UMASK";
+    if let Some(mask) = std::env::var_os(UMASK_ENV) {
+        let mask = u32::from_str_radix(mask.to_str().unwrap(), 8).unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let registry = Registry::native(2).unwrap();
+        let tool = registry.get("write_file").unwrap();
+        let ctx = ToolContext {
+            workspace: workspace.path().to_path_buf(),
+            cancellation: CancellationToken::new(),
+        };
+        let call = ToolCall {
+            id: "umask-file".into(),
+            name: "write_file".into(),
+            arguments: json!({"path":"new.txt","content":"restricted"}),
+        };
+        let action = tool.prepare(&call, &ctx).await.unwrap();
+        tool.execute(action, &ctx).await.unwrap();
+        assert_eq!(
+            std::fs::metadata(workspace.path().join("new.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o666 & !mask
+        );
+        return;
+    }
+
+    let executable = std::env::current_exe().unwrap();
+    for mask in ["077", "027"] {
+        let status = Command::new("sh")
+            .args([
+                "-c",
+                "umask \"$1\"; shift; exec \"$@\"",
+                "umask-wrapper",
+                mask,
+            ])
+            .arg(&executable)
+            .args([
+                "--exact",
+                "newly_written_files_respect_umask_in_an_isolated_process",
+                "--nocapture",
+            ])
+            .env(UMASK_ENV, mask)
+            .status()
+            .unwrap();
+        assert!(status.success(), "umask {mask} subprocess failed");
+    }
 }
 
 #[tokio::test]

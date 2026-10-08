@@ -302,7 +302,9 @@ impl Tool for NativeTool {
                 options.write(true).create_new(true);
                 #[cfg(unix)]
                 {
-                    options.mode(0o600);
+                    // Use the same mode as a normal writable file; open() lets
+                    // the kernel apply the process umask before the atomic rename.
+                    options.mode(0o666);
                 }
                 let mut file = options.open(&temp).await?;
                 use tokio::io::AsyncWriteExt;
@@ -312,16 +314,6 @@ impl Tool for NativeTool {
                     file.sync_all().await?;
                     if let Ok(metadata) = tokio::fs::metadata(&path).await {
                         tokio::fs::set_permissions(&temp, metadata.permissions()).await?;
-                    } else {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            tokio::fs::set_permissions(
-                                &temp,
-                                std::fs::Permissions::from_mode(0o644),
-                            )
-                            .await?;
-                        }
                     }
                     tokio::fs::rename(&temp, &path).await?;
                     Ok::<_, AgentError>(())
