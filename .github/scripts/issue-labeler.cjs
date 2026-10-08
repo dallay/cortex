@@ -82,27 +82,61 @@ function parseFormArea(body, rules) {
 
 function parseConventionalTitle(title, rules) {
   const m = String(title || '').match(/^\s*([A-Za-z]+)(?:\(([^)]+)\))?(!)?:/);
-  if (!m) return { prefix: null, scope: null, type: null };
+  if (!m) return { prefix: null, scope: null, type: null, scopeExplicit: false, scopeValid: false };
   const prefix = m[1].toLowerCase();
+  const hasParens = m[2] !== undefined;
   const rawScope = (m[2] || '').trim().toLowerCase();
   let scope = null;
-  if (rawScope) {
+  let scopeExplicit = false;
+  let scopeValid = false;
+  if (hasParens) {
+    scopeExplicit = true;
     const parts = rawScope.split(/[,\s/]+/).map((s) => s.trim()).filter(Boolean);
     const valid = parts.filter((p) => rules.scopes.includes(p));
-    // Exactly one valid scope counts as explicit; multiple or unknown => ambiguous (null).
-    if (parts.length === 1 && valid.length === 1) scope = valid[0];
-    else scope = null;
+    // Exactly one valid scope counts as explicit; multiple/unknown/empty => explicit but invalid.
+    if (parts.length === 1 && valid.length === 1) {
+      scope = valid[0];
+      scopeValid = true;
+    } else {
+      scope = null;
+      scopeValid = false;
+    }
   }
   const type = rules.conventional[prefix] || null;
-  return { prefix, scope, type };
+  return { prefix, scope, type, scopeExplicit, scopeValid };
+}
+
+function isWordChar(ch) {
+  return !!ch && /[a-z0-9_]/.test(ch);
+}
+
+// Whole-token/phrase match without RegExp (avoids ReDoS flags; keywords are
+// versioned config, haystack is user text). Boundary = start/end or non-word char.
+function matchesWholeToken(hayLower, kwLower) {
+  const needle = String(kwLower || '').trim().toLowerCase();
+  if (!needle) return false;
+  const hay = String(hayLower || '').toLowerCase();
+  let from = 0;
+  while (true) {
+    const idx = hay.indexOf(needle, from);
+    if (idx < 0) return false;
+    const before = idx === 0 ? '' : hay[idx - 1];
+    const after = idx + needle.length >= hay.length ? '' : hay[idx + needle.length];
+    if (!isWordChar(before) && !isWordChar(after)) return true;
+    from = idx + 1;
+  }
 }
 
 function inferAreas(title, body, rules) {
   const hay = `${title || ''}\n${body || ''}`.toLowerCase();
   const found = new Set();
   for (const [area, keywords] of Object.entries(rules.areaKeywords || {})) {
-    for (const kw of keywords) {
-      if (kw && hay.includes(String(kw).toLowerCase())) {
+    for (const raw of keywords) {
+      const kw = String(raw || '').trim().toLowerCase();
+      if (!kw) continue;
+      // Whole-token match: avoids `auth` in `author`, `core` in `score`.
+      // Multi-word keywords match as whole phrases with word boundaries.
+      if (matchesWholeToken(hay, kw)) {
         found.add(area);
         break;
       }
@@ -138,12 +172,19 @@ function isRenovateLike(title, rules) {
   return (rules.renovate?.titleContains || []).some((s) => t.includes(String(s).toLowerCase()));
 }
 
+function isAllowedRenovateActor(login, rules) {
+  const allowed = (rules.renovate?.logins || []).map((s) => String(s).toLowerCase());
+  return !!login && allowed.includes(String(login).toLowerCase());
+}
+
 function classify(input, rules) {
-  const { title = '', body = '', existingLabels = [] } = input || {};
+  const { title = '', body = '', existingLabels = [], author = null } = input || {};
   const split = splitExisting(existingLabels, rules);
 
-  // Special case: Renovate dashboard / bot maintenance -> shared + dependencies + chore.
-  if (isRenovateLike(title, rules)) {
+  // Special case: Renovate bot maintenance -> shared + dependencies + chore.
+  // Requires BOTH title match and allowlisted bot login so human issues
+  // with similar titles do not trigger the exception.
+  if (isRenovateLike(title, rules) && isAllowedRenovateActor(author, rules)) {
     const add = new Set();
     const remove = new Set();
     for (const l of [rules.renovate.product, rules.renovate.area, rules.renovate.type]) {
@@ -151,6 +192,9 @@ function classify(input, rules) {
     }
     for (const p of split.productsAll) {
       if (p !== rules.renovate.product) remove.add(p);
+    }
+    for (const t of split.typesAll) {
+      if (t !== rules.renovate.type) remove.add(t);
     }
     if (split.triageAll.length && split.invalidManaged.length === 0) {
       for (const t of split.triageAll) remove.add(t);
@@ -164,15 +208,17 @@ function classify(input, rules) {
   const inferredAreas = inferAreas(title, body, rules);
 
   // --- Product: form > title scope > existing single --- never body keywords.
+  // Explicit but invalid scope (e.g. fix(rook,agent):) must triage, never inherit stale product.
   let desiredProduct = null;
   let productSource = null;
+  const explicitScopeInvalid = conv.scopeExplicit && !conv.scopeValid;
   if (formProduct.present && formProduct.value) {
     desiredProduct = formProduct.value;
     productSource = 'form';
-  } else if (!formProduct.present && conv.scope) {
+  } else if (!formProduct.present && conv.scopeValid && conv.scope) {
     desiredProduct = `product/${conv.scope}`;
     productSource = 'title';
-  } else if (!formProduct.present && !conv.scope && split.validProducts.length === 1 && split.productsAll.length === 1) {
+  } else if (!formProduct.present && !conv.scopeExplicit && split.validProducts.length === 1 && split.productsAll.length === 1) {
     desiredProduct = split.validProducts[0];
     productSource = 'existing';
   } else {
@@ -203,6 +249,7 @@ function classify(input, rules) {
     !desiredType ||
     desiredAreas.size === 0 ||
     formProductInvalid ||
+    explicitScopeInvalid ||
     (formArea.present && !formArea.value) ||
     split.invalidManaged.length > 0 ||
     (split.productsAll.length > 1 && productSource !== 'form' && productSource !== 'title');
@@ -255,11 +302,15 @@ async function run({ github, context, issueNumber, rulesPath } = {}) {
   const rules = loadRules(rulesPath);
 
   const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: num });
+  if (issue.pull_request) {
+    throw new Error(`Refusing to classify #${num}: it is a pull request (product exclusivity applies to issues only).`);
+  }
   const title = issue.title || '';
   const ibody = issue.body || '';
   const existingLabels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
+  const author = (issue.user && issue.user.login) || null;
 
-  const result = classify({ title, body: ibody, existingLabels }, rules);
+  const result = classify({ title, body: ibody, existingLabels, author }, rules);
 
   const toAdd = [...result.add].filter((l) => !existingLabels.includes(l));
   const toRemove = [...result.remove].filter((l) => existingLabels.includes(l));

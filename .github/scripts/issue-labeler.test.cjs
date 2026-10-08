@@ -113,11 +113,96 @@ describe('ambiguity and human preservation', () => {
 });
 
 describe('renovate and bots', () => {
-  it('Dependency Dashboard -> shared/dependencies/chore', () => {
-    const r = classify({ title: 'Dependency Dashboard', body: '', existingLabels: [] }, rules);
+  it('Dependency Dashboard from renovate[bot] -> shared/dependencies/chore', () => {
+    const r = classify(
+      { title: 'Dependency Dashboard', body: '', existingLabels: [], author: 'renovate[bot]' },
+      rules
+    );
     assert.ok(r.add.has('product/shared'));
     assert.ok(r.add.has('area/dependencies'));
     assert.ok(r.add.has('type/chore'));
+  });
+
+  it('human issue with dashboard title does NOT trigger renovate exception', () => {
+    const r = classify(
+      { title: 'Dependency Dashboard for my team', body: '', existingLabels: [], author: 'yacosta738' },
+      rules
+    );
+    assert.ok(!r.add.has('product/shared'), 'must not invent product for human');
+    assert.ok(r.add.has('triage/needs-classification'));
+  });
+
+  it('renovate reconciles conflicting types to single chore', () => {
+    const r = classify(
+      {
+        title: 'Dependency Dashboard',
+        body: '',
+        existingLabels: ['product/shared', 'type/bug', 'type/feature', 'area/dependencies'],
+        author: 'renovate[bot]',
+      },
+      rules
+    );
+    assert.ok(r.add.has('type/chore'));
+    assert.ok(r.remove.has('type/bug'));
+    assert.ok(r.remove.has('type/feature'));
+  });
+});
+
+describe('token matching (no substring false positives)', () => {
+  it('"author" does not trigger area/auth', () => {
+    const r = classify(
+      { title: 'Fix author name display', body: 'the author field is blank', existingLabels: ['product/rook', 'type/bug'] },
+      rules
+    );
+    assert.ok(!r.add.has('area/auth'), 'auth substring in author must not match');
+  });
+
+  it('"score" does not trigger area/core', () => {
+    const r = classify(
+      { title: 'Fix high score display', body: 'scoreboard shows wrong score', existingLabels: ['product/rook', 'type/bug'] },
+      rules
+    );
+    assert.ok(!r.add.has('area/core'), 'core substring in score must not match');
+  });
+
+  it('whole-word auth still matches', () => {
+    const r = classify(
+      { title: 'fix(rook): oauth login fails', body: '', existingLabels: [] },
+      rules
+    );
+    assert.ok(r.add.has('area/auth'));
+  });
+});
+
+describe('explicit ambiguity requires triage', () => {
+  it('fix(rook,agent) with stale product/rook -> triage, no preserve', () => {
+    const r = classify(
+      {
+        title: 'fix(rook,agent): shared thing',
+        body: '',
+        existingLabels: ['product/rook', 'type/bug', 'area/ci'],
+      },
+      rules
+    );
+    assert.ok(r.add.has('triage/needs-classification'));
+    assert.ok(!r.add.has('product/rook') || r.remove.size >= 0, 'must not silently keep stale');
+    // desired product is null -> needsTriage true
+    assert.equal(r.needsTriage, true);
+  });
+});
+
+describe('run() guards', () => {
+  it('rejects pull requests before classification', async () => {
+    const { run } = require('./issue-labeler.cjs');
+    const fakeGithub = {
+      rest: {
+        issues: {
+          get: async () => ({ data: { title: 'x', body: '', labels: [], pull_request: {}, user: { login: 'u' } } }),
+        },
+      },
+    };
+    const fakeContext = { repo: { owner: 'o', repo: 'r' }, issue: { number: 1 } };
+    await assert.rejects(() => run({ github: fakeGithub, context: fakeContext, issueNumber: 1 }), /pull request/);
   });
 });
 

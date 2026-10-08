@@ -29,8 +29,8 @@ jobs:
             const rules = require('./.github/issue-labeler-rules.json');
             const { owner, repo } = context.repo;
 
-            const knownPrefixes = ['product/', 'type/', 'area/', 'triage/', 'priority/'];
-            const knownExact = new Set(['security', 'stale', rules.triageLabel]);
+            const knownPrefixes = ['product/', 'type/', 'area/'];
+            const knownExact = new Set(['security', 'stale', 'priority/high', 'priority/low', rules.triageLabel]);
 
             const isValidProduct = (l) => rules.products.includes(l.slice('product/'.length));
             const isValidType = (l) => rules.types.includes(l.slice('type/'.length));

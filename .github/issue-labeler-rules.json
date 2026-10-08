@@ -58,6 +58,7 @@
   },
   "renovate": {
     "titleContains": ["dependency dashboard"],
+    "logins": ["renovate[bot]"],
     "product": "product/shared",
     "area": "area/dependencies",
     "type": "type/chore"

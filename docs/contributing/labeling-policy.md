@@ -78,13 +78,16 @@ falls back to the title and then to existing labels.
 - Areas are additive: the classifier only adds missing `area/*`, never removes.
 - Types preserve humans: a single valid existing `type/*` wins over a stale title prefix.
   Titles only fill a missing type or resolve zero-or-many into one.
-- `GITHUB_TOKEN` edits labels only, never the body, so `opened/edited/reopened`
-  does not recurse (`labeled` does not trigger the workflow).
+- `GITHUB_TOKEN` edits labels only, never the body, so `opened/edited/reopened/labeled/unlabeled`
+  does not recurse (`GITHUB_TOKEN` events do not launch new workflow runs).
+  `labeled/unlabeled` exists so manual fixes reconcile `triage/needs-classification` automatically.
 
 ## Exceptions
 
 - Renovate `Dependency Dashboard` → `product/shared` + `area/dependencies` + `type/chore`.
-  It has no form and no conventional scope by design.
+  It has no form and no conventional scope by design. The exception requires both
+  the title match and an allowlisted bot login (`renovate[bot]` in
+  `issue-labeler-rules.json`); human issues with similar titles triage normally.
 - Forks: `pr-labeler.yml` stays on `pull_request`, not `pull_request_target`.
   Do not change this without a security review.
 - Multi-product PRs are normal (path-based). Multi-product issues are a bug; triage them.
