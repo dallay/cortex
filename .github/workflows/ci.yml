@@ -51,7 +51,6 @@ jobs:
               - 'rust-toolchain.toml'
             frontend:
               - 'apps/rook/dashboard/**'
-              - '!apps/rook/dashboard/e2e/**'
             docker:
               - 'Dockerfile*'
               - 'dev/e2e/**'
@@ -593,6 +592,9 @@ jobs:
       - sonar
       - test-ci-policy
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
       - name: Validate required CI outcomes
         env:
           EVENT_NAME: ${{ github.event_name }}

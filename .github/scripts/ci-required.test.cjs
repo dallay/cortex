@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const { evaluateRequiredChecks } = require('./ci-required.cjs');
+
+const workflow = fs.readFileSync('.github/workflows/ci.yml', 'utf8');
 
 const base = {
   eventName: 'pull_request',
@@ -22,6 +25,27 @@ function evaluate(overrides = {}) {
   input.results = { ...base.results, ...(overrides.results || {}) };
   return evaluateRequiredChecks(input);
 }
+
+test('required aggregate checks out the repository before running its validator', () => {
+  const job = workflow.split('  required:\n')[1]?.split(/\n  [a-zA-Z0-9_-]+:\n/)[0];
+  assert.ok(job, 'required job exists');
+  assert.match(job, /uses: actions\/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10/);
+  assert.match(job, /run: node \.github\/scripts\/ci-required-run\.cjs/);
+  assert.ok(job.indexOf('actions/checkout') < job.indexOf('ci-required-run.cjs'));
+});
+
+test('frontend path filter only matches dashboard paths, including dashboard E2E', () => {
+  const frontendFilter = workflow.match(/            frontend:\n((?:              - .*\n)+)/)?.[1];
+  assert.ok(frontendFilter, 'frontend filter exists');
+  const patterns = [...frontendFilter.matchAll(/^\s+- ['\"]?([^'\"\n]+)['\"]?$/gm)].map((match) => match[1]);
+  assert.deepEqual(patterns, ['apps/rook/dashboard/**']);
+  const matches = (file) => patterns.some((pattern) => file.startsWith(pattern.slice(0, -2)));
+  assert.equal(matches('apps/rook/dashboard/src/main.ts'), true);
+  assert.equal(matches('apps/rook/dashboard/e2e/login.spec.ts'), true);
+  assert.equal(matches('.github/workflows/ci.yml'), false);
+  assert.equal(matches('.github/scripts/ci-required.cjs'), false);
+  assert.equal(matches('docs/branch-protection-ruleset.md'), false);
+});
 
 test('documentation-only accepts skipped unrelated jobs and requires markdown + always-on secret scan', () => {
   const result = evaluate({

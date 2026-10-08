@@ -50,7 +50,7 @@
 - [ ] RPI-004 actual acceptance evidence incomplete
 
 ## Evidence
-- `node --test .github/scripts/ci-required.test.cjs`: 12/12 passed (docs, E2E-infrastructure-only, frontend, backend, workflow, expected E2E/security failures, missing token, fork/Dependabot policy, skipped always-on checks).
+- `node --test .github/scripts/ci-required.test.cjs`: 14/14 passed (asserts aggregate checkout-before-script, frontend path positive-only match incl. E2E, docs, E2E-infrastructure-only, frontend, backend, workflow, expected E2E/security failures, missing token, fork/Dependabot policy, skipped always-on checks).
 - `actionlint -color .github/workflows/ci.yml`: passed (no output), including merged `sonar-project.properties` path and full-history Sonar checkout / coverage setup from #295.
 - Semgrep scan for workflow and three JS files: 0 findings, 0 errors.
 - `git diff --check`: passed.
