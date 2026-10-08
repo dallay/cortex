@@ -1,38 +1,96 @@
-# Centralized label definitions for dallay/cortex
+# Centralized label taxonomy for dallay/cortex.
+# Axes: product (exactly one owning product), area (zero or more), type (one),
+# plus optional priority and operational labels.
+# New product labels must be added here before use; labels-sync is non-destructive.
 # https://github.com/crazy-max/ghaction-github-labeler
 
+# Product ownership (mutually exclusive on issues)
+- name: product/rook
+  color: "1d4ed8"
+  description: "Rook LLM gateway, providers, routing, API and dashboard"
+- name: product/agent
+  color: "8b5cf6"
+  description: "Standalone Cortex coding agent (provisional product name)"
+- name: product/shared
+  color: "64748b"
+  description: "Cortex-wide tooling, shared infrastructure and cross-product work"
+
+# Technical areas (multiple may apply)
 - name: area/ci
   color: "4a9e2f"
   description: "CI, tooling, and automation"
-
 - name: area/core
   color: "3d66c4"
   description: "Core domain logic and models"
-
 - name: area/docs
   color: "7c3aed"
   description: "Documentation and README"
-
 - name: area/providers
   color: "0891b2"
-  description: "Provider integrations (OpenAI, Anthropic, etc.)"
-
+  description: "LLM provider integrations and adapters"
 - name: area/testing
   color: "db6d28"
-  description: "Tests and testing infrastructure"
+  description: "Tests, QA, acceptance, and testing infrastructure"
+- name: area/dashboard
+  color: "16a34a"
+  description: "Rook management dashboard and frontend"
+- name: area/runtime
+  color: "0ea5e9"
+  description: "Agent execution loop, tool runtime, streaming and sessions"
+- name: area/transport
+  color: "0284c7"
+  description: "HTTP transport, API protocol and SSE wire handling"
+- name: area/auth
+  color: "c2410c"
+  description: "Authentication, authorization, API keys and OAuth"
+- name: area/storage
+  color: "0f766e"
+  description: "Database, persistence, migrations and caching"
+- name: area/observability
+  color: "0d9488"
+  description: "Telemetry, health, metrics and diagnostic visibility"
+- name: area/release
+  color: "a855f7"
+  description: "Packaging, versioning, publishing and distribution"
+- name: area/dependencies
+  color: "64748b"
+  description: "Dependency management, lockfiles and Renovate"
 
+# Work type (one per issue)
+- name: type/bug
+  color: "d73a4a"
+  description: "Defect or regression in existing behavior"
+- name: type/feature
+  color: "1f883d"
+  description: "New user-visible capability"
+- name: type/enhancement
+  color: "84b6eb"
+  description: "Improvement to existing behavior or architecture"
+- name: type/chore
+  color: "6b7280"
+  description: "Maintenance, housekeeping and operational work"
+- name: type/test
+  color: "ed8936"
+  description: "Verification, QA, tests and acceptance evidence"
+- name: type/milestone
+  color: "8250df"
+  description: "Coordinating issue with multiple deliverables or exit criteria"
+- name: type/performance
+  color: "f59e0b"
+  description: "Performance optimization or resource-efficiency work"
+
+# Priority (preserve existing issue decisions)
 - name: priority/high
   color: "ef4444"
   description: "High priority issue or PR"
-
 - name: priority/low
   color: "94a3b8"
   description: "Low priority issue or PR"
 
+# Operational
 - name: security
   color: "dc2626"
   description: "Security-related changes"
-
 - name: stale
   color: "fef3c7"
   description: "Stale item pending closure"
