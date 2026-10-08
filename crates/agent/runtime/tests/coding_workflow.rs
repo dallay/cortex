@@ -293,6 +293,52 @@ fn sse_assembles_fragmented_arguments_and_utf8_and_rejects_truncation() {
     assert!(malformed.push(b"data: invalid\n\n").is_err());
 }
 
+#[test]
+fn sse_rejects_oversized_complete_event_before_parsing() {
+    // 1. Complete oversized event in a single chunk must be rejected before JSON parsing.
+    let big = "x".repeat(1_048_577);
+    let payload = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{big}\"}}}}]}}\n\n");
+    assert!(payload.len() > 1_048_576);
+    let mut parser = SseParser::default();
+    let err = parser
+        .push(payload.as_bytes())
+        .expect_err("oversized complete event must be rejected");
+    assert!(
+        err.to_string().contains("SSE event exceeds 1 MiB"),
+        "unexpected error: {err}"
+    );
+
+    // 2. Incomplete oversized buffered bytes must still be rejected.
+    let mut partial = SseParser::default();
+    let chunk = vec![b'a'; 1_048_577];
+    let err = partial
+        .push(&chunk)
+        .expect_err("oversized partial must be rejected");
+    assert!(
+        err.to_string().contains("SSE event exceeds 1 MiB"),
+        "unexpected error: {err}"
+    );
+
+    // 3. Multiple valid complete events in one chunk must still be accepted.
+    let mut ok = SseParser::default();
+    let two = b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"},\"finish_reason\":null}]}\n\n";
+    let deltas = ok.push(two).expect("valid events must pass");
+    assert_eq!(deltas.len(), 2);
+    assert!(matches!(&deltas[0], ModelDelta::Text(t) if t == "a"));
+    assert!(matches!(&deltas[1], ModelDelta::Text(t) if t == "b"));
+
+    // 4. Fragmented valid event across pushes must continue to work.
+    let mut split = SseParser::default();
+    let full = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n";
+    let mid = full.len() / 2;
+    let first = split
+        .push(&full[..mid])
+        .expect("first fragment must buffer");
+    assert!(first.is_empty());
+    let rest = split.push(&full[mid..]).expect("second fragment completes");
+    assert!(matches!(rest.first(), Some(ModelDelta::Text(t)) if t == "hi"));
+}
+
 #[tokio::test]
 async fn session_lock_and_recovery_prevent_concurrent_or_replayed_effects() {
     let dir = tempfile::tempdir().unwrap();
