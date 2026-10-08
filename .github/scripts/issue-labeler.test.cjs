@@ -189,6 +189,21 @@ describe('explicit ambiguity requires triage', () => {
     // desired product is null -> needsTriage true
     assert.equal(r.needsTriage, true);
   });
+
+  it('valid form product suppresses title ambiguity (form wins)', () => {
+    const body = '### Product\n\nAgent\n\n### Technical Area\n\nruntime';
+    const r = classify(
+      {
+        title: 'fix(rook,agent): x',
+        body,
+        existingLabels: ['type/bug'],
+      },
+      rules
+    );
+    assert.ok(r.add.has('product/agent'));
+    assert.ok(!r.add.has('triage/needs-classification'), 'form authority must not triage on title ambiguity');
+    assert.equal(r.needsTriage, false);
+  });
 });
 
 describe('run() guards', () => {

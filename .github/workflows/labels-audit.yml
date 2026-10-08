@@ -73,6 +73,10 @@ jobs:
               });
               if (undocumented.length > 0) problems.push(`undocumented: ${undocumented.join(',')}`);
 
+              if (labels.includes(rules.triageLabel) && problems.length === 0) {
+                problems.push('stale triage/needs-classification — remove after classification');
+              }
+
               if (problems.length > 0) {
                 rows.push(`| #${issue.number} | ${labels.join(', ') || '(none)'} | ${problems.join('; ')} |`);
               }

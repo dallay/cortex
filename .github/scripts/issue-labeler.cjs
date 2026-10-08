@@ -22,10 +22,6 @@
 const fs = require('fs');
 const path = require('path');
 
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function loadRules(rulesPath) {
   const fallback = path.join(__dirname, '..', 'issue-labeler-rules.json');
   const raw = fs.readFileSync(rulesPath || fallback, 'utf8');
@@ -249,7 +245,7 @@ function classify(input, rules) {
     !desiredType ||
     desiredAreas.size === 0 ||
     formProductInvalid ||
-    explicitScopeInvalid ||
+    (explicitScopeInvalid && productSource !== 'form') ||
     (formArea.present && !formArea.value) ||
     split.invalidManaged.length > 0 ||
     (split.productsAll.length > 1 && productSource !== 'form' && productSource !== 'title');
