@@ -56,6 +56,7 @@ jobs:
               - 'dev/e2e/**'
             github:
               - '.github/workflows/**'
+              - 'sonar-project.properties'
             labeler:
               - '.github/scripts/issue-labeler.*'
               - '.github/issue-labeler-rules.json'
@@ -495,9 +496,17 @@ jobs:
       needs.changes.result != 'failure' &&
       needs.test.result != 'failure' &&
       needs.test-frontend.result != 'failure'
-    env:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
+      - name: Check SONAR_TOKEN availability
+        id: sonar-token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0 # Historial completo: lo exige Sonar para blame y decoracion de PRs
@@ -522,18 +531,16 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
       - name: Install cargo-llvm-cov
-        if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
         run: cargo install cargo-llvm-cov
       - name: Generate Rust coverage
-        if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
         run: |
           mkdir -p coverage
           cargo llvm-cov --workspace --all-features --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
         # Forks / PRs de Dependabot no tienen SONAR_TOKEN: skip silencioso en vez de fallar.
-        # (El guard anterior `if: env.SONAR_TOKEN != ''` nunca funcionaba: el `env` de un
-        # step no ve el `env` declarado en ese mismo step. Con SONAR_TOKEN a nivel de job si evalua.)
-        if: env.SONAR_TOKEN != ''
+        # El token solo existe en este step (least privilege); la disponibilidad la
+        # publica el step `sonar-token` via outputs.
+        if: steps.sonar-token.outputs.available == 'true'
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
