@@ -280,7 +280,8 @@ impl Tool for NativeTool {
         }
         match self.kind {
             Kind::Write | Kind::Edit => {
-                if let Ok(metadata) = tokio::fs::metadata(&path).await {
+                let existing_metadata = tokio::fs::metadata(&path).await.ok();
+                if let Some(metadata) = &existing_metadata {
                     if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
                         return Err(AgentError::Tool(
                             "edit target changed; prepare a new diff".into(),
@@ -302,9 +303,14 @@ impl Tool for NativeTool {
                 options.write(true).create_new(true);
                 #[cfg(unix)]
                 {
-                    // Use the same mode as a normal writable file; open() lets
-                    // the kernel apply the process umask before the atomic rename.
-                    options.mode(0o666);
+                    use std::os::unix::fs::PermissionsExt;
+                    // Existing files keep their permissions. New files use a normal
+                    // creation mode so the kernel applies the process umask.
+                    let mode = existing_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.permissions().mode())
+                        .unwrap_or(0o666);
+                    options.mode(mode);
                 }
                 let mut file = options.open(&temp).await?;
                 use tokio::io::AsyncWriteExt;
@@ -312,7 +318,7 @@ impl Tool for NativeTool {
                     file.write_all(argument(&args, "replacement")?.as_bytes())
                         .await?;
                     file.sync_all().await?;
-                    if let Ok(metadata) = tokio::fs::metadata(&path).await {
+                    if let Some(metadata) = &existing_metadata {
                         tokio::fs::set_permissions(&temp, metadata.permissions()).await?;
                     }
                     tokio::fs::rename(&temp, &path).await?;

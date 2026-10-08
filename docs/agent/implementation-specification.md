@@ -71,22 +71,24 @@ including tool definitions and output reservation, are conservative token estima
 - Traversal: 20,000 entries, skipping generated/dependency folders and directory symlinks.
 - Read tools resolve containment; new writes require an existing contained parent.
 - Writes compare prepared paths and original content, then use a temporary file and
-  atomic rename. On Unix, new temporary files are created with mode `0666`, allowing
-  the kernel to apply the process umask; replacement temporaries inherit the existing
-  target permissions. Non-Unix creation behavior follows the platform defaults.
-  Concurrent hostile filesystem mutations are outside the trust model.
+  atomic rename. On Unix, existing destination permissions are read before opening
+  the temporary file and used as its creation mode; new files use mode `0666`, allowing
+  the kernel to apply the process umask. Non-Unix creation behavior follows platform
+  defaults. Concurrent hostile filesystem mutations are outside the trust model.
 
 ```mermaid
 flowchart TD
-    A[Validate approved path and original content] --> B[Create unique temporary file]
-    B --> C[Write contents and sync]
-    C --> D{Destination exists?}
-    D -- Yes --> E[Apply existing destination permissions]
-    D -- No, Unix --> F[Keep creation mode 0666 after kernel umask]
-    D -- No, non-Unix --> G[Keep platform-default creation permissions]
-    E --> H[Atomic rename to destination]
-    F --> H
-    G --> H
+    A[Validate approved path and original content] --> B{Destination exists?}
+    B -- Yes --> C[Read existing permissions]
+    B -- No, Unix --> D[Select creation mode 0666]
+    B -- No, non-Unix --> E[Use platform-default creation permissions]
+    C --> F[Create unique temporary file with existing mode]
+    D --> G[Create unique temporary file; kernel applies umask]
+    E --> H[Create unique temporary file]
+    F --> I[Write contents and sync]
+    G --> I
+    H --> I
+    I --> J[Atomic rename to destination]
 ```
 - Shell uses POSIX sh, null stdin, PATH-only environment and supervised process groups.
   Timeout, cancellation and dropped execution kill the group; stdout/stderr are drained

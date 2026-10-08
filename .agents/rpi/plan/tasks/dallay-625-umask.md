@@ -7,6 +7,7 @@ Delegated direct: corregir creación de archivos nuevos en `write_file`, preserv
 - [x] RPI-001: Cambiar modo temporal para archivos nuevos en Unix a creación normal con `0666`, dejando que el kernel aplique umask; no cambiar comportamiento no-Unix.
 - [x] RPI-002: Añadir prueba aislada para umask restrictivo `077` (y `027`) sin mutar el umask global del proceso de pruebas.
 - [x] RPI-003: Ejecutar pruebas enfocadas y revisar diff.
+- [x] RPI-004: Leer permisos existentes antes de crear el temporal y usarlos como modo de creación; añadir test de reemplazo.
 
 ## Criterios de aceptación
 - Archivos nuevos respetan el umask en Unix.
@@ -16,7 +17,7 @@ Delegated direct: corregir creación de archivos nuevos en `write_file`, preserv
 - Comportamiento no-Unix permanece sin cambios o queda documentado.
 
 ## Evidencia
-- `cargo test -p agent-runtime --test coding_workflow` — pasó: 17 tests; incluye subprocesses aislados que verifican umask `077` y `027`.
+- `cargo test -p agent-runtime --test coding_workflow` — pasó: 18 tests; incluye subprocesses aislados que verifican umask `077` y `027`, y prueba de preservación de permisos.
 - `git diff --check` — pasó.
 - La documentación del flujo atómico en `docs/agent/implementation-specification.md` ahora especifica la aplicación del umask y contiene un diagrama Mermaid con las ramas Unix/no-Unix y preservación de permisos.
 

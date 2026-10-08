@@ -183,6 +183,36 @@ async fn denied_edit_does_not_modify_the_file() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn replacing_files_preserves_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let target = workspace.path().join("existing.txt");
+    std::fs::write(&target, "before").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("write_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().to_path_buf(),
+        cancellation: CancellationToken::new(),
+    };
+    let call = ToolCall {
+        id: "existing-file".into(),
+        name: "write_file".into(),
+        arguments: json!({"path":"existing.txt","content":"after"}),
+    };
+    let action = tool.prepare(&call, &ctx).await.unwrap();
+    tool.execute(action, &ctx).await.unwrap();
+
+    assert_eq!(
+        std::fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn newly_written_files_respect_umask_in_an_isolated_process() {
     use std::{os::unix::fs::PermissionsExt, process::Command};
 
