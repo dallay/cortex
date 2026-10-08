@@ -1,0 +1,44 @@
+name: Bug report
+description: Report incorrect behavior
+labels: ["type/bug"]
+body:
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      description: Which product is affected? Exactly one.
+      options:
+        - Rook
+        - Agent
+        - Shared
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Technical Area
+      description: Primary technical area.
+      options:
+        - auth
+        - ci
+        - core
+        - dashboard
+        - dependencies
+        - docs
+        - observability
+        - providers
+        - release
+        - runtime
+        - storage
+        - testing
+        - transport
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, steps to reproduce, expected vs actual.
+      placeholder: Describe the bug with steps, logs, and versions.
+    validations:
+      required: true

@@ -1,0 +1,8 @@
+blank_issues: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/dallay/cortex/blob/main/README.md
+    about: Check docs before filing — most setup questions are answered there.
+  - name: Security policy
+    url: https://github.com/dallay/cortex/blob/main/SECURITY.md
+    about: Do not file public issues for vulnerabilities; follow the policy instead.

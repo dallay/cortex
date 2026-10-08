@@ -1,0 +1,97 @@
+name: Labels Audit
+
+on:
+  schedule:
+    - cron: 0 9 * * 1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: labels-audit-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - name: Audit label invariants
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const rules = require('./.github/issue-labeler-rules.json');
+            const { owner, repo } = context.repo;
+
+            const knownPrefixes = ['product/', 'type/', 'area/', 'triage/', 'priority/'];
+            const knownExact = new Set(['security', 'stale', rules.triageLabel]);
+
+            const isValidProduct = (l) => rules.products.includes(l.slice('product/'.length));
+            const isValidType = (l) => rules.types.includes(l.slice('type/'.length));
+            const isValidArea = (l) => rules.areas.includes(l.slice('area/'.length));
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            const rows = [];
+            for (const issue of issues) {
+              if (issue.pull_request) continue; // PRs allow multiple products; audit issues only
+              const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
+              const products = labels.filter((l) => l.startsWith('product/'));
+              const types = labels.filter((l) => l.startsWith('type/'));
+              const areas = labels.filter((l) => l.startsWith('area/'));
+              const problems = [];
+
+              const validProducts = products.filter(isValidProduct);
+              if (validProducts.length === 0) problems.push('missing product/*');
+              if (validProducts.length > 1) problems.push(`multiple products: ${validProducts.join(',')}`);
+              if (products.some((l) => !isValidProduct(l))) problems.push('invalid product/* value');
+
+              const validTypes = types.filter(isValidType);
+              if (validTypes.length === 0) problems.push('missing type/*');
+              if (validTypes.length > 1) problems.push(`multiple types: ${validTypes.join(',')}`);
+              if (types.some((l) => !isValidType(l))) problems.push('invalid type/* value');
+
+              const validAreas = areas.filter(isValidArea);
+              if (validAreas.length === 0) problems.push('missing area/*');
+              if (areas.some((l) => !isValidArea(l))) problems.push('invalid area/* value');
+
+              const undocumented = labels.filter((l) => {
+                if (knownPrefixes.some((p) => l.startsWith(p))) return false;
+                if (knownExact.has(l)) return false;
+                return true;
+              });
+              if (undocumented.length > 0) problems.push(`undocumented: ${undocumented.join(',')}`);
+
+              if (problems.length > 0) {
+                rows.push(`| #${issue.number} | ${labels.join(', ') || '(none)'} | ${problems.join('; ')} |`);
+              }
+            }
+
+            const summary = [
+              '## Labels audit',
+              '',
+              `- Open issues scanned (excluding PRs): ${issues.filter((i) => !i.pull_request).length}`,
+              `- With problems: ${rows.length}`,
+              '',
+              ...(rows.length > 0
+                ? ['| Issue | Labels | Problems |', '| --- | --- | --- |', ...rows, '', 'Fix: set exactly one valid `product/*`, one `type/*`, at least one `area/*`; remove undocumented labels or add them to `.github/labels.yml`.']
+                : ['All open issues satisfy product/type/area invariants.']),
+              '',
+            ].join('\n');
+
+            await fs.promises.appendFile(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
+
+            if (rows.length > 0) {
+              core.setFailed(`${rows.length} issue(s) violate label invariants — see summary.`);
+            }
