@@ -152,6 +152,11 @@ async function createApiKeyViaApi(
 // =============================================================================
 
 test.describe('Dashboard', () => {
+  // TEMPORARY DALLAY-628 validation: prove CI / Required propagates E2E failures.
+  test('TEMPORARY DALLAY-628 negative gate validation (intentional failure)', () => {
+    expect(false).toBe(true)
+  })
+
   test('loads the home page', async ({ page }) => {
     // Set API base URL for the frontend
     await page.goto(DASHBOARD_URL)
