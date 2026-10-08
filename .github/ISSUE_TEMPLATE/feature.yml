@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new user-visible capability
+labels: ["type/feature"]
+body:
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      description: Which product should own this? Exactly one.
+      options:
+        - Rook
+        - Agent
+        - Shared
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Technical Area
+      description: Primary technical area.
+      options:
+        - auth
+        - ci
+        - core
+        - dashboard
+        - dependencies
+        - docs
+        - observability
+        - providers
+        - release
+        - runtime
+        - storage
+        - testing
+        - transport
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Problem, proposal, acceptance hints, out of scope.
+      placeholder: Who needs this, what changes, how do we know it works?
+    validations:
+      required: true

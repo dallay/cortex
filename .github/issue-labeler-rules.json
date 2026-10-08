@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "products": ["rook", "agent", "shared"],
+  "areas": [
+    "auth",
+    "ci",
+    "core",
+    "dashboard",
+    "dependencies",
+    "docs",
+    "observability",
+    "providers",
+    "release",
+    "runtime",
+    "storage",
+    "testing",
+    "transport"
+  ],
+  "types": ["bug", "feature", "enhancement", "chore", "test", "milestone", "performance"],
+  "triageLabel": "triage/needs-classification",
+  "managedPrefixes": ["product/", "type/", "area/", "triage/"],
+  "preservePrefixes": ["priority/"],
+  "preserveExact": ["security", "stale"],
+  "form": {
+    "productHeading": "Product",
+    "areaHeading": "Technical Area"
+  },
+  "conventional": {
+    "fix": "type/bug",
+    "feat": "type/feature",
+    "feature": "type/feature",
+    "chore": "type/chore",
+    "docs": "type/chore",
+    "test": "type/test",
+    "tests": "type/test",
+    "perf": "type/performance",
+    "performance": "type/performance",
+    "refactor": "type/enhancement",
+    "enhancement": "type/enhancement",
+    "improvement": "type/enhancement",
+    "milestone": "type/milestone"
+  },
+  "scopes": ["rook", "agent", "shared"],
+  "areaKeywords": {
+    "area/ci": ["github actions", "workflow", "justfile", "lefthook", "pipeline", "ci "],
+    "area/core": ["core", "domain", "usecase", "use-case", "shared-kernel"],
+    "area/docs": ["docs", "readme", "documentation", "contributing", "labeling-policy"],
+    "area/providers": ["provider", "openai", "anthropic", "ollama", "gemini", "groq", "llm gateway"],
+    "area/testing": ["vitest", "playwright", "e2e", "coverage", "qa ", "acceptance"],
+    "area/dashboard": ["dashboard", "frontend", "vue", " ui"],
+    "area/runtime": ["runtime", "mcp", "session", "streaming", "execution loop", "agent loop", "tool runtime", "recovery"],
+    "area/transport": ["transport", "axum", "http", "sse", "endpoint", "wire protocol"],
+    "area/auth": ["auth", "oauth", "api key", "apikey", "permission"],
+    "area/storage": ["storage", "sqlite", "database", "persistence", "migration", "cache", "dashmap"],
+    "area/observability": ["observability", "telemetry", "metrics", "tracing", "audit log", "health check"],
+    "area/release": ["release", "versioning", "packaging", "publishing", "release-please"],
+    "area/dependencies": ["dependencies", "renovate", "dependabot", "lockfile", "cargo update", "pnpm update"]
+  },
+  "renovate": {
+    "titleContains": ["dependency dashboard"],
+    "logins": ["renovate[bot]"],
+    "product": "product/shared",
+    "area": "area/dependencies",
+    "type": "type/chore"
+  }
+}

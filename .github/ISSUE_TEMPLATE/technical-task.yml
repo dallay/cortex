@@ -1,0 +1,44 @@
+name: Technical task
+description: Maintenance, refactor, tooling, or operational work
+labels: ["type/chore"]
+body:
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      description: Which product owns this? Use Shared for cross-cutting work. Exactly one.
+      options:
+        - Rook
+        - Agent
+        - Shared
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Technical Area
+      description: Primary technical area.
+      options:
+        - auth
+        - ci
+        - core
+        - dashboard
+        - dependencies
+        - docs
+        - observability
+        - providers
+        - release
+        - runtime
+        - storage
+        - testing
+        - transport
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Goal, context, exit criteria.
+      placeholder: What must be true when this is done?
+    validations:
+      required: true

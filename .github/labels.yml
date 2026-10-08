@@ -94,3 +94,8 @@
 - name: stale
   color: "fef3c7"
   description: "Stale item pending closure"
+
+# Triage
+- name: triage/needs-classification
+  color: "fbca04"
+  description: "Needs human triage — missing or ambiguous product/type/area classification"

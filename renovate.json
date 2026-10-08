@@ -5,7 +5,7 @@
   "schedule": ["* 17-23,0-6 * * 1-5", "* * * * 0,6"],
   "assignees": ["yacosta738"],
   "reviewers": ["team:dbwh", "yacosta738"],
-  "labels": ["dependencies"],
+  "labels": ["area/dependencies"],
   "minimumReleaseAge": "3 days",
   "dependencyDashboard": true,
   "prConcurrentLimit": 10,
@@ -21,21 +21,21 @@
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "rust dependencies",
       "semanticCommitScope": "deps-rust",
-      "labels": ["dependencies", "rust"]
+      "labels": ["area/dependencies"]
     },
     {
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["major"],
       "groupName": "rust major",
       "semanticCommitScope": "deps-rust",
-      "labels": ["dependencies", "rust"]
+      "labels": ["area/dependencies"]
     },
     {
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "javascript dependencies",
       "semanticCommitScope": "deps-js",
-      "labels": ["dependencies", "javascript"],
+      "labels": ["area/dependencies"],
       "postUpdateOptions": ["pnpmDedupe"]
     },
     {
@@ -43,25 +43,25 @@
       "matchUpdateTypes": ["major"],
       "groupName": "javascript major",
       "semanticCommitScope": "deps-js",
-      "labels": ["dependencies", "javascript"]
+      "labels": ["area/dependencies"]
     },
     {
       "matchManagers": ["github-actions"],
       "groupName": "github-actions",
       "semanticCommitScope": "deps-actions",
-      "labels": ["dependencies", "github-actions"]
+      "labels": ["area/dependencies", "area/ci"]
     },
     {
       "matchManagers": ["dockerfile"],
       "groupName": "docker",
       "semanticCommitScope": "deps-docker",
-      "labels": ["dependencies", "docker"]
+      "labels": ["area/dependencies"]
     },
     {
       "matchManagers": ["rust-toolchain"],
       "groupName": "rust-toolchain",
       "semanticCommitScope": "deps-rust",
-      "labels": ["dependencies", "rust"]
+      "labels": ["area/dependencies"]
     }
   ]
 }
