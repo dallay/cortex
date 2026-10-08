@@ -3,6 +3,9 @@ name: 🏷️ Sync Labels
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/labels.yml'
+      - '.github/workflows/labels-sync.yml'
   workflow_dispatch:
 
 permissions:
@@ -12,6 +15,15 @@ permissions:
 jobs:
   sync:
     name: 🏷️ Sync Labels
-    uses: dallay/common-actions/.github/workflows/labels-sync.yml@v2.2.1
-    with:
-      labels-file: '.github/labels.yml'
+    if: ${{ !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: labels-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: crazy-max/ghaction-github-labeler@548a7c3603594ec17c819e1239f281a3b801ab4d # v6
+        with:
+          github-token: ${{ github.token }}
+          yaml-file: '.github/labels.yml'
+          skip-delete: true
