@@ -19,7 +19,7 @@ libc = "0.2"
 rusqlite.workspace = true
 uuid.workspace = true
 rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-child-process"] }
-similar = "2"
+similar = "3"
 fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
 
