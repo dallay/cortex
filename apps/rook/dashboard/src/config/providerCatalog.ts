@@ -97,6 +97,16 @@ export interface CatalogEntry {
 }
 
 /**
+ * Shared defaults for API-key cloud providers (5 of 6 kinds).
+ * Spread into entries to avoid repeating the same two fields —
+ * Sonar-flagged duplication with zero information content.
+ */
+const API_KEY_DEFAULTS = {
+	category: "api-key",
+	authTypes: ["apikey"],
+} as const;
+
+/**
  * The full provider catalog. Order is intentional: API-key cloud
  * providers first (most common), then local. This order is also the
  * default render order in the catalog view.
@@ -104,12 +114,11 @@ export interface CatalogEntry {
 export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	{
 		kind: "openai",
+		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.openai.name",
-		category: "api-key",
 		defaultBaseUrl: "https://api.openai.com/v1",
 		iconFile: "openai.svg",
 		brandUrl: "https://platform.openai.com/api-keys",
-		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.openai.description",
 		docsUrl: "https://platform.openai.com/docs",
 		defaultModels: [
@@ -122,12 +131,11 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	},
 	{
 		kind: "anthropic",
+		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.anthropic.name",
-		category: "api-key",
 		defaultBaseUrl: "https://api.anthropic.com",
 		iconFile: "anthropic.png",
 		brandUrl: "https://console.anthropic.com/settings/keys",
-		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.anthropic.description",
 		docsUrl: "https://docs.anthropic.com",
 		defaultModels: [
@@ -138,12 +146,11 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	},
 	{
 		kind: "gemini",
+		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.gemini.name",
-		category: "api-key",
 		defaultBaseUrl: "https://generativelanguage.googleapis.com",
 		iconFile: "gemini.svg",
 		brandUrl: "https://aistudio.google.com/apikey",
-		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.gemini.description",
 		docsUrl: "https://ai.google.dev/gemini-api/docs",
 		defaultModels: [
@@ -154,12 +161,11 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	},
 	{
 		kind: "groq",
+		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.groq.name",
-		category: "api-key",
 		defaultBaseUrl: "https://api.groq.com/openai/v1",
 		iconFile: "groq.svg",
 		brandUrl: "https://console.groq.com/keys",
-		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.groq.description",
 		docsUrl: "https://console.groq.com/docs",
 		defaultModels: [
@@ -182,13 +188,12 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	},
 	{
 		kind: "ollama-cloud",
+		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.ollamaCloud.name",
-		category: "api-key",
 		defaultBaseUrl: "https://ollama.com",
 		baseUrlEditable: false,
 		iconFile: "ollama-cloud.svg",
 		brandUrl: "https://ollama.com/cloud",
-		authTypes: ["apikey"],
 		descriptionKey: "providers.kind.ollamaCloud.description",
 		docsUrl: "https://docs.ollama.com/api-reference/chat.md",
 		defaultModels: [],
