@@ -2,18 +2,19 @@
 // Tests that RouteRequest::execute properly enforces allowed_models and allowed_providers.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use rook_core::{
-    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CachePort, CacheStats, CompletionRequest,
-    CompletionResponse, CortexError, CortexResult, FormatTranslatorPort, HealthStatus, Message,
-    MessageContent, ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort, ModelId,
-    ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, SignatureEntry, StreamChunk,
-    TokenCacheStats, TokenUsage,
+    ApiFormat, ApiKeyRestrictions, AuditPort, CachePort, CompletionRequest, CompletionResponse,
+    CortexError, CortexResult, FormatTranslatorPort, HealthStatus, Message, MessageContent,
+    ModelAliasRepositoryPort, ModelId, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort,
+    StreamChunk, TokenUsage,
 };
 use rook_usecases::{route_request::ModelAliasesConfig, PricingConfig, RouteRequest};
-use shared_kernel::{CacheKey, RequestId};
+use shared_kernel::RequestId;
+
+mod common;
+use common::{NoOpAliasRepository, NoOpAudit, NoOpCache, NoOpTranslator};
 
 // --- Fake Implementations ---
 
@@ -121,124 +122,6 @@ impl RouterPort for FakeRouter {
 
     fn providers(&self) -> Vec<ProviderId> {
         vec![self.provider.id().clone()]
-    }
-}
-
-struct NoOpCache;
-
-#[async_trait]
-impl CachePort for NoOpCache {
-    async fn get(&self, _key: &CacheKey) -> CortexResult<Option<CompletionResponse>> {
-        Ok(None)
-    }
-
-    async fn set(
-        &self,
-        _key: &CacheKey,
-        _value: &CompletionResponse,
-        _ttl: Duration,
-    ) -> CortexResult<()> {
-        Ok(())
-    }
-
-    async fn delete(&self, _key: &CacheKey) -> CortexResult<()> {
-        Ok(())
-    }
-
-    async fn clear(&self) -> CortexResult<()> {
-        Ok(())
-    }
-
-    async fn stats(&self) -> CortexResult<CacheStats> {
-        Ok(CacheStats {
-            hits: 0,
-            misses: 0,
-            evictions: 0,
-            entries: 0,
-            max_entries: 0,
-            token_cache: TokenCacheStats::default(),
-        })
-    }
-
-    async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
-        Ok(0)
-    }
-
-    async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>> {
-        Ok(Vec::new())
-    }
-
-    async fn get_by_signature(&self, _signature: &str) -> CortexResult<Option<CompletionResponse>> {
-        Ok(None)
-    }
-
-    async fn increment_token_cache_hit(&self, _tokens: u64, _cost_usd: f64) -> CortexResult<()> {
-        Ok(())
-    }
-
-    async fn increment_token_cache_miss(&self) -> CortexResult<()> {
-        Ok(())
-    }
-}
-
-struct NoOpAudit;
-
-#[async_trait]
-impl AuditPort for NoOpAudit {
-    async fn record(&self, _entry: AuditEntry) -> CortexResult<()> {
-        Ok(())
-    }
-}
-
-struct NoOpTranslator;
-
-impl FormatTranslatorPort for NoOpTranslator {
-    fn translate_request(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest> {
-        Ok(req)
-    }
-
-    fn translate_response(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse> {
-        Ok(resp)
-    }
-}
-
-/// Test stub for ModelAliasRepositoryPort
-struct NoOpAliasRepository;
-
-#[async_trait]
-impl ModelAliasRepositoryPort for NoOpAliasRepository {
-    async fn find_by_alias(
-        &self,
-        _alias: &ModelId,
-        _provider_id: Option<&ProviderId>,
-    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
-        Ok(None)
-    }
-
-    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
-        Ok(vec![])
-    }
-
-    async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
-        Ok(())
-    }
-
-    async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
-        Ok(false)
-    }
-
-    async fn seed(&self, _aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError> {
-        Ok(0)
     }
 }
 
