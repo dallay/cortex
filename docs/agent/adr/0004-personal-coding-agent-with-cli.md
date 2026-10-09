@@ -5,6 +5,8 @@
 - Product: Cortex agent (provisional name)
 - Decision basis: Explicit choices made during the agent MVP planning conversation.
 
+**Partially superseded (2026-10-09):** [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) replaces the deferral of the TUI and the long-term selection of a line-oriented CLI for interactive work. This record is retained as the historical decision for the already implemented MVP; its noninteractive, safety, platform and acceptance principles remain relevant. New interactive functionality is Ratatui-first and plugin-first.
+
 ## Context
 
 A harness can become a general tool platform, an embeddable SDK, or a coding product.

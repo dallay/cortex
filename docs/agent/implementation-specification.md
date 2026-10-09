@@ -14,6 +14,19 @@ AgentLoop accepts a session, prompt, approval policy, event sink and cancellatio
 token. The standard loop is registered through LoopService, so another native
 implementation can replace it without changing the supervisor.
 
+## Ratatui-first interactive frontend contract (ADR-0010)
+
+This section governs **new** interactive behavior. The crate table above documents the existing MVP and remains historically accurate until the TUI module is implemented.
+
+- **Presentation plugin:** Ratatui + Crossterm + Tokio run behind a first-party plugin/service boundary. The composition root selects one terminal owner before initializing input. No Ratatui types in `agent-core` or `agent-runtime`.
+- **Default selection (target):** `chat` and interactive `resume` use Ratatui on supported TTY after its acceptance gate. Provide an explicit `--ui=line` fallback and `--ui=tui` override. `run`, `--json`, `sessions` and `doctor` remain noninteractive/compatible. `--json` never emits ANSI UI output.
+- **Plugin model:** all non-kernel features, including view/prompt functionality, commands, tool-result renderers and status contributions, register through kernel-managed services. Contributions are declarative and host-rendered; registration and cleanup belong to the plugin generation. User-authored plugin extensibility is a roadmap requirement, but a public dynamic ABI is not implied by the first built-in implementation.
+- **Focus/input:** host owns raw mode, stdin, keymap context, modal priority and terminal restoration. Existing `apps/agent/src/terminal.rs::Input` and Crossterm's EventStream may not coexist in one interactive process. Modal approval keys cannot consume pre-modal paste/buffered input, and denying/no answer remains default.
+- **Approvals:** TUI implements the existing `ApprovalPolicy` only. Approval views show complete authorized action/diff, distinguish pending vs decided, bind to the request ID and reject stale confirmations; only policy grants authority. Plugin views are never authorities.
+- **Streaming state:** `EventSink::emit` remains synchronous; it synchronously projects typed events into TUI-owned state with short critical sections and emits a coalesced dirty-frame signal. Renderers read snapshots; no unbounded token-to-frame queue. Persisted session messages and permissions are authoritative, unfinished tokens are ephemeral, and tool/approval transitions must not be silently dropped. If this contract proves inadequate, evolve `EventSink` explicitly with tests rather than hide overload losses.
+- **Scrollback:** preserve native history semantics. Keep mutable Markdown blocks/tables/code fences in a streaming tail until safe to commit; once committed, do not duplicate them on resize. PTY tests must cover cursor query races and Windows/SSH/tmux claims separately.
+- **Lifecycle:** plugin activation/unload removes contributed UI views, commands and listeners; terminal failure returns control to the host with tty state restored. Confirm stack with controlled integration tests.
+
 ## Services and effects
 
 Services use explicit `name@major` identifiers, one provider per service and one
