@@ -41,7 +41,11 @@ impl ApiKeyRepositoryPort for FakeApiKeyRepository {
     }
 
     async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-        self.records.lock().unwrap().push(record.clone());
+        let mut records = self.records.lock().unwrap();
+        if records.iter().any(|existing| existing.id == record.id) {
+            return Err(ApiKeyRepositoryError::DuplicateHash);
+        }
+        records.push(record.clone());
         Ok(())
     }
 
@@ -121,6 +125,31 @@ mod tests {
     use rook_core::{ApiKeyId, ApiKeyRecord, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier};
 
     use crate::FakeApiKeyRepository;
+
+    #[tokio::test]
+    async fn create_rejects_duplicate_id() {
+        let repo = FakeApiKeyRepository::default();
+        let record = ApiKeyRecord {
+            id: ApiKeyId::new("duplicate-id"),
+            label: "test key".to_string(),
+            key_hash: "hash".to_string(),
+            key_prefix: "rk-test".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+            tier: ApiKeyTier::Free,
+            is_active: true,
+            revoked_at: None,
+            expires_at: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+        };
+        repo.create(&record).await.unwrap();
+
+        let result = repo.create(&record).await;
+
+        assert_eq!(result, Err(rook_core::ApiKeyRepositoryError::DuplicateHash));
+    }
 
     #[tokio::test]
     async fn revoke_marks_record_inactive_and_persists_revocation_time() {
