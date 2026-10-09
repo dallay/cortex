@@ -4,12 +4,10 @@ use std::sync::Arc;
 
 use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
 use rook::di::{
-    build_api_key_auth, build_cache_port, build_manage_connections,
-    build_provider_from_connection, build_rate_limiter_config,
+    build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
+    build_rate_limiter_config,
 };
-use rook_core::{
-    ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind,
-};
+use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
@@ -105,7 +103,10 @@ fn build_rate_limiter_config_maps_tiers_correctly() {
     assert_eq!(result.default_tier, ApiKeyTier::Free);
     assert_eq!(result.tiers.len(), 2);
 
-    let free_tier = result.tiers.get(&ApiKeyTier::Free).expect("Free tier exists");
+    let free_tier = result
+        .tiers
+        .get(&ApiKeyTier::Free)
+        .expect("Free tier exists");
     assert_eq!(free_tier.requests_per_minute, 60);
     assert_eq!(free_tier.requests_per_day, Some(500));
     assert_eq!(free_tier.tokens_per_minute, Some(5000));
@@ -134,8 +135,8 @@ fn build_rate_limiter_config_disabled() {
 mod api_key_auth_mocks {
     use async_trait::async_trait;
     use rook_core::{
-        ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort,
-        ApiKeySubject, ProviderId, ProviderPort, RegistryError,
+        ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeySubject,
+        ProviderId, ProviderPort, RegistryError,
     };
     use std::sync::Arc;
 
@@ -144,7 +145,9 @@ mod api_key_auth_mocks {
 
     #[async_trait]
     impl rook_core::ProviderRepositoryPort for FakeProviderRepository {
-        async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
             Ok(vec![])
         }
 
@@ -170,7 +173,10 @@ mod api_key_auth_mocks {
             Ok(())
         }
 
-        async fn delete(&self, _id: &rook_core::ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        async fn delete(
+            &self,
+            _id: &rook_core::ConnectionId,
+        ) -> Result<(), rook_core::RepositoryError> {
             Ok(())
         }
     }
@@ -198,7 +204,10 @@ mod api_key_auth_mocks {
             Ok(vec![])
         }
 
-        async fn find(&self, _id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
+        async fn find(
+            &self,
+            _id: &ApiKeyId,
+        ) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
             Ok(None)
         }
 
@@ -206,10 +215,7 @@ mod api_key_auth_mocks {
             Ok(())
         }
 
-        async fn update(
-            &self,
-            _record: &ApiKeyRecord,
-        ) -> Result<(), ApiKeyRepositoryError> {
+        async fn update(&self, _record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
             Ok(())
         }
 
@@ -258,10 +264,7 @@ mod api_key_auth_mocks {
             None
         }
 
-        fn replace_all(
-            &self,
-            _providers: Vec<Arc<dyn ProviderPort>>,
-        ) -> Result<(), RegistryError> {
+        fn replace_all(&self, _providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError> {
             Ok(())
         }
 
@@ -280,7 +283,8 @@ use api_key_auth_mocks::{FakeApiKeyRepository, FakeProviderRegistry, FakeProvide
 #[test]
 fn build_api_key_auth_disabled_returns_none() {
     let config: RookConfig =
-        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = false")).expect("config parses");
+        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = false"))
+            .expect("config parses");
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository);
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
@@ -295,7 +299,8 @@ fn build_api_key_auth_disabled_returns_none() {
 #[test]
 fn build_api_key_auth_enabled_returns_some() {
     let config: RookConfig =
-        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = true")).expect("config parses");
+        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = true"))
+            .expect("config parses");
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository);
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
@@ -332,8 +337,10 @@ use model_catalog_mock::FakeModelCatalog;
 #[test]
 fn build_manage_connections_disabled_returns_none() {
     let config: RookConfig =
-        toml::from_str(&minimal_config_toml("[provider_crud]\nenabled = false")).expect("config parses");
-    let provider_repo: Arc<dyn rook_core::ProviderRepositoryPort> = Arc::new(FakeProviderRepository);
+        toml::from_str(&minimal_config_toml("[provider_crud]\nenabled = false"))
+            .expect("config parses");
+    let provider_repo: Arc<dyn rook_core::ProviderRepositoryPort> =
+        Arc::new(FakeProviderRepository);
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
     let model_catalog: Arc<dyn rook_core::ModelCatalogPort> = Arc::new(FakeModelCatalog);
 
