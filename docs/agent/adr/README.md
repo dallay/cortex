@@ -19,6 +19,7 @@ The product name is still open. Agent is a provisional internal identifier.
 | [ADR-0007](0007-read-freely-approve-effects.md) | Read freely and approve effects | Accepted |
 | [ADR-0008](0008-repository-instructions-and-durable-context.md) | Repository instructions and durable context | Accepted |
 | [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md) | SQLite, configuration and runtime contracts | Accepted |
+| [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted |
 
 ## Record format
 
@@ -44,6 +45,10 @@ The repository placement and MCP trust decisions here refine earlier research
 that left placement undecided or assumed stronger external-runtime isolation.
 The external research notes now link to these canonical MVP decisions; their older
 alternatives are preserved as research history.
+
+## Current interactive architecture
+
+[ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) is the controlling decision for new interactive UI development. It partially supersedes ADR-0004's TUI deferral. The implemented line-oriented CLI remains a supported transitional/fallback adapter, not the architectural target. Start the Ratatui presentation plugin now while keeping agent core UI-agnostic and all functional capabilities replaceable via plugin services. PTY tests determine necessary terminal workarounds; they are not a prerequisite for selecting Ratatui.
 
 ## Remaining decisions
 
