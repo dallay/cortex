@@ -1,7 +1,7 @@
 // Integration tests for the rook DI container and provider builder
 
-use rook::di::{build_cache_port, build_provider_from_connection};
 use rook::config::RookConfig;
+use rook::di::{build_cache_port, build_provider_from_connection};
 use rook_core::{ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
 fn conn_id() -> ConnectionId {
