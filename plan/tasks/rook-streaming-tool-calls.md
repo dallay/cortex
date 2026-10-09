@@ -39,4 +39,4 @@ Cerrar la brecha de la issue #279: preservar tool-call deltas OpenAI desde el pr
 - Compatibilidad del agente: no se declara; `docs/agent/validation.md` conserva el estado no compatible hasta una prueba E2E con Rook en ejecución.
 
 ## Estado
-Ready — implementación, pruebas y documentación verificadas; `size-exception` autorizada; publicación en curso.
+Ready — implementación, pruebas y documentación verificadas; `size-exception` autorizada; PR draft #311 abierta para revisión: https://github.com/dallay/cortex/pull/311.
