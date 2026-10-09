@@ -154,6 +154,22 @@ impl StandardLoop {
         }
         Ok(context)
     }
+    /// Process a user prompt through model responses and sequential tool calls.
+    ///
+    /// Saves the prompt and each validated, completed assistant response before
+    /// executing its tools. Text deltas go only to `sink`; partial text from an
+    /// unfinished response is not persisted. Returns success once a completed
+    /// response has no tool calls. Earlier saved messages survive later failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns cancellation errors from `cancel`, the lifecycle token, or tool
+    /// handling, and model errors for incomplete or invalid responses and exceeded
+    /// context, response, or iteration limits. Propagates instruction-loading,
+    /// serialization, model-provider, and session-save errors, except within tool
+    /// handling: non-cancellation errors during lookup, preparation, approval
+    /// (including approval-event saves), or execution become tool error results
+    /// for the next model response. Approval denial also becomes a tool error result.
     async fn turn(
         &self,
         session: &mut Session,
@@ -217,7 +233,9 @@ impl StandardLoop {
                             return Err(AgentError::Model("response exceeds text limit".into()));
                         }
                         response.content.push_str(&text);
-                        self.record(session, Event::Text { text }, sink).await?;
+                        // Text deltas are live-only; the completed response is saved below.
+                        // Incomplete or cancelled turns intentionally lose partial text.
+                        sink.emit(Event::Text { text });
                     }
                     ModelDelta::ToolCall(call) => {
                         if response.tool_calls.len() >= 64 {
