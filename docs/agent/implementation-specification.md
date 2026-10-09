@@ -75,20 +75,25 @@ including tool definitions and output reservation, are conservative token estima
   the temporary file and used as its creation mode; new files use mode `0666`, allowing
   the kernel to apply the process umask. Non-Unix creation behavior follows platform
   defaults. Concurrent hostile filesystem mutations are outside the trust model.
+- Native tool execution dispatches each operation to a focused handler to keep the
+  orchestration path readable; blocking workspace traversal runs on Tokio's blocking pool.
 
 ```mermaid
 flowchart TD
-    A[Validate approved path and original content] --> B{Destination exists?}
-    B -- Yes --> C[Read existing permissions]
-    B -- No, Unix --> D[Select creation mode 0666]
-    B -- No, non-Unix --> E[Use platform-default creation permissions]
-    C --> F[Create unique temporary file with existing mode]
-    D --> G[Create unique temporary file; kernel applies umask]
-    E --> H[Create unique temporary file]
-    F --> I[Write contents and sync]
-    G --> I
-    H --> I
-    I --> J[Atomic rename to destination]
+    A[Dispatch native operation] --> B{Operation kind}
+    B -- read --> C[Read bounded file range]
+    B -- list/search --> D[Traverse workspace on blocking pool]
+    B -- write/edit --> E[Validate approved content and destination]
+    E --> F{Destination exists?}
+    F -- Yes --> G[Read and retain existing permissions]
+    F -- No, Unix --> H[Select creation mode 0666]
+    F -- No, non-Unix --> I[Use platform-default creation permissions]
+    G --> J[Create temporary file with existing mode]
+    H --> K[Create temporary file; kernel applies umask]
+    I --> L[Create temporary file]
+    J --> M[Write contents, sync, then atomic rename]
+    K --> M
+    L --> M
 ```
 - Shell uses POSIX sh, null stdin, PATH-only environment and supervised process groups.
   Timeout, cancellation and dropped execution kill the group; stdout/stderr are drained

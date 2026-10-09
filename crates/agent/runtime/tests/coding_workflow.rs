@@ -214,7 +214,8 @@ async fn replacing_files_preserves_permissions() {
 #[cfg(unix)]
 #[tokio::test]
 async fn newly_written_files_respect_umask_in_an_isolated_process() {
-    use std::{os::unix::fs::PermissionsExt, process::Command};
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::process::Command;
 
     const UMASK_ENV: &str = "DALLAY_625_TEST_UMASK";
     if let Some(mask) = std::env::var_os(UMASK_ENV) {
@@ -261,6 +262,7 @@ async fn newly_written_files_respect_umask_in_an_isolated_process() {
             ])
             .env(UMASK_ENV, mask)
             .status()
+            .await
             .unwrap();
         assert!(status.success(), "umask {mask} subprocess failed");
     }

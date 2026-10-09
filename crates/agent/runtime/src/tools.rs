@@ -279,143 +279,156 @@ impl Tool for NativeTool {
             ));
         }
         match self.kind {
-            Kind::Write | Kind::Edit => {
-                let existing_metadata = tokio::fs::metadata(&path).await.ok();
-                if let Some(metadata) = &existing_metadata {
-                    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-                        return Err(AgentError::Tool(
-                            "edit target changed; prepare a new diff".into(),
-                        ));
-                    }
-                }
-                let current = match tokio::fs::read_to_string(&path).await {
-                    Ok(value) => Some(value),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(e.into()),
-                };
-                if json!(current) != args["original"] {
-                    return Err(AgentError::Tool(
-                        "file changed after approval; prepare a new diff".into(),
-                    ));
-                }
-                let temp = path.with_file_name(format!(".agent-{}.tmp", uuid::Uuid::new_v4()));
-                let mut options = tokio::fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    // Existing files keep their permissions. New files use a normal
-                    // creation mode so the kernel applies the process umask.
-                    let mode = existing_metadata
-                        .as_ref()
-                        .map(|metadata| metadata.permissions().mode())
-                        .unwrap_or(0o666);
-                    options.mode(mode);
-                }
-                let mut file = options.open(&temp).await?;
-                use tokio::io::AsyncWriteExt;
-                let result = async {
-                    file.write_all(argument(&args, "replacement")?.as_bytes())
-                        .await?;
-                    file.sync_all().await?;
-                    if let Some(metadata) = &existing_metadata {
-                        tokio::fs::set_permissions(&temp, metadata.permissions()).await?;
-                    }
-                    tokio::fs::rename(&temp, &path).await?;
-                    Ok::<_, AgentError>(())
-                }
-                .await;
-                if result.is_err() {
-                    let _ = tokio::fs::remove_file(&temp).await;
-                }
-                result?;
-                Ok(format!("Updated {}", path.display()))
-            }
-            Kind::Read => {
-                let metadata = tokio::fs::metadata(&path).await?;
-                if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-                    return Err(AgentError::Tool(
-                        "read target must be a regular file under 1 MiB".into(),
-                    ));
-                }
-                let text = tokio::fs::read_to_string(&path).await?;
-                let start = args["start_line"].as_u64().unwrap_or(1);
-                let end = args["end_line"]
-                    .as_u64()
-                    .unwrap_or_else(|| start.saturating_add(199));
-                if start == 0 || end < start {
-                    return Err(AgentError::Tool("invalid line range".into()));
-                }
-                Ok(bounded_text(
-                    text.lines()
-                        .enumerate()
-                        .filter(|(i, _)| (*i as u64) >= start - 1 && (*i as u64) < end)
-                        .map(|(i, line)| format!("{}: {line}", i + 1))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                ))
-            }
-            Kind::List | Kind::Search => {
-                let root = ctx.workspace.clone();
-                let input = path.clone();
-                let files = tokio::task::spawn_blocking(move || workspace_files(&root, &input))
-                    .await
-                    .map_err(|_| AgentError::Tool("file traversal failed".into()))??;
-                if matches!(self.kind, Kind::List) {
-                    let mut listing = files
-                        .iter()
-                        .take(100)
-                        .map(|p| {
-                            p.strip_prefix(&ctx.workspace)
-                                .unwrap_or(p)
-                                .display()
-                                .to_string()
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if files.len() > 100 {
-                        listing.push_str("\n[100-file limit; select a narrower path]");
-                    }
-                    return Ok(bounded_text(listing));
-                }
-                let query = argument(&args, "query")?;
-                if query.is_empty() {
-                    return Err(AgentError::Tool("query must not be empty".into()));
-                }
-                let mut matches = vec![];
-                for file in files {
-                    if ctx.cancellation.is_cancelled() {
-                        return Err(AgentError::Cancelled);
-                    }
-                    if tokio::fs::metadata(&file).await?.len() > MAX_FILE_BYTES {
-                        continue;
-                    }
-                    let Ok(text) = tokio::fs::read_to_string(&file).await else {
-                        continue;
-                    };
-                    for (index, line) in text
-                        .lines()
-                        .enumerate()
-                        .filter(|(_, line)| line.contains(query))
-                    {
-                        matches.push(format!(
-                            "{}:{}: {line}",
-                            file.strip_prefix(&ctx.workspace).unwrap_or(&file).display(),
-                            index + 1
-                        ));
-                        if matches.len() >= 100 {
-                            return Ok(bounded_text(format!(
-                                "{}\n[100-match limit]",
-                                matches.join("\n")
-                            )));
-                        }
-                    }
-                }
-                Ok(bounded_text(matches.join("\n")))
-            }
+            Kind::Write | Kind::Edit => execute_mutation(&args, &path).await,
+            Kind::Read => execute_read(&args, &path).await,
+            Kind::List => execute_list(&path, ctx).await,
+            Kind::Search => execute_search(&args, &path, ctx).await,
             Kind::Shell => unreachable!(),
         }
     }
+}
+
+async fn execute_mutation(args: &Value, path: &Path) -> Result<String> {
+    let existing_metadata = tokio::fs::metadata(path).await.ok();
+    if let Some(metadata) = &existing_metadata {
+        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+            return Err(AgentError::Tool(
+                "edit target changed; prepare a new diff".into(),
+            ));
+        }
+    }
+    let current = match tokio::fs::read_to_string(path).await {
+        Ok(value) => Some(value),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    if json!(current) != args["original"] {
+        return Err(AgentError::Tool(
+            "file changed after approval; prepare a new diff".into(),
+        ));
+    }
+    let temp = path.with_file_name(format!(".agent-{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Existing files keep their permissions. New files use a normal
+        // creation mode so the kernel applies the process umask.
+        let mode = existing_metadata
+            .as_ref()
+            .map(|metadata| metadata.permissions().mode())
+            .unwrap_or(0o666);
+        options.mode(mode);
+    }
+    let mut file = options.open(&temp).await?;
+    use tokio::io::AsyncWriteExt;
+    let result = async {
+        file.write_all(argument(args, "replacement")?.as_bytes())
+            .await?;
+        file.sync_all().await?;
+        if let Some(metadata) = &existing_metadata {
+            tokio::fs::set_permissions(&temp, metadata.permissions()).await?;
+        }
+        tokio::fs::rename(&temp, path).await?;
+        Ok::<_, AgentError>(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+    result?;
+    Ok(format!("Updated {}", path.display()))
+}
+
+async fn execute_read(args: &Value, path: &Path) -> Result<String> {
+    let metadata = tokio::fs::metadata(path).await?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return Err(AgentError::Tool(
+            "read target must be a regular file under 1 MiB".into(),
+        ));
+    }
+    let text = tokio::fs::read_to_string(path).await?;
+    let start = args["start_line"].as_u64().unwrap_or(1);
+    let end = args["end_line"]
+        .as_u64()
+        .unwrap_or_else(|| start.saturating_add(199));
+    if start == 0 || end < start {
+        return Err(AgentError::Tool("invalid line range".into()));
+    }
+    Ok(bounded_text(
+        text.lines()
+            .enumerate()
+            .filter(|(i, _)| (*i as u64) >= start - 1 && (*i as u64) < end)
+            .map(|(i, line)| format!("{}: {line}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+}
+
+async fn workspace_file_list(path: &Path, ctx: &ToolContext) -> Result<Vec<PathBuf>> {
+    let root = ctx.workspace.clone();
+    let input = path.to_path_buf();
+    tokio::task::spawn_blocking(move || workspace_files(&root, &input))
+        .await
+        .map_err(|_| AgentError::Tool("file traversal failed".into()))?
+}
+
+async fn execute_list(path: &Path, ctx: &ToolContext) -> Result<String> {
+    let files = workspace_file_list(path, ctx).await?;
+    let mut listing = files
+        .iter()
+        .take(100)
+        .map(|p| {
+            p.strip_prefix(&ctx.workspace)
+                .unwrap_or(p)
+                .display()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if files.len() > 100 {
+        listing.push_str("\n[100-file limit; select a narrower path]");
+    }
+    Ok(bounded_text(listing))
+}
+
+async fn execute_search(args: &Value, path: &Path, ctx: &ToolContext) -> Result<String> {
+    let files = workspace_file_list(path, ctx).await?;
+    let query = argument(args, "query")?;
+    if query.is_empty() {
+        return Err(AgentError::Tool("query must not be empty".into()));
+    }
+    let mut matches = vec![];
+    for file in files {
+        if ctx.cancellation.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
+        if tokio::fs::metadata(&file).await?.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        let Ok(text) = tokio::fs::read_to_string(&file).await else {
+            continue;
+        };
+        for (index, line) in text
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains(query))
+        {
+            matches.push(format!(
+                "{}:{}: {line}",
+                file.strip_prefix(&ctx.workspace).unwrap_or(&file).display(),
+                index + 1
+            ));
+            if matches.len() >= 100 {
+                return Ok(bounded_text(format!(
+                    "{}\n[100-match limit]",
+                    matches.join("\n")
+                )));
+            }
+        }
+    }
+    Ok(bounded_text(matches.join("\n")))
 }
 
 async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Result<String> {
