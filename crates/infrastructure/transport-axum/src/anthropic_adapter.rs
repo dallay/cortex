@@ -351,6 +351,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "Hello".to_string(),
+            tool_calls: vec![],
             finish_reason: None,
             usage: None,
         };
@@ -369,6 +370,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "".to_string(),
+            tool_calls: vec![],
             finish_reason: Some(FinishReason::Stop),
             usage: Some(make_token_usage(10, 25)),
         };
@@ -387,6 +389,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "part".to_string(),
+            tool_calls: vec![],
             finish_reason: None,
             usage: Some(make_token_usage(10, 5)), // Should be ignored
         };
@@ -402,6 +405,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "".to_string(),
+            tool_calls: vec![],
             finish_reason: Some(FinishReason::Stop),
             usage: Some(make_token_usage(10, 25)),
         };

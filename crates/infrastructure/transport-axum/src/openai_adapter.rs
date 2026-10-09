@@ -257,6 +257,26 @@ pub struct OpenAIChunkDelta {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAIChunkToolCall>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIChunkToolCall {
+    pub index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: OpenAIChunkToolFunction,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAIChunkToolFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 impl From<&StreamChunk> for OpenAIChatCompletionChunk {
@@ -282,6 +302,21 @@ impl From<&StreamChunk> for OpenAIChatCompletionChunk {
                     } else {
                         Some(chunk.delta.clone())
                     },
+                    tool_calls: (!chunk.tool_calls.is_empty()).then(|| {
+                        chunk
+                            .tool_calls
+                            .iter()
+                            .map(|tool_call| OpenAIChunkToolCall {
+                                index: tool_call.index,
+                                id: tool_call.id.clone(),
+                                call_type: "function".to_string(),
+                                function: OpenAIChunkToolFunction {
+                                    name: tool_call.function.name.clone(),
+                                    arguments: tool_call.function.arguments.clone(),
+                                },
+                            })
+                            .collect()
+                    }),
                 },
                 finish_reason: finish_reason.map(str::to_string),
             }],
@@ -312,6 +347,7 @@ pub struct OpenAIErrorBody {
 #[cfg(test)]
 mod openai_adapter_tests {
     use super::*;
+    use rook_core::{ToolCallDelta, ToolCallFunctionDelta};
 
     #[test]
     fn deserializes_request_with_tool_fields_without_error() {
@@ -411,6 +447,53 @@ mod openai_adapter_tests {
                 input: serde_json::json!({"city": "Paris"}),
             }
         );
+    }
+
+    #[test]
+    fn serializes_structured_streaming_tool_call_delta() {
+        let chunk = StreamChunk {
+            id: RequestId::new(),
+            model: ModelId::new("gpt-4o"),
+            delta: String::new(),
+            tool_calls: vec![
+                ToolCallDelta {
+                    index: 2,
+                    id: Some("call-2".to_string()),
+                    function: ToolCallFunctionDelta {
+                        name: Some("lookup".to_string()),
+                        arguments: Some("{\"key\":".to_string()),
+                    },
+                },
+                ToolCallDelta {
+                    index: 3,
+                    id: Some("call-3".to_string()),
+                    function: ToolCallFunctionDelta {
+                        name: Some("count".to_string()),
+                        arguments: Some("{}".to_string()),
+                    },
+                },
+            ],
+            finish_reason: None,
+            usage: None,
+        };
+
+        let json = serde_json::to_value(OpenAIChatCompletionChunk::from(&chunk)).unwrap();
+        assert_eq!(json["choices"][0]["delta"]["tool_calls"][0]["index"], 2);
+        assert_eq!(json["choices"][0]["delta"]["tool_calls"][0]["id"], "call-2");
+        assert_eq!(
+            json["choices"][0]["delta"]["tool_calls"][0]["type"],
+            "function"
+        );
+        assert_eq!(
+            json["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
+            "lookup"
+        );
+        assert_eq!(
+            json["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            "{\"key\":"
+        );
+        assert_eq!(json["choices"][0]["delta"]["tool_calls"][1]["index"], 3);
+        assert_eq!(json["choices"][0]["delta"]["tool_calls"][1]["id"], "call-3");
     }
 
     #[test]

@@ -3,6 +3,31 @@ use providers_openai::provider::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{CompletionRequest, FinishReason, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 
+fn stream_request() -> CompletionRequest {
+    CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("test".to_string()),
+        }],
+        stream: true,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // health_check tests
 // ---------------------------------------------------------------------------
@@ -337,6 +362,190 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         chunks.last().unwrap().usage.as_ref().unwrap().total_tokens,
         12
     );
+}
+
+#[tokio::test]
+async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"checking ","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"pa"}},{"index":1,"id":"call-2","type":"function","function":{"name":"count","arguments":"{\"n\":"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}},{"index":1,"function":{"arguments":"1}"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n"
+        )))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("read and count".to_string()),
+        }],
+        stream: true,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let chunks = provider
+        .stream(&req)
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("tool-call deltas parse");
+
+    assert_eq!(chunks[0].delta, "checking ");
+    assert_eq!(chunks[0].tool_calls.len(), 2);
+    assert_eq!(chunks[0].tool_calls[0].index, 0);
+    assert_eq!(chunks[0].tool_calls[0].id.as_deref(), Some("call-1"));
+    assert_eq!(
+        chunks[0].tool_calls[0].function.name.as_deref(),
+        Some("read_file")
+    );
+    assert_eq!(
+        chunks[0].tool_calls[0].function.arguments.as_deref(),
+        Some("{\"pa")
+    );
+    assert_eq!(chunks[0].tool_calls[1].index, 1);
+    assert_eq!(
+        chunks[1].tool_calls[0].function.arguments.as_deref(),
+        Some("th\":\"x\"}")
+    );
+    assert_eq!(
+        chunks[1].tool_calls[1].function.arguments.as_deref(),
+        Some("1}")
+    );
+    assert_eq!(chunks[2].finish_reason, Some(FinishReason::ToolCalls));
+}
+
+#[tokio::test]
+async fn stream_returns_error_for_malformed_upstream_json_event() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string("data: {not-valid-json}\n\n"),
+        )
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].as_ref().is_err());
+}
+
+#[tokio::test]
+async fn stream_returns_error_when_tool_arguments_are_incomplete_at_finish() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n"
+        )))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_ok());
+    let error = results[1].as_ref().expect_err("incomplete arguments fail");
+    assert!(error.to_string().contains("invalid tool-call arguments"));
+}
+
+#[tokio::test]
+async fn stream_returns_error_when_connection_ends_before_tool_finish_reason() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}"#,
+            "\n\n"
+        )))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_ok());
+    assert!(results[1]
+        .as_ref()
+        .expect_err("missing finish reason fails")
+        .to_string()
+        .contains("before the tool_calls finish reason"));
 }
 
 #[tokio::test]

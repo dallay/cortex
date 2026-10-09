@@ -87,6 +87,7 @@ impl ProviderPort for FakeProvider {
             id: RequestId::new(),
             model: self.models[0].clone(),
             delta: "test".to_string(),
+            tool_calls: vec![],
             finish_reason: None,
             usage: None,
         };

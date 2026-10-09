@@ -144,6 +144,7 @@ impl OllamaProvider {
             id: request_id.clone(),
             model: ModelId::new(parsed.model.clone()),
             delta: parsed.message.content,
+            tool_calls: vec![],
             finish_reason: if parsed.done {
                 Some(rook_core::FinishReason::Stop)
             } else {

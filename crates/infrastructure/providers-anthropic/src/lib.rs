@@ -307,6 +307,7 @@ impl AnthropicProvider {
                 id: request_id.clone(),
                 model: model.clone(),
                 delta: delta.text,
+                tool_calls: vec![],
                 finish_reason: None,
                 usage: None,
             })),
@@ -320,6 +321,7 @@ impl AnthropicProvider {
                     id: request_id.clone(),
                     model: model.clone(),
                     delta: String::new(),
+                    tool_calls: vec![],
                     finish_reason: Some(finish_reason),
                     usage: Some(TokenUsage {
                         prompt_tokens: usage.input_tokens.unwrap_or(0),

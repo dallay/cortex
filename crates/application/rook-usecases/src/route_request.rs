@@ -1180,6 +1180,7 @@ mod tests {
                     id: RequestId::new(),
                     model: TEST_MODEL.clone(),
                     delta: "hel".to_string(),
+                    tool_calls: vec![],
                     finish_reason: None,
                     usage: None,
                 }),
@@ -1187,6 +1188,7 @@ mod tests {
                     id: RequestId::new(),
                     model: TEST_MODEL.clone(),
                     delta: "lo".to_string(),
+                    tool_calls: vec![],
                     finish_reason: Some(rook_core::FinishReason::Stop),
                     usage: Some(TokenUsage {
                         prompt_tokens: 2,
@@ -2046,6 +2048,7 @@ mod tests {
                         id: RequestId::new(),
                         model: TEST_MODEL.clone(),
                         delta: "start".to_string(),
+                        tool_calls: vec![],
                         finish_reason: None,
                         usage: None,
                     }),
