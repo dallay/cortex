@@ -1,10 +1,54 @@
 // Integration tests for the rook DI container and provider builder
 
-use rook::di::build_provider_from_connection;
+use rook::di::{build_cache_port, build_provider_from_connection};
+use rook::config::RookConfig;
 use rook_core::{ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
+}
+
+fn minimal_config_toml(extra: &str) -> String {
+    format!(
+        r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+{extra}
+"#
+    )
+}
+
+fn cache_config_toml(enabled: bool) -> String {
+    minimal_config_toml(&format!(
+        r#"[cache]
+enabled = {enabled}
+ttl_secs = 60
+max_entries = 100
+"#
+    ))
+}
+
+#[tokio::test]
+async fn build_cache_port_returns_in_memory_cache_when_enabled() {
+    let config: RookConfig = toml::from_str(&cache_config_toml(true)).expect("config parses");
+    let cache = build_cache_port(&config);
+
+    let result = cache.stats().await;
+    assert!(result.is_ok(), "in-memory cache should be functional");
+}
+
+#[tokio::test]
+async fn build_cache_port_returns_noop_cache_when_disabled() {
+    let config: RookConfig = toml::from_str(&cache_config_toml(false)).expect("config parses");
+    let cache = build_cache_port(&config);
+
+    let result = cache.stats().await;
+    assert!(result.is_ok(), "no-op cache should be functional too");
 }
 
 // T7.1 — DI wires usage recorder with nullable port

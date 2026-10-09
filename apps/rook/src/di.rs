@@ -66,7 +66,7 @@ pub struct RookContainer {
     pub usage_config: crate::config::UsageConfig,
 }
 
-fn build_cache_port(config: &RookConfig) -> Arc<dyn CachePort> {
+pub fn build_cache_port(config: &RookConfig) -> Arc<dyn CachePort> {
     if config.cache.enabled {
         Arc::new(InMemoryCache::new(
             config.cache.ttl(),
@@ -77,7 +77,7 @@ fn build_cache_port(config: &RookConfig) -> Arc<dyn CachePort> {
     }
 }
 
-fn build_api_key_auth(
+pub(crate) fn build_api_key_auth(
     config: &RookConfig,
     api_key_repo: &Arc<dyn ApiKeyRepositoryPort>,
     registry: &Arc<dyn ProviderRegistryPort>,
@@ -102,7 +102,7 @@ fn build_api_key_auth(
     ))
 }
 
-fn build_manage_connections(
+pub(crate) fn build_manage_connections(
     config: &RookConfig,
     provider_repo: &Arc<dyn ProviderRepositoryPort>,
     registry: &Arc<dyn ProviderRegistryPort>,
@@ -392,7 +392,7 @@ fn required_env(name: &str, context: &str) -> anyhow::Result<String> {
 }
 
 /// Build transport-axum RateLimiterConfig from apps/rook config
-fn build_rate_limiter_config(
+pub(crate) fn build_rate_limiter_config(
     cfg: &crate::config::RateLimiterConfig,
 ) -> transport_axum::middleware::api_key_rate_limiter::RateLimiterConfig {
     use std::collections::HashMap;
