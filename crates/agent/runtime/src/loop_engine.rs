@@ -217,7 +217,9 @@ impl StandardLoop {
                             return Err(AgentError::Model("response exceeds text limit".into()));
                         }
                         response.content.push_str(&text);
-                        self.record(session, Event::Text { text }, sink).await?;
+                        // Text deltas are live-only; the completed response is saved below.
+                        // Incomplete or cancelled turns intentionally lose partial text.
+                        sink.emit(Event::Text { text });
                     }
                     ModelDelta::ToolCall(call) => {
                         if response.tool_calls.len() >= 64 {

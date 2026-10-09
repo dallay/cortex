@@ -45,6 +45,7 @@ JSON events use a `type` discriminator: turn_started, text, tool_started,
 approval_requested, approval_resolved, tool_finished, usage, compacted,
 turn_finished and error. Event variants and fields are defined in agent-core.
 Text is incremental; approval and tool events include their identifiers.
+Text deltas are emitted directly to the live sink, not appended to persisted events.
 
 ## Persistence and context
 
@@ -54,6 +55,14 @@ with original messages, events, workspace, separate summary and exclusive summar
 boundary. Each update is an atomic UPSERT. Future migrations must be explicit;
 unknown higher user_version values are rejected. Cross-process advisory lock files
 protect an actively resumed session and release automatically after a crash.
+
+Completed assistant responses are saved as messages before any tool execution;
+resume and context assembly use those messages, not replayed text events. Text
+delta count does not increase session saves. Partial text from incomplete, failed,
+cancelled or crashed turns is live-only and intentionally lost on reload. Existing
+stored text events remain readable; new streams do not persist them. Usage,
+turn/error, compaction, tool and approval persistence boundaries are unchanged,
+including saving approval outcomes before effects and tool results after execution.
 
 An unfinished tool call is paired with an unknown-completion recovery result rather
 than replayed. Stored summaries must end on a user-turn boundary. Context assembly
