@@ -211,8 +211,7 @@ fn build_api_key_auth_disabled_returns_none() {
     let config: RookConfig =
         toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = false"))
             .expect("config parses");
-    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
-        Arc::new(FakeApiKeyRepository::default());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
     let result = build_api_key_auth(&config, &repo, &registry);
@@ -254,8 +253,7 @@ enabled = false
 "#,
     )
     .expect("config parses");
-    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
-        Arc::new(FakeApiKeyRepository::default());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
     let result = build_api_key_auth(&config, &repo, &registry);
