@@ -131,13 +131,10 @@ fn build_rate_limiter_config_disabled() {
     assert!(!result.enabled);
 }
 
-// Mocks for build_api_key_auth tests
+// Mocks for build_api_key_auth and build_manage_connections tests
 mod api_key_auth_mocks {
     use async_trait::async_trait;
-    use rook_core::{
-        ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeySubject,
-        ProviderId, ProviderPort, RegistryError,
-    };
+    use rook_core::{ProviderId, ProviderPort, RegistryError};
     use std::sync::Arc;
 
     // FakeProviderRepository for build_manage_connections test
@@ -181,78 +178,6 @@ mod api_key_auth_mocks {
         }
     }
 
-    pub struct FakeApiKeyRepository;
-
-    #[async_trait]
-    impl ApiKeyRepositoryPort for FakeApiKeyRepository {
-        async fn find_active_by_hash(
-            &self,
-            _hash: &str,
-        ) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError> {
-            Ok(None)
-        }
-
-        async fn record_last_used(
-            &self,
-            _id: &ApiKeyId,
-            _used_at: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn find(
-            &self,
-            _id: &ApiKeyId,
-        ) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
-            Ok(None)
-        }
-
-        async fn create(&self, _record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn update(&self, _record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn revoke(
-            &self,
-            _id: &ApiKeyId,
-            _revoked_at: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn rotate_hash(
-            &self,
-            _id: &ApiKeyId,
-            _new_hash: &str,
-            _new_prefix: &str,
-        ) -> Result<(), ApiKeyRepositoryError> {
-            Ok(())
-        }
-
-        async fn list_paginated(
-            &self,
-            _limit: i64,
-            _offset: i64,
-        ) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
-            Ok(0)
-        }
-    }
-
     pub struct FakeProviderRegistry;
 
     impl rook_core::ProviderRegistryPort for FakeProviderRegistry {
@@ -278,14 +203,16 @@ mod api_key_auth_mocks {
     }
 }
 
-use api_key_auth_mocks::{FakeApiKeyRepository, FakeProviderRegistry, FakeProviderRepository};
+use api_key_auth_mocks::{FakeProviderRegistry, FakeProviderRepository};
+use cortex_test_support::FakeApiKeyRepository;
 
 #[test]
 fn build_api_key_auth_disabled_returns_none() {
     let config: RookConfig =
         toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = false"))
             .expect("config parses");
-    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository);
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
+        Arc::new(FakeApiKeyRepository::default());
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
     let result = build_api_key_auth(&config, &repo, &registry);
@@ -298,18 +225,40 @@ fn build_api_key_auth_disabled_returns_none() {
 
 #[test]
 fn build_api_key_auth_enabled_returns_some() {
-    let config: RookConfig =
-        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = true"))
-            .expect("config parses");
-    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository);
+    // Use in-memory SQLite so resolve_api_key_secret generates a transient secret
+    // automatically without needing to mutate the process environment.
+    let config: RookConfig = toml::from_str(
+        r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 60
+
+[auth.api_keys]
+enabled = true
+
+[database]
+db_path = ":memory:"
+
+[provider_crud]
+enabled = false
+
+[rate_limiting]
+enabled = false
+"#,
+    )
+    .expect("config parses");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
+        Arc::new(FakeApiKeyRepository::default());
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
 
-    // Set env var for the hash secret
-    std::env::set_var("API_KEY_HASH_SECRET", "test-secret-for-coverage");
-
     let result = build_api_key_auth(&config, &repo, &registry);
-
-    std::env::remove_var("API_KEY_HASH_SECRET");
 
     assert!(result.is_ok());
     let (auth_api, manage_keys) = result.unwrap();
