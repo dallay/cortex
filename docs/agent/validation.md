@@ -146,28 +146,27 @@ denials and fresh-process behavior.
 
 ### 2026-10-09 follow-up — approval numbering and `/compact`
 
-The local acceptance session surfaced an approval UX gap: when the same tool
-triggers a second approval in the same turn, the terminal printed the new diff
-and asked `Approve once? [y/N]` again without indicating that the new request
-was *different* from the first. The terminal policy now numbers each approval
-in a turn and adds a `different from #N-1` hint on repeats, plus a single-line
-`Action:` / `Effect:` header above the preview. The full diff is still
-printed. The CLI also accepts `/compact` (with `/summarize` as a deprecated
-alias) to trigger the same real-model summarization the conservative
-byte-budget threshold would call, with explicit confirmation through the same
-`Input` reader that handles approvals. The loop exposes a new public method
-`StandardLoop::compact(session, sink, cancel)` that mirrors the summary branch
-of `context()` exactly: same prompt, same `max_tokens = 1024`, same
-`Event::Compacted` emission, same SQLite save. Manual acceptance of the new
-approval header and `/compact` flow is still pending a real terminal session;
-the `compact_command_skips_when_session_has_no_complete_turns` test in
-`apps/agent/tests/cli.rs` exercises the no-op path with the mock provider.
+The local acceptance session surfaced an approval UX gap: a second approval in
+a turn did not indicate its position in the sequence. The terminal policy now
+numbers each approval and prints single-line `Action:` / `Effect:` headers
+above the full preview. It does not claim a later request is different unless
+that property is actually established. The CLI accepts `/compact` (with
+`/summarize` as an alias) with explicit confirmation. Manual compaction selects
+the latest complete finalized turn; automatic compaction preserves the latest
+complete turn while trimming older history. Both share the same summary
+request, budget/result validation, persistence, and event-emission helper.
+The command calls the registered loop, reuses the `Output` event sink, and
+propagates Ctrl+C cancellation.
 
-Workspace checks for this iteration: `cargo fmt --check`,
-`cargo clippy --workspace --all-targets -- -D warnings` (one pre-existing
-dead-code warning on `Policy::turn_count` that is exercised by tests and is
-left visible for external introspection),
-`cargo test -p agent-runtime --test transports` (6 passed),
-`cargo test -p agent-runtime --test coding_workflow` (27 passed),
-`cargo test -p cortex-agent --test cli` (3 passed), Markdown lint (0 issues),
-`git diff --check`, and focused Semgrep (no findings).
+Regression coverage now includes runtime compaction across 1, 2, and 3
+complete turns with tool-call/result groups, cancellation without persisting a
+summary, exact approval header text for repeated identical actions, and PTY
+integration tests for accepted/declined `/compact` confirmation in JSON mode.
+These use the mock provider and do not replace manual terminal acceptance of
+repeated approvals or real-model compaction; both remain pending.
+
+Focal checks: `cargo fmt --check`; runtime `stream_persistence` (4 passed),
+`coding_workflow` (27 passed), `transports` (6 passed); CLI unit tests (7 passed)
+and CLI integration tests (4 passed); `cargo clippy -p cortex-agent
+-p agent-runtime --all-targets -- -D warnings`; focused Markdown lint (0 issues);
+`git diff --check`.

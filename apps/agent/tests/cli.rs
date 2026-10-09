@@ -83,9 +83,6 @@ fn invalid_runtime_config_fails_before_database_creation() {
 
 #[test]
 fn run_mode_forwards_compact_as_a_regular_prompt() {
-    // `/compact` is only a chat command. In one-shot `run` mode it is
-    // forwarded to the model as ordinary prompt text, without prompting
-    // for confirmation or invoking compaction.
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let db = data.path().join("sessions.db");
@@ -98,13 +95,49 @@ fn run_mode_forwards_compact_as_a_regular_prompt() {
         .arg("/compact")
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let combined = format!("{stdout}\n{stderr}");
     assert!(output.status.success());
+    assert!(stdout.contains("Offline mock: /compact"), "got: {stdout}");
+}
+
+fn run_chat_with_pty(workspace: &std::path::Path, db: &std::path::Path, input: &str) -> String {
+    let child = Command::new("expect")
+        .args(["-c"])
+        .arg(format!(
+            "set timeout 10; spawn {} --provider mock --workspace {} --db {} --json chat; expect \"agent> \"; send {:?}; expect {{agent> }}; send \"/compact\\r\"; expect \"Compact session now?\"; send {:?}; expect \"agent> \"; send \"/quit\\r\"; expect eof",
+            env!("CARGO_BIN_EXE_agent"),
+            workspace.display(),
+            db.display(),
+            "first completed turn\r",
+            input
+        ))
+        .output()
+        .expect("expect PTY helper must start");
     assert!(
-        combined.contains("Offline mock: /compact"),
-        "got: {combined}"
+        child.status.success(),
+        "expect PTY transcript: {}",
+        String::from_utf8_lossy(&child.stdout)
     );
-    assert!(!combined.contains("Compact session now?"));
+    String::from_utf8_lossy(&child.stdout).into_owned()
+}
+
+#[test]
+fn chat_compact_emits_ndjson_event_after_confirmation() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let transcript = run_chat_with_pty(workspace.path(), &data.path().join("sessions.db"), "y\r");
+    assert!(
+        transcript.contains("\"type\":\"compacted\""),
+        "{transcript}"
+    );
+    assert!(transcript.contains("\"through\":2"), "{transcript}");
+}
+
+#[test]
+fn chat_compact_decline_emits_no_compacted_event() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let transcript = run_chat_with_pty(workspace.path(), &data.path().join("sessions.db"), "n\r");
+    assert!(transcript.contains("Compaction skipped."));
+    assert!(!transcript.contains("\"type\":\"compacted\""));
 }

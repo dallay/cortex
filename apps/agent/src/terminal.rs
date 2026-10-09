@@ -72,17 +72,7 @@ impl ApprovalPolicy for Policy {
             *guard += 1;
             *guard
         };
-        let suffix = if n > 1 {
-            format!(", different from #{}", n - 1)
-        } else {
-            String::new()
-        };
-        eprintln!(
-            "\nApproval for {} (request #{}{} this turn):",
-            safe(&request.action),
-            n,
-            suffix
-        );
+        eprintln!("\n{}", approval_header(&request.action, n));
         eprintln!("  Action: {}", safe(&request.action));
         if let Some(effect) = effect_line(&request.preview) {
             eprintln!("  Effect: {}", effect);
@@ -132,6 +122,14 @@ impl EventSink for Output {
         }
     }
 }
+fn approval_header(action: &str, number: u64) -> String {
+    format!(
+        "Approval for {} (request #{} this turn):",
+        safe(action),
+        number
+    )
+}
+
 /// Derive a single short `Effect:` line from the first non-empty line of
 /// the preview when it starts with a known prefix. Conservative by design:
 /// returning `None` is always safe (the header omits the `Effect:` line).
@@ -152,13 +150,13 @@ fn effect_line(preview: &str) -> Option<String> {
             return Some(trimmed.to_string());
         }
         if let Some(rest) = trimmed.strip_prefix("Server:") {
-            return Some(format!("start MCP server{}", rest.trim()));
+            return Some(format!("start MCP server {}", rest.trim()));
         }
         if let Some(rest) = trimmed.strip_prefix("Server/action:") {
-            return Some(format!("call MCP tool{}", rest.trim()));
+            return Some(format!("call MCP tool {}", rest.trim()));
         }
         if let Some(rest) = trimmed.strip_prefix("MCP tool:") {
-            return Some(format!("call MCP tool{}", rest.trim()));
+            return Some(format!("call MCP tool {}", rest.trim()));
         }
         if let Some(rest) = trimmed.strip_prefix("--- ") {
             let target = rest.split_whitespace().next().unwrap_or("");
@@ -185,7 +183,16 @@ fn safe(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::effect_line;
+    use super::{approval_header, effect_line};
+
+    #[test]
+    fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {
+        let first = approval_header("native.shell", 1);
+        let second = approval_header("native.shell", 2);
+        assert_eq!(first, "Approval for native.shell (request #1 this turn):");
+        assert_eq!(second, "Approval for native.shell (request #2 this turn):");
+        assert!(!second.contains("different"));
+    }
 
     #[test]
     fn effect_line_for_shell_preview() {
@@ -216,8 +223,7 @@ mod tests {
     fn effect_line_for_mcp_start() {
         let preview = "Server: fixture (trusted local process; startup may have external side effects)\nCommand: /usr/bin/mcp-server";
         let line = effect_line(preview).expect("MCP start preview should produce an effect line");
-        assert!(line.starts_with("start MCP server"));
-        assert!(line.contains("fixture"));
+        assert_eq!(line, "start MCP server fixture (trusted local process; startup may have external side effects)");
     }
 
     #[test]
@@ -225,7 +231,7 @@ mod tests {
         let preview =
             "Server/action: fixture\nTool: echo\nArguments (sent to the configured MCP server; external effects depend on that server):\n{}";
         let line = effect_line(preview).expect("MCP call preview should produce an effect line");
-        assert!(line.starts_with("call MCP tool"));
+        assert_eq!(line, "call MCP tool fixture");
     }
 
     #[test]

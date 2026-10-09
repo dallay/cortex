@@ -27,9 +27,10 @@ though the binary does not use it directly.
 
 **`cargo test -p agent-runtime --test coding_workflow`**: ✅ 27 passed / 0 failed.
 
-**`cargo test -p cortex-agent --test cli`**: ✅ 3 passed / 0 failed (was 2; the
-new `compact_command_skips_when_session_has_no_complete_turns` test is the
-additive case).
+**`cargo test -p cortex-agent --test cli`**: the original change added one
+one-shot `run` forwarding test. The later review-fix iteration adds CLI coverage
+for non-interactive chat rejection; accepted/declined interactive confirmation
+is not exercised by this report.
 
 **`cargo test -p cortex-agent` (unit tests inside `apps/agent`)**:
 ✅ 6 passed / 0 failed (the six `effect_line_for_*` cases added to
@@ -45,18 +46,19 @@ additive case).
 
 | Requirement                        | Scenario                                                                 | Test                                                                    | Result       |
 |------------------------------------|--------------------------------------------------------------------------|-------------------------------------------------------------------------|--------------|
-| R1 numbered approval prompts        | Scenario 1 — single approval                                              | unit `effect_line_for_*`; existing `coding_workflow` keep passing         | ✅ COMPLIANT |
-| R1 numbered approval prompts        | Scenario 2 — denied then reformulated retry                               | `repeat_approval_in_same_turn_adds_different_from_line` planned          | ⏳ DEFERRED   |
-| R2 per-turn counter lifecycle        | Counter resets at the start of each turn                                 | `reset_turn` called from CLI; counter exposed via `turn_count`             | ✅ COMPLIANT |
-| R3 `Effect:` line derivation         | Shell, edit, create, MCP start, MCP call                                 | `effect_line_for_*` unit tests                                           | ✅ COMPLIANT |
-| R4 `/compact` command in chat        | Scenarios 3 & 4 — accepted / declined                                     | `compact_command_summarizes_when_accepted` and `compact_command_skips_when_declined` planned | ⏳ DEFERRED (interactive PTY not available in CI) |
-| R5 reuse existing summarization      | Manual trigger uses the same prompt, `max_tokens`, validation, and `Event::Compacted` | `StandardLoop::compact` mirrors the summary branch of `context`           | ✅ COMPLIANT |
-| R6 approval state on denial         | Existing denied-edit and denied-shell tests                              | `denied_edit_does_not_modify_the_file` etc.                              | ✅ COMPLIANT |
-| R7 backwards compatibility          | No public API of `agent-core` / `agent-runtime` changes                  | Additive `StandardLoop::compact`; local `Policy::reset_turn` / `turn_count` | ✅ COMPLIANT |
+| R1 numbered approval prompts | Scenario 1 — single approval | No approval-header-specific test in this report | ⏳ DEFERRED |
+| R1 numbered approval prompts | Scenario 2 — repeated approval | No approval-header-specific test in this report | ⏳ DEFERRED |
+| R2 per-turn counter lifecycle | Counter resets at the start of each turn | Static call-site only; no lifecycle test in this report | ⚠ PARTIAL |
+| R3 `Effect:` line derivation | Shell, edit, create, MCP start, MCP call | `effect_line_for_*` unit tests | ✅ COMPLIANT |
+| R4 `/compact` command in chat | Accepted / declined | Non-TTY rejection is tested; accepted/declined chat confirmation was not exercised | ⚠ FOLLOW-UP |
+| R5 shared summarization | Manual and automatic compaction share summary helper | Runtime compaction + automatic flow tests | ✅ COMPLIANT |
+| R6 approval state on denial | Existing denied-edit and denied-shell tests | Existing `coding_workflow` regression cases | ✅ COMPLIANT |
+| R7 backwards compatibility | Additive trait method with default unsupported result | Existing implementors compile in workspace checks | ✅ COMPLIANT |
 
-**Compliance summary**: 5/7 scenarios compliant in CI; 2/7 are interactive
-acceptance scenarios that require a real terminal. They are explicitly
-called out in the `RPI` task and the `validation.md` follow-up note.
+**Compliance summary**: The original report did not demonstrate approval numbering or
+interactive command acceptance. Later review-fix tests cover runtime turn selection,
+cancellation, and CLI chat behavior where a PTY is available; real terminal plus
+real-model acceptance remains pending the author.
 
 ---
 
@@ -64,7 +66,7 @@ called out in the `RPI` task and the `validation.md` follow-up note.
 
 | Requirement                                | Status         | Notes                                                                                                       |
 |--------------------------------------------|----------------|--------------------------------------------------------------------------------------------------------------|
-| R1 numbered header                          | ✅ Implemented | `Policy::approve` increments `turn_count` and renders `(request #N this turn[, different from #<N-1>])` |
+| R1 numbered header                          | ✅ Implemented | `Policy::approve` increments `turn_count` and renders `(request #N this turn)` without unverified difference claims |
 | R2 per-turn reset                           | ✅ Implemented | `apps/agent/src/main.rs` calls `policy.reset_turn()` in `Run` and at the top of each `chat` iteration        |
 | R3 `Effect:` derivation                     | ✅ Implemented | `effect_line()` helper in `apps/agent/src/terminal.rs`; six unit tests cover prefixes                       |
 | R4 `/compact` command                       | ✅ Implemented | `chat` loop intercepts `/compact` and `/summarize`; `run_compact` reads confirmation, calls `StandardLoop::compact` |
@@ -78,7 +80,7 @@ called out in the `RPI` task and the `validation.md` follow-up note.
 
 | Decision                                                | Followed?   | Notes                                                                                          |
 |---------------------------------------------------------|-------------|-------------------------------------------------------------------------------------------------|
-| Header shape: `Approval for <action> (request #N this turn[, different from #<N-1>]):` | ✅ Yes | Single `Action:` line and a conditional `Effect:` line above the preview; prompt reworded     |
+| Header shape: `Approval for <action> (request #N this turn):` | ✅ Yes | Single `Action:` line and a conditional `Effect:` line above the preview; prompt reworded     |
 | Counter held in `Mutex<u64>`                              | ✅ Yes       | Brief critical section, no async lock needed                                                   |
 | `/compact` intercept before `run(...)`                     | ✅ Yes       | `chat` only; `Run` forwards the literal as a regular prompt                                     |
 | `StandardLoop::compact` reuses the summary branch prompt | ✅ Yes       | String literal lives once; both call sites use the same prompt                                  |
@@ -110,11 +112,11 @@ called out in the `RPI` task and the `validation.md` follow-up note.
 
 ## Verdict
 
-**PASS WITH WARNINGS**
+PASS WITH WARNINGS — historical report, corrected during PR #305 review fixes
 
-All five phases of the change are implemented and the deterministic tests
-pass. The remaining gaps are interactive acceptance scenarios that require a
-real terminal session with a model, exactly the same gap that the local Ollama
-record in `validation.md` already covers for the prior acceptance iteration.
-
-The change is ready to archive.
+This report records the original implementation verification, not a claim that
+the missing interactive acceptance scenarios were tested. In particular, the
+previous report text incorrectly referred to a non-existent CLI test and
+planned tests as though they were evidence. Later review-fix verification is
+recorded in `.agents/rpi/plan/tasks/dallay-631-pr305-review-fixes.md` and
+`docs/agent/validation.md`; local TUI plus real-model acceptance remains open.

@@ -41,23 +41,23 @@ and lack of sandboxing. Native effect denial must occur before mutation.
 The terminal's exact action grants last only for the current invocation.
 
 The terminal policy numbers each approval within a turn. The header reads
-`Approval for <action> (request #N this turn[, different from #<N-1>]):`,
-followed by a single `Action: <action>` line and, when the preview starts with a
-known prefix, a single `Effect: <one-line summary>` line above the full
-preview. The counter resets to 0 at the start of each new turn so each turn's
-approvals number from #1 again. The prompt text is
+`Approval for <action> (request #N this turn):`, followed by a single
+`Action: <action>` line and, when the preview starts with a known prefix, a
+single `Effect: <one-line summary>` line above the full preview. The counter
+resets to 0 at the start of each new turn so each turn's first approval is
+numbered one. The prompt text is
 `Approve this exact change? [y/N]`.
 
 The chat loop also accepts `/compact` (with `/summarize` as a deprecated
-alias) to trigger the same real-model summarization the conservative
-byte-budget threshold would call. The CLI prints
-`Compact session now? Older history will be summarized; originals stay in the
-database. [y/N]` and reuses the same `Input` reader used for approvals; on
-`y` it calls `StandardLoop::compact(session, sink, cancel)`, which mirrors the
-summary branch of the loop's `context()` method (same prompt, same
-`max_tokens = 1024`, same `Event::Compacted` emission, same SQLite save) and
-returns the loop to the prompt. The automatic path is unchanged: the
-threshold still triggers compaction without user action.
+alias) to compact all complete finalized turns in the current session. The CLI
+prints `Compact session now? Older history will be summarized; originals stay
+in the database. [y/N]` and reuses the same `Input` reader used for approvals.
+After confirmation it calls the registered loop's `compact(session, output,
+cancel)` capability, so Ctrl+C reaches the active summary request and JSON mode
+receives the persisted `Event::Compacted` event. Manual and automatic paths use
+the same summary request, budget validation, result validation, persistence,
+and event-emission helper; automatic compaction still preserves the newest
+complete turn when trimming to fit the configured context.
 
 ## HTTP and event contract
 
