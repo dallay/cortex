@@ -153,13 +153,17 @@ impl ApiKeyRepositoryPort for FakeApiKeyRepo {
     }
 }
 
-/// User repo where admin exists with NO password set — simulates fresh install.
-struct UninitializedUserRepo {
+/// Configurable fake user repo — `fresh()` simulates a fresh install where the
+/// admin exists with NO password set, `initialized()` simulates a system where
+/// the admin already has a password. Single impl block replaces the former
+/// `UninitializedUserRepo` / `InitializedUserRepo` twins flagged by duplication
+/// detection. No behavior changes.
+struct FakeUserRepo {
     admin: Mutex<User>,
 }
 
-impl UninitializedUserRepo {
-    fn new() -> Self {
+impl FakeUserRepo {
+    fn fresh() -> Self {
         Self {
             admin: Mutex::new(User {
                 id: UserId::new(),
@@ -170,10 +174,22 @@ impl UninitializedUserRepo {
             }),
         }
     }
+
+    fn initialized() -> Self {
+        Self {
+            admin: Mutex::new(User {
+                id: UserId::new(),
+                username: "admin".to_string(),
+                password_hash: Some("$argon2id$already_set".to_string()),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            }),
+        }
+    }
 }
 
 #[async_trait]
-impl UserRepositoryPort for UninitializedUserRepo {
+impl UserRepositoryPort for FakeUserRepo {
     async fn find_by_username(&self, _: &str) -> Result<Option<User>, UserRepositoryError> {
         Ok(Some(self.admin.lock().unwrap().clone()))
     }
@@ -198,44 +214,6 @@ impl UserRepositoryPort for UninitializedUserRepo {
         hash: &PasswordHash,
     ) -> Result<(), UserRepositoryError> {
         self.admin.lock().unwrap().password_hash = Some(hash.0.clone());
-        Ok(())
-    }
-}
-
-/// User repo where admin already has a password — simulates initialized system.
-struct InitializedUserRepo;
-
-#[async_trait]
-impl UserRepositoryPort for InitializedUserRepo {
-    async fn find_by_username(&self, _: &str) -> Result<Option<User>, UserRepositoryError> {
-        Ok(Some(User {
-            id: UserId::new(),
-            username: "admin".to_string(),
-            password_hash: Some("$argon2id$already_set".to_string()),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        }))
-    }
-    async fn find_by_id(&self, _: &UserId) -> Result<Option<User>, UserRepositoryError> {
-        Ok(None)
-    }
-    async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
-        Ok(true)
-    }
-    async fn create(&self, user: &NewUser) -> Result<User, UserRepositoryError> {
-        Ok(User {
-            id: UserId::new(),
-            username: user.username.clone(),
-            password_hash: user.password_hash.clone(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        })
-    }
-    async fn update_password_hash(
-        &self,
-        _: &UserId,
-        _: &PasswordHash,
-    ) -> Result<(), UserRepositoryError> {
         Ok(())
     }
 }
@@ -276,7 +254,7 @@ fn make_bootstrap_usecases(
 #[tokio::test]
 async fn status_returns_not_initialized_on_fresh_system() {
     let usecases = make_bootstrap_usecases(
-        Arc::new(UninitializedUserRepo::new()),
+        Arc::new(FakeUserRepo::fresh()),
         Some(TEST_SETUP_TOKEN.to_string()),
     );
     let router = bootstrap_test_router(usecases);
@@ -300,7 +278,7 @@ async fn status_returns_not_initialized_on_fresh_system() {
 
 #[tokio::test]
 async fn status_returns_initialized_on_ready_system() {
-    let usecases = make_bootstrap_usecases(Arc::new(InitializedUserRepo), None);
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::initialized()), None);
     let router = bootstrap_test_router(usecases);
 
     let req = Request::builder()
@@ -325,17 +303,17 @@ async fn status_never_exposes_setup_token_in_response_body() {
     for (label, user_repo, _setup_token) in [
         (
             "fresh system with active token",
-            Arc::new(UninitializedUserRepo::new()) as Arc<dyn UserRepositoryPort>,
+            Arc::new(FakeUserRepo::fresh()) as Arc<dyn UserRepositoryPort>,
             Some(TEST_SETUP_TOKEN.to_string()),
         ),
         (
             "initialized system",
-            Arc::new(InitializedUserRepo) as Arc<dyn UserRepositoryPort>,
+            Arc::new(FakeUserRepo::initialized()) as Arc<dyn UserRepositoryPort>,
             None::<String>,
         ),
         (
             "fresh system with no token in memory",
-            Arc::new(UninitializedUserRepo::new()),
+            Arc::new(FakeUserRepo::fresh()),
             None,
         ),
     ] {
@@ -361,7 +339,7 @@ async fn status_never_exposes_setup_token_in_response_body() {
 #[tokio::test]
 async fn setup_rejects_wrong_token_with_401() {
     let usecases = make_bootstrap_usecases(
-        Arc::new(UninitializedUserRepo::new()),
+        Arc::new(FakeUserRepo::fresh()),
         Some(TEST_SETUP_TOKEN.to_string()),
     );
     let router = bootstrap_test_router(usecases);
@@ -388,7 +366,7 @@ async fn setup_rejects_wrong_token_with_401() {
 #[tokio::test]
 async fn setup_rejects_already_initialized_system_with_409() {
     let usecases = make_bootstrap_usecases(
-        Arc::new(InitializedUserRepo),
+        Arc::new(FakeUserRepo::initialized()),
         Some(TEST_SETUP_TOKEN.to_string()),
     );
     let router = bootstrap_test_router(usecases);
@@ -417,7 +395,7 @@ async fn setup_rejects_missing_token_in_memory_with_503() {
     // If the server has no active setup token in memory, the endpoint must return
     // 503 SERVICE_UNAVAILABLE — not 401 UNAUTHORIZED.
     let usecases = make_bootstrap_usecases(
-        Arc::new(UninitializedUserRepo::new()),
+        Arc::new(FakeUserRepo::fresh()),
         None, // no token in memory
     );
     let router = bootstrap_test_router(usecases);
@@ -444,7 +422,7 @@ async fn setup_rejects_missing_token_in_memory_with_503() {
 #[tokio::test]
 async fn setup_succeeds_with_correct_token_and_returns_api_key() {
     let usecases = make_bootstrap_usecases(
-        Arc::new(UninitializedUserRepo::new()),
+        Arc::new(FakeUserRepo::fresh()),
         Some(TEST_SETUP_TOKEN.to_string()),
     );
     let router = bootstrap_test_router(usecases);
