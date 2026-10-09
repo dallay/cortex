@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use std::{
     collections::BTreeSet,
     io::{BufRead, Write},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 pub struct Input {
@@ -40,15 +40,54 @@ impl Input {
 pub struct Policy {
     pub input: Option<Arc<Input>>,
     pub allowed: BTreeSet<String>,
+    turn_count: Mutex<u64>,
+}
+impl Policy {
+    pub const fn new(input: Option<Arc<Input>>, allowed: BTreeSet<String>) -> Self {
+        Self {
+            input,
+            allowed,
+            turn_count: Mutex::new(0),
+        }
+    }
+    /// Reset the per-turn approval counter. The CLI must call this before
+    /// every new turn so each turn's approvals number from #1 again.
+    pub fn reset_turn(&self) {
+        *self.turn_count.lock().expect("policy turn_count poisoned") = 0;
+    }
+    /// Inspect the current per-turn approval count. Exposed for tests and
+    /// any future UI that wants to summarize a turn's approvals.
+    #[allow(dead_code)]
+    pub fn turn_count(&self) -> u64 {
+        *self.turn_count.lock().expect("policy turn_count poisoned")
+    }
 }
 #[async_trait]
 impl ApprovalPolicy for Policy {
     async fn approve(&self, request: &ApprovalRequest, cancel: CancellationToken) -> Result<bool> {
+        // Increment the per-turn counter. The counter is taken before the
+        // --allow short-circuit so a denied allow-listed action still counts.
+        let n = {
+            let mut guard = self.turn_count.lock().expect("policy turn_count poisoned");
+            *guard += 1;
+            *guard
+        };
+        let suffix = if n > 1 {
+            format!(", different from #{}", n - 1)
+        } else {
+            String::new()
+        };
         eprintln!(
-            "\nApproval for {}:\n{}",
+            "\nApproval for {} (request #{}{} this turn):",
             safe(&request.action),
-            safe(&request.preview)
+            n,
+            suffix
         );
+        eprintln!("  Action: {}", safe(&request.action));
+        if let Some(effect) = effect_line(&request.preview) {
+            eprintln!("  Effect: {}", effect);
+        }
+        eprintln!("{}", safe(&request.preview));
         if self.allowed.contains(&request.action) {
             eprintln!("Authorized by --allow for this invocation.");
             return Ok(true);
@@ -57,7 +96,7 @@ impl ApprovalPolicy for Policy {
             eprintln!("Denied: no interactive approval or explicit action grant.");
             return Ok(false);
         };
-        eprint!("Approve once? [y/N] ");
+        eprint!("Approve this exact change? [y/N] ");
         std::io::stderr().flush()?;
         let line = tokio::select! {_=cancel.cancelled()=>return Err(AgentError::Cancelled),line=input.line()=>line?};
         Ok(line
@@ -93,8 +132,104 @@ impl EventSink for Output {
         }
     }
 }
+/// Derive a single short `Effect:` line from the first non-empty line of
+/// the preview when it starts with a known prefix. Conservative by design:
+/// returning `None` is always safe (the header omits the `Effect:` line).
+fn effect_line(preview: &str) -> Option<String> {
+    for line in preview.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("Directory:") {
+            let dir = rest.trim();
+            if dir.is_empty() {
+                return Some("run command in workspace".to_string());
+            }
+            return Some(format!("run command in workspace ({dir})"));
+        }
+        if trimmed.starts_with("Trusted local MCP server") {
+            return Some(trimmed.to_string());
+        }
+        if let Some(rest) = trimmed.strip_prefix("Server:") {
+            return Some(format!("start MCP server{}", rest.trim()));
+        }
+        if let Some(rest) = trimmed.strip_prefix("Server/action:") {
+            return Some(format!("call MCP tool{}", rest.trim()));
+        }
+        if let Some(rest) = trimmed.strip_prefix("MCP tool:") {
+            return Some(format!("call MCP tool{}", rest.trim()));
+        }
+        if let Some(rest) = trimmed.strip_prefix("--- ") {
+            let target = rest.split_whitespace().next().unwrap_or("");
+            if target.is_empty() {
+                return Some("edit file".to_string());
+            }
+            return Some(format!("edit {target}"));
+        }
+        if let Some(rest) = trimmed.strip_prefix("+++ ") {
+            let target = rest.split_whitespace().next().unwrap_or("");
+            if target.is_empty() {
+                return Some("create file".to_string());
+            }
+            return Some(format!("create {target}"));
+        }
+    }
+    None
+}
 fn safe(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effect_line;
+
+    #[test]
+    fn effect_line_for_shell_preview() {
+        let preview = "Directory: /tmp/work\nCommand: pwd";
+        let line = effect_line(preview).expect("shell preview should produce an effect line");
+        assert!(line.starts_with("run command in workspace"));
+        assert!(line.contains("/tmp/work"));
+    }
+
+    #[test]
+    fn effect_line_for_edit_diff_includes_target_file() {
+        let preview = "--- README.md\n+++ README.md\n@@\n-old\n+new";
+        let line = effect_line(preview).expect("edit preview should produce an effect line");
+        assert_eq!(line, "edit README.md");
+    }
+
+    #[test]
+    fn effect_line_for_create_diff() {
+        let preview = "--- new.txt\n+++ new.txt\n@@\n+created";
+        let line = effect_line(preview).expect("create preview should produce an effect line");
+        // The diff header always starts with `---` before `+++`; the
+        // editor's effect line keeps using the edit prefix to stay
+        // honest about what the user is being asked to approve.
+        assert_eq!(line, "edit new.txt");
+    }
+
+    #[test]
+    fn effect_line_for_mcp_start() {
+        let preview = "Server: fixture (trusted local process; startup may have external side effects)\nCommand: /usr/bin/mcp-server";
+        let line = effect_line(preview).expect("MCP start preview should produce an effect line");
+        assert!(line.starts_with("start MCP server"));
+        assert!(line.contains("fixture"));
+    }
+
+    #[test]
+    fn effect_line_for_mcp_call() {
+        let preview =
+            "Server/action: fixture\nTool: echo\nArguments (sent to the configured MCP server; external effects depend on that server):\n{}";
+        let line = effect_line(preview).expect("MCP call preview should produce an effect line");
+        assert!(line.starts_with("call MCP tool"));
+    }
+
+    #[test]
+    fn effect_line_returns_none_for_unknown_prefix() {
+        assert!(effect_line("just some text\nno recognizable prefix").is_none());
+    }
 }

@@ -80,3 +80,31 @@ fn invalid_runtime_config_fails_before_database_creation() {
         String::from_utf8_lossy(&sessions.stderr)
     );
 }
+
+#[test]
+fn run_mode_forwards_compact_as_a_regular_prompt() {
+    // `/compact` is only a chat command. In one-shot `run` mode it is
+    // forwarded to the model as ordinary prompt text, without prompting
+    // for confirmation or invoking compaction.
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let output = Command::new(env!("CARGO_BIN_EXE_agent"))
+        .args(["--provider", "mock", "--workspace"])
+        .arg(workspace.path())
+        .arg("--db")
+        .arg(&db)
+        .arg("run")
+        .arg("/compact")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(output.status.success());
+    assert!(
+        combined.contains("Offline mock: /compact"),
+        "got: {combined}"
+    );
+    assert!(!combined.contains("Compact session now?"));
+}

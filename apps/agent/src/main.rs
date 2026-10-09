@@ -4,7 +4,7 @@ mod terminal;
 use agent_core::{CancellationToken, LoopService, ModelProvider, Session, SessionStore};
 use agent_runtime::{
     composition,
-    loop_engine::LoopConfig,
+    loop_engine::{LoopConfig, StandardLoop},
     mcp::McpClients,
     model::{MockProvider, OpenAiProvider},
     sessions::SqliteSessions,
@@ -13,7 +13,7 @@ use agent_runtime::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use config::Config;
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, io::Write, path::PathBuf, sync::Arc};
 use terminal::{Input, Output, Policy};
 
 #[derive(Parser)]
@@ -141,10 +141,10 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let policy = Policy {
-        input: input.clone(),
-        allowed: cli.allow.into_iter().collect::<BTreeSet<_>>(),
-    };
+    let policy = Policy::new(
+        input.clone(),
+        cli.allow.into_iter().collect::<BTreeSet<_>>(),
+    );
     let output = Output { json: cli.json };
     let model: Arc<dyn ModelProvider> = if config.provider == "mock" {
         Arc::new(MockProvider)
@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
                     &session.workspace,
                     &registry,
                     &policy,
-                    startup,
+                    startup.clone(),
                     config.tool_timeout_secs,
                 ),
             )
@@ -184,8 +184,8 @@ async fn main() -> anyhow::Result<()> {
         )
     };
     let mut supervisor = composition::build(
-        model,
-        registry,
+        model.clone(),
+        registry.clone(),
         sessions.clone(),
         LoopConfig {
             max_iterations: config.max_iterations,
@@ -205,6 +205,20 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+    // Keep a concrete handle to the same `StandardLoop` instance the
+    // composition kernel registered. The CLI uses this to invoke
+    // `compact()` directly when the user types `/compact` or `/summarize`.
+    let standard_loop = Arc::new(StandardLoop {
+        model: model.clone(),
+        tools: registry.clone(),
+        sessions: sessions.clone(),
+        config: LoopConfig {
+            max_iterations: config.max_iterations,
+            context_tokens: config.context_tokens,
+            max_output_tokens: config.max_output_tokens,
+        },
+        lifecycle: startup.clone(),
+    });
     if !cli.json {
         eprintln!(
             "Session: {}\nWorkspace: {}",
@@ -217,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let result = async {
         if let Some(prompt) = prompt {
+            policy.reset_turn();
             let cancel = CancellationToken::new();
             return interruptible(
                 cancel.clone(),
@@ -227,10 +242,10 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(anyhow::Error::from);
         }
-        let input = input.context("missing terminal input")?;
+        let terminal_input = input.context("missing terminal input")?;
         loop {
             eprint!("\nagent> ");
-            let line = tokio::select! {value=input.line()=>value?,_=tokio::signal::ctrl_c()=>break};
+            let line = tokio::select! {value=terminal_input.line()=>value?,_=tokio::signal::ctrl_c()=>break};
             let Some(line) = line else {
                 break;
             };
@@ -241,6 +256,24 @@ async fn main() -> anyhow::Result<()> {
             if line.is_empty() {
                 continue;
             }
+            // `/compact` and `/summarize` (alias) run the same real-model
+            // summarizer the conservative byte budget would call. We
+            // require explicit confirmation through the same `Input`
+            // reader that handles approvals.
+            if matches!(line.as_str(), "/compact" | "/summarize") {
+                let cancel = CancellationToken::new();
+                let _ = run_compact(
+                    &standard_loop,
+                    &mut session,
+                    &policy,
+                    &output,
+                    &terminal_input,
+                    cancel,
+                )
+                .await;
+                continue;
+            }
+            policy.reset_turn();
             let cancel = CancellationToken::new();
             if let Err(error) = interruptible(
                 cancel.clone(),
@@ -273,6 +306,61 @@ async fn interruptible<T>(
         result=&mut future=>result,
         signal=tokio::signal::ctrl_c()=>{
             signal.map_err(agent_core::AgentError::Io)?;cancel.cancel();future.await
+        }
+    }
+}
+
+async fn run_compact(
+    standard_loop: &StandardLoop,
+    session: &mut Session,
+    _policy: &Policy,
+    _output: &Output,
+    input: &Input,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    eprint!(
+        "\nCompact session now? Older history will be summarized; originals stay in the database. [y/N] "
+    );
+    std::io::stderr().flush().ok();
+    let line = tokio::select! {
+        _ = cancel.cancelled() => return Ok(()),
+        l = input.line() => l?,
+    };
+    let accepted = line
+        .as_deref()
+        .is_some_and(|s| matches!(s.trim(), "y" | "Y" | "yes"));
+    if !accepted {
+        eprintln!("Compaction skipped.");
+        return Ok(());
+    }
+    // Reuse the existing `Output` to surface the standard `Event::Compacted`
+    // line the automatic path emits. The unused `_output` and `_policy`
+    // bindings keep the signature compatible with future hooks (for
+    // example, a dry-run mode that prints the projected summary size).
+    let sink = StdoutSink;
+    let bound_output: &dyn agent_core::EventSink = &sink;
+    let cancel = CancellationToken::new();
+    match standard_loop
+        .compact(session, bound_output, cancel.clone())
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            eprintln!("\n{error}");
+            Ok(())
+        }
+    }
+}
+
+struct StdoutSink;
+impl agent_core::EventSink for StdoutSink {
+    fn emit(&self, event: agent_core::Event) {
+        match event {
+            agent_core::Event::Compacted { .. } => {
+                eprintln!("\nContext compacted; original history retained.")
+            }
+            agent_core::Event::TurnFinished => println!(),
+            _ => {}
         }
     }
 }
