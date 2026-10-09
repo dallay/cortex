@@ -269,6 +269,330 @@ async fn newly_written_files_respect_umask_in_an_isolated_process() {
 }
 
 #[tokio::test]
+async fn read_file_bounds_large_output_on_utf8_boundary() {
+    let workspace = tempfile::tempdir().unwrap();
+    let content = format!("{}é", "x".repeat(agent_runtime::tools::MAX_OUTPUT_BYTES));
+    std::fs::write(workspace.path().join("long.txt"), content).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-long".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"long.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let output = tool.execute(action, &ctx).await.unwrap();
+    assert!(output.ends_with("[output truncated]"));
+    assert!(output.is_char_boundary(output.len()));
+    assert!(output.len() < agent_runtime::tools::MAX_OUTPUT_BYTES + 32);
+}
+
+#[tokio::test]
+async fn read_file_rejects_oversized_targets() {
+    let workspace = tempfile::tempdir().unwrap();
+    let oversized = vec![b'x'; agent_runtime::tools::MAX_FILE_BYTES as usize + 1];
+    std::fs::write(workspace.path().join("large.txt"), oversized).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-large".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"large.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(tool
+        .execute(action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("read target must be a regular file under 1 MiB"));
+}
+
+#[tokio::test]
+async fn read_file_returns_requested_line_range_and_rejects_invalid_range() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("lines.txt"), "one\ntwo\nthree\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("read_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-range".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"lines.txt","start_line":2,"end_line":2}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tool.execute(action, &ctx).await.unwrap(), "2: two");
+
+    let invalid_action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-invalid-range".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"lines.txt","start_line":3,"end_line":2}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(tool
+        .execute(invalid_action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("invalid line range"));
+}
+
+#[tokio::test]
+async fn list_and_search_tools_return_workspace_results() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("src")).unwrap();
+    std::fs::write(
+        workspace.path().join("src/main.rs"),
+        "fn main() {\n    println!(\"needle\");\n}\n",
+    )
+    .unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let list_tool = registry.get("list_files").unwrap();
+    let list_action = list_tool
+        .prepare(
+            &ToolCall {
+                id: "list".into(),
+                name: "list_files".into(),
+                arguments: json!({"path":"."}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let listing = list_tool.execute(list_action, &ctx).await.unwrap();
+    assert!(listing.contains("src/main.rs"));
+
+    let search_tool = registry.get("search_files").unwrap();
+    let search_action = search_tool
+        .prepare(
+            &ToolCall {
+                id: "search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let results = search_tool.execute(search_action, &ctx).await.unwrap();
+    assert!(results.contains("src/main.rs:2:"));
+    assert!(results.contains("needle"));
+}
+
+#[tokio::test]
+async fn list_and_search_cover_empty_and_cancelled_paths() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("match.txt"), "needle\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("search_files").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let empty_action = tool
+        .prepare(
+            &ToolCall {
+                id: "empty-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":""}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(tool
+        .execute(empty_action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("query must not be empty"));
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let cancelled_ctx = ToolContext {
+        workspace: ctx.workspace.clone(),
+        cancellation,
+    };
+    let cancelled_action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-search-loop".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        tool.execute(cancelled_action, &cancelled_ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn search_skips_oversized_files_and_limits_matches() {
+    let workspace = tempfile::tempdir().unwrap();
+    let oversized = vec![b'x'; agent_runtime::tools::MAX_FILE_BYTES as usize + 1];
+    std::fs::write(workspace.path().join("large.txt"), oversized).unwrap();
+    let mut matching_lines = String::new();
+    for index in 0..101 {
+        matching_lines.push_str(&format!("match {index}\n"));
+    }
+    std::fs::write(workspace.path().join("matches.txt"), matching_lines).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("search_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "limited-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"match"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let results = tool.execute(action, &ctx).await.unwrap();
+    assert!(results.contains("matches.txt:1: match 0"));
+    assert!(results.contains("[100-match limit]"));
+    assert!(!results.contains("large.txt"));
+    assert!(!results.contains("match 100"));
+}
+
+#[tokio::test]
+async fn list_files_reports_traversal_errors_and_file_limit() {
+    let workspace = tempfile::tempdir().unwrap();
+    for index in 0..101 {
+        std::fs::write(workspace.path().join(format!("file-{index:03}.txt")), "x").unwrap();
+    }
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("list_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "list-limited".into(),
+                name: "list_files".into(),
+                arguments: json!({"path":"."}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let listing = tool.execute(action, &ctx).await.unwrap();
+    assert!(listing.contains("file-000.txt"));
+    assert!(listing.contains("[100-file limit; select a narrower path]"));
+    assert!(!listing.contains("file-100.txt"));
+}
+
+#[tokio::test]
+async fn cancelled_execution_is_rejected_before_dispatch() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("existing.txt"), "present").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation,
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-execution".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"existing.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        tool.execute(action, &ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn cancelled_search_is_rejected_before_scanning_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("match.txt"), "needle\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation,
+    };
+    let tool = registry.get("search_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        tool.execute(action, &ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
 async fn stale_diff_and_symlink_escape_are_rejected() {
     let workspace = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();

@@ -11,7 +11,8 @@ Delegated direct: atender el fallo Reliability de Sonar y reducir complejidad de
 - [x] RPI-005: Evaluar alternativa sin shell; se mantiene el wrapper porque cambiar umask sin shell requiere `unsafe`, prohibido por lint, y los argumentos del wrapper son constantes controladas por el test.
 - [x] RPI-006: Hacer asíncrono el test de subprocesses umask usando `tokio::process::Command` sin modificar el umask global del proceso de pruebas.
 - [x] RPI-007: Reducir complejidad de `NativeTool::execute` extrayendo helpers, preservando comportamiento.
-- [ ] RPI-008: Actualizar evidencia y subir los cambios a PR #299; confirmar resultado del nuevo Quality Gate.
+- [x] RPI-008: Añadir cobertura específica a las ramas nuevas de las herramientas nativas y validar pruebas locales.
+- [x] RPI-009: Ejecutar CI local completo y publicar los cambios al PR #299; queda pendiente confirmar checks remotos y estado de merge.
 
 ## Criterios de aceptación
 - Archivos nuevos respetan el umask en Unix.
