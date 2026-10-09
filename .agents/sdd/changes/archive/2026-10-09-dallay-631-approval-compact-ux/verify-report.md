@@ -30,11 +30,20 @@ though the binary does not use it directly.
 **`cargo test -p cortex-agent --test cli`**: the original change added one
 one-shot `run` forwarding test. The later review-fix iteration adds CLI coverage
 for non-interactive chat rejection; accepted/declined interactive confirmation
-is not exercised by this report.
+is not exercised by this report. After the second review-fix cycle the two
+interactive PTY tests (`chat_compact_emits_ndjson_event_after_confirmation`
+and `chat_compact_decline_emits_no_compacted_event`) are driven through a Rust
+PTY harness built on `portable-pty`, so they run on every CI job without
+relying on the `expect` binary.
 
 **`cargo test -p cortex-agent` (unit tests inside `apps/agent`)**:
 ✅ 6 passed / 0 failed (the six `effect_line_for_*` cases added to
-`apps/agent/src/terminal.rs`).
+`apps/agent/src/terminal.rs`). After the second review the binary-side test
+suite covers nine cases: the six `effect_line_for_*` cases, the
+`approval_header_numbers_repeated_identical_requests_without_claiming_difference`
+header test, the new `safe_strips_ansi_sequences_from_effect_line` sanitization
+test, and `policy_approval_counter_increments_within_a_turn_and_resets` for the
+per-turn counter lifecycle.
 
 **`pnpm exec markdownlint-cli2 docs/agent/validation.md docs/agent/implementation-specification.md docs/agent/linux-daily-use.md`**: ✅ 0 issues.
 
@@ -46,19 +55,20 @@ is not exercised by this report.
 
 | Requirement                        | Scenario                                                                 | Test                                                                    | Result       |
 |------------------------------------|--------------------------------------------------------------------------|-------------------------------------------------------------------------|--------------|
-| R1 numbered approval prompts | Scenario 1 — single approval | No approval-header-specific test in this report | ⏳ DEFERRED |
-| R1 numbered approval prompts | Scenario 2 — repeated approval | No approval-header-specific test in this report | ⏳ DEFERRED |
-| R2 per-turn counter lifecycle | Counter resets at the start of each turn | Static call-site only; no lifecycle test in this report | ⚠ PARTIAL |
+| R1 numbered approval prompts | Scenario 1 — single approval | `approval_header_numbers_repeated_identical_requests_without_claiming_difference` | ✅ COMPLIANT |
+| R1 numbered approval prompts | Scenario 2 — repeated approval | `policy_approval_counter_increments_within_a_turn_and_resets` | ✅ COMPLIANT |
+| R2 per-turn counter lifecycle | Counter resets at the start of each turn | `policy_approval_counter_increments_within_a_turn_and_resets` plus `policy.reset_turn()` call sites in `main.rs` | ✅ COMPLIANT |
 | R3 `Effect:` line derivation | Shell, edit, create, MCP start, MCP call | `effect_line_for_*` unit tests | ✅ COMPLIANT |
-| R4 `/compact` command in chat | Accepted / declined | Non-TTY rejection is tested; accepted/declined chat confirmation was not exercised | ⚠ FOLLOW-UP |
+| R4 `/compact` command in chat | Accepted / declined | `chat_compact_emits_ndjson_event_after_confirmation` and `chat_compact_decline_emits_no_compacted_event` drive the chat subcommand through a Rust PTY harness (`portable-pty`) and assert both branches. Real terminal with a real model remains a separate manual step recorded in `docs/agent/validation.md`. | ✅ COMPLIANT |
 | R5 shared summarization | Manual and automatic compaction share summary helper | Runtime compaction + automatic flow tests | ✅ COMPLIANT |
 | R6 approval state on denial | Existing denied-edit and denied-shell tests | Existing `coding_workflow` regression cases | ✅ COMPLIANT |
 | R7 backwards compatibility | Additive trait method with default unsupported result | Existing implementors compile in workspace checks | ✅ COMPLIANT |
 
-**Compliance summary**: The original report did not demonstrate approval numbering or
-interactive command acceptance. Later review-fix tests cover runtime turn selection,
-cancellation, and CLI chat behavior where a PTY is available; real terminal plus
-real-model acceptance remains pending the author.
+**Compliance summary**: After the second review cycle the report demonstrates
+approval numbering, the per-turn counter lifecycle, the `/compact` accept/decline
+chat branches, the sanitization of the `Effect:` line, and the existing runtime
+turn selection and cancellation cases. The remaining manual step is the Ctrl+C
+cancellation test with a real model, recorded in `docs/agent/validation.md`.
 
 ---
 
@@ -96,27 +106,35 @@ real-model acceptance remains pending the author.
 
 **WARNING** (should fix):
 
-- **Interactive acceptance is deferred.** The repeat-approval and accepted-`/compact`
-  scenarios require a real terminal with a model available; they were not
-  exercised in this CI run. The same setup that produced the
-  2026-10-09 local Ollama record is documented in `validation.md` and
-  remains the recommended path to close those scenarios.
+- **Interactive acceptance with a real model is still deferred.** The
+  repeat-approval and Ctrl+C-during-`/compact` scenarios require a real
+  terminal with a model available; they were not exercised in this CI run. The
+  2026-10-09 local Ollama record documents an earlier accepted-edit /
+  denied-write / `/compact` flow and is available in `docs/agent/validation.md`.
+  The pending manual step is a Ctrl+C during a live `/compact` summary.
 
 **SUGGESTION** (nice to have):
 
 - Consider a turn-end approval summary line (`Approvals: #2 (1 denied, 1 approved)`)
   once the turn completes; deferred.
 - Consider exposing `/compact --dry-run`; deferred.
+- `complete_turn_ends` in `crates/agent/runtime/src/loop_engine.rs` walks
+  `messages[from..]` for every assistant message and is O(n²) in the worst
+  case. A single pass would be cheaper; deferred because the reviewer flagged
+  it as an observation, not a blocker.
 
 ---
 
 ## Verdict
 
 PASS WITH WARNINGS — historical report, corrected during PR #305 review fixes
+and refreshed after the second review cycle.
 
 This report records the original implementation verification, not a claim that
 the missing interactive acceptance scenarios were tested. In particular, the
 previous report text incorrectly referred to a non-existent CLI test and
 planned tests as though they were evidence. Later review-fix verification is
-recorded in `.agents/rpi/plan/tasks/dallay-631-pr305-review-fixes.md` and
-`docs/agent/validation.md`; local TUI plus real-model acceptance remains open.
+recorded in `.agents/rpi/plan/tasks/dallay-631-pr305-review-fixes.md`,
+`.agents/rpi/plan/tasks/dallay-631-pr305-second-review-fixes.md`, and
+`docs/agent/validation.md`; local TUI plus real-model acceptance remains open
+for the Ctrl+C cancellation case.

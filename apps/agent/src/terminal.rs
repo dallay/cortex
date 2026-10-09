@@ -75,7 +75,11 @@ impl ApprovalPolicy for Policy {
         eprintln!("\n{}", approval_header(&request.action, n));
         eprintln!("  Action: {}", safe(&request.action));
         if let Some(effect) = effect_line(&request.preview) {
-            eprintln!("  Effect: {}", effect);
+            // `effect` is derived from the same preview as the rest of the
+            // block, so it must travel through `safe()` for consistency — a
+            // path or directory with control bytes would otherwise be printed
+            // verbatim here while the rest of the prompt is sanitized.
+            eprintln!("  Effect: {}", safe(&effect));
         }
         eprintln!("{}", safe(&request.preview));
         if self.allowed.contains(&request.action) {
@@ -183,7 +187,10 @@ fn safe(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_header, effect_line};
+    use super::{approval_header, effect_line, safe};
+    use crate::terminal::{Input, Policy};
+    use agent_core::{ApprovalPolicy, ApprovalRequest, CancellationToken};
+    use std::sync::Arc;
 
     #[test]
     fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {
@@ -237,5 +244,57 @@ mod tests {
     #[test]
     fn effect_line_returns_none_for_unknown_prefix() {
         assert!(effect_line("just some text\nno recognizable prefix").is_none());
+    }
+
+    /// RPI2-002 — the `Effect:` line must be sanitized with `safe()` exactly
+    /// like the rest of the prompt, so a malicious file path or directory
+    /// containing control bytes cannot inject terminal escapes into the
+    /// approval header.
+    #[test]
+    fn safe_strips_ansi_sequences_from_effect_line() {
+        let preview = "Directory: \x1b[31m/tmp/evil\x1b[0m\nCommand: pwd";
+        let effect = effect_line(preview).expect("shell preview should produce an effect line");
+        let sanitized = safe(&effect);
+        assert!(
+            !sanitized.contains('\x1b'),
+            "Effect line should be free of escape sequences; got: {sanitized:?}"
+        );
+        // The textual content survives (with whitespace trimmed) so the user
+        // still sees which path the action targets.
+        assert!(sanitized.contains("/tmp/evil"));
+    }
+
+    /// RPI2-003 — the per-turn approval counter must increment for each
+    /// approval within a turn and reset to 0 (i.e. the next request becomes
+    /// `#1`) when `reset_turn()` is called.
+    #[test]
+    fn policy_approval_counter_increments_within_a_turn_and_resets() {
+        let input = Some(Arc::new(Input::new()));
+        let policy = Policy::new(input, Default::default());
+        // No interactions yet — the counter starts at zero.
+        assert_eq!(policy.turn_count(), 0);
+
+        let cancel = CancellationToken::new();
+        let request = ApprovalRequest {
+            id: "first".into(),
+            action: "native.shell".into(),
+            preview: "Directory: /tmp/work\nCommand: echo hi".into(),
+        };
+        // Drive two `approve()` calls synchronously via a oneshot runtime.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime must build");
+        let first_approved = runtime.block_on(policy.approve(&request, cancel.clone()));
+        assert!(first_approved.is_ok());
+        let second_approved = runtime.block_on(policy.approve(&request, cancel));
+        assert!(second_approved.is_ok());
+        // The two calls advanced the counter to 2 within the same turn.
+        assert_eq!(policy.turn_count(), 2);
+
+        // `reset_turn()` returns the counter to 0 so the next turn starts
+        // numbering again at #1.
+        policy.reset_turn();
+        assert_eq!(policy.turn_count(), 0);
     }
 }
