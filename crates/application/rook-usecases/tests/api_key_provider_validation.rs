@@ -163,23 +163,37 @@ impl ProviderRegistryPort for FakeProviderRegistry {
     }
 }
 
-// --- Test Cases ---
+// --- Shared setup helpers (dedupe Sonar-flagged copy-paste) ---
 
-#[tokio::test]
-async fn create_with_unknown_provider_filters_stale_providers() {
+/// Build a `ManageApiKeys` usecase backed by in-memory fakes.
+/// `providers` are the provider IDs the fake registry advertises.
+fn test_usecase(providers: Vec<&str>) -> ManageApiKeys {
     let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
-    let usecase = ManageApiKeys::new(repo, "test-secret", registry);
+    let registry = Arc::new(FakeProviderRegistry::with_providers(providers));
+    ManageApiKeys::new(repo, "test-secret", registry)
+}
 
-    let request = CreateApiKeyRequest {
-        label: "Test Key".to_string(),
+/// Build a create-key request with the standard test scope/tier.
+/// `providers` become the `allowed_providers` list.
+fn create_request(label: &str, providers: Vec<&str>) -> CreateApiKeyRequest {
+    CreateApiKeyRequest {
+        label: label.to_string(),
         scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
         tier: ApiKeyTier::Free,
         expires_at: None,
         allowed_models: vec![],
-        // "fake-provider" does not exist in registry - should be silently filtered
-        allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("fake-provider")],
-    };
+        allowed_providers: providers.into_iter().map(ProviderId::new).collect(),
+    }
+}
+
+// --- Test Cases ---
+
+#[tokio::test]
+async fn create_with_unknown_provider_filters_stale_providers() {
+    let usecase = test_usecase(vec!["openai"]);
+
+    // "fake-provider" does not exist in registry - should be silently filtered
+    let request = create_request("Test Key", vec!["openai", "fake-provider"]);
 
     let result = usecase.create(request).await;
     // Should succeed - unknown providers are filtered, not rejected
@@ -309,22 +323,9 @@ async fn update_with_empty_allowed_providers_clears_restriction() {
 
 #[tokio::test]
 async fn registry_subset_match_passes() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::with_providers(vec![
-        "openai",
-        "anthropic",
-        "gemini",
-    ]));
-    let usecase = ManageApiKeys::new(repo, "test-secret", registry);
+    let usecase = test_usecase(vec!["openai", "anthropic", "gemini"]);
 
-    let request = CreateApiKeyRequest {
-        label: "Subset Key".to_string(),
-        scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
-        tier: ApiKeyTier::Free,
-        expires_at: None,
-        allowed_models: vec![],
-        allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("anthropic")],
-    };
+    let request = create_request("Subset Key", vec!["openai", "anthropic"]);
 
     let result = usecase.create(request).await;
     assert!(result.is_ok());
