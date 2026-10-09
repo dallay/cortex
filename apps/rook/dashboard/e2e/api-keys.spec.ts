@@ -16,7 +16,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin123!234'
 
 function cookieValue(setCookie: string | null, name: string): string | null {
   if (!setCookie) return null
-  const match = setCookie.match(new RegExp(`${name}=([^;]+)`))
+  const match = new RegExp(`${name}=([^;]+)`).exec(setCookie)
   return match?.[1] ?? null
 }
 

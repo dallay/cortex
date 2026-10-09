@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/domain/shared-kernel",
     "crates/domain/rook-core",
+    "crates/test-support",
     "crates/application/rook-usecases",
     "crates/infrastructure/transport-axum",
     "crates/infrastructure/auth-sqlite",

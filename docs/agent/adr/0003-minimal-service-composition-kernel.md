@@ -5,6 +5,8 @@
 - Product: Cortex agent (provisional name)
 - Decision basis: Explicit choices made during the agent MVP planning conversation.
 
+**Subsequent decision (2026-10-09):** [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) requires that the Ratatui frontend and user-visible features be registered as first-party plugins from the start of the new interactive phase, with an authorable extension path. The original MVP deferral of a stable public SDK, hot reload and native dynamic loading remains historical; it is not a mandate to build monolithic new features.
+
 ## Context
 
 The research already accepts composability, dependency-driven lifecycle,

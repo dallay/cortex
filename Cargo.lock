@@ -690,6 +690,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-test-support"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "rook-core",
+ "tokio",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2951,6 +2961,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "cortex-test-support",
  "dashmap",
  "futures",
  "hex",
@@ -3880,6 +3891,7 @@ dependencies = [
  "base64",
  "cache-memory",
  "chrono",
+ "cortex-test-support",
  "dashmap",
  "encryption-inmemory",
  "futures",

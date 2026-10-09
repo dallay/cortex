@@ -3,121 +3,10 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use rook_core::{
-    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier,
-    ProviderId, ProviderRegistryPort,
-};
+use rook_core::{ApiKeyScope, ApiKeyTier, ProviderId, ProviderRegistryPort};
 use rook_usecases::{CreateApiKeyRequest, ManageApiKeys, UpdateApiKeyRequest};
 
-// --- Fake Repositories ---
-
-#[derive(Default)]
-struct FakeApiKeyRepository {
-    records: std::sync::Mutex<Vec<ApiKeyRecord>>,
-}
-
-#[async_trait]
-impl ApiKeyRepositoryPort for FakeApiKeyRepository {
-    async fn find_active_by_hash(
-        &self,
-        _hash: &str,
-    ) -> Result<Option<rook_core::ApiKeySubject>, ApiKeyRepositoryError> {
-        Ok(None)
-    }
-
-    async fn record_last_used(
-        &self,
-        _id: &ApiKeyId,
-        _used_at: DateTime<Utc>,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        Ok(())
-    }
-
-    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-        Ok(self.records.lock().unwrap().clone())
-    }
-
-    async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
-        let records = self.records.lock().unwrap();
-        Ok(records.iter().find(|r| &r.id == id).cloned())
-    }
-
-    async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-        self.records.lock().unwrap().push(record.clone());
-        Ok(())
-    }
-
-    async fn update(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| r.id == record.id) {
-            records[pos] = record.clone();
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(record.id.clone()))
-        }
-    }
-
-    async fn delete(&self, id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records.remove(pos);
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-
-    async fn revoke(
-        &self,
-        id: &ApiKeyId,
-        revoked_at: DateTime<Utc>,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records[pos].is_active = false;
-            records[pos].revoked_at = Some(revoked_at);
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-
-    async fn rotate_hash(
-        &self,
-        id: &ApiKeyId,
-        new_hash: &str,
-        new_prefix: &str,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records[pos].key_hash = new_hash.to_string();
-            records[pos].key_prefix = new_prefix.to_string();
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-
-    async fn list_paginated(
-        &self,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-        let records = self.records.lock().unwrap();
-        Ok(records
-            .iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .cloned()
-            .collect())
-    }
-
-    async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
-        Ok(self.records.lock().unwrap().len() as i64)
-    }
-}
+// --- Fake provider registry ---
 
 struct FakeProviderRegistry {
     providers: Vec<ProviderId>,
@@ -163,23 +52,37 @@ impl ProviderRegistryPort for FakeProviderRegistry {
     }
 }
 
-// --- Test Cases ---
+// --- Shared setup helpers (dedupe Sonar-flagged copy-paste) ---
 
-#[tokio::test]
-async fn create_with_unknown_provider_filters_stale_providers() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
-    let usecase = ManageApiKeys::new(repo, "test-secret", registry);
+/// Build a `ManageApiKeys` usecase backed by in-memory fakes.
+/// `providers` are the provider IDs the fake registry advertises.
+fn test_usecase(providers: Vec<&str>) -> ManageApiKeys {
+    let repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
+    let registry = Arc::new(FakeProviderRegistry::with_providers(providers));
+    ManageApiKeys::new(repo, "test-secret", registry)
+}
 
-    let request = CreateApiKeyRequest {
-        label: "Test Key".to_string(),
+/// Build a create-key request with the standard test scope/tier.
+/// `providers` become the `allowed_providers` list.
+fn create_request(label: &str, providers: Vec<&str>) -> CreateApiKeyRequest {
+    CreateApiKeyRequest {
+        label: label.to_string(),
         scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
         tier: ApiKeyTier::Free,
         expires_at: None,
         allowed_models: vec![],
-        // "fake-provider" does not exist in registry - should be silently filtered
-        allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("fake-provider")],
-    };
+        allowed_providers: providers.into_iter().map(ProviderId::new).collect(),
+    }
+}
+
+// --- Test Cases ---
+
+#[tokio::test]
+async fn create_with_unknown_provider_filters_stale_providers() {
+    let usecase = test_usecase(vec!["openai"]);
+
+    // "fake-provider" does not exist in registry - should be silently filtered
+    let request = create_request("Test Key", vec!["openai", "fake-provider"]);
 
     let result = usecase.create(request).await;
     // Should succeed - unknown providers are filtered, not rejected
@@ -192,7 +95,7 @@ async fn create_with_unknown_provider_filters_stale_providers() {
 
 #[tokio::test]
 async fn update_with_unknown_provider_filters_stale_providers() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
+    let repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
     let usecase = ManageApiKeys::new(repo.clone(), "test-secret", registry);
 
@@ -228,7 +131,7 @@ async fn update_with_unknown_provider_filters_stale_providers() {
 
 #[tokio::test]
 async fn create_with_empty_allowed_providers_passes() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
+    let repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::with_providers(vec!["openai"]));
     let usecase = ManageApiKeys::new(repo, "test-secret", registry);
 
@@ -249,7 +152,7 @@ async fn create_with_empty_allowed_providers_passes() {
 
 #[tokio::test]
 async fn create_when_registry_is_empty_filters_all_providers() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
+    let repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::empty()); // No providers in registry
     let usecase = ManageApiKeys::new(repo, "test-secret", registry);
 
@@ -273,7 +176,7 @@ async fn create_when_registry_is_empty_filters_all_providers() {
 
 #[tokio::test]
 async fn update_with_empty_allowed_providers_clears_restriction() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
+    let repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
     let registry = Arc::new(FakeProviderRegistry::with_providers(vec![
         "openai",
         "anthropic",
@@ -309,22 +212,9 @@ async fn update_with_empty_allowed_providers_clears_restriction() {
 
 #[tokio::test]
 async fn registry_subset_match_passes() {
-    let repo = Arc::new(FakeApiKeyRepository::default());
-    let registry = Arc::new(FakeProviderRegistry::with_providers(vec![
-        "openai",
-        "anthropic",
-        "gemini",
-    ]));
-    let usecase = ManageApiKeys::new(repo, "test-secret", registry);
+    let usecase = test_usecase(vec!["openai", "anthropic", "gemini"]);
 
-    let request = CreateApiKeyRequest {
-        label: "Subset Key".to_string(),
-        scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
-        tier: ApiKeyTier::Free,
-        expires_at: None,
-        allowed_models: vec![],
-        allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("anthropic")],
-    };
+    let request = create_request("Subset Key", vec!["openai", "anthropic"]);
 
     let result = usecase.create(request).await;
     assert!(result.is_ok());

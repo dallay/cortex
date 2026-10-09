@@ -147,7 +147,7 @@ async function handleToggle({ id, enabled }: { id: string; enabled: boolean }) {
 }
 
 async function handleDelete(id: string) {
-  if (!window.confirm(t("providers.details.deleteConfirm"))) return;
+  if (!globalThis.confirm(t("providers.details.deleteConfirm"))) return;
   busyIds.value = new Set([...busyIds.value, id]);
   try {
     await remove(id);

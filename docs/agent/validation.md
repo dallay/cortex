@@ -3,6 +3,12 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## New interactive frontend — pending implementation
+
+The accepted [ADR-0010](adr/0010-ratatui-plugin-first-interactive-terminal.md) now selects Ratatui + Crossterm + Tokio as the next-phase interactive frontend through the plugin kernel. **None of the CLI results below validate that Ratatui has shipped or passed PTY acceptance.** The existing line-oriented CLI remains the currently implemented interface and a future explicit fallback.
+
+New TUI evidence will require: inline scrollback/resize and cursor-query PTY tests; plugin-driven command/render replacement; reliable stream projection and responsive editor; complete approval previews without stale-key acceptance; terminal restoration; macOS/Linux validation; and preservation of `run`/`--json`/diagnostic output. Record dependency versions, terminals and failures here when the code is implemented.
+
 ## Automated evidence
 
 The deterministic suite covers service lifecycle and rollback, approved coding

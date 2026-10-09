@@ -11,24 +11,21 @@ import {computed, ref} from "vue";
 const STORAGE_KEY = "rook-api-base-url";
 
 function getStoredOverride(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(STORAGE_KEY);
+  if (typeof globalThis.localStorage === "undefined") return null;
+  return globalThis.localStorage.getItem(STORAGE_KEY);
 }
 
 function storeOverride(url: string | null): void {
-  if (typeof window === "undefined") return;
+  if (typeof globalThis.localStorage === "undefined") return;
   if (url) {
-    localStorage.setItem(STORAGE_KEY, url);
+    globalThis.localStorage.setItem(STORAGE_KEY, url);
   } else {
-    localStorage.removeItem(STORAGE_KEY);
+    globalThis.localStorage.removeItem(STORAGE_KEY);
   }
 }
 
 function detectOrigin(): string {
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
-  return "http://127.0.0.1:3773";
+  return globalThis.location?.origin ?? "http://127.0.0.1:3773";
 }
 
 export function useBaseUrl() {

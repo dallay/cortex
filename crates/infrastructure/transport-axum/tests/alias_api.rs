@@ -133,6 +133,30 @@ async fn json_body<T: serde::de::DeserializeOwned>(response: axum::response::Res
     serde_json::from_slice(&body).unwrap()
 }
 
+/// Helper for error-case alias creation tests — posts `payload` and asserts
+/// a 400 with the expected error `code`. Removes the copy-pasted
+/// request + assert blocks flagged by Sonar duplication detection.
+/// Returns the error body so callers can add extra message asserts.
+async fn assert_create_error(
+    app: Router,
+    payload: serde_json::Value,
+    expected_code: &str,
+) -> serde_json::Value {
+    let response = make_request(
+        app,
+        "/",
+        "POST",
+        Body::from(serde_json::to_vec(&payload).unwrap()),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let error: serde_json::Value = json_body(response).await;
+    assert_eq!(error["code"], expected_code);
+    error
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -195,18 +219,7 @@ async fn test_create_alias_duplicate() {
         "canonical": "gpt-4o-2024-08-06"
     });
 
-    let response = make_request(
-        app,
-        "/",
-        "POST",
-        Body::from(serde_json::to_vec(&payload).unwrap()),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let error: serde_json::Value = json_body(response).await;
-    assert_eq!(error["code"], "ALIAS_ALREADY_EXISTS");
+    assert_create_error(app, payload, "ALIAS_ALREADY_EXISTS").await;
 }
 
 #[tokio::test]
@@ -218,18 +231,7 @@ async fn test_create_alias_empty_alias() {
         "canonical": "gpt-4-0613"
     });
 
-    let response = make_request(
-        app,
-        "/",
-        "POST",
-        Body::from(serde_json::to_vec(&payload).unwrap()),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let error: serde_json::Value = json_body(response).await;
-    assert_eq!(error["code"], "INVALID_ALIAS");
+    assert_create_error(app, payload, "INVALID_ALIAS").await;
 }
 
 #[tokio::test]
@@ -241,18 +243,7 @@ async fn test_create_alias_empty_canonical() {
         "canonical": ""
     });
 
-    let response = make_request(
-        app,
-        "/",
-        "POST",
-        Body::from(serde_json::to_vec(&payload).unwrap()),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let error: serde_json::Value = json_body(response).await;
-    assert_eq!(error["code"], "INVALID_CANONICAL");
+    assert_create_error(app, payload, "INVALID_CANONICAL").await;
 }
 
 #[tokio::test]
@@ -265,18 +256,7 @@ async fn test_create_alias_cycle_detection() {
         "canonical": "gpt-4o-latest"  // This is itself an alias
     });
 
-    let response = make_request(
-        app,
-        "/",
-        "POST",
-        Body::from(serde_json::to_vec(&payload).unwrap()),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let error: serde_json::Value = json_body(response).await;
-    assert_eq!(error["code"], "ALIAS_CYCLE");
+    let error = assert_create_error(app, payload, "ALIAS_CYCLE").await;
     assert!(error["error"]
         .as_str()
         .unwrap()

@@ -1,0 +1,12 @@
+[package]
+name = "cortex-test-support"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rook-core = { path = "../domain/rook-core" }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -56,10 +56,10 @@ export const useAuthStore = defineStore("auth", () => {
       }
 
       initialized.value = true;
-    } catch (value) {
-      error.value = toErrorMessage(value);
+    } catch (error_) {
+      error.value = toErrorMessage(error_);
       initialized.value = true; // allow navigation to proceed even if status check fails
-      throw value; // re-throw so router guard can handle it
+      throw error_; // re-throw so router guard can handle it
     } finally {
       isLoading.value = false;
     }
@@ -72,10 +72,10 @@ export const useAuthStore = defineStore("auth", () => {
     try {
       await api.login({username: "admin", password});
       setAdminSession();
-    } catch (value) {
+    } catch (error_) {
       currentUser.value = null;
-      error.value = toErrorMessage(value);
-      throw value;
+      error.value = toErrorMessage(error_);
+      throw error_;
     } finally {
       isLoading.value = false;
     }
@@ -106,10 +106,10 @@ export const useAuthStore = defineStore("auth", () => {
       initialApiKey.value = result.apiKey;
       await api.login({username: "admin", password});
       setAdminSession();
-    } catch (value) {
+    } catch (error_) {
       currentUser.value = null;
-      error.value = toErrorMessage(value);
-      throw value;
+      error.value = toErrorMessage(error_);
+      throw error_;
     } finally {
       isLoading.value = false;
     }
