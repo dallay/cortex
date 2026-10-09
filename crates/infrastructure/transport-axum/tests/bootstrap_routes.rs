@@ -21,19 +21,17 @@ const TEST_FIXTURE_PASSWORD: &str = "Super-Secret-12345!";
 const TEST_SETUP_TOKEN: &str = "rk-setup-test-fixture-token";
 // =============================================================================
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::body::to_bytes;
 use axum::http::{Method, Request, StatusCode};
 use chrono::Utc;
 use rook_core::{
-    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeySubject, NewUser,
-    PasswordHash, PasswordHashError, PasswordHasher, User, UserId, UserRepositoryError,
-    UserRepositoryPort,
+    ApiKeyRepositoryPort, NewUser, PasswordHash, PasswordHashError, PasswordHasher, User, UserId,
+    UserRepositoryError, UserRepositoryPort,
 };
 use serde_json::Value;
-use std::sync::Mutex;
 use tower::util::ServiceExt;
 use transport_axum::bootstrap_helpers::{bootstrap_test_router, make_test_bootstrap_usecases};
 
@@ -55,101 +53,6 @@ impl PasswordHasher for FakePasswordHasher {
         hash: &PasswordHash,
     ) -> Result<bool, PasswordHashError> {
         Ok(hash.0 == format!("fake_hash_for_{}", password))
-    }
-}
-
-#[derive(Default)]
-struct FakeApiKeyRepo {
-    records: Mutex<Vec<ApiKeyRecord>>,
-}
-
-#[async_trait]
-impl ApiKeyRepositoryPort for FakeApiKeyRepo {
-    async fn find_active_by_hash(
-        &self,
-        _: &str,
-    ) -> Result<Option<ApiKeySubject>, ApiKeyRepositoryError> {
-        Ok(None)
-    }
-    async fn record_last_used(
-        &self,
-        _: &ApiKeyId,
-        _: chrono::DateTime<Utc>,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        Ok(())
-    }
-    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-        Ok(self.records.lock().unwrap().clone())
-    }
-    async fn find(&self, id: &ApiKeyId) -> Result<Option<ApiKeyRecord>, ApiKeyRepositoryError> {
-        let records = self.records.lock().unwrap();
-        Ok(records.iter().find(|r| &r.id == id).cloned())
-    }
-    async fn create(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-        self.records.lock().unwrap().push(record.clone());
-        Ok(())
-    }
-    async fn update(&self, record: &ApiKeyRecord) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| r.id == record.id) {
-            records[pos] = record.clone();
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(record.id.clone()))
-        }
-    }
-    async fn delete(&self, id: &ApiKeyId) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records.remove(pos);
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-    async fn revoke(
-        &self,
-        id: &ApiKeyId,
-        _: chrono::DateTime<Utc>,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records[pos].is_active = false;
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-    async fn rotate_hash(
-        &self,
-        id: &ApiKeyId,
-        new_hash: &str,
-        new_prefix: &str,
-    ) -> Result<(), ApiKeyRepositoryError> {
-        let mut records = self.records.lock().unwrap();
-        if let Some(pos) = records.iter().position(|r| &r.id == id) {
-            records[pos].key_hash = new_hash.to_string();
-            records[pos].key_prefix = new_prefix.to_string();
-            Ok(())
-        } else {
-            Err(ApiKeyRepositoryError::NotFound(id.clone()))
-        }
-    }
-    async fn list_paginated(
-        &self,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<ApiKeyRecord>, ApiKeyRepositoryError> {
-        let records = self.records.lock().unwrap();
-        Ok(records
-            .iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .cloned()
-            .collect())
-    }
-    async fn count(&self) -> Result<i64, ApiKeyRepositoryError> {
-        Ok(self.records.lock().unwrap().len() as i64)
     }
 }
 
@@ -236,7 +139,8 @@ fn make_bootstrap_usecases(
         user_repo.clone(),
         Arc::new(FakePasswordHasher) as Arc<dyn PasswordHasher>,
     );
-    let api_key_repo: Arc<dyn ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepo::default());
+    let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
+        Arc::new(cortex_test_support::FakeApiKeyRepository::default());
     make_test_bootstrap_usecases(
         user_repo,
         Arc::new(FakePasswordHasher) as Arc<dyn PasswordHasher>,
