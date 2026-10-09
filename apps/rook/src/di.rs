@@ -66,20 +66,96 @@ pub struct RookContainer {
     pub usage_config: crate::config::UsageConfig,
 }
 
+fn build_cache_port(config: &RookConfig) -> Arc<dyn CachePort> {
+    if config.cache.enabled {
+        Arc::new(InMemoryCache::new(
+            config.cache.ttl(),
+            config.cache.max_entries,
+        ))
+    } else {
+        Arc::new(NoOpCache)
+    }
+}
+
+fn build_api_key_auth(
+    config: &RookConfig,
+    api_key_repo: &Arc<dyn ApiKeyRepositoryPort>,
+    registry: &Arc<dyn ProviderRegistryPort>,
+) -> anyhow::Result<(
+    Option<AuthenticateClientApi>,
+    Option<rook_usecases::ManageApiKeys>,
+)> {
+    if !config.auth.api_keys.enabled {
+        return Ok((None, None));
+    }
+    let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
+    Ok((
+        Some(AuthenticateClientApi::new(
+            api_key_repo.clone(),
+            hash_secret.clone(),
+        )),
+        Some(rook_usecases::ManageApiKeys::new(
+            api_key_repo.clone(),
+            hash_secret,
+            registry.clone(),
+        )),
+    ))
+}
+
+fn build_manage_connections(
+    config: &RookConfig,
+    provider_repo: &Arc<dyn ProviderRepositoryPort>,
+    registry: &Arc<dyn ProviderRegistryPort>,
+    model_catalog: &Arc<dyn ModelCatalogPort>,
+) -> anyhow::Result<Option<ManageConnections>> {
+    if !config.provider_crud.enabled {
+        return Ok(None);
+    }
+    let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
+    let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
+    let key_manager = Arc::new(
+        AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
+            .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
+    );
+    let builder: Arc<dyn ProviderBuilderPort> =
+        Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
+    Ok(Some(ManageConnections::new(
+        provider_repo.clone(),
+        registry.clone(),
+        key_manager,
+        builder,
+    )))
+}
+
+fn build_rate_limit_store(
+    config: &RookConfig,
+) -> Option<transport_axum::handlers::rate_limits::RateLimitRuleStore> {
+    if config.rate_limiting.enabled {
+        Some(Arc::new(dashmap::DashMap::new()))
+    } else {
+        None
+    }
+}
+
+fn resolve_setup_token_value(is_initialized: bool) -> Option<String> {
+    if is_initialized {
+        return None;
+    }
+    let token = std::env::var("ROOK_SETUP_TOKEN")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(generate_setup_token);
+    Some(token)
+}
+
 impl RookContainer {
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
         // Run startup migrations once before constructing any repositories
         run_startup_migrations(&config.database.db_path)?;
 
         // 1. Cache
-        let cache: Arc<dyn CachePort> = if config.cache.enabled {
-            Arc::new(InMemoryCache::new(
-                config.cache.ttl(),
-                config.cache.max_entries,
-            ))
-        } else {
-            Arc::new(NoOpCache)
-        };
+        let cache: Arc<dyn CachePort> = build_cache_port(config);
 
         // 2. Audit
         let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.database.db_path)?);
@@ -117,22 +193,8 @@ impl RookContainer {
         let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
             Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
 
-        let (authenticate_client_api, manage_api_keys) = if config.auth.api_keys.enabled {
-            let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
-            (
-                Some(AuthenticateClientApi::new(
-                    api_key_repo.clone(),
-                    hash_secret.clone(),
-                )),
-                Some(rook_usecases::ManageApiKeys::new(
-                    api_key_repo.clone(),
-                    hash_secret,
-                    registry.clone(),
-                )),
-            )
-        } else {
-            (None, None)
-        };
+        let (authenticate_client_api, manage_api_keys) =
+            build_api_key_auth(config, &api_key_repo, &registry)?;
 
         // 7. Build shared provider repository for manage_connections AND usage/connection lookup
         // Single shared instance — NOT duplicated for RouteRequest.
@@ -146,25 +208,8 @@ impl RookContainer {
             };
 
         // 7a. ManageConnections (provider CRUD) — uses shared provider_repo
-        let manage_connections = if config.provider_crud.enabled {
-            let passphrase = required_env("ENCRYPTION_PASSPHRASE", "provider_crud.enabled")?;
-            let salt = required_env("ENCRYPTION_SALT", "provider_crud.enabled")?;
-            let key_manager = Arc::new(
-                AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
-                    .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
-            );
-            let repo = provider_repo.clone();
-            let builder: Arc<dyn ProviderBuilderPort> =
-                Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
-            Some(ManageConnections::new(
-                repo,
-                registry.clone(),
-                key_manager,
-                builder,
-            ))
-        } else {
-            None
-        };
+        let manage_connections =
+            build_manage_connections(config, &provider_repo, &registry, &model_catalog)?;
 
         // 7b. Usage repository — concrete SqliteUsageRepository stored on container for retention
         let sqlite_usage: Arc<SqliteUsageRepository> = Arc::new(
@@ -297,16 +342,7 @@ impl RookContainer {
         // Check initialization state to decide on setup token.
         // Run AFTER usecases is built so we can write the token into it.
         let bootstrap_state = bootstrap_status.execute().await?;
-        let setup_token_value = if bootstrap_state.is_initialized {
-            None
-        } else {
-            let token = std::env::var("ROOK_SETUP_TOKEN")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(generate_setup_token);
-            Some(token)
-        };
+        let setup_token_value = resolve_setup_token_value(bootstrap_state.is_initialized);
 
         // Write token into usecases so HTTP handlers can access it
         {
@@ -325,11 +361,7 @@ impl RookContainer {
         let rate_limiter_config = Arc::new(build_rate_limiter_config(&config.rate_limiting));
 
         // Build rate limit rule store if rate limiting is enabled
-        let rate_limit_store = if config.rate_limiting.enabled {
-            Some(Arc::new(dashmap::DashMap::new()))
-        } else {
-            None
-        };
+        let rate_limit_store = build_rate_limit_store(config);
 
         Ok(Self {
             usecases,

@@ -19,7 +19,7 @@ async function getCsrfToken(
   const res = await api.get(`${API_BASE_URL}/login`)
   const body = await res.json()
   const token = body.csrf_token as string
-  const cookie = res.headers()['set-cookie']?.match(/csrf_token=([^;]+)/)?.[1] ?? token
+  const cookie = /csrf_token=([^;]+)/.exec(res.headers()['set-cookie'] ?? '')?.[1] ?? token
   return { token, cookie }
 }
 
@@ -33,7 +33,7 @@ async function saveAuthState(): Promise<void> {
   const csrfRes = await page.request.get(`${API_BASE_URL}/login`)
   const csrfBody = await csrfRes.json()
   const csrfToken = csrfBody.csrf_token as string
-  const csrfCookie = csrfRes.headers()['set-cookie']?.match(/csrf_token=([^;]+)/)?.[1] ?? csrfToken
+  const csrfCookie = /csrf_token=([^;]+)/.exec(csrfRes.headers()['set-cookie'] ?? '')?.[1] ?? csrfToken
 
   const loginRes = await page.request.post(`${API_BASE_URL}/login`, {
     data: { username: 'admin', password: ADMIN_PASSWORD },
@@ -52,7 +52,7 @@ async function saveAuthState(): Promise<void> {
   // The auth_token is issued by the backend (port 3773).  The frontend (Vite, port 4747)
   // proxies /api/* to the backend, so the cookie must be registered for the FRONTEND
   // origin — otherwise the browser won't send it with proxied API requests.
-  const authToken = loginRes.headers()['set-cookie']?.match(/auth_token=([^;]+)/)?.[1]
+  const authToken = /auth_token=([^;]+)/.exec(loginRes.headers()['set-cookie'] ?? '')?.[1]
   if (!authToken) {
     await browser.close()
     throw new Error('[globalSetup] Login response did not include auth_token cookie')
@@ -101,7 +101,30 @@ async function globalSetup(): Promise<void> {
 
     const status = await statusRes.json()
 
-    if (!status.is_initialized) {
+    if (status.is_initialized) {
+      // Already initialized — verify we can login with the expected password
+      const csrf = await getCsrfToken(api)
+
+      const loginRes = await api.post(`${API_BASE_URL}/login`, {
+        data: { username: 'admin', password: ADMIN_PASSWORD },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf.token,
+          'Cookie': `csrf_token=${csrf.cookie}`,
+        },
+      })
+
+      if (!loginRes.ok()) {
+        throw new Error(
+          `[globalSetup] Cannot login with ADMIN_PASSWORD="${ADMIN_PASSWORD}".\n` +
+            `The backend DB was initialized with a different password.\n` +
+            `Fix: delete ~/.local/share/cortex/rook/rook.db, restart rook, then re-run tests.\n` +
+            `Or set ADMIN_PASSWORD env var to match your existing admin password.`,
+        )
+      }
+
+      console.log(`[globalSetup] ✓ Backend already initialized, login verified`)
+    } else {
       // System is fresh — bootstrap with the test password
       const csrf = await getCsrfToken(api)
 
@@ -132,29 +155,6 @@ async function globalSetup(): Promise<void> {
       }
 
       console.log(`[globalSetup] ✓ Backend bootstrapped with test password`)
-    } else {
-      // Already initialized — verify we can login with the expected password
-      const csrf = await getCsrfToken(api)
-
-      const loginRes = await api.post(`${API_BASE_URL}/login`, {
-        data: { username: 'admin', password: ADMIN_PASSWORD },
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': csrf.token,
-          'Cookie': `csrf_token=${csrf.cookie}`,
-        },
-      })
-
-      if (!loginRes.ok()) {
-        throw new Error(
-          `[globalSetup] Cannot login with ADMIN_PASSWORD="${ADMIN_PASSWORD}".\n` +
-            `The backend DB was initialized with a different password.\n` +
-            `Fix: delete ~/.local/share/cortex/rook/rook.db, restart rook, then re-run tests.\n` +
-            `Or set ADMIN_PASSWORD env var to match your existing admin password.`,
-        )
-      }
-
-      console.log(`[globalSetup] ✓ Backend already initialized, login verified`)
     }
   } finally {
     await api.dispose()
