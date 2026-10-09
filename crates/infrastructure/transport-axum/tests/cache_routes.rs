@@ -41,6 +41,39 @@ fn make_response(content: &str) -> CompletionResponse {
     }
 }
 
+/// Helper: empty cache instance shared by signature tests.
+fn empty_cache() -> Arc<dyn CachePort> {
+    Arc::new(InMemoryCache::new(Duration::from_secs(300), None))
+}
+
+/// Helper: router serving the signatures endpoint with the given cache.
+/// Removes the copy-pasted Router + layer blocks flagged by duplication detection.
+fn signatures_app(cache: Arc<dyn CachePort>) -> axum::Router {
+    axum::Router::new()
+        .route("/api/cache/signatures", axum::routing::get(list_signatures))
+        .layer(Extension(cache))
+}
+
+/// Helper: GET the signatures endpoint and assert a 200 with parsed entries.
+async fn get_signature_entries(app: axum::Router) -> Vec<SignatureEntry> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cache/signatures")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
 #[tokio::test]
 async fn get_cache_stats_returns_200_with_json() {
     let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
@@ -305,34 +338,14 @@ fn cache_routes_require_management_auth() {
 
 #[tokio::test]
 async fn list_signatures_returns_200_with_empty_list_when_cache_empty() {
-    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
-
-    let app = axum::Router::new()
-        .route("/api/cache/signatures", axum::routing::get(list_signatures))
-        .layer(Extension(cache));
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/cache/signatures")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let entries: Vec<SignatureEntry> = serde_json::from_slice(&body).unwrap();
+    let cache = empty_cache();
+    let entries = get_signature_entries(signatures_app(cache)).await;
     assert_eq!(entries.len(), 0);
 }
 
 #[tokio::test]
 async fn list_signatures_returns_200_with_signature_entries() {
-    let cache: Arc<dyn CachePort> = Arc::new(InMemoryCache::new(Duration::from_secs(300), None));
+    let cache = empty_cache();
 
     // Populate cache with entries
     let sig1 = "a".repeat(64);
@@ -355,26 +368,7 @@ async fn list_signatures_returns_200_with_signature_entries() {
         .await
         .unwrap();
 
-    let app = axum::Router::new()
-        .route("/api/cache/signatures", axum::routing::get(list_signatures))
-        .layer(Extension(cache));
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/cache/signatures")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let entries: Vec<SignatureEntry> = serde_json::from_slice(&body).unwrap();
+    let entries = get_signature_entries(signatures_app(cache)).await;
     assert_eq!(entries.len(), 2);
 
     // Verify entries contain correct signatures

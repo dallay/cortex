@@ -20,7 +20,7 @@ const {allGroups, filterState} = useCommand();
 const id = useId();
 
 const isRender = computed(() =>
-  !filterState.search ? true : filterState.filtered.groups.has(id),
+  filterState.search ? filterState.filtered.groups.has(id) : true,
 );
 
 provideCommandGroupContext({id});

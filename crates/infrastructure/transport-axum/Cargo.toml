@@ -50,4 +50,5 @@ dashmap = "6"
 axum-test = "21"
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
+cortex-test-support = { path = "../../test-support" }
 

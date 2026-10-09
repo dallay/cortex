@@ -124,8 +124,8 @@ export interface UpdateApiKeyRequest {
 /**
  * Rook API Client
  *
- * Base URL is auto-detected from window.location for convenience.
- * Override via window.__ROOK_API_BASE__ or setApiBaseUrl().
+ * Base URL is auto-detected from globalThis.location for convenience.
+ * Override via globalThis.__ROOK_API_BASE__ or setApiBaseUrl().
  */
 
 export interface HealthResponse {
@@ -268,14 +268,14 @@ const STORAGE_KEY = "rook-api-base-url";
 
 function getBaseUrl(): string {
   // Allow override for development/CI
-  if (
-    typeof window !== "undefined" &&
-    (window as unknown as { __ROOK_API_BASE__?: string }).__ROOK_API_BASE__
-  ) {
-    return (window as unknown as { __ROOK_API_BASE__: string })
-      .__ROOK_API_BASE__;
+  const globalScope = globalThis as unknown as { __ROOK_API_BASE__?: string };
+  if (globalScope.__ROOK_API_BASE__) {
+    return globalScope.__ROOK_API_BASE__;
   }
-  const stored = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  const stored =
+    typeof globalThis.localStorage !== "undefined"
+      ? globalThis.localStorage.getItem(STORAGE_KEY)
+      : null;
   if (stored) return stored;
   // In development with Vite proxy, use relative URLs
   // The proxy handles forwarding to the backend
@@ -283,10 +283,7 @@ function getBaseUrl(): string {
     return ""; // Relative URLs for dev proxy
   }
   // Auto-detect from current origin in production
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
-  return "http://127.0.0.1:3773";
+  return globalThis.location?.origin ?? "http://127.0.0.1:3773";
 }
 
 export function setApiBaseUrl(url: string | null): void {
@@ -691,8 +688,6 @@ export interface TestConnectionResponse {
 let apiClient: ReturnType<typeof createApiClient> | null = null;
 
 export function useApi(): ReturnType<typeof createApiClient> {
-  if (!apiClient) {
-    apiClient = createApiClient();
-  }
+  apiClient ??= createApiClient();
   return apiClient;
 }

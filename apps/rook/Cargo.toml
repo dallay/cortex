@@ -53,3 +53,5 @@ dashmap = "6"
 
 [dev-dependencies]
 tempfile = "3"
+chrono = { workspace = true }
+cortex-test-support = { path = "../../crates/test-support" }
