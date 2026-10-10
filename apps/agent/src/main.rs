@@ -312,14 +312,10 @@ async fn run_compact(
         "\nCompact session now? Older history will be summarized; originals stay in the database. [y/N] "
     );
     std::io::stderr().flush().ok();
-    let mut signal = Box::pin(tokio::signal::ctrl_c());
+    // Ctrl+C is handled by the surrounding `interruptible()` wrapper; we
+    // only need to react to a cancel already in flight and to the readline.
     let line = tokio::select! {
         _ = cancel.cancelled() => return Err(agent_core::AgentError::Cancelled),
-        result = &mut signal => {
-            result.map_err(agent_core::AgentError::Io)?;
-            cancel.cancel();
-            return Err(agent_core::AgentError::Cancelled);
-        },
         l = input.line() => l?,
     };
     let accepted = line

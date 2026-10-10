@@ -39,5 +39,5 @@ verdict:
 # Phase 1 (terminal): Policy::turn_count + reset_turn + new header + Effect: line in apps/agent/src/terminal.rs.
 # Phase 2 (runtime): StandardLoop::compact mirrors the summary branch of context() in crates/agent/runtime/src/loop_engine.rs.
 # Phase 3 (CLI): /compact and /summarize interception in apps/agent/src/main.rs; Arc<StandardLoop> captured alongside LoopService.
-# Phase 4 (tests): six effect_line unit tests; compact_command_skips_when_session_has_no_complete_turns CLI test.
+# Phase 4 (tests): six effect_line unit tests; chat_compact_emits_ndjson_event_after_confirmation and chat_compact_decline_emits_no_compacted_event PTY tests; run_mode_forwards_compact_as_a_regular_prompt CLI test.
 # Phase 5 (docs): implementation-specification.md, linux-daily-use.md, validation.md updated.

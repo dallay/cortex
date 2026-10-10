@@ -157,7 +157,21 @@ fn effect_line(preview: &str) -> Option<String> {
             return Some(format!("start MCP server {}", rest.trim()));
         }
         if let Some(rest) = trimmed.strip_prefix("Server/action:") {
-            return Some(format!("call MCP tool {}", rest.trim()));
+            // The first non-empty line carries the MCP server name; the
+            // subsequent `Tool:` line carries the remote tool name. Surface
+            // both so the user knows which exact tool the approval is for,
+            // not just the configured server.
+            let server = rest.trim();
+            for line in preview.lines().skip(1) {
+                if let Some(tool) = line.trim().strip_prefix("Tool:") {
+                    let tool = tool.trim();
+                    if tool.is_empty() {
+                        return Some(format!("call MCP tool {server}"));
+                    }
+                    return Some(format!("call MCP tool {server}.{tool}"));
+                }
+            }
+            return Some(format!("call MCP tool {server}"));
         }
         if let Some(rest) = trimmed.strip_prefix("MCP tool:") {
             return Some(format!("call MCP tool {}", rest.trim()));
@@ -188,9 +202,8 @@ fn safe(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{approval_header, effect_line, safe};
-    use crate::terminal::{Input, Policy};
+    use crate::terminal::Policy;
     use agent_core::{ApprovalPolicy, ApprovalRequest, CancellationToken};
-    use std::sync::Arc;
 
     #[test]
     fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {
@@ -238,6 +251,15 @@ mod tests {
         let preview =
             "Server/action: fixture\nTool: echo\nArguments (sent to the configured MCP server; external effects depend on that server):\n{}";
         let line = effect_line(preview).expect("MCP call preview should produce an effect line");
+        assert_eq!(line, "call MCP tool fixture.echo");
+    }
+
+    /// When the `Tool:` line is missing the helper must keep the historical
+    /// behaviour (server name only) so older call sites do not regress.
+    #[test]
+    fn effect_line_for_mcp_call_without_tool_field() {
+        let preview = "Server/action: fixture\nArguments (sent to the configured MCP server; external effects depend on that server):\n{}";
+        let line = effect_line(preview).expect("MCP call preview should produce an effect line");
         assert_eq!(line, "call MCP tool fixture");
     }
 
@@ -269,8 +291,10 @@ mod tests {
     /// `#1`) when `reset_turn()` is called.
     #[test]
     fn policy_approval_counter_increments_within_a_turn_and_resets() {
-        let input = Some(Arc::new(Input::new()));
-        let policy = Policy::new(input, Default::default());
+        // Construct the policy with no terminal input so the test does not
+        // depend on stdin: the counter is taken before the input short-circuit
+        // and `approve` returns `Ok(false)` early when no input is available.
+        let policy = Policy::new(None, Default::default());
         // No interactions yet — the counter starts at zero.
         assert_eq!(policy.turn_count(), 0);
 

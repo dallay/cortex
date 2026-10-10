@@ -207,9 +207,33 @@ fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
     // returns. `portable-pty` requires dropping the writer to deliver EOF to
     // the child reliably across platforms.
     drop(writer);
-    let status = child.wait().expect("agent must exit");
+    // Bound the wait so a regression in the agent's shutdown path cannot
+    // stall the test forever. Poll `try_wait` and only kill the child if the
+    // deadline expires; the reader thread is unblocked by the slave's EOF
+    // once the child exits.
+    let shutdown_deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        match child.try_wait().expect("try_wait must succeed") {
+            Some(status) => break status,
+            None => {
+                if Instant::now() > shutdown_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader_handle.join();
+                    panic!("agent did not exit within shutdown deadline");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
     // Drain any remaining bytes the agent may have written between the last
-    // script line and the exit.
+    // script line and the exit. The reader thread exits when the slave
+    // closes; bounding the join avoids a hang if a regression keeps the
+    // pty alive.
+    let reader_deadline = Instant::now() + Duration::from_secs(2);
+    while !reader_handle.is_finished() && Instant::now() < reader_deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let _ = reader_handle.join();
     let output = captured.lock().expect("capture mutex poisoned").clone();
     PtyRun { output, status }

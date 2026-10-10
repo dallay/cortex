@@ -101,10 +101,10 @@ a smaller valid `context_tokens` budget and `max_output_tokens` below half that
 budget. Record those values and whether compaction actually occurred.
 
 ```bash
-# Manual compaction — type /compact at the agent> prompt; /summarize is the
-# deprecated alias. The CLI asks for explicit confirmation before running
-# the same real-model summarizer the threshold would call. Originals
-# remain in the SQLite session.
+# Manual compaction — type /compact at the agent> prompt; /summarize is an
+# alias. The CLI asks for explicit confirmation before running the same
+# real-model summarizer the threshold would call. Originals remain in the
+# SQLite session.
 agent> /compact
 Compact session now? Older history will be summarized; originals stay in the database. [y/N] y
 Context compacted; original history retained.
