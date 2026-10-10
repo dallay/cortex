@@ -30,8 +30,8 @@ quinn-proto 0.11.14 and rustls 0.23.40, plus warnings for anyhow and chacha20.
 Those versions were already present; no dependency upgrades were included in this
 feature. Passing the configured CI gate does not mean the audit is clean.
 
-Semgrep tools are unavailable in this session. The user explicitly authorized
-continuing without Semgrep, retaining Rust checks and just ci-local.
+Semgrep tools were unavailable for the earlier implementation checks; current
+focused MCP source and test scan completed with no findings.
 
 ## Remaining acceptance
 
@@ -73,69 +73,106 @@ never in configuration, fixture files or this record.
   compatibility record. The Linux checklist uses `chat` for individual approvals,
   explains restarting after cancellation and requires observed compaction.
 
-The user authorized omitting unavailable Semgrep tools for this change. Real-model
+The user authorized omitting unavailable Semgrep tools for that change. Real-model
 compaction, human approval UX and Linux daily use remain unvalidated by this smoke.
 
-Workspace verification: `just ci-local` passed stages 1–8, including workspace
-Rust tests, 175 Vitest tests and documentation. The audit reported the existing
-`anyhow` unsoundness and yanked `chacha20` warnings; no lockfile was changed.
-Stage 9 built the Docker image but could not start the container because the
-daemon cannot bind-mount the configuration file under this host's `.codex` path.
-The unmodified gate therefore did not pass. A temporary copy of the same E2E
-runner uses a Docker volume containing that configuration instead of the host
-bind mount: **83 E2E tests passed, 7 skipped** across Chromium, Firefox and WebKit.
-No runner changes are included. Markdown lint and diff whitespace checks also
-passed after updating this record.
+## DALLAY-631 acceptance session — 2026-10-09
 
-## Rook compatibility result
+Host: MacBook Pro M2 Max, 32 GB unified memory. Ollama server version: 0.40.2.
+An isolated test directory, SQLite database and disposable workspace were used
+under `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/dallay631-ollama.PhjPZU`.
+The workspace contained only a README fixture and no MCP server config. No API
+credential was needed; the temporary config set `api_key_env = ""`.
 
-The plan reserved this item for "Rook's current streaming model does not represent
-structured tool-call arguments." The inspection on 2026-10-06 confirmed a stricter
-finding: Rook's OpenAI adapter does not represent tool calls at all during
-streaming.
+### Qwen2.5-Coder baseline
 
-Evidence from the current source:
+With `qwen2.5-coder:14b`, a direct text completion and agent `doctor` passed. In
+both direct tool-schema and actual CLI attempts, the model returned tool-call-like
+JSON in normal assistant `content`, rather than structured `tool_calls`. Thus the
+agent correctly did not execute the requested tool. This was not counted as
+acceptance of tool calling or compaction.
 
-- `crates/infrastructure/providers-openai/src/provider.rs:151-161` builds the
-  outbound `StreamChunk` from the OpenAI delta's `content` only; the parsed
-  `tool_calls` field is dropped.
-- `docs/providers.md:52-55` records the same gap from the user-facing side:
-  `stream()` is marked ❌ not yet implemented.
-- The agent's adapter (`crates/agent/runtime/src/model.rs:67-122`, `SseParser` at
-  `:137-286`) does send `tools` in the request and assembles fragmented
-  `tool_calls` deltas into `ModelDelta::ToolCall`. It expects the OpenAI-shaped
-  response with `choices[0].delta.tool_calls` and `finish_reason: "tool_calls"`.
+### Qwen3-8B structured tool compatibility
 
-End-to-end consequence: any prompt that requires a tool call against a Rook
-gateway reaches the `SseParser.finish()` step with no assembled calls, the
-`stream ended without a finish marker` or `missing tool identity` error fires,
-and the turn aborts. Plain-text turns may still appear to work because the
-content-only delta path is intact, but the agent's MVP workflow is tool-driven
-and cannot complete against Rook today.
+Model used: `qcwind/qwen3-8b-instruct-Q4-K-M:latest`, architecture Qwen3, 8.2B,
+Q4_K_M, Ollama reports tools capability. It was loaded fully on GPU with a 32K
+runtime context. On the exact minimal `read_file` tool request:
 
-Per ADR-0005 ("Do not advertise that integration as working until the complete
-tool-call round trip has been tested"), Rook is recorded as **not supported** as
-a model backend. Closing this item did not require running Rook; a live request
-would only confirm the same code-level limitation. Supporting Rook would need a
-scoped change in `crates/infrastructure/providers-openai/src/provider.rs` plus
-tests that exercise the tool-call delta path. That work is out of scope for
-the personal MVP and is not scheduled here.
+- OpenAI-compatible `/v1/chat/completions`, `stream=false`: **PASS** — response
+  had `finish_reason="tool_calls"` and `message.tool_calls[0]` named `read_file`
+  with `{"path":"README.md"}`.
+- Native `/api/chat`, `stream=false`: **PASS** — response had `message.tool_calls`
+  with the same tool name and object arguments.
+- OpenAI-compatible `/v1/chat/completions`, `stream=true`: **PASS** — SSE emitted
+  `choices[0].delta.tool_calls`; tool-call arguments were fragmented across events
+  as allowed by the streaming protocol.
+- Actual Cortex CLI `run` in the isolated workspace: **PASS** — it invoked
+  `read_file`, printed the README heading `Marea Demo`, and returned without
+  changing the workspace. This confirms the streamed structured tool path works
+  through the current Cortex adapter for this model/runtime combination.
 
-The offline mock and local protocol fixtures validate implementation mechanics;
-they do not establish quality of model reasoning or compatibility with every endpoint.
+### Compaction and persisted-original evidence
 
-## Linux daily-use record
+A single CLI session was resumed across multiple processes. The temporary config
+used a low `context_tokens = 4096` and `max_output_tokens = 1024` to reach the
+configured compaction threshold. The model produced a coherent summary preserving
+the Marea task and key decisions, and subsequent resumed turns could answer from
+that summary (for example, identify Marea and `ValueError` for an empty list).
+SQLite inspection confirmed the persisted `summary_through` advanced to 12 and
+`summary` was present. Earlier original messages, including a complete assistant
+tool call and its corresponding tool result, remained in `messages`; the workspace
+README hash remained unchanged.
 
-The agent is ready to be exercised against a real model on a Linux host. The
-manual workflow lives in [linux-daily-use.md](linux-daily-use.md); the
-companion `scripts/agent-linux-smoke.sh` verifies the local install (toolchain,
-build, deterministic suite, offline mock session) and appends one line to
-`linux-smoke.log` on success. It does not contact a model.
+**Limitations observed:** with the small budget, the model summary did not retain
+all four pending test cases: after compaction the model reported insufficient
+context for those details. Therefore this demonstrates that compaction triggered,
+original messages/tool pair were retained, and the model continued using salient
+summary facts; it does **not** establish perfect semantic retention of every detail.
+When a repeated follow-up ran into the intentionally tight 4096-token budget, the
+loop correctly reported `context cannot fit safely` rather than sending an unsafe
+request. Raising the temporary test budget to 8192 allowed the model to continue
+from the summary. No corrupt session or workspace mutation was observed. The
+separate automated `failed_compaction_preserves_original_history_and_stops` test
+continues to cover summary failure rollback/preservation.
 
-Append each completed session here in the shape documented in the checklist:
+### Interactive approvals: not accepted
 
-- YYYY-MM-DD host=<hostname> rustc=<version> endpoint=<provider/model>
-  steps=<which steps completed 1–7> result=<ok|degraded|failed>
-  notes=<one-line summary or "see issue #N">
+An attempt to run interactive `chat` under the shell tool failed because it did
+not provide a usable TTY; the CLI correctly rejected non-terminal stdin. A PTY
+harness attempt timed out before a model response, and no approval was granted.
+The disposable workspace README remained unchanged. Thus no real-model human
+approval was exercised for file edits or shell commands. MCP startup and MCP tool
+approval were not tested because no local MCP server/config was provided.
 
-(Empty — first session pending.)
+Conclusion: Ollama/Qwen3-8B is compatible with Cortex's streamed structured tool
+calls in this setup and can trigger/continue after compaction, with the noted
+summary-fidelity limitation. The issue's approval-UX acceptance remains open until
+file-edit, shell, MCP-start and MCP-call prompts are manually examined, including
+denials and fresh-process behavior.
+
+### 2026-10-09 follow-up — approval numbering and `/compact`
+
+The local acceptance session surfaced an approval UX gap: a second approval in
+a turn did not indicate its position in the sequence. The terminal policy now
+numbers each approval and prints single-line `Action:` / `Effect:` headers
+above the full preview. It does not claim a later request is different unless
+that property is actually established. The CLI accepts `/compact` (with
+`/summarize` as an alias) with explicit confirmation. Manual compaction selects
+the latest complete finalized turn; automatic compaction preserves the latest
+complete turn while trimming older history. Both share the same summary
+request, budget/result validation, persistence, and event-emission helper.
+The command calls the registered loop, reuses the `Output` event sink, and
+propagates Ctrl+C cancellation.
+
+Regression coverage now includes runtime compaction across 1, 2, and 3
+complete turns with tool-call/result groups, cancellation without persisting a
+summary, exact approval header text for repeated identical actions, and PTY
+integration tests for accepted/declined `/compact` confirmation in JSON mode.
+These use the mock provider and do not replace manual terminal acceptance of
+repeated approvals or real-model compaction; both remain pending.
+
+Focal checks: `cargo fmt --check`; runtime `stream_persistence` (4 passed),
+`coding_workflow` (27 passed), `transports` (6 passed); CLI unit tests (7 passed)
+and CLI integration tests (4 passed); `cargo clippy -p cortex-agent
+-p agent-runtime --all-targets -- -D warnings`; focused Markdown lint (0 issues);
+`git diff --check`.

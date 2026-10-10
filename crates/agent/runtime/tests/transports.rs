@@ -282,10 +282,13 @@ async fn mcp_denied_launch_and_approved_discovery_call_and_shutdown() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        prepared.approval.as_ref().unwrap().action,
-        "mcp.fixture.echo"
-    );
+    let approval = prepared.approval.as_ref().unwrap();
+    assert_eq!(approval.action, "mcp.fixture.echo");
+    assert!(approval.preview.contains("Server/action: fixture"));
+    assert!(approval.preview.contains("Tool: echo"));
+    assert!(approval
+        .preview
+        .contains("sent to the configured MCP server"));
     assert!(tool
         .execute(prepared, &ctx)
         .await

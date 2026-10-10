@@ -23,7 +23,9 @@ toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+portable-pty = "0.9"
 tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "process", "time"] }
 
 [lints]
 workspace = true
