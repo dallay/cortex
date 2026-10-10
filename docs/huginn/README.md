@@ -30,6 +30,10 @@ huginn resume SESSION_UUID --prompt "Continue the task"
 huginn doctor
 ```
 
+Interactive `chat` (or no subcommand) uses the Ratatui TUI when attached to a
+terminal. `--line-mode` selects the line-oriented recovery adapter; `--json`
+emits machine-readable events instead.
+
 `doctor` validates configuration and reports services without contacting the
 model or launching MCP. It currently requires configured credentials to be
 present. `--db` selects another session database; `--config` selects a
@@ -109,6 +113,7 @@ through a plain file copy.
 
 ## Development and architecture
 
+- Code: [`apps/huginn`](../../apps/huginn/), [`core`](../../crates/huginn/core/), [`runtime`](../../crates/huginn/runtime/).
 - [Implementation specification](implementation-specification.md) — contracts and limits.
 - [Architecture decisions](adr/README.md) — accepted ADRs.
 - [Implementation plan](implementation-plan.md) — milestones and acceptance boundaries.
@@ -118,8 +123,8 @@ through a plain file copy.
 - `./scripts/huginn-linux-smoke.sh` verifies the local install on a Linux host without contacting a model.
 - `just ci-local` runs the complete workspace gate, including Rook and Docker E2E.
 
-The Huginn crates have no dependency on Rook's domain or provider
-abstractions. Rook is not a supported backend as of 2026-10-06 — see
+Huginn is independent of Rook's abstractions; Rook is not a supported backend
+as of 2026-10-06 — see
 [validation.md § Rook compatibility result](validation.md#rook-compatibility-result).
 Real-model validation and a Linux daily-use run must be recorded before
 declaring the personal MVP fully accepted. MCP transport fixtures

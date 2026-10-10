@@ -1,73 +1,63 @@
-# dashboard
+# Rook Dashboard
 
-This template should help get you started developing with Vue 3 in Vite.
+The Rook management dashboard is a Vue 3 SPA, embedded in the production Rook
+binary under `/dashboard/`. Vite serves it on port `4747` and proxies API requests
+to the backend on port `3773` by default.
 
-## Recommended IDE Setup
+## Requirements
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+- Node.js and pnpm (version pinned in the root `package.json`)
+- A running Rook backend for authenticated management flows and API data
 
-## Recommended Browser Setup
+Install workspace dependencies with `pnpm install` from the repository root.
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## Local development
 
-## Type Support for `.vue` Imports in TS
+Start Rook, then start Vite from the repository root:
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
-pnpm install
+```bash
+just run-dashboard
 ```
 
-### Compile and Hot-Reload for Development
+Open <http://localhost:4747/dashboard/>. The dev server proxies `/api/`,
+`/health`, and authentication requests to `http://127.0.0.1:3773`.
 
-```sh
-pnpm dev
+To use another backend or base path, set `API_TARGET` or `BASE_PATH` when running
+Vite. For example:
+
+```bash
+cd apps/rook/dashboard
+API_TARGET=http://127.0.0.1:8081 pnpm dev
 ```
 
-### Type-Check, Compile and Minify for Production
+## Checks
 
-```sh
-pnpm build
+From `apps/rook/dashboard/`, run:
+
+```bash
+pnpm typecheck && pnpm build && pnpm exec vitest run
 ```
 
-### Run Unit Tests with [Vitest](https://vitest.dev/)
+`just ci-local` runs the dashboard checks as part of the workspace quality gate.
 
-```sh
-pnpm test:unit
+## End-to-end tests
+
+Playwright tests in `e2e/` cover login, providers, API keys, and dashboard flows.
+The Docker-backed workflow prepares the backend, admin account, and dashboard:
+
+```bash
+just test-e2e
 ```
 
-### Run End-to-End Tests with [Playwright](https://playwright.dev)
+See the [dev test guide](../../../dev/README.md#path-2--playwright-e2e-against-docker)
+for manual runs and browser installation.
 
-```sh
-# Install browsers for the first run
-npx playwright install
+## Structure and configuration
 
-# When testing on CI, must build the project first
-pnpm build
+Pages live in `src/views/`, shared UI in `src/components/`, routing in
+`src/router/`, Pinia state in `src/stores/`, and English/Spanish translations in
+`src/locales/`. `vite.config.ts` defines the base path and proxy; `playwright.config.ts`
+defines browser projects and E2E settings.
 
-# Runs the end-to-end tests
-pnpm test:e2e
-# Runs the tests only on Chromium
-pnpm test:e2e --project=chromium
-# Runs the tests of a specific file
-pnpm test:e2e tests/example.spec.ts
-# Runs the tests in debug mode
-pnpm test:e2e --debug
-```
-
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
-pnpm lint
-```
+See the [Rook configuration guide](../../../docs/configuration.md), [API reference](../../../docs/api.md),
+and [workspace README](../../../README.md) for backend setup and product context.
