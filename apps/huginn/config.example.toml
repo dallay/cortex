@@ -2,7 +2,8 @@
 provider = "openai" # "mock" for an offline diagnostic
 base_url = "http://127.0.0.1:8000/v1"
 model = "your-tool-capable-model"
-api_key_env = "HUGINN_API_KEY" # empty string disables authentication; legacy AGENT_API_KEY is also accepted
+api_key_env = "HUGINN_API_KEY" # empty string disables authentication
+# Only HUGINN_API_KEY falls back to legacy AGENT_API_KEY when unavailable.
 # db = "/absolute/path/to/sessions.db" # default: OS data directory/cortex/huginn/
 timeout_secs = 120
 tool_timeout_secs = 60

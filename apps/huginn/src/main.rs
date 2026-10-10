@@ -154,6 +154,17 @@ async fn main() -> anyhow::Result<()> {
         let key = match &config.api_key_env {
             Some(name) if !name.is_empty() => Some(
                 std::env::var(name)
+                    .or_else(|error| {
+                        if name == "HUGINN_API_KEY" {
+                            std::env::var("AGENT_API_KEY").inspect(|_| {
+                                eprintln!(
+                                    "warning: AGENT_API_KEY is deprecated; use HUGINN_API_KEY"
+                                );
+                            })
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .with_context(|| format!("credential environment variable {name} is unset"))?,
             ),
             _ => None,

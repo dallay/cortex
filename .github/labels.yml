@@ -13,7 +13,7 @@
   description: "Huginn, the Cortex coding agent (personal Rust CLI and TUI)"
 - name: product/agent
   color: "a78bfa"
-  description: "DEPRECATED — historical label kept so existing issues keep their classification. Use product/huginn for new issues."
+  description: "DEPRECATED — kept for historical issues. Use product/huginn for new issues."
 - name: product/shared
   color: "64748b"
   description: "Cortex-wide tooling, shared infrastructure and cross-product work"

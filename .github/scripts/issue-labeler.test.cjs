@@ -64,6 +64,35 @@ describe('conventional titles', () => {
   });
 });
 
+describe('legacy product selection', () => {
+  for (const source of ['title', 'form']) {
+    for (const product of ['agent', 'huginn']) {
+      it(`${source} ${product} preserves legacy naming or explicitly corrects it`, () => {
+        const input = {
+          title: `fix(${source === 'title' ? product : 'agent'}): session recovery`,
+          body: source === 'form' ? `### Product\n\n${product === 'agent' ? 'Agent' : 'Huginn'}` : '',
+          existingLabels: ['product/agent', 'type/bug', 'area/runtime'],
+        };
+        const result = classify(input, rules);
+        assert.equal(result.desired.product, `product/${product}`);
+        assert.deepEqual(add(result), product === 'huginn' ? ['product/huginn'] : []);
+        assert.deepEqual(remove(result), product === 'huginn' ? ['product/agent'] : []);
+        assert.equal(result.needsTriage, false);
+        const labels = input.existingLabels.filter((label) => !result.remove.has(label)).concat(add(result));
+        const repeated = classify({ ...input, existingLabels: labels }, rules);
+        assert.deepEqual(add(repeated), []);
+        assert.deepEqual(remove(repeated), []);
+      });
+    }
+  }
+
+  it('a legacy Agent form on a new issue selects Huginn', () => {
+    const result = classify({ title: 'fix: session recovery', body: '### Product\n\nAgent' }, rules);
+    assert.equal(result.desired.product, 'product/huginn');
+    assert.ok(!result.add.has('product/agent'));
+  });
+});
+
 describe('issue forms (highest priority)', () => {
   it('form Rook/providers wins over title scope', () => {
     const body = '### Product\n\nRook\n\n### Technical Area\n\nproviders\n\n### Description\n\ntimeout';

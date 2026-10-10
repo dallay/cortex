@@ -13,6 +13,8 @@ fn canonical_environment_values_take_precedence_over_legacy_values() {
         .arg(workspace.path())
         .arg("doctor")
         .env("HOME", home.path())
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME")
         .env_remove("HUGINN_API_KEY")
         .env_remove("AGENT_API_KEY")
         .env("HUGINN_BASE_URL", "http://canonical.invalid/v1")
@@ -36,7 +38,12 @@ fn canonical_environment_values_take_precedence_over_legacy_values() {
 fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
     let home = tempfile::tempdir().expect("home directory");
     let workspace = tempfile::tempdir().expect("workspace");
-    let legacy_dir = home.path().join("Library/Application Support/cortex/agent");
+    let data_root = if cfg!(target_os = "macos") {
+        home.path().join("Library/Application Support")
+    } else {
+        home.path().join(".local/share")
+    };
+    let legacy_dir = data_root.join("cortex/agent");
     std::fs::create_dir_all(&legacy_dir).expect("create legacy data directory");
     let legacy_db = legacy_dir.join("sessions.db");
     let setup = huginn()
@@ -46,6 +53,8 @@ fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
         .arg(&legacy_db)
         .arg("sessions")
         .env("HOME", home.path())
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME")
         .env_remove("HUGINN_API_KEY")
         .env_remove("AGENT_API_KEY")
         .env_remove("HUGINN_BASE_URL")
@@ -64,6 +73,8 @@ fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
         .arg(workspace.path())
         .arg("doctor")
         .env("HOME", home.path())
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CONFIG_HOME")
         .env_remove("HUGINN_API_KEY")
         .env_remove("AGENT_API_KEY")
         .env_remove("HUGINN_BASE_URL")
@@ -81,10 +92,101 @@ fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
     assert_eq!(report["database"], legacy_db.to_string_lossy().as_ref());
     assert!(legacy_db.exists(), "legacy database must remain in place");
     assert!(
-        !home
-            .path()
-            .join("Library/Application Support/cortex/huginn/sessions.db")
-            .exists(),
+        !data_root.join("cortex/huginn/sessions.db").exists(),
         "do not create/copy a canonical DB during legacy fallback"
     );
+}
+
+#[test]
+fn credential_fallback_respects_the_configured_environment_name() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let config = workspace.path().join("config.toml");
+    let db = workspace.path().join("sessions.db");
+    // configured name, canonical key, legacy key, custom key, success, fallback warning
+    for (name, canonical, legacy, custom, success, warning) in [
+        (
+            "HUGINN_API_KEY",
+            None,
+            Some("legacy-test-key"),
+            None,
+            true,
+            true,
+        ),
+        (
+            "HUGINN_API_KEY",
+            Some("canonical-test-key"),
+            Some("legacy-test-key"),
+            None,
+            true,
+            false,
+        ),
+        ("HUGINN_API_KEY", None, None, None, false, false),
+        (
+            "CUSTOM_API_KEY",
+            Some("canonical-test-key"),
+            Some("legacy-test-key"),
+            None,
+            false,
+            false,
+        ),
+        (
+            "CUSTOM_API_KEY",
+            None,
+            Some("legacy-test-key"),
+            Some("custom-test-key"),
+            true,
+            false,
+        ),
+        (
+            "AGENT_API_KEY",
+            None,
+            Some("legacy-test-key"),
+            None,
+            true,
+            false,
+        ),
+        ("", None, Some("legacy-test-key"), None, true, false),
+    ] {
+        std::fs::write(&config, format!("api_key_env = {name:?}\n")).expect("write config");
+        let mut command = huginn();
+        command
+            .arg("--config")
+            .arg(&config)
+            .arg("--workspace")
+            .arg(workspace.path())
+            .arg("--db")
+            .arg(&db)
+            .args([
+                "--base-url",
+                "http://127.0.0.1:1/v1",
+                "--model",
+                "test-model",
+                "doctor",
+            ]);
+        for (key, value) in [
+            ("HUGINN_API_KEY", canonical),
+            ("AGENT_API_KEY", legacy),
+            ("CUSTOM_API_KEY", custom),
+        ] {
+            if let Some(value) = value {
+                command.env(key, value);
+            } else {
+                command.env_remove(key);
+            }
+        }
+        let output = command.output().expect("run doctor");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), success, "{name}: {stderr}");
+        assert_eq!(
+            stderr.contains("AGENT_API_KEY is deprecated"),
+            warning,
+            "{name}: {stderr}"
+        );
+        if !success {
+            assert!(
+                stderr.contains(&format!("credential environment variable {name} is unset")),
+                "{stderr}"
+            );
+        }
+    }
 }

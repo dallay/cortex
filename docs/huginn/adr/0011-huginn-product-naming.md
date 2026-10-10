@@ -119,8 +119,8 @@ operation.
 - Migration evidence: `cargo check --workspace`, `cargo test -p
   huginn-core -p huginn-runtime -p huginn`, `cargo run -p huginn --
   --provider mock doctor`, and `just huginn-test` pass after the change.
-- Operational compatibility label: `scripts/huginn-linux-smoke.sh` succeeds
-  on a clean Linux host without contacting one.
+- Operational compatibility acceptance criterion: `scripts/huginn-linux-smoke.sh`
+  must succeed on a clean Linux host without contacting a model endpoint.
 - Add immutable evidence references (commit, Cargo manifest, label audit
   run) when this ADR is archived.
 - Revisit only if naming conflict, trademark complaint, or
