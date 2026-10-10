@@ -40,7 +40,7 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::ToolCall;
+    use huginn_core::ToolCall;
     use serde_json::json;
 
     fn assistant_text(content: &str) -> Message {

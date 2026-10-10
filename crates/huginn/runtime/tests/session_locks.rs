@@ -2,64 +2,17 @@ use fs2::FileExt;
 use huginn_core::AgentError;
 use huginn_runtime::sessions::SqliteSessions;
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-const HELPER_ID: &str = "HUGINN_TEST_LEGACY_LOCK_ID";
-const HELPER_READY: &str = "HUGINN_TEST_LEGACY_LOCK_READY";
-
-#[test]
-#[ignore = "subprocess synchronization helper; invoked explicitly by parent tests"]
-fn legacy_lock_holder_helper() {
-    let (Ok(id), Ok(ready_path)) = (std::env::var(HELPER_ID), std::env::var(HELPER_READY)) else {
-        return;
-    };
-    let ready_path = PathBuf::from(ready_path);
-    let temp_dir = std::env::temp_dir();
-    let Some(parent) = ready_path.parent() else {
-        return;
-    };
-    let Ok(canonical_parent) = parent.canonicalize() else {
-        return;
-    };
-    let Ok(canonical_temp_dir) = temp_dir.canonicalize() else {
-        return;
-    };
-    if ready_path.file_name().and_then(|name| name.to_str()) != Some("ready")
-        || !canonical_parent.starts_with(&canonical_temp_dir)
-    {
-        return;
-    }
-    let path = std::path::Path::new("/tmp").join(format!("cortex-agent-session-{id}.lock"));
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .expect("open legacy lock file");
-    lock.lock_exclusive().expect("hold legacy lock");
-    std::fs::write(&ready_path, "ready").expect("signal lock readiness");
-    let mut release = [0; 1];
-    let _ = std::io::stdin().read(&mut release);
-    FileExt::unlock(&lock).expect("release legacy lock");
-}
-
 fn spawn_legacy_protocol_holder(id: Uuid) -> (Child, tempfile::TempDir) {
     let ready_dir = tempfile::tempdir().expect("temporary synchronization directory");
     let ready_path = ready_dir.path().join("ready");
-    let child = Command::new(std::env::current_exe().expect("test executable"))
-        .args([
-            "--exact",
-            "legacy_lock_holder_helper",
-            "--ignored",
-            "--nocapture",
-        ])
-        .env(HELPER_ID, id.to_string())
-        .env(HELPER_READY, &ready_path)
+    let child = Command::new(env!("CARGO_BIN_EXE_session_lock_holder"))
+        .arg(id.as_hyphenated().to_string())
+        .arg(&ready_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -141,6 +94,53 @@ fn symlink_lock_path_is_reported_as_io_not_session_contention() {
         "unexpected error: {error}"
     );
     std::fs::remove_file(lock_path).expect("remove lock symlink");
+}
+
+#[cfg(unix)]
+#[test]
+fn lease_normalises_canonical_and_noncanonical_session_ids() {
+    let id = Uuid::new_v4();
+    let canonical = id.as_hyphenated().to_string();
+    let upper = canonical.to_ascii_uppercase();
+    let stripped: String = canonical.chars().filter(|c| *c != '-').collect();
+    // All three spellings must resolve to the same shared lockfile, so a
+    // legacy owner that wrote under the canonical form blocks Huginn even
+    // when the CLI hands us upper-case or dash-stripped input.
+    let lock_path =
+        std::path::Path::new("/tmp").join(format!("cortex-agent-session-{canonical}.lock"));
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .expect("open canonical lock");
+    lock.lock_exclusive().expect("hold canonical lock");
+    for variant in [canonical.as_str(), upper.as_str(), stripped.as_str()] {
+        let (_directory, store) = sessions();
+        let error = match store.lease(variant) {
+            Ok(_) => panic!("variant {variant} unexpectedly acquired the lock"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("session is in use"),
+            "variant {variant} reported wrong error: {error}"
+        );
+    }
+    FileExt::unlock(&lock).expect("release canonical lock");
+    let (_directory, store) = sessions();
+    store
+        .lease(&upper)
+        .expect("acquire lock via upper-case after release");
+    let (_directory, store) = sessions();
+    store
+        .lease(&stripped)
+        .expect("acquire lock via dash-stripped form after release");
+    let (_directory, store) = sessions();
+    store
+        .lease(&canonical)
+        .expect("acquire lock via canonical form after release");
+    let _ = std::fs::remove_file(&lock_path);
 }
 
 #[test]

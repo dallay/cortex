@@ -315,6 +315,21 @@ describe('idempotence and preservation', () => {
     assert.ok(!r.add.has('product/huginn'), 'must not silently migrate the label');
   });
 
+  it('legacy product/agent survives a new fix(agent) title scope', () => {
+    // A historical issue still labelled product/agent must keep that
+    // label when a follow-up title reuses the legacy scope.
+    const r = classify(
+      {
+        title: 'fix(agent): trim cache',
+        body: '',
+        existingLabels: ['product/agent', 'type/bug', 'area/runtime'],
+      },
+      rules
+    );
+    assert.ok(!r.remove.has('product/agent'), 'must not strip legacy product/agent');
+    assert.ok(!r.add.has('product/huginn'), 'must not migrate the historical label');
+  });
+
   it('never touches priority/security/stale', () => {
     const r = classify(
       {

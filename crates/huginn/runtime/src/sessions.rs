@@ -14,7 +14,7 @@ pub struct SqliteSessions {
 /// Cross-process advisory lock held for the duration of a conversation.
 /// It is released by the operating system even if the process crashes.
 pub struct SessionLease {
-    _files: Vec<File>,
+    _file: File,
 }
 impl SqliteSessions {
     pub fn open(path: &Path) -> Result<Self> {
@@ -48,47 +48,34 @@ impl SqliteSessions {
         })
     }
     pub fn lease(&self, id: &str) -> Result<SessionLease> {
-        if id.len() != 36
-            || !id.bytes().enumerate().all(|(index, byte)| {
-                if matches!(index, 8 | 13 | 18 | 23) {
-                    byte == b'-'
-                } else {
-                    byte.is_ascii_hexdigit()
-                }
-            })
-        {
-            return Err(AgentError::Session("invalid session id".into()));
-        }
+        // Normalise the ID to the canonical hyphenated lower-case form so the
+        // same lockfile is shared with the legacy binary regardless of input
+        // casing or stripped dashes, and so the path is a single, well-known
+        // filename. `Uuid::parse_str` accepts all valid UUID spellings; we
+        // then re-emit the canonical string before computing the lock path.
         let uuid = uuid::Uuid::parse_str(id)
             .map_err(|_| AgentError::Session("invalid session id".into()))?;
-        if uuid.to_string() != id {
-            return Err(AgentError::Session("invalid session id".into()));
+        // The shared lock filename is the only synchronization point; old
+        // binaries understand it and new binaries keep acquiring it. We
+        // intentionally do not probe parallel filenames because the legacy
+        // binary would not honour them and could race.
+        let path = legacy_session_lock_path(&uuid);
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
-        // Old and new lockfiles may already be held independently by old/new
-        // binaries, so probing for both can deadlock under contention. Instead,
-        // preserve the shared legacy filename as the synchronization point:
-        // old binaries understand it, and new binaries keep acquiring it.
-        let paths = [legacy_session_lock_path(&uuid)];
-        let mut files = Vec::with_capacity(paths.len());
-        for path in paths {
-            let mut options = OpenOptions::new();
-            options.read(true).write(true).create(true).truncate(false);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        let file = options.open(path)?;
+        file.try_lock_exclusive().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                AgentError::Session("session is in use by another process".into())
+            } else {
+                AgentError::Io(error)
             }
-            let file = options.open(path)?;
-            file.try_lock_exclusive().map_err(|error| {
-                if error.kind() == std::io::ErrorKind::WouldBlock {
-                    AgentError::Session("session is in use by another process".into())
-                } else {
-                    AgentError::Io(error)
-                }
-            })?;
-            files.push(file);
-        }
-        Ok(SessionLease { _files: files })
+        })?;
+        Ok(SessionLease { _file: file })
     }
 }
 /// Shared lock filename used by both `cortex-agent` and Huginn binaries to

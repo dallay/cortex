@@ -74,6 +74,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(value) = cli.db {
         config.db = value;
     }
+    if !matches!(cli.command, Some(Commands::Sessions)) {
+        // Resolve HUGINN_* / AGENT_* env vars before validating so doctor
+        // and one-shot modes have the same precedence as chat/run.
+        config.fill_from_env();
+    }
     // The sessions subcommand only reads the database and must work without model settings.
     if !matches!(cli.command, Some(Commands::Sessions)) {
         config.validate()?;
@@ -151,23 +156,17 @@ async fn main() -> anyhow::Result<()> {
     let model: Arc<dyn ModelProvider> = if config.provider == "mock" {
         Arc::new(MockProvider)
     } else {
-        let key = match &config.api_key_env {
-            Some(name) if !name.is_empty() => Some(
-                std::env::var(name)
-                    .or_else(|error| {
-                        if name == "HUGINN_API_KEY" {
-                            std::env::var("AGENT_API_KEY").inspect(|_| {
-                                eprintln!(
-                                    "warning: AGENT_API_KEY is deprecated; use HUGINN_API_KEY"
-                                );
-                            })
-                        } else {
-                            Err(error)
-                        }
-                    })
+        let key = match config
+            .api_key_env
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        {
+            Some(name) => Some(
+                config
+                    .resolve_api_key()?
                     .with_context(|| format!("credential environment variable {name} is unset"))?,
             ),
-            _ => None,
+            None => None,
         };
         Arc::new(OpenAiProvider::new(
             config.base_url.as_deref().context("base_url is required")?,
@@ -208,11 +207,24 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     if is_doctor {
+        // Surface legacy env-var warnings even when the user only ran
+        // `huginn doctor`. resolve_api_key is the single place that knows
+        // the canonical->legacy fallback order.
+        let resolved_key = config.resolve_api_key()?;
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({"workspace":session.workspace,
-            "database":config.db,"provider":config.provider,"mcp_servers":config.mcp.iter().map(|c|&c.name).collect::<Vec<_>>(),
-            "services":supervisor.diagnostics(),"rook_compatibility":"unsupported"}))?
+            serde_json::to_string_pretty(&serde_json::json!({
+                "workspace": session.workspace,
+                "database": config.db,
+                "provider": config.provider,
+                "base_url": config.base_url,
+                "model": config.model,
+                "api_key_env": config.api_key_env,
+                "api_key_resolved": resolved_key.is_some(),
+                "mcp_servers": config.mcp.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                "services": supervisor.diagnostics(),
+                "rook_compatibility": "unsupported",
+            }))?
         );
         supervisor.shutdown().await;
         return Ok(());

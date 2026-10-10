@@ -132,12 +132,7 @@ struct PtyRun {
 /// to exit. The implementation is fully self-contained: no `expect` binary,
 /// no shell quoting, and the script is parameterised by an iterator of lines
 /// so the tests can express their intent clearly.
-fn run_chat_with_pty(
-    workspace: &Path,
-    db: &Path,
-    script: &[&str],
-    binary: Option<&Path>,
-) -> PtyRun {
+fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -148,8 +143,7 @@ fn run_chat_with_pty(
         })
         .expect("pty pair must open");
 
-    let binary = binary.unwrap_or_else(|| Path::new(env!("CARGO_BIN_EXE_huginn")));
-    let mut builder = CommandBuilder::new(binary);
+    let mut builder = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
     builder.arg("--provider");
     builder.arg("mock");
     builder.arg("--workspace");
@@ -268,7 +262,6 @@ fn chat_compact_emits_ndjson_event_after_confirmation() {
         workspace.path(),
         &db,
         &["first completed turn", "/compact", "y", "/quit"],
-        None,
     );
     assert!(status.success(), "huginn failed; transcript:\n{output}");
     assert!(
@@ -287,7 +280,6 @@ fn chat_compact_decline_emits_no_compacted_event() {
         workspace.path(),
         &db,
         &["first completed turn", "/compact", "n", "/quit"],
-        None,
     );
     assert!(status.success(), "huginn failed; transcript:\n{output}");
     assert!(

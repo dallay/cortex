@@ -46,7 +46,7 @@ Cerrar la brecha de la issue #279: preservar tool-call deltas OpenAI desde el pr
 - RED confirmado: la prueba de provider inicialmente no compiló porque `StreamChunk` no tenía `tool_calls`; la de transporte compiló y falló porque el campo no se emitía.
 - Verificación final: `cargo test -p rook-core -p providers-openai -p providers-groq -p providers-anthropic -p providers-ollama -p rook-usecases -p transport-axum` — todo PASS, incluyendo la prueba de round-trip.
 - Lint/formato: `cargo clippy -p rook-core -p providers-openai -p providers-groq -p providers-anthropic -p providers-ollama -p rook-usecases -p transport-axum --all-targets -- -D warnings` — PASS; `cargo fmt --all -- --check` — PASS.
-- Compatibilidad del agente: no se declara; `docs/agent/validation.md` conserva el estado no compatible hasta una prueba E2E con Rook en ejecución.
+- Compatibilidad del agente: no se declara; `docs/huginn/validation.md` conserva el estado no compatible hasta una prueba E2E con Rook en ejecución.
 - Revisión de la PR verificada: el EOF parcial, parsing multilínea y acumulación sin límites ocurrían en código; la prueba round-trip existente no pasaba por el endpoint HTTP.
 - RED/GREEN RPI-007: `stream_returns_error_for_eof_inside_sse_event` falló inicialmente con cero items; tras exponer `SseBuffer::pending_len()` y validar EOF, pasó con error provider explícito.
 - RED/GREEN RPI-008: `stream_joins_multiple_data_lines_in_one_sse_event` falló con EOF JSON en la primera línea; ahora el payload SSE se une con newline antes de deserializarse.

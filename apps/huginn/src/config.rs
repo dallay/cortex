@@ -33,23 +33,10 @@ impl Default for Config {
         } else {
             canonical_data
         };
-        // Prefer the canonical HUGINN_* variables; fall back to legacy AGENT_*
-        // only when the canonical one is unset, with a stderr notice so users
-        // learn the new namespace without losing previously-exported credentials.
-        let base_url = std::env::var("HUGINN_BASE_URL").ok().or_else(|| {
-            std::env::var("AGENT_BASE_URL").ok().inspect(|_| {
-                eprintln!("warning: AGENT_BASE_URL is deprecated; use HUGINN_BASE_URL");
-            })
-        });
-        let model = std::env::var("HUGINN_MODEL").ok().or_else(|| {
-            std::env::var("AGENT_MODEL").ok().inspect(|_| {
-                eprintln!("warning: AGENT_MODEL is deprecated; use HUGINN_MODEL");
-            })
-        });
         Self {
             provider: "openai".into(),
-            base_url,
-            model,
+            base_url: None,
+            model: None,
             api_key_env: Some("HUGINN_API_KEY".into()),
             db: root.join("sessions.db"),
             timeout_secs: 120,
@@ -62,6 +49,49 @@ impl Default for Config {
     }
 }
 impl Config {
+    /// Fill any unset optional fields from the canonical `HUGINN_*`
+    /// environment variables, falling back to the legacy `AGENT_*` names
+    /// with a one-shot deprecation warning. Custom values explicitly
+    /// configured in TOML or via CLI flags are preserved.
+    pub fn fill_from_env(&mut self) {
+        if self.base_url.is_none() {
+            self.base_url = Self::env_with_legacy_fallback("HUGINN_BASE_URL", "AGENT_BASE_URL");
+        }
+        if self.model.is_none() {
+            self.model = Self::env_with_legacy_fallback("HUGINN_MODEL", "AGENT_MODEL");
+        }
+    }
+
+    /// Resolve the API key from the configured env var, falling back to
+    /// the legacy `AGENT_API_KEY` only when the canonical name was left
+    /// at its default. Custom env names are not migrated.
+    pub fn resolve_api_key(&self) -> anyhow::Result<Option<String>> {
+        let Some(name) = self.api_key_env.as_deref().filter(|name| !name.is_empty()) else {
+            return Ok(None);
+        };
+        if let Ok(value) = std::env::var(name) {
+            return Ok(Some(value));
+        }
+        if name == "HUGINN_API_KEY" {
+            if let Ok(value) = std::env::var("AGENT_API_KEY") {
+                eprintln!("warning: AGENT_API_KEY is deprecated; use HUGINN_API_KEY");
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
+    }
+
+    fn env_with_legacy_fallback(canonical: &str, legacy: &str) -> Option<String> {
+        if let Ok(value) = std::env::var(canonical) {
+            return Some(value);
+        }
+        if let Ok(value) = std::env::var(legacy) {
+            eprintln!("warning: {legacy} is deprecated; use {canonical}");
+            return Some(value);
+        }
+        None
+    }
+
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
         // Resolution order, all read-only:
         // 1. Explicit --config (highest priority, never falls back).

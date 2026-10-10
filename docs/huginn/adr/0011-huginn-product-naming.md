@@ -11,11 +11,34 @@ The coding agent inside the Cortex monorepo had been referred to as
 `agent` (binary), `cortex-agent` (Cargo package), `agent-core`,
 `agent-runtime`, `cortex/agent` (config dir) and `AGENT_*` (env vars).
 ADR-0001 explicitly stated that the public product name remained open and
-that `agent` was a provisional internal identifier. Several weeks of
-daily-use validation and structured acceptance have now passed
-(see [`../validation.md`](../validation.md)), so the team is ready to
-commit to a stable identity before any public packaging or external
-distribution is considered.
+that `agent` was a provisional internal identifier. The MVP has been
+exercised manually for several days on macOS (the `apps/huginn` and
+`crates/huginn/*` suites) and the structured acceptance script
+`scripts/huginn-linux-smoke.sh` is in place but has not been executed
+on a Linux host from this branch. The team is committing to a stable
+identity now, ahead of any public packaging or external distribution,
+so the rename work and tooling normalisation can be tracked together
+before the next release window.
+
+This ADR supersedes the "product name still open" statement in
+`docs/huginn/adr/README.md` and the "provisional internal identifier"
+wording in historical ADRs. The historical decisions themselves remain
+valid and are not rewritten; provenance notes in the archived
+DALLAY-631 SDD evidence call out the rename explicitly.
+
+## Cross-references
+
+- ADR-0001 ([`./0001-agent-product-and-documentation-boundaries.md`](./0001-agent-product-and-documentation-boundaries.md))
+  — the original boundary that introduced the provisional `agent`
+  identifier and the working title for the product name. This ADR
+  resolves that open thread.
+- The internal naming research note (the "Drive ADR" referenced during
+  ideation) reached the same conclusion: **Huginn** for the autonomous
+  reasoning product, **Muninn** reserved for the future memory product.
+  It also documented collisions with other open-source projects
+  (e.g. `zaidorx/huginn`, another Rust coding agent) and recommended
+  accepting the collision risk at this stage. This ADR consolidates
+  those findings so the naming decision has a single source of truth.
 
 ## Decision
 
@@ -119,10 +142,20 @@ operation.
 - Migration evidence: `cargo check --workspace`, `cargo test -p
   huginn-core -p huginn-runtime -p huginn`, `cargo run -p huginn --
   --provider mock doctor`, and `just huginn-test` pass after the change.
-- Operational compatibility acceptance criterion: `scripts/huginn-linux-smoke.sh`
-  must succeed on a clean Linux host without contacting a model endpoint.
+- `just ci-local` is the agreed merge gate (markdownlint-cli2, cargo
+  fmt, cargo clippy, cargo check, cargo test --workspace --all-features,
+  vitest, cargo doc, cargo audit, and the Playwright e2e matrix).
+  The macOS dev run executed in the migration commit; a Linux runner
+  must repeat the suite, especially the multi-platform SQLite fallback
+  test added in this PR.
+- `scripts/huginn-linux-smoke.sh` is the structured acceptance script
+  for Huginn on Linux. It was **not** executed during this rename on a
+  Linux host from this branch; it is part of the CI matrix but the
+  end-to-end smoke must run on `ubuntu-latest` before tagging a release
+  that advertises the new product name.
 - Add immutable evidence references (commit, Cargo manifest, label audit
-  run) when this ADR is archived.
+  run, and a clean Linux `just ci-local` transcript) when this ADR is
+  archived.
 - Revisit only if naming conflict, trademark complaint, or
   install-distribution friction makes a future rename materially
   worthwhile.

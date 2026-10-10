@@ -7,7 +7,11 @@
 - GitHub repository: [`dallay/cortex`](https://github.com/dallay/cortex).
 - Linear team: `Dallay` (`DALLAY`).
 - Linear project: [`cortex`](https://linear.app/dallay/project/cortex-0598ad516a88/overview) (project UUID: `1ea06171-1a67-411c-b65f-a829ece58b48`).
-- Product labels: `product/rook`, `product/agent`, `product/shared`.
+- Product labels: `product/rook`, `product/huginn`, `product/shared`.
+  `product/agent` is the deprecated alias of `product/huginn` and is
+  preserved on historical issues only — see ADR-0011. When configuring
+  Linear Triage Rules, include the legacy `product/agent` label as an
+  additional OR condition until historical issues are re-labeled by hand.
 - GitHub is the **source for issue creation and classification labels**; Linear is the **source for project planning and triage**.
 - Preserve the existing GitHub Issues Sync integration; **never create a duplicate Linear issue** for a GitHub issue already synced.
 
@@ -42,7 +46,11 @@ Linear [Triage Rules](https://linear.app/docs/triage) can set the project and st
 1. Open **Linear → Settings → Teams → Dallay → Triage → Triage Rules**.
 2. Create a rule named `Route Cortex GitHub issues`.
 3. **Prefer an origin/repository condition** identifying synced issues from `dallay/cortex` *if that condition exists in the rule editor*. Do not apply a team-wide unconditional project assignment: team `Dallay` also owns other projects.
-4. If no repository/source filter is available, use an OR condition for `product/rook`, `product/agent`, or `product/shared`, **but only after confirming that GitHub labels are present at the moment the issue enters Triage**.
+4. If no repository/source filter is available, use an OR condition for
+   `product/rook`, `product/huginn`, `product/shared`, or the legacy
+   `product/agent` (until historical re-labeling is complete), **but only
+   after confirming that GitHub labels are present at the moment the
+   issue enters Triage**.
 5. **Action:** set **Project → cortex**.
 6. **Optional separate rule:** move to **Backlog** only when the issue is already unambiguously classified: exactly one `product/*`, exactly one `type/*`, at least one `area/*`, and no `triage/needs-classification`. If the rule editor cannot express all these conditions, retain `Triage` for human review rather than routing an ambiguous issue automatically.
 7. Review rule ordering and conflicts with other `Dallay` Triage Rules; they execute in configured order.
@@ -53,7 +61,7 @@ Linear [Triage Rules](https://linear.app/docs/triage) can set the project and st
 ## Acceptance tests (perform after rule setup)
 
 1. Create a GitHub issue in `dallay/cortex` using a structured Issue Form, product `Rook`, type `bug`, technical area `providers`. Confirm it creates **one** synced `DALLAY-*` issue in Linear, assigned to project `cortex`, with all three classification axes.
-2. Repeat for `Agent` and `Shared`.
+2. Repeat for `Huginn` (formerly `Agent`) and `Shared`.
 3. Confirm a new issue in a **different** GitHub repository connected to team `Dallay` is **not** assigned to project `cortex`.
 4. Confirm incomplete or ambiguous classification remains triaged unless the rule explicitly supports the complete classification requirements.
 5. Exercise the **label-arrival race**: confirm routing when GitHub adds labels *after* the Linear issue was initially ingested.

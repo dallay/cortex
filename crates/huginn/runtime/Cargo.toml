@@ -5,6 +5,11 @@ edition = "2021"
 rust-version = "1.89"
 publish = false
 
+[[bin]]
+name = "session_lock_holder"
+path = "tests/support/session_lock_holder.rs"
+test = false
+
 [dependencies]
 huginn-core = { path = "../core" }
 async-trait.workspace = true
