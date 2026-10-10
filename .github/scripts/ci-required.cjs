@@ -1,6 +1,5 @@
 const EXPECTED = [
   { job: 'changes', when: () => true },
-  { job: 'test-ci-policy', when: (c) => c.github },
   { job: 'build-dashboard', when: (c) => c.backend || c.frontend || c.github },
   { job: 'fmt', when: (c) => c.backend || c.github },
   { job: 'markdown', when: (c) => c.docs || c.github },

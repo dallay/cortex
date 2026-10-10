@@ -117,6 +117,23 @@ completion. Flaky SQLite tests may need an isolated re-run.
 - `just test-integration` — integration tests only
 - `just test-e2e` — Playwright suite (requires `just test-e2e-build` + Docker)
 
+## Testing Policy — TDD Scope
+
+TDD follows explicit project/session configuration, never by default.
+When enabled: failing test first, then RED → GREEN → REFACTOR.
+When disabled: ordinary functional checks only.
+
+- **TDD YES** — pure domain logic: use-cases, classifiers, parsers,
+  wire formats. Example: `issue-labeler.cjs classify()` invariants
+  (no invented product, human preservation, idempotence).
+- **TDD NO** — config / YAML / GitHub Actions / Renovate-pinned SHAs,
+  docs-only changes. Light validation only:
+  `ruby -ryaml YAML.load_file`, `node --check`, smoke run.
+- **Anti-pattern** — asserting implementation details like
+  `actions/checkout@<40-hex>` pinned SHA or path-filter literals.
+  If a policy check is needed, use a non-fragile shape
+  (e.g. `/uses:\s*actions\/checkout@[a-f0-9]{40}/`), never a literal SHA.
+
 ## References
 
 - [Architecture](docs/architecture.md) — layer diagram, data/config flow
