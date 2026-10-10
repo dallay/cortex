@@ -220,6 +220,7 @@ async fn complete_returns_response_with_token_counts() {
         id: RequestId::new(),
         model: ModelId::new("gemini-2.0-flash"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],

@@ -8,6 +8,7 @@ fn stream_request() -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("test".to_string()),
         }],
@@ -291,6 +292,7 @@ async fn complete_returns_response_on_success() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -344,6 +346,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -419,6 +422,7 @@ async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("read and count".to_string()),
         }],
@@ -789,6 +793,7 @@ async fn complete_parses_cached_tokens_and_reasoning_tokens() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4o"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -847,6 +852,7 @@ async fn stream_request_includes_include_usage_option() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -946,18 +952,22 @@ async fn complete_supports_all_roles() {
             rook_core::Message {
                 role: Role::System,
                 content: rook_core::MessageContent::Text("sys".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::User,
                 content: rook_core::MessageContent::Text("user".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::Assistant,
                 content: rook_core::MessageContent::Text("asst".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::Developer,
                 content: rook_core::MessageContent::Text("dev".to_string()),
+                tool_calls: vec![],
             },
         ],
         stream: false,

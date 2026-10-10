@@ -51,5 +51,6 @@ axum-test = "21"
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
 providers-openai = { path = "../providers-openai" }
+providers-ollama = { path = "../providers-ollama" }
 wiremock = "0.6"
 cortex-test-support = { path = "../../test-support" }

@@ -69,6 +69,7 @@ async fn complete_returns_valid_response_from_mock_server() {
         id: RequestId::new(),
         model: ModelId::new("claude-3-5-sonnet-20241022"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("Hi".to_string()),
         }],
@@ -143,6 +144,7 @@ async fn complete_parses_cache_tokens() {
         id: RequestId::new(),
         model: ModelId::new("claude-3-5-sonnet-20241022"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("Hi".to_string()),
         }],
@@ -179,6 +181,7 @@ fn make_test_request(model: &str) -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new(model),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("Hi".to_string()),
         }],
@@ -567,6 +570,7 @@ async fn stream_includes_system_message_in_request() {
     req.messages.insert(
         0,
         rook_core::Message {
+            tool_calls: vec![],
             role: Role::System,
             content: MessageContent::Text("You are a helpful assistant.".to_string()),
         },

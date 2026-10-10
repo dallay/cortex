@@ -341,6 +341,7 @@ async fn complete_returns_response_with_token_counts() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -402,6 +403,7 @@ async fn complete_handles_missing_eval_counts() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -427,6 +429,103 @@ async fn complete_handles_missing_eval_counts() {
     // Missing eval counts default to 0
     assert_eq!(resp.usage.prompt_tokens, 0);
     assert_eq!(resp.usage.completion_tokens, 0);
+}
+
+#[tokio::test]
+async fn complete_preserves_finish_reason_and_structured_tool_calls() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/chat"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "qwen3",
+                "message": {
+                    "role": "assistant",
+                "content": "",
+                "thinking": "checking the key",
+                "images": ["base64-image-data"],
+                    "tool_calls": [{
+                        "function": {
+                            "name": "lookup",
+                            "arguments": {"key": "value"}
+                        }
+                    }]
+                },
+            "done": true,
+            "done_reason": "length",
+            "created_at": "2025-01-01T00:00:00Z",
+            "total_duration": 100,
+            "load_duration": 10,
+            "prompt_eval_duration": 20,
+            "eval_duration": 30,
+            "prompt_eval_cached_count": 4,
+                "logprobs": [{"token": "x", "logprob": -0.1}]
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OllamaProvider::new(OllamaProviderConfig {
+        id: ProviderId::new("ollama-test"),
+        base_url: server.uri(),
+        models: vec![ModelId::new("qwen3")],
+        timeout_secs: 10,
+        api_key: None,
+    })
+    .unwrap();
+    let request = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("qwen3"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: "Look up the key".into(),
+            tool_calls: vec![rook_core::MessageToolCall {
+                id: Some("call_1".to_string()),
+                name: "lookup".to_string(),
+                arguments: serde_json::json!({"key": "value"}),
+            }],
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let response = provider
+        .complete(&request)
+        .await
+        .expect("completion succeeds");
+    let serialized = serde_json::to_value(response).expect("response serializes");
+
+    assert_eq!(serialized["finish_reason"], "length");
+    assert_eq!(serialized["thinking"], "checking the key");
+    assert_eq!(serialized["tool_calls"][0]["name"], "lookup");
+    assert_eq!(serialized["usage"]["cache_read_tokens"], 4);
+    assert_eq!(
+        serialized["tool_calls"][0]["arguments"],
+        serde_json::json!({"key": "value"})
+    );
+    let requests = server.received_requests().await.expect("request captured");
+    let request_body: serde_json::Value =
+        serde_json::from_slice(&requests[0].body).expect("request body is JSON");
+    assert_eq!(
+        request_body["messages"][0]["tool_calls"][0]["function"]["name"],
+        "lookup"
+    );
+    assert_eq!(
+        request_body["messages"][0]["tool_calls"][0]["function"]["arguments"],
+        serde_json::json!({"key": "value"})
+    );
 }
 
 #[tokio::test]
@@ -456,6 +555,7 @@ async fn complete_returns_error_on_http_failure() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -513,6 +613,7 @@ async fn stream_returns_chunks_from_sse_lines() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -572,6 +673,7 @@ async fn stream_returns_error_on_http_failure() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -631,6 +733,7 @@ async fn stream_handles_single_chunk() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -698,6 +801,7 @@ async fn complete_sends_bearer_header_when_api_key_configured() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -757,6 +861,7 @@ async fn complete_does_not_send_auth_header_when_api_key_is_none() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -818,6 +923,7 @@ async fn complete_does_not_send_auth_header_when_api_key_is_empty() {
         id: RequestId::new(),
         model: ModelId::new("llama3"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],

@@ -14,12 +14,24 @@ use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, 
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
+fn map_anthropic_finish_reason(reason: &str) -> Option<FinishReason> {
+    match reason {
+        "end_turn" | "stop_sequence" => Some(FinishReason::Stop),
+        "max_tokens" => Some(FinishReason::Length),
+        "tool_use" => Some(FinishReason::ToolCalls),
+        "refusal" => Some(FinishReason::ContentFilter),
+        _ => None,
+    }
+}
+
 /// Non-streaming response body from Anthropic API
 #[derive(Debug, Deserialize)]
 struct AnthropicNonStreamResponse {
     #[allow(dead_code)]
     id: String,
     model: String,
+    #[serde(default)]
+    stop_reason: Option<String>,
     content: Vec<AnthropicNonStreamContentBlock>,
     usage: AnthropicNonStreamUsage,
 }
@@ -307,36 +319,31 @@ impl AnthropicProvider {
                 id: request_id.clone(),
                 model: model.clone(),
                 delta: delta.text,
+                thinking: None,
                 tool_calls: vec![],
                 finish_reason: None,
                 usage: None,
             })),
-            AnthropicStreamEvent::MessageDelta { delta, usage } => {
-                let finish_reason = if delta.stop_reason == "tool_use" {
-                    FinishReason::ToolCalls
-                } else {
-                    FinishReason::Stop
-                };
-                Some(Ok(StreamChunk {
-                    id: request_id.clone(),
-                    model: model.clone(),
-                    delta: String::new(),
-                    tool_calls: vec![],
-                    finish_reason: Some(finish_reason),
-                    usage: Some(TokenUsage {
-                        prompt_tokens: usage.input_tokens.unwrap_or(0),
-                        completion_tokens: usage.output_tokens,
-                        total_tokens: usage
-                            .input_tokens
-                            .unwrap_or(0)
-                            .saturating_add(usage.output_tokens),
-                        cache_read_tokens: usage.cache_read_input_tokens,
-                        cache_creation_tokens: usage.cache_creation_input_tokens,
-                        reasoning_tokens: None,
-                        estimated_cost_usd: None,
-                    }),
-                }))
-            }
+            AnthropicStreamEvent::MessageDelta { delta, usage } => Some(Ok(StreamChunk {
+                id: request_id.clone(),
+                model: model.clone(),
+                delta: String::new(),
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: map_anthropic_finish_reason(&delta.stop_reason),
+                usage: Some(TokenUsage {
+                    prompt_tokens: usage.input_tokens.unwrap_or(0),
+                    completion_tokens: usage.output_tokens,
+                    total_tokens: usage
+                        .input_tokens
+                        .unwrap_or(0)
+                        .saturating_add(usage.output_tokens),
+                    cache_read_tokens: usage.cache_read_input_tokens,
+                    cache_creation_tokens: usage.cache_creation_input_tokens,
+                    reasoning_tokens: None,
+                    estimated_cost_usd: None,
+                }),
+            })),
             AnthropicStreamEvent::Error { error } => Some(Err(CortexError::provider(format!(
                 "Anthropic error: {} - {}",
                 error.error_type, error.message
@@ -442,6 +449,12 @@ impl ProviderPort for AnthropicProvider {
             model: ModelId::new(anthropic_resp.model),
             content: text.clone(),
             content_blocks: vec![rook_core::MessageContent::Text(text)],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: anthropic_resp
+                .stop_reason
+                .as_deref()
+                .and_then(map_anthropic_finish_reason),
             usage: TokenUsage {
                 prompt_tokens: anthropic_resp.usage.input_tokens,
                 completion_tokens: anthropic_resp.usage.output_tokens,

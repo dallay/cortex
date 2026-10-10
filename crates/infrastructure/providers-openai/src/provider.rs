@@ -76,22 +76,49 @@ impl OpenAIProvider {
         Ok(Self { config, client })
     }
 
+    fn message_to_openai(
+        message: &rook_core::Message,
+        request_id: &RequestId,
+        message_index: usize,
+    ) -> OpenAIMessage {
+        OpenAIMessage {
+            role: match message.role {
+                rook_core::Role::System => "system",
+                rook_core::Role::User => "user",
+                rook_core::Role::Assistant => "assistant",
+                rook_core::Role::Developer => "developer",
+            }
+            .to_string(),
+            content: message.content.as_text().to_string(),
+            tool_calls: (!message.tool_calls.is_empty()).then(|| {
+                message
+                    .tool_calls
+                    .iter()
+                    .enumerate()
+                    .map(|(call_index, call)| OpenAIRequestToolCall {
+                        id: call.id.clone().unwrap_or_else(|| {
+                            format!("call_{request_id}_{message_index}_{call_index}")
+                        }),
+                        call_type: "function".to_string(),
+                        function: OpenAIRequestFunction {
+                            name: call.name.clone(),
+                            arguments: serde_json::to_string(&call.arguments)
+                                .unwrap_or_else(|_| "null".to_string()),
+                        },
+                    })
+                    .collect()
+            }),
+        }
+    }
+
     fn build_stream_request(req: &CompletionRequest) -> OpenAIRequest {
         OpenAIRequest {
             model: req.model.to_string(),
             messages: req
                 .messages
                 .iter()
-                .map(|m| OpenAIMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
-                    content: m.content.as_text().to_string(),
-                })
+                .enumerate()
+                .map(|(index, message)| Self::message_to_openai(message, &req.id, index))
                 .collect(),
             stream: true,
             max_tokens: req.max_tokens,
@@ -210,6 +237,7 @@ impl OpenAIProvider {
             delta: choice
                 .and_then(|c| c.delta.content.clone())
                 .unwrap_or_default(),
+            thinking: choice.and_then(|c| c.delta.thinking.clone()),
             tool_calls: tool_calls
                 .iter()
                 .map(|tool_call| ToolCallDelta {
@@ -251,6 +279,22 @@ struct OpenAIStreamOptions {
 struct OpenAIMessage {
     role: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAIRequestToolCall>>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct OpenAIRequestToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: OpenAIRequestFunction,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct OpenAIRequestFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -274,6 +318,22 @@ struct OpenAIMessageResp {
     #[allow(dead_code)]
     role: String,
     content: String,
+    #[serde(default, alias = "reasoning_content", alias = "thinking")]
+    thinking: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<OpenAIResponseToolCall>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIResponseToolCall {
+    id: String,
+    function: OpenAIResponseFunction,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIResponseFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -318,6 +378,8 @@ struct OpenAIStreamChoice {
 struct OpenAIStreamDelta {
     #[serde(default)]
     content: Option<String>,
+    #[serde(default, alias = "reasoning_content", alias = "thinking")]
+    thinking: Option<String>,
     #[serde(default)]
     tool_calls: Vec<OpenAIStreamToolCallDelta>,
 }
@@ -546,16 +608,8 @@ impl ProviderPort for OpenAIProvider {
             messages: req
                 .messages
                 .iter()
-                .map(|m| OpenAIMessage {
-                    role: match m.role {
-                        rook_core::Role::System => "system",
-                        rook_core::Role::User => "user",
-                        rook_core::Role::Assistant => "assistant",
-                        rook_core::Role::Developer => "developer",
-                    }
-                    .to_string(),
-                    content: m.content.as_text().to_string(),
-                })
+                .enumerate()
+                .map(|(index, message)| Self::message_to_openai(message, &req.id, index))
                 .collect(),
             stream: false,
             max_tokens: req.max_tokens,
@@ -597,6 +651,20 @@ impl ProviderPort for OpenAIProvider {
             content_blocks: vec![rook_core::MessageContent::Text(
                 choice.message.content.clone(),
             )],
+            thinking: choice.message.thinking.clone(),
+            tool_calls: choice
+                .message
+                .tool_calls
+                .iter()
+                .map(|tool_call| rook_core::MessageToolCall {
+                    id: Some(tool_call.id.clone()),
+                    name: tool_call.function.name.clone(),
+                    arguments: serde_json::from_str(&tool_call.function.arguments).unwrap_or_else(
+                        |_| serde_json::Value::String(tool_call.function.arguments.clone()),
+                    ),
+                })
+                .collect(),
+            finish_reason: parse_finish_reason(&choice.finish_reason),
             usage: TokenUsage {
                 prompt_tokens: openai_resp.usage.prompt_tokens,
                 completion_tokens: openai_resp.usage.completion_tokens,
