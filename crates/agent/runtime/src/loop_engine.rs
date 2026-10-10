@@ -118,7 +118,15 @@ mod tests {
         // plus interleaved tool-call pairs to exercise the skip branch. Each "user+assistant"
         // pair at the tail of a turn must produce exactly one end index at index + 1.
         const TURNS: usize = 1_250;
-        let mut messages: Vec<Message> = Vec::with_capacity(TURNS * 4);
+        const PREFIX_ASSISTANTS: usize = 1_666;
+        let mut messages: Vec<Message> = Vec::with_capacity(5_000);
+        // Leading tool-call-free assistants with no user in their window: they emit
+        // no ends but force the legacy O(n²) scan to walk windows without a user
+        // (no early `.any()` exit), so this fixture actually exercises the slow path.
+        for index in 0..PREFIX_ASSISTANTS {
+            messages.push(assistant_text(&format!("prefix {index}")));
+        }
+
         for turn in 0..TURNS {
             messages.push(Message::text(Role::User, format!("request {turn}")));
             // Tool-call turn every third turn to verify the O(n) skip path is exercised.
@@ -131,6 +139,8 @@ mod tests {
             }
             messages.push(assistant_text(&format!("done {turn}")));
         }
+
+        assert_eq!(messages.len(), 5_000);
 
         let started = std::time::Instant::now();
         let ends = complete_turn_ends(&messages, 0);
