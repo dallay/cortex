@@ -142,8 +142,11 @@ async fn main() -> anyhow::Result<()> {
     let tui = interactive && !cli.line_mode && !cli.json;
     if interactive {
         use std::io::IsTerminal;
+        // The Ratatui path (tui) always needs a TTY: it implies neither
+        // --line-mode nor --json. The line/NDJSON adapter works headless,
+        // so piped stdin is allowed with --json (or --line-mode recovery).
         anyhow::ensure!(
-            std::io::stdin().is_terminal() || cli.line_mode,
+            std::io::stdin().is_terminal() || cli.line_mode || cli.json,
             "interactive mode needs a terminal; use `huginn run <prompt>` or explicit --line-mode recovery"
         );
     }

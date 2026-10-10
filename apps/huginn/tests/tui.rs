@@ -102,3 +102,32 @@ fn non_tty_default_fails_clearly_and_explicit_line_recovery_works() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Offline mock: hello"));
     assert!(!output.stdout.contains(&0x1b));
 }
+#[test]
+fn json_chat_accepts_piped_stdin_without_tty_or_line_mode() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_huginn"));
+    child
+        .args(["--provider", "mock", "--workspace"])
+        .arg(workspace.path())
+        .arg("--db")
+        .arg(&db)
+        .arg("--json")
+        .arg("chat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = child.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"hello\n").unwrap();
+    // Dropping stdin delivers EOF so the line adapter ends the turn loop.
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"type\":\"text\""), "got: {stdout}");
+    assert!(
+        stdout.contains("\"type\":\"turn_finished\""),
+        "got: {stdout}"
+    );
+    assert!(!output.stdout.contains(&0x1b));
+}
