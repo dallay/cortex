@@ -52,14 +52,14 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Implementation status:**
 
 - `complete()` — ✅ Implemented
-- `stream()` — ❌ Not yet implemented
+- `stream()` — ✅ Implementado, incluidos los deltas estructurados `tool_calls`
 
-> **Compatibility note (2026-10-06):** the streaming path drops the
-> `tool_calls` delta (see `providers-openai/src/provider.rs:151-161`). Plain-text
-> chat works through a Rook gateway, but tool-driven workflows do not. The
-> Cortex agent's MVP depends on tool calls and cannot use Rook as a backend
-> until this path is implemented. See
-> `docs/agent/validation.md` § Rook compatibility result.
+> **Nota de compatibilidad:** Las pruebas del provider y del adaptador OpenAI
+> verifican que los argumentos fragmentados sobreviven el modelo de streaming de
+> Rook y salen como deltas compatibles con OpenAI. Esto no valida de extremo a
+> extremo el agente Cortex contra un gateway Rook en ejecución; `docs/agent/validation.md`
+> sigue marcando Rook como no compatible hasta que pase esa prueba. La issue #279
+> define este trabajo como no requerido para el MVP del agente personal.
 
 ---
 

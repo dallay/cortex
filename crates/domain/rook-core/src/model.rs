@@ -306,9 +306,30 @@ pub struct StreamChunk {
     pub id: RequestId,
     pub model: ModelId,
     pub delta: String,
+    /// Structured tool-call fragments carried independently from text deltas.
+    pub tool_calls: Vec<ToolCallDelta>,
     pub finish_reason: Option<FinishReason>,
     /// Token usage is emitted on the final chunk only when the provider reports it.
     pub usage: Option<TokenUsage>,
+}
+
+/// Provider-neutral fragment of a tool call in a streaming response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallDelta {
+    pub index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub function: ToolCallFunctionDelta,
+}
+
+/// Function fields are optional because upstream streaming protocols may
+/// deliver the name and arguments in separate deltas.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallFunctionDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 /// The set of supported API wire formats.

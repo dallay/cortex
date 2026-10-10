@@ -50,5 +50,6 @@ dashmap = "6"
 axum-test = "21"
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
+providers-openai = { path = "../providers-openai" }
+wiremock = "0.6"
 cortex-test-support = { path = "../../test-support" }
-

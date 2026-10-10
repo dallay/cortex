@@ -1,16 +1,18 @@
 // OpenAI provider implementation — stub until existing impls are migrated
 
 use async_trait::async_trait;
-use futures::{Stream, TryStreamExt};
+use futures::{Stream, StreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage,
+    ProviderPort, StreamChunk, TokenUsage, ToolCallDelta, ToolCallFunctionDelta,
 };
 
 use providers_core::sanitize_body;
 use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
 
 /// Map an OpenAI HTTP error response to a typed `CortexError`.
 ///
@@ -109,28 +111,59 @@ impl OpenAIProvider {
     fn process_bytes(
         request_id: &RequestId,
         sse_buffer: &mut SseBuffer,
+        tool_call_validator: &mut ToolCallStreamValidator,
         bytes: &[u8],
     ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
         let events = sse_buffer.push(bytes);
-        let chunks: Vec<StreamChunk> = events
+        let chunks: Vec<Result<StreamChunk, CortexError>> = events
             .into_iter()
-            .flat_map(|event_text| Self::parse_event_text(&event_text, request_id))
+            .flat_map(|event_text| {
+                Self::parse_event_text(&event_text, request_id, tool_call_validator)
+            })
             .collect();
 
-        futures::stream::iter(chunks.into_iter().map(Ok))
+        futures::stream::iter(chunks)
     }
 
-    fn parse_event_text(event_text: &str, request_id: &RequestId) -> Vec<StreamChunk> {
-        event_text
+    fn parse_event_text(
+        event_text: &str,
+        request_id: &RequestId,
+        tool_call_validator: &mut ToolCallStreamValidator,
+    ) -> Vec<Result<StreamChunk, CortexError>> {
+        let mut chunks = Vec::new();
+        for data_line in event_text
             .lines()
-            .filter_map(|l| l.strip_prefix("data: "))
-            .filter(|line| line.trim() != "[DONE]")
-            .filter_map(|data_line| serde_json::from_str::<OpenAIStreamResponse>(data_line).ok())
-            .map(|parsed| Self::response_to_chunk(parsed, request_id))
-            .collect()
+            .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+        {
+            if data_line.trim() == "[DONE]" {
+                if let Err(error) = tool_call_validator.finish_without_marker() {
+                    chunks.push(Err(error));
+                }
+                continue;
+            }
+
+            let parsed = match serde_json::from_str::<OpenAIStreamResponse>(data_line) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    chunks.push(Err(CortexError::provider(format!(
+                        "malformed OpenAI stream event: {error}"
+                    ))));
+                    continue;
+                }
+            };
+            match Self::response_to_chunk(parsed, request_id, tool_call_validator) {
+                Ok(chunk) => chunks.push(Ok(chunk)),
+                Err(error) => chunks.push(Err(error)),
+            }
+        }
+        chunks
     }
 
-    fn response_to_chunk(parsed: OpenAIStreamResponse, request_id: &RequestId) -> StreamChunk {
+    fn response_to_chunk(
+        parsed: OpenAIStreamResponse,
+        request_id: &RequestId,
+        tool_call_validator: &mut ToolCallStreamValidator,
+    ) -> Result<StreamChunk, CortexError> {
         let choice = parsed.choices.first();
         let usage = parsed.usage.map(|usage| TokenUsage {
             prompt_tokens: usage.prompt_tokens,
@@ -148,17 +181,37 @@ impl OpenAIProvider {
             estimated_cost_usd: None,
         });
 
-        StreamChunk {
+        let tool_calls = choice
+            .map(|c| c.delta.tool_calls.as_slice())
+            .unwrap_or_default();
+        tool_call_validator.observe(tool_calls)?;
+        let finish_reason = choice
+            .and_then(|c| c.finish_reason.as_deref())
+            .and_then(parse_finish_reason);
+        if finish_reason == Some(FinishReason::ToolCalls) {
+            tool_call_validator.validate_and_reset()?;
+        }
+
+        Ok(StreamChunk {
             id: request_id.clone(),
             model: ModelId::new(parsed.model),
             delta: choice
                 .and_then(|c| c.delta.content.clone())
                 .unwrap_or_default(),
-            finish_reason: choice
-                .and_then(|c| c.finish_reason.as_deref())
-                .and_then(parse_finish_reason),
+            tool_calls: tool_calls
+                .iter()
+                .map(|tool_call| ToolCallDelta {
+                    index: tool_call.index,
+                    id: tool_call.id.clone(),
+                    function: ToolCallFunctionDelta {
+                        name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                    },
+                })
+                .collect(),
+            finish_reason,
             usage,
-        }
+        })
     }
 }
 
@@ -251,7 +304,97 @@ struct OpenAIStreamChoice {
 
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIStreamDelta {
+    #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<OpenAIStreamToolCallDelta>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAIStreamToolCallDelta {
+    index: u32,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: OpenAIStreamFunctionDelta,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct OpenAIStreamFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct ToolCallStreamValidator {
+    calls: BTreeMap<u32, ToolCallAssembly>,
+}
+
+#[derive(Debug, Default)]
+struct ToolCallAssembly {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
+impl ToolCallStreamValidator {
+    fn observe(&mut self, deltas: &[OpenAIStreamToolCallDelta]) -> CortexResult<()> {
+        for delta in deltas {
+            let call = self.calls.entry(delta.index).or_default();
+            if let Some(id) = &delta.id {
+                match &call.id {
+                    Some(previous) if previous != id => {
+                        return Err(CortexError::provider(format!(
+                            "OpenAI stream changed tool-call identity at index {}",
+                            delta.index
+                        )));
+                    }
+                    Some(_) => {}
+                    None => call.id = Some(id.clone()),
+                }
+            }
+            if let Some(name) = &delta.function.name {
+                call.name.push_str(name);
+            }
+            if let Some(arguments) = &delta.function.arguments {
+                call.arguments.push_str(arguments);
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_and_reset(&mut self) -> CortexResult<()> {
+        let calls = std::mem::take(&mut self.calls);
+        if calls.is_empty() {
+            return Err(CortexError::provider(
+                "OpenAI stream finished with tool_calls but no tool-call deltas",
+            ));
+        }
+        for (index, call) in &calls {
+            if call.id.as_deref().is_none_or(str::is_empty) || call.name.is_empty() {
+                return Err(CortexError::provider(format!(
+                    "OpenAI stream ended with incomplete tool-call identity at index {index}"
+                )));
+            }
+            serde_json::from_str::<serde_json::Value>(&call.arguments).map_err(|error| {
+                CortexError::provider(format!(
+                    "OpenAI stream ended with invalid tool-call arguments at index {index}: {error}"
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn finish_without_marker(&mut self) -> CortexResult<()> {
+        if self.calls.is_empty() {
+            return Ok(());
+        }
+        Err(CortexError::provider(
+            "OpenAI stream ended before the tool_calls finish reason",
+        ))
+    }
 }
 
 fn parse_finish_reason(reason: &str) -> Option<FinishReason> {
@@ -444,17 +587,94 @@ impl ProviderPort for OpenAIProvider {
             return Err(map_openai_http_error(&self.config.id, resp).await);
         }
 
-        let request_id = req.id.clone();
-        let mut sse_buffer = SseBuffer::new();
+        let stream = futures::stream::unfold(
+            (
+                resp.bytes_stream(),
+                SseBuffer::new(),
+                ToolCallStreamValidator::default(),
+                req.id.clone(),
+                VecDeque::<CortexResult<StreamChunk>>::new(),
+                false,
+            ),
+            |(
+                mut byte_stream,
+                mut sse_buffer,
+                mut tool_call_validator,
+                request_id,
+                mut pending,
+                mut terminated,
+            )| async move {
+                loop {
+                    if let Some(result) = pending.pop_front() {
+                        if result.is_err() {
+                            terminated = true;
+                        }
+                        return Some((
+                            result,
+                            (
+                                byte_stream,
+                                sse_buffer,
+                                tool_call_validator,
+                                request_id,
+                                pending,
+                                terminated,
+                            ),
+                        ));
+                    }
+                    if terminated {
+                        return None;
+                    }
 
-        let stream = resp
-            .bytes_stream()
-            .map_err(|e| CortexError::provider(format!("stream read failed: {e}")))
-            .and_then(move |bytes| {
-                let request_id = request_id.clone();
-                futures::future::ok(Self::process_bytes(&request_id, &mut sse_buffer, &bytes))
-            })
-            .try_flatten();
+                    match byte_stream.next().await {
+                        Some(Ok(bytes)) => {
+                            pending.extend(
+                                Self::process_bytes(
+                                    &request_id,
+                                    &mut sse_buffer,
+                                    &mut tool_call_validator,
+                                    &bytes,
+                                )
+                                .collect::<Vec<_>>()
+                                .await,
+                            );
+                        }
+                        Some(Err(error)) => {
+                            terminated = true;
+                            return Some((
+                                Err(CortexError::provider(format!(
+                                    "stream read failed: {error}"
+                                ))),
+                                (
+                                    byte_stream,
+                                    sse_buffer,
+                                    tool_call_validator,
+                                    request_id,
+                                    pending,
+                                    terminated,
+                                ),
+                            ));
+                        }
+                        None => match tool_call_validator.finish_without_marker() {
+                            Ok(()) => return None,
+                            Err(error) => {
+                                terminated = true;
+                                return Some((
+                                    Err(error),
+                                    (
+                                        byte_stream,
+                                        sse_buffer,
+                                        tool_call_validator,
+                                        request_id,
+                                        pending,
+                                        terminated,
+                                    ),
+                                ));
+                            }
+                        },
+                    }
+                }
+            },
+        );
 
         Ok(Box::pin(stream))
     }

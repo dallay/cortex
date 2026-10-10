@@ -218,6 +218,7 @@ impl GroqProvider {
             delta: choice
                 .and_then(|c| c.delta.content.clone())
                 .unwrap_or_default(),
+            tool_calls: vec![],
             finish_reason: choice
                 .and_then(|c| c.finish_reason.as_deref())
                 .and_then(Self::map_finish_reason),
