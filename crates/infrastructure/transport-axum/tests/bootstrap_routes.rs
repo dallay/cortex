@@ -27,13 +27,22 @@ use async_trait::async_trait;
 use axum::body::to_bytes;
 use axum::http::{Method, Request, StatusCode};
 use chrono::Utc;
+use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{
-    ApiKeyRepositoryPort, NewUser, PasswordHash, PasswordHashError, PasswordHasher, User, UserId,
-    UserRepositoryError, UserRepositoryPort,
+    ApiKeyRepositoryPort, NewUser, PasswordHash, PasswordHashError, PasswordHasher, ProviderPort,
+    User, UserId, UserRepositoryError, UserRepositoryPort,
 };
 use serde_json::Value;
+use shared_kernel::{ModelId, ProviderId};
 use tower::util::ServiceExt;
-use transport_axum::bootstrap_helpers::{bootstrap_test_router, make_test_bootstrap_usecases};
+use transport_axum::{
+    authz::AuthzConfig,
+    bootstrap_helpers::{
+        bootstrap_test_router, make_test_bootstrap_usecases,
+        make_test_bootstrap_usecases_with_providers,
+    },
+    ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter,
+};
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -151,9 +160,141 @@ fn make_bootstrap_usecases(
     )
 }
 
+fn make_openai_stream_router(provider: OpenAIProvider, authz: AuthzConfig) -> axum::Router {
+    let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepo::fresh());
+    let password_hasher: Arc<dyn PasswordHasher> = Arc::new(FakePasswordHasher);
+    let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
+        Arc::new(cortex_test_support::FakeApiKeyRepository::default());
+    let bootstrap_status = rook_usecases::BootstrapStatus::new(user_repo.clone());
+    let set_admin_password =
+        rook_usecases::SetAdminPassword::new(user_repo.clone(), password_hasher.clone());
+    let usecases = make_test_bootstrap_usecases_with_providers(
+        user_repo,
+        password_hasher,
+        api_key_repo,
+        bootstrap_status,
+        set_admin_password,
+        None,
+        vec![Arc::new(provider) as Arc<dyn ProviderPort>],
+    );
+
+    transport_axum::router(
+        usecases,
+        authz,
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    )
+}
+
+async fn post_openai_stream(app: axum::Router, model: &str) -> (StatusCode, String, String) {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer test-client-key")
+        .body(axum::body::Body::from(
+            serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Look up the key"}],
+                "stream": true,
+                "tools": [{"type": "function", "function": {"name": "lookup"}}]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        content_type,
+        String::from_utf8(bytes.to_vec()).unwrap(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openai_chat_completions_http_sse_preserves_tools_and_propagates_truncation() {
+    let original_api_keys = std::env::var_os("CLIENT_API_KEYS");
+    std::env::set_var("CLIENT_API_KEYS", "test-client-key");
+    let authz = AuthzConfig::from_env_with_client_auth(None, true);
+    match original_api_keys {
+        Some(value) => std::env::set_var("CLIENT_API_KEYS", value),
+        None => std::env::remove_var("CLIENT_API_KEYS"),
+    }
+
+    let valid_server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"content":"Looking up.","tool_calls":[{"index":0,"id":"call-http","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"value\"}"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n"
+        )))
+        .mount(&valid_server)
+        .await;
+    let valid_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-http-test"),
+        api_key: "upstream-test-key".to_string(),
+        base_url: valid_server.uri(),
+        models: vec![ModelId::new("gpt-4o")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let valid_app = make_openai_stream_router(valid_provider, authz.clone());
+    let (status, content_type, body) = post_openai_stream(valid_app, "gpt-4o").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type, "text/event-stream");
+    assert!(body.contains("Looking up."));
+    assert!(body.contains("call-http"));
+    assert!(body.contains(r#""arguments":"{\"key\":"#));
+    assert!(body.contains(r#""arguments":"\"value\"}"#));
+    assert!(body.contains(r#""finish_reason":"tool_calls""#), "{body}");
+    assert!(body.contains("data: [DONE]"));
+
+    let truncated_server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+            r#"data: {"id":"chatcmpl-truncated","model":"gpt-4o-truncated","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-truncated","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}"#,
+        ))
+        .mount(&truncated_server)
+        .await;
+    let truncated_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-truncated-test"),
+        api_key: "upstream-test-key".to_string(),
+        base_url: truncated_server.uri(),
+        models: vec![ModelId::new("gpt-4o-truncated")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let truncated_app = make_openai_stream_router(truncated_provider, authz);
+    let (status, content_type, body) = post_openai_stream(truncated_app, "gpt-4o-truncated").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type, "text/event-stream");
+    assert!(body.contains("incomplete SSE event"));
+    assert!(body.contains("data: [DONE]"));
+    assert!(!body.contains("call-truncated"));
+}
 
 #[tokio::test]
 async fn status_returns_not_initialized_on_fresh_system() {
