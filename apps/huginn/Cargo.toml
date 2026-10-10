@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 huginn-core = { path = "../../crates/huginn/core" }
 huginn-runtime = { path = "../../crates/huginn/runtime" }
+huginn-presentation = { path = "../../crates/huginn/presentation" }
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true

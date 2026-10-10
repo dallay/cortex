@@ -137,7 +137,7 @@ huginn-run *args:
     cargo run -p huginn -- "$@"
 
 huginn-test:
-    cargo test -p huginn-core -p huginn-runtime -p huginn
+    cargo test -p huginn-core -p huginn-runtime -p huginn-presentation -p huginn --all-features
 
 # Run the backend (rook) in dev mode
 run:

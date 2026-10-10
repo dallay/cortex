@@ -41,12 +41,17 @@ pub struct Diagnostic {
 type Services = BTreeMap<ServiceId, Arc<dyn Any + Send + Sync>>;
 
 pub struct PluginContext {
+    generation: u64,
     services: Services,
     staged: Services,
     pub cancellation: CancellationToken,
     tasks: Vec<JoinHandle<()>>,
 }
 impl PluginContext {
+    /// Supervisor-assigned identity for generation-owned registrations.
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
     pub fn resolve<T: Any + Send + Sync>(&self, id: &ServiceId) -> Result<Arc<T>> {
         self.services
             .get(id)
@@ -212,6 +217,7 @@ impl Supervisor {
                 let e = self.plugins.get_mut(&id).expect("registered plugin");
                 e.diagnostic.generation = self.generation;
                 let mut ctx = PluginContext {
+                    generation: self.generation,
                     services: self
                         .services
                         .iter()

@@ -34,6 +34,9 @@ struct Cli {
     /// Emit newline-delimited JSON events to stdout.
     #[arg(long, global = true)]
     json: bool,
+    /// Use the explicit line-oriented recovery adapter instead of Ratatui.
+    #[arg(long, global = true)]
+    line_mode: bool,
     /// Explicit action grants for this invocation only (e.g. native.shell).
     #[arg(long, global = true, value_delimiter = ',')]
     allow: Vec<String>,
@@ -136,14 +139,15 @@ async fn main() -> anyhow::Result<()> {
     };
     let is_doctor = matches!(cli.command, Some(Commands::Doctor));
     let interactive = prompt.is_none() && !is_doctor;
+    let tui = interactive && !cli.line_mode && !cli.json;
     if interactive {
         use std::io::IsTerminal;
         anyhow::ensure!(
-            std::io::stdin().is_terminal(),
-            "interactive mode needs a terminal; use `huginn run <prompt>`"
+            std::io::stdin().is_terminal() || cli.line_mode,
+            "interactive mode needs a terminal; use `huginn run <prompt>` or explicit --line-mode recovery"
         );
     }
-    let input = if interactive {
+    let input = if interactive && !tui {
         Some(Arc::new(Input::new()))
     } else {
         None
@@ -177,24 +181,6 @@ async fn main() -> anyhow::Result<()> {
     };
     let registry = Arc::new(Registry::native(config.tool_timeout_secs)?);
     let startup = CancellationToken::new();
-    let mut mcp = if is_doctor {
-        None
-    } else {
-        Some(
-            interruptible(
-                startup.clone(),
-                McpClients::connect(
-                    &config.mcp,
-                    &session.workspace,
-                    &registry,
-                    &policy,
-                    startup.clone(),
-                    config.tool_timeout_secs,
-                ),
-            )
-            .await?,
-        )
-    };
     let mut supervisor = composition::build(
         model.clone(),
         registry.clone(),
@@ -229,6 +215,32 @@ async fn main() -> anyhow::Result<()> {
         supervisor.shutdown().await;
         return Ok(());
     }
+    if tui {
+        let result = tui_chat(
+            &config,
+            &registry,
+            &mut session,
+            &mut supervisor,
+            policy.allowed.clone(),
+        )
+        .await;
+        supervisor.shutdown().await;
+        return result;
+    }
+    let mut mcp = Some(
+        interruptible(
+            startup.clone(),
+            McpClients::connect(
+                &config.mcp,
+                &session.workspace,
+                &registry,
+                &policy,
+                startup.clone(),
+                config.tool_timeout_secs,
+            ),
+        )
+        .await?,
+    );
     let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
     if !cli.json {
         eprintln!(
@@ -351,4 +363,90 @@ async fn run_compact(
         return Ok(());
     }
     agent_loop.compact(session, output, cancel).await
+}
+
+async fn tui_chat(
+    config: &Config,
+    registry: &Arc<Registry>,
+    session: &mut Session,
+    supervisor: &mut huginn_core::kernel::Supervisor,
+    allowed: BTreeSet<String>,
+) -> anyhow::Result<()> {
+    use huginn_presentation::{
+        contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
+    };
+    supervisor.register(Box::new(RatatuiPlugin::default()))?;
+    supervisor.register(Box::new(ConversationPlugin::default()))?;
+    supervisor.start().await?;
+    let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
+    let connection = presentation.0.open(session, allowed).await?;
+    let ui = connection.ui.clone();
+    let mut mcp = None;
+    let result: anyhow::Result<()> = async {
+        let startup = CancellationToken::new();
+        ui.begin(startup.clone());
+        mcp = Some(
+            interruptible(
+                startup.clone(),
+                McpClients::connect(
+                    &config.mcp,
+                    &session.workspace,
+                    registry,
+                    ui.as_ref(),
+                    startup,
+                    config.tool_timeout_secs,
+                ),
+            )
+            .await?,
+        );
+        ui.synchronize(session);
+        let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+        while let Some(prompt) = ui.prompt().await {
+            let cancel = CancellationToken::new();
+            ui.begin(cancel.clone());
+            let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
+                let request = huginn_core::ApprovalRequest {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    action: "session.compact".into(),
+                    preview: "Older history will be summarized by the model. Original messages stay in the database. No effects are replayed.".into(),
+                };
+                match ui.approve(&request, cancel.clone()).await {
+                    Ok(true) => {
+                        interruptible(
+                            cancel.clone(),
+                            implementation.0.compact(session, ui.as_ref(), cancel),
+                        )
+                        .await
+                    }
+                    Ok(false) => {
+                        ui.notice("Compaction skipped.".into());
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                interruptible(
+                    cancel.clone(),
+                    implementation
+                        .0
+                        .run(session, prompt, ui.as_ref(), ui.as_ref(), cancel),
+                )
+                .await
+            };
+            ui.synchronize(session);
+            if let Err(error) = result {
+                ui.notice(error.to_string());
+            }
+        }
+        Ok(())
+    }
+    .await;
+    // Restore the TTY before any shutdown error can be printed by the host.
+    let restored = connection.finish().await;
+    if let Some(clients) = &mut mcp {
+        clients.shutdown().await?;
+    }
+    result?;
+    restored?;
+    Ok(())
 }

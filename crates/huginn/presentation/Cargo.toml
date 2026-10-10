@@ -1,0 +1,31 @@
+[package]
+name = "huginn-presentation"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[features]
+test-driver = []
+
+[[bin]]
+name = "tui-fixture"
+path = "tests/support/fixture.rs"
+required-features = ["test-driver"]
+
+[dependencies]
+huginn-core = { path = "../core" }
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = { version = "=0.29.0", features = ["event-stream"] }
+unicode-width = "0.2"
+
+[dev-dependencies]
+portable-pty = "0.9"
+tempfile = "3"
+
+[lints]
+workspace = true
