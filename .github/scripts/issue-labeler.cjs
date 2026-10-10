@@ -10,7 +10,9 @@
  *   04 Triage — add triage/needs-classification, never invent a product.
  *
  * Invariants:
- *   - exactly one product/* (rook|agent|shared)
+ *   - exactly one product/* (rook|huginn|agent|shared)
+ *     `agent` is a preserved legacy alias for `huginn` and only appears on
+ *     historical issues; new classifications land on `product/huginn`.
  *   - exactly one type/* when determinable, else triage
  *   - at least one area/* when determinable, else triage
  *   - product is NEVER inferred from body keywords (avoids "Agent integration with Rook" doubles)
@@ -26,6 +28,18 @@ function loadRules(rulesPath) {
   const fallback = path.join(__dirname, '..', 'issue-labeler-rules.json');
   const raw = fs.readFileSync(rulesPath || fallback, 'utf8');
   return JSON.parse(raw);
+}
+
+// Resolve legacy product keywords (e.g. `agent`) to their canonical successor
+// (e.g. `huginn`) for newly classified issues. The mapping is applied to
+// user-supplied products only — it never strips a `product/<legacy>` label
+// that already exists on the issue, so historical classification is
+// preserved.
+function canonicalProduct(value, rules) {
+  if (!value) return value;
+  const mapping = (rules && rules.productAliases) || {};
+  const key = value.startsWith('product/') ? value.slice('product/'.length) : value;
+  return mapping[key] ? `product/${mapping[key]}` : value;
 }
 
 function firstNonEmptyLine(text) {
@@ -64,7 +78,15 @@ function parseFormProduct(body, rules) {
   const section = parseFormSection(body, rules.form.productHeading);
   if (!section) return { present: false, value: null };
   const v = firstNonEmptyLine(section).toLowerCase();
-  if (rules.products.includes(v)) return { present: true, value: `product/${v}` };
+  if (rules.products.includes(v)) {
+    return { present: true, value: canonicalProduct(`product/${v}`, rules) };
+  }
+  // Legacy form responses for the previous product name resolve to the
+  // canonical successor so historical issues keep their classification while
+  // new submissions land on the current canonical label.
+  if (rules.productAliases && rules.productAliases[v]) {
+    return { present: true, value: `product/${rules.productAliases[v]}` };
+  }
   return { present: true, value: null, invalid: firstNonEmptyLine(section) };
 }
 
@@ -209,10 +231,10 @@ function classify(input, rules) {
   let productSource = null;
   const explicitScopeInvalid = conv.scopeExplicit && !conv.scopeValid;
   if (formProduct.present && formProduct.value) {
-    desiredProduct = formProduct.value;
+    desiredProduct = canonicalProduct(formProduct.value, rules);
     productSource = 'form';
   } else if (!formProduct.present && conv.scopeValid && conv.scope) {
-    desiredProduct = `product/${conv.scope}`;
+    desiredProduct = canonicalProduct(`product/${conv.scope}`, rules);
     productSource = 'title';
   } else if (!formProduct.present && !conv.scopeExplicit && split.validProducts.length === 1 && split.productsAll.length === 1) {
     desiredProduct = split.validProducts[0];
@@ -331,6 +353,7 @@ module.exports = {
   parseFormArea,
   parseConventionalTitle,
   inferAreas,
+  canonicalProduct,
   classify,
   run,
 };

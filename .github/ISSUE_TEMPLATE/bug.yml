@@ -9,7 +9,7 @@ body:
       description: Which product is affected? Exactly one.
       options:
         - Rook
-        - Agent
+        - Huginn
         - Shared
     validations:
       required: true

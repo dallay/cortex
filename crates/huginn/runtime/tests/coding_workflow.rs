@@ -1,0 +1,1089 @@
+use async_trait::async_trait;
+use futures::{stream::BoxStream, StreamExt};
+use huginn_core::{
+    AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
+    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
+    ToolCall, ToolContext, ToolRegistry,
+};
+use huginn_runtime::{
+    loop_engine::{recover, LoopConfig, StandardLoop},
+    model::{MockProvider, SseParser},
+    sessions::SqliteSessions,
+    tools::{resolve_path, Registry},
+};
+use serde_json::json;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+
+struct Policy(bool);
+#[async_trait]
+impl ApprovalPolicy for Policy {
+    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+        Ok(self.0)
+    }
+}
+#[derive(Default)]
+struct Events(Mutex<Vec<Event>>);
+impl EventSink for Events {
+    fn emit(&self, event: Event) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+struct Script {
+    replies: Mutex<VecDeque<Vec<ModelDelta>>>,
+    requests: Mutex<Vec<ModelRequest>>,
+}
+#[async_trait]
+impl ModelProvider for Script {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        _: CancellationToken,
+    ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+        self.requests.lock().unwrap().push(request);
+        let output = self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| AgentError::Model("script exhausted".into()))?;
+        Ok(futures::stream::iter(output.into_iter().map(Ok)).boxed())
+    }
+}
+fn call(name: &str, args: serde_json::Value) -> ModelDelta {
+    ModelDelta::ToolCall(ToolCall {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.into(),
+        arguments: args,
+    })
+}
+fn fixture(
+    model: Arc<dyn ModelProvider>,
+    db: &std::path::Path,
+) -> (StandardLoop, Arc<SqliteSessions>) {
+    let sessions = Arc::new(SqliteSessions::open(db).unwrap());
+    (
+        StandardLoop {
+            model,
+            tools: Arc::new(Registry::native(2).unwrap()),
+            sessions: sessions.clone(),
+            config: LoopConfig::default(),
+            lifecycle: CancellationToken::new(),
+        },
+        sessions,
+    )
+}
+
+#[tokio::test]
+async fn approved_edit_and_command_complete_then_session_resumes_without_replay() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("lib.txt"), "before\n").unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![
+                call(
+                    "edit_file",
+                    json!({"path":"lib.txt","old_text":"before","new_text":"after"}),
+                ),
+                ModelDelta::Finished,
+            ],
+            vec![
+                call(
+                    "shell",
+                    json!({"command":"test \"$(cat lib.txt)\" = after && printf 'tests passed'"}),
+                ),
+                ModelDelta::Finished,
+            ],
+            vec![
+                ModelDelta::Text("Changed and tested.".into()),
+                ModelDelta::Finished,
+            ],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (engine, sessions) = fixture(model.clone(), &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let events = Events::default();
+    engine
+        .run(
+            &mut session,
+            "change before to after and test it".into(),
+            &Policy(true),
+            &events,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("lib.txt")).unwrap(),
+        "after\n"
+    );
+    assert!(!session.interrupted);
+    assert!(session
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("tests passed")));
+    assert!(events
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Event::ApprovalResolved { approved: true, .. })));
+    drop(engine);
+    drop(sessions);
+    let reopened = SqliteSessions::open(&data.path().join("sessions.db")).unwrap();
+    let resumed = reopened.load(&session.id).await.unwrap();
+    assert_eq!(resumed.messages.len(), session.messages.len());
+    assert!(!resumed.interrupted);
+    assert!(model.requests.lock().unwrap()[1]
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool));
+}
+
+#[tokio::test]
+async fn denied_edit_does_not_modify_the_file() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("file"), "original").unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![
+                call("write_file", json!({"path":"file","content":"changed"})),
+                ModelDelta::Finished,
+            ],
+            vec![ModelDelta::Text("Denied.".into()), ModelDelta::Finished],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (engine, _) = fixture(model, &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    engine
+        .run(
+            &mut session,
+            "edit".into(),
+            &Policy(false),
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("file")).unwrap(),
+        "original"
+    );
+    assert!(session
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("denied")));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn replacing_files_preserves_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let target = workspace.path().join("existing.txt");
+    std::fs::write(&target, "before").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("write_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().to_path_buf(),
+        cancellation: CancellationToken::new(),
+    };
+    let call = ToolCall {
+        id: "existing-file".into(),
+        name: "write_file".into(),
+        arguments: json!({"path":"existing.txt","content":"after"}),
+    };
+    let action = tool.prepare(&call, &ctx).await.unwrap();
+    tool.execute(action, &ctx).await.unwrap();
+
+    assert_eq!(
+        std::fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn newly_written_files_respect_umask_in_an_isolated_process() {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::process::Command;
+
+    const UMASK_ENV: &str = "DALLAY_625_TEST_UMASK";
+    if let Some(mask) = std::env::var_os(UMASK_ENV) {
+        let mask = u32::from_str_radix(mask.to_str().unwrap(), 8).unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let registry = Registry::native(2).unwrap();
+        let tool = registry.get("write_file").unwrap();
+        let ctx = ToolContext {
+            workspace: workspace.path().to_path_buf(),
+            cancellation: CancellationToken::new(),
+        };
+        let call = ToolCall {
+            id: "umask-file".into(),
+            name: "write_file".into(),
+            arguments: json!({"path":"new.txt","content":"restricted"}),
+        };
+        let action = tool.prepare(&call, &ctx).await.unwrap();
+        tool.execute(action, &ctx).await.unwrap();
+        assert_eq!(
+            std::fs::metadata(workspace.path().join("new.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o666 & !mask
+        );
+        return;
+    }
+
+    let executable = std::env::current_exe().unwrap();
+    for mask in ["077", "027"] {
+        let status = Command::new("sh")
+            .args([
+                "-c",
+                "umask \"$1\"; shift; exec \"$@\"",
+                "umask-wrapper",
+                mask,
+            ])
+            .arg(&executable)
+            .args([
+                "--exact",
+                "newly_written_files_respect_umask_in_an_isolated_process",
+                "--nocapture",
+            ])
+            .env(UMASK_ENV, mask)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success(), "umask {mask} subprocess failed");
+    }
+}
+
+#[tokio::test]
+async fn read_file_bounds_large_output_on_utf8_boundary() {
+    let workspace = tempfile::tempdir().unwrap();
+    let content = format!("{}é", "x".repeat(huginn_runtime::tools::MAX_OUTPUT_BYTES));
+    std::fs::write(workspace.path().join("long.txt"), content).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-long".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"long.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let output = tool.execute(action, &ctx).await.unwrap();
+    assert!(output.ends_with("[output truncated]"));
+    assert!(output.is_char_boundary(output.len()));
+    assert!(output.len() < huginn_runtime::tools::MAX_OUTPUT_BYTES + 32);
+}
+
+#[tokio::test]
+async fn read_file_rejects_oversized_targets() {
+    let workspace = tempfile::tempdir().unwrap();
+    let oversized = vec![b'x'; huginn_runtime::tools::MAX_FILE_BYTES as usize + 1];
+    std::fs::write(workspace.path().join("large.txt"), oversized).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-large".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"large.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(tool
+        .execute(action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("read target must be a regular file under 1 MiB"));
+}
+
+#[tokio::test]
+async fn read_file_returns_requested_line_range_and_rejects_invalid_range() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("lines.txt"), "one\ntwo\nthree\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("read_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-range".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"lines.txt","start_line":2,"end_line":2}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tool.execute(action, &ctx).await.unwrap(), "2: two");
+
+    let invalid_action = tool
+        .prepare(
+            &ToolCall {
+                id: "read-invalid-range".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"lines.txt","start_line":3,"end_line":2}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(tool
+        .execute(invalid_action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("invalid line range"));
+}
+
+#[tokio::test]
+async fn list_and_search_tools_return_workspace_results() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("src")).unwrap();
+    std::fs::write(
+        workspace.path().join("src/main.rs"),
+        "fn main() {\n    println!(\"needle\");\n}\n",
+    )
+    .unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let list_tool = registry.get("list_files").unwrap();
+    let list_action = list_tool
+        .prepare(
+            &ToolCall {
+                id: "list".into(),
+                name: "list_files".into(),
+                arguments: json!({"path":"."}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let listing = list_tool.execute(list_action, &ctx).await.unwrap();
+    assert!(listing.contains("src/main.rs"));
+
+    let search_tool = registry.get("search_files").unwrap();
+    let search_action = search_tool
+        .prepare(
+            &ToolCall {
+                id: "search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let results = search_tool.execute(search_action, &ctx).await.unwrap();
+    assert!(results.contains("src/main.rs:2:"));
+    assert!(results.contains("needle"));
+}
+
+#[tokio::test]
+async fn list_and_search_cover_empty_and_cancelled_paths() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("match.txt"), "needle\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("search_files").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+
+    let empty_action = tool
+        .prepare(
+            &ToolCall {
+                id: "empty-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":""}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(tool
+        .execute(empty_action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("query must not be empty"));
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let cancelled_ctx = ToolContext {
+        workspace: ctx.workspace.clone(),
+        cancellation,
+    };
+    let cancelled_action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-search-loop".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        tool.execute(cancelled_action, &cancelled_ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn search_skips_oversized_files_and_limits_matches() {
+    let workspace = tempfile::tempdir().unwrap();
+    let oversized = vec![b'x'; huginn_runtime::tools::MAX_FILE_BYTES as usize + 1];
+    std::fs::write(workspace.path().join("large.txt"), oversized).unwrap();
+    let mut matching_lines = String::new();
+    for index in 0..101 {
+        matching_lines.push_str(&format!("match {index}\n"));
+    }
+    std::fs::write(workspace.path().join("matches.txt"), matching_lines).unwrap();
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("search_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "limited-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"match"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let results = tool.execute(action, &ctx).await.unwrap();
+    assert!(results.contains("matches.txt:1: match 0"));
+    assert!(results.contains("[100-match limit]"));
+    assert!(!results.contains("large.txt"));
+    assert!(!results.contains("match 100"));
+}
+
+#[tokio::test]
+async fn list_files_reports_traversal_errors_and_file_limit() {
+    let workspace = tempfile::tempdir().unwrap();
+    for index in 0..101 {
+        std::fs::write(workspace.path().join(format!("file-{index:03}.txt")), "x").unwrap();
+    }
+    let registry = Registry::native(2).unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let tool = registry.get("list_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "list-limited".into(),
+                name: "list_files".into(),
+                arguments: json!({"path":"."}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let listing = tool.execute(action, &ctx).await.unwrap();
+    assert!(listing.contains("file-000.txt"));
+    assert!(listing.contains("[100-file limit; select a narrower path]"));
+    assert!(!listing.contains("file-100.txt"));
+}
+
+#[tokio::test]
+async fn cancelled_execution_is_rejected_before_dispatch() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("existing.txt"), "present").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation,
+    };
+    let tool = registry.get("read_file").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-execution".into(),
+                name: "read_file".into(),
+                arguments: json!({"path":"existing.txt"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        tool.execute(action, &ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn cancelled_search_is_rejected_before_scanning_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("match.txt"), "needle\n").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation,
+    };
+    let tool = registry.get("search_files").unwrap();
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "cancel-search".into(),
+                name: "search_files".into(),
+                arguments: json!({"path":".","query":"needle"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        tool.execute(action, &ctx).await,
+        Err(AgentError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn stale_diff_and_symlink_escape_are_rejected() {
+    let workspace = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("file"), "before").unwrap();
+    let registry = Registry::native(2).unwrap();
+    let tool = registry.get("write_file").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let action = tool
+        .prepare(
+            &ToolCall {
+                id: "edit".into(),
+                name: "write_file".into(),
+                arguments: json!({"path":"file","content":"after"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(action
+        .approval
+        .as_ref()
+        .unwrap()
+        .preview
+        .contains("-before"));
+    std::fs::write(workspace.path().join("file"), "user edit").unwrap();
+    assert!(tool
+        .execute(action, &ctx)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("changed after approval"));
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("file")).unwrap(),
+        "user edit"
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(outside.path(), workspace.path().join("escape")).unwrap();
+        assert!(resolve_path(&ctx.workspace, "escape/new", true).is_err());
+        std::os::unix::fs::symlink(
+            outside.path().join("missing"),
+            workspace.path().join("dangling"),
+        )
+        .unwrap();
+        assert!(resolve_path(&ctx.workspace, "dangling", true).is_err());
+    }
+}
+
+#[test]
+fn sse_assembles_fragmented_arguments_and_utf8_and_rejects_truncation() {
+    let frames = [
+        json!({"choices":[{"delta":{"content":"Hola 🧠"},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_file","arguments":"{\"pa"}}]},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}}]},"finish_reason":"tool_calls"}]}),
+    ];
+    let source = frames
+        .iter()
+        .map(|f| format!("data: {f}\r\n\r\n"))
+        .collect::<String>()
+        + "data: [DONE]\r\n\r\n";
+    let mut parser = SseParser::default();
+    let mut deltas = vec![];
+    for byte in source.bytes() {
+        deltas.extend(parser.push(&[byte]).unwrap());
+    }
+    assert!(deltas
+        .iter()
+        .any(|d| matches!(d,ModelDelta::Text(t) if t=="Hola 🧠")));
+    assert!(deltas
+        .iter()
+        .any(|d| matches!(d,ModelDelta::ToolCall(c) if c.arguments==json!({"path":"x"}))));
+    assert!(matches!(deltas.last(), Some(ModelDelta::Finished)));
+    let mut incomplete = SseParser::default();
+    incomplete.push(b"data: {\"choices\":[]}").unwrap();
+    assert!(incomplete.eof().is_err());
+    let mut malformed = SseParser::default();
+    assert!(malformed.push(b"data: invalid\n\n").is_err());
+}
+
+#[test]
+fn sse_rejects_oversized_complete_event_before_parsing() {
+    // 1. Complete oversized event in a single chunk must be rejected before JSON parsing.
+    let big = "x".repeat(1_048_577);
+    let payload = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{big}\"}}}}]}}\n\n");
+    assert!(payload.len() > 1_048_576);
+    let mut parser = SseParser::default();
+    let err = parser
+        .push(payload.as_bytes())
+        .expect_err("oversized complete event must be rejected");
+    assert!(
+        err.to_string().contains("SSE event exceeds 1 MiB"),
+        "unexpected error: {err}"
+    );
+
+    // 2. Incomplete oversized buffered bytes must still be rejected.
+    let mut partial = SseParser::default();
+    let chunk = vec![b'a'; 1_048_577];
+    let err = partial
+        .push(&chunk)
+        .expect_err("oversized partial must be rejected");
+    assert!(
+        err.to_string().contains("SSE event exceeds 1 MiB"),
+        "unexpected error: {err}"
+    );
+
+    // 3. Multiple valid complete events in one chunk must still be accepted.
+    let mut ok = SseParser::default();
+    let two = b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"},\"finish_reason\":null}]}\n\n";
+    let deltas = ok.push(two).expect("valid events must pass");
+    assert_eq!(deltas.len(), 2);
+    assert!(matches!(&deltas[0], ModelDelta::Text(t) if t == "a"));
+    assert!(matches!(&deltas[1], ModelDelta::Text(t) if t == "b"));
+
+    // 4. Fragmented valid event across pushes must continue to work.
+    let mut split = SseParser::default();
+    let full = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n";
+    let mid = full.len() / 2;
+    let first = split
+        .push(&full[..mid])
+        .expect("first fragment must buffer");
+    assert!(first.is_empty());
+    let rest = split.push(&full[mid..]).expect("second fragment completes");
+    assert!(matches!(rest.first(), Some(ModelDelta::Text(t)) if t == "hi"));
+}
+
+#[tokio::test]
+async fn session_lock_and_recovery_prevent_concurrent_or_replayed_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SqliteSessions::open(&dir.path().join("sessions.db")).unwrap();
+    let mut session = Session::new(dir.path().canonicalize().unwrap());
+    session.interrupted = true;
+    assert!(store.lease("../../escape").is_err());
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_call_id: None,
+        tool_calls: vec![ToolCall {
+            id: "pending".into(),
+            name: "shell".into(),
+            arguments: json!({"command":"echo unsafe"}),
+        }],
+    });
+    store.save(&session).await.unwrap();
+    let lease = store.lease(&session.id).unwrap();
+    assert!(store.lease(&session.id).is_err());
+    drop(lease);
+    assert!(store.lease(&session.id).is_ok());
+    recover(&mut session);
+    assert_eq!(session.messages.len(), 2);
+    assert!(session.messages[1]
+        .content
+        .contains("completion is unknown"));
+    recover(&mut session);
+    assert_eq!(session.messages.len(), 2);
+}
+
+#[test]
+fn recovery_places_missing_tool_results_before_later_user_messages() {
+    let mut session = Session::new(std::env::current_dir().unwrap());
+    session.messages = vec![
+        Message {
+            role: Role::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![
+                ToolCall {
+                    id: "first".into(),
+                    name: "one".into(),
+                    arguments: json!({}),
+                },
+                ToolCall {
+                    id: "second".into(),
+                    name: "two".into(),
+                    arguments: json!({}),
+                },
+            ],
+        },
+        Message::text(Role::User, "next turn"),
+        Message::tool("first".into(), "completed".into()),
+    ];
+    recover(&mut session);
+    assert_eq!(session.messages[1].tool_call_id.as_deref(), Some("first"));
+    assert_eq!(session.messages[2].tool_call_id.as_deref(), Some("second"));
+    assert_eq!(session.messages[3].role, Role::User);
+}
+
+#[tokio::test]
+async fn compaction_preserves_history_and_tool_pairs() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![
+                ModelDelta::Text("Earlier work summarized.".into()),
+                ModelDelta::Finished,
+            ],
+            vec![ModelDelta::Text("Continuing.".into()), ModelDelta::Finished],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (mut engine, _) = fixture(model.clone(), &data.path().join("sessions.db"));
+    engine.config.context_tokens = 16000;
+    engine.config.max_output_tokens = 512;
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    for index in 0..6 {
+        session.messages.push(Message::text(
+            Role::User,
+            format!("{index}: {}", "x".repeat(1600)),
+        ));
+        let mut assistant = Message::text(Role::Assistant, "previous answer");
+        assistant.tool_calls.push(ToolCall {
+            id: format!("old-{index}"),
+            name: "read_file".into(),
+            arguments: json!({"path":"file"}),
+        });
+        session.messages.push(assistant);
+        session
+            .messages
+            .push(Message::tool(format!("old-{index}"), "read result".into()));
+        session
+            .messages
+            .push(Message::text(Role::Assistant, "previous answer"));
+    }
+    let original = session.messages.len();
+    engine
+        .run(
+            &mut session,
+            "next".into(),
+            &Policy(false),
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(session.summary.is_some());
+    assert!(session.summary_through > 0);
+    assert_eq!(session.messages.len(), original + 2);
+    assert!(session.messages[0].content.contains("0:"));
+    let requests = model.requests.lock().unwrap();
+    let context = requests.last().unwrap().messages.clone();
+    drop(requests);
+    for message in &context {
+        for call in &message.tool_calls {
+            assert!(context
+                .iter()
+                .any(|m| m.tool_call_id.as_ref() == Some(&call.id)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancellation_keeps_an_interrupted_record_and_does_not_execute_tools() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let (engine, store) = fixture(Arc::new(MockProvider), &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert!(matches!(
+        engine
+            .run(
+                &mut session,
+                "next".into(),
+                &Policy(false),
+                &Events::default(),
+                cancellation
+            )
+            .await,
+        Err(AgentError::Cancelled)
+    ));
+    assert!(store.load(&session.id).await.unwrap().interrupted);
+}
+
+#[cfg(unix)]
+#[test]
+fn root_and_nested_instructions_are_scoped_and_symlinks_are_contained() {
+    let workspace = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("src")).unwrap();
+    std::fs::write(workspace.path().join("AGENTS.md"), "root instruction").unwrap();
+    std::fs::write(workspace.path().join("nested.md"), "nested instruction").unwrap();
+    std::os::unix::fs::symlink("../nested.md", workspace.path().join("src/AGENTS.md")).unwrap();
+    let text = huginn_runtime::instructions::load(workspace.path()).unwrap();
+    assert!(text.contains("root instruction"));
+    assert!(text.contains("Instructions for src:"));
+    assert!(text.contains("nested instruction"));
+    assert!(text.contains("cannot grant permissions"));
+    std::fs::remove_file(workspace.path().join("src/AGENTS.md")).unwrap();
+    std::fs::write(outside.path().join("AGENTS.md"), "outside").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("AGENTS.md"),
+        workspace.path().join("src/AGENTS.md"),
+    )
+    .unwrap();
+    assert!(huginn_runtime::instructions::load(workspace.path()).is_err());
+}
+
+#[test]
+fn instruction_errors_name_non_file_and_oversized_targets() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("AGENTS.md")).unwrap();
+    let error = huginn_runtime::instructions::load(workspace.path()).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("AGENTS.md is not a regular file"));
+
+    std::fs::remove_dir(workspace.path().join("AGENTS.md")).unwrap();
+    std::fs::write(workspace.path().join("AGENTS.md"), vec![b'x'; 65_537]).unwrap();
+    let error = huginn_runtime::instructions::load(workspace.path()).unwrap_err();
+    assert!(error.to_string().contains("AGENTS.md exceeds 64 KiB"));
+}
+
+#[tokio::test]
+async fn failed_compaction_preserves_original_history_and_stops() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([vec![ModelDelta::Finished]])),
+        requests: Mutex::new(vec![]),
+    });
+    let (mut engine, store) = fixture(model, &data.path().join("sessions.db"));
+    engine.config.context_tokens = 14_000;
+    engine.config.max_output_tokens = 512;
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    for _ in 0..6 {
+        session
+            .messages
+            .push(Message::text(Role::User, "x".repeat(1600)));
+        session
+            .messages
+            .push(Message::text(Role::Assistant, "answer"));
+    }
+    assert!(engine
+        .run(
+            &mut session,
+            "continue".into(),
+            &Policy(true),
+            &Events::default(),
+            CancellationToken::new()
+        )
+        .await
+        .is_err());
+    assert!(session.summary.is_none());
+    assert_eq!(session.summary_through, 0);
+    assert_eq!(session.messages.len(), 13);
+    assert!(store.load(&session.id).await.unwrap().interrupted);
+}
+
+#[tokio::test]
+async fn shell_timeout_kills_descendants_before_they_can_write() {
+    let workspace = tempfile::tempdir().unwrap();
+    let registry = Registry::native(1).unwrap();
+    let shell = registry.get("shell").unwrap();
+    let ctx = ToolContext {
+        workspace: workspace.path().canonicalize().unwrap(),
+        cancellation: CancellationToken::new(),
+    };
+    let prepared = shell
+        .prepare(
+            &ToolCall {
+                id: "shell".into(),
+                name: "shell".into(),
+                arguments: json!({"command":"(sleep 2; printf leaked > escaped) & wait"}),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(shell.execute(prepared, &ctx).await.is_err());
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert!(!workspace.path().join("escaped").exists());
+}
+
+#[tokio::test]
+async fn interruption_during_approved_shell_records_unknown_completion_without_replay() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([vec![
+            call(
+                "shell",
+                json!({"command":"printf started > marker; sleep 10; printf repeated >> marker"}),
+            ),
+            ModelDelta::Finished,
+        ]])),
+        requests: Mutex::new(vec![]),
+    });
+    let (engine, store) = fixture(model, &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let token = CancellationToken::new();
+    let trigger = token.clone();
+    let marker = workspace.path().join("marker");
+    let check = marker.clone();
+    let cancel_task = tokio::spawn(async move {
+        for _ in 0..200 {
+            if check.exists() {
+                trigger.cancel();
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("shell never started");
+    });
+    assert!(matches!(
+        engine
+            .run(
+                &mut session,
+                "run command".into(),
+                &Policy(true),
+                &Events::default(),
+                token
+            )
+            .await,
+        Err(AgentError::Cancelled)
+    ));
+    cancel_task.await.unwrap();
+    let mut restored = store.load(&session.id).await.unwrap();
+    assert!(restored.interrupted);
+    recover(&mut restored);
+    assert!(restored
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.contains("unknown")));
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "started");
+}
+
+#[tokio::test]
+async fn denied_mcp_call_never_reaches_the_started_server() {
+    use huginn_runtime::mcp::{McpClients, ServerConfig};
+    use std::collections::BTreeMap;
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let marker = workspace.path().join("marker");
+    let registry = Arc::new(Registry::native(1).unwrap());
+    let config = ServerConfig {
+        name: "fixture".into(),
+        command: "/usr/bin/python3".into(),
+        args: vec![format!(
+            "{}/tests/fixtures/mcp_server.py",
+            env!("CARGO_MANIFEST_DIR")
+        )],
+        env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
+        env_from: BTreeMap::new(),
+    };
+    let mut clients = McpClients::connect(
+        &[config],
+        workspace.path(),
+        &registry,
+        &Policy(true),
+        CancellationToken::new(),
+        5,
+    )
+    .await
+    .unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![call("mcp_fixture_0", json!({})), ModelDelta::Finished],
+            vec![ModelDelta::Text("Denied".into()), ModelDelta::Finished],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (mut engine, _) = fixture(model, &data.path().join("sessions.db"));
+    engine.tools = registry;
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    engine
+        .run(
+            &mut session,
+            "call MCP".into(),
+            &Policy(false),
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "started\n");
+    clients.shutdown().await.unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn traversal_skips_unix_sockets_and_sse_accepts_mixed_line_endings() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("file"), "content").unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(workspace.path().join("socket")).unwrap();
+    let files = huginn_runtime::tools::workspace_files(workspace.path(), workspace.path()).unwrap();
+    assert_eq!(files, [workspace.path().join("file")]);
+    let mut parser = SseParser::default();
+    let deltas = parser.push(b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\r\n\r\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").unwrap();
+    assert!(matches!(deltas.first(), Some(ModelDelta::Text(text)) if text == "hello"));
+    assert!(matches!(deltas.last(), Some(ModelDelta::Finished)));
+}

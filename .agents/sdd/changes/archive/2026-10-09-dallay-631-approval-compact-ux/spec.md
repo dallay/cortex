@@ -1,5 +1,10 @@
 # Specification: Approval numbering, header clarity, and explicit `/compact`
 
+> **Naming provenance (2026-10-10):** See ADR-0011. Crate/binary names
+> in this document (`apps/agent`, `cortex-agent`, `agent-core`,
+> `agent-runtime`) are historical; live code uses
+> `apps/huginn`/`huginn`/`huginn-core`/`huginn-runtime`.
+
 ## Overview
 
 This spec defines the behavior for two user-facing changes in the `agent` CLI:

@@ -164,7 +164,7 @@ See [Architecture Documentation](docs/architecture.md) for details.
 | Tool | Status | Description |
 |------|--------|-------------|
 | [Rook](apps/rook/) | ✅ Active | AI proxy/router with multi-provider support |
-| [Agent](docs/agent/README.md) | 🚧 Experimental | Personal Rust coding CLI; provisional name |
+| [Huginn](docs/huginn/README.md) | 🚧 Experimental | Personal Rust coding agent (CLI and future TUI) |
 | *Future tools* | 🚧 Planned | TBD |
 
 ## 🛠 Development

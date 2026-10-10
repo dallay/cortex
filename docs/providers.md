@@ -57,7 +57,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 > **Nota de compatibilidad:** Las pruebas del provider y del adaptador OpenAI
 > verifican que los argumentos fragmentados sobreviven el modelo de streaming de
 > Rook y salen como deltas compatibles con OpenAI. Esto no valida de extremo a
-> extremo el agente Cortex contra un gateway Rook en ejecución; `docs/agent/validation.md`
+> extremo Huginn contra un gateway Rook en ejecución; `docs/huginn/validation.md`
 > sigue marcando Rook como no compatible hasta que pase esa prueba. La issue #279
 > define este trabajo como no requerido para el MVP del agente personal.
 >

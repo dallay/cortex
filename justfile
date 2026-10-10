@@ -132,12 +132,12 @@ build-targets:
 
 # === Run ===
 
-# Run the personal coding agent (e.g. just agent-run --provider mock run "list files")
-agent-run *args:
-    cargo run -p cortex-agent -- "$@"
+# Run the personal coding agent (e.g. just huginn-run --provider mock run "list files")
+huginn-run *args:
+    cargo run -p huginn -- "$@"
 
-agent-test:
-    cargo test -p agent-core -p agent-runtime -p cortex-agent
+huginn-test:
+    cargo test -p huginn-core -p huginn-runtime -p huginn
 
 # Run the backend (rook) in dev mode
 run:

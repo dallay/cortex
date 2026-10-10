@@ -1,0 +1,176 @@
+use async_trait::async_trait;
+use fs2::FileExt;
+use huginn_core::{AgentError, Result, Session, SessionInfo, SessionStore};
+use rusqlite::{params, Connection};
+use std::{
+    fs::{File, OpenOptions},
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+pub struct SqliteSessions {
+    connection: Mutex<Connection>,
+}
+/// Cross-process advisory lock held for the duration of a conversation.
+/// It is released by the operating system even if the process crashes.
+pub struct SessionLease {
+    _files: Vec<File>,
+}
+impl SqliteSessions {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let _ = options.open(path)?;
+        let connection = Connection::open(path).map_err(db_error)?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(db_error)?;
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .map_err(db_error)?;
+        if version > 1 {
+            return Err(AgentError::Session(
+                "session database is from a newer version".into(),
+            ));
+        }
+        connection.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); PRAGMA user_version=1; COMMIT;")
+            .map_err(db_error)?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+    pub fn lease(&self, id: &str) -> Result<SessionLease> {
+        if id.len() != 36
+            || !id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+        {
+            return Err(AgentError::Session("invalid session id".into()));
+        }
+        let uuid = uuid::Uuid::parse_str(id)
+            .map_err(|_| AgentError::Session("invalid session id".into()))?;
+        if uuid.to_string() != id {
+            return Err(AgentError::Session("invalid session id".into()));
+        }
+        // Old and new lockfiles may already be held independently by old/new
+        // binaries, so probing for both can deadlock under contention. Instead,
+        // preserve the shared legacy filename as the synchronization point:
+        // old binaries understand it, and new binaries keep acquiring it.
+        let paths = [legacy_session_lock_path(&uuid)];
+        let mut files = Vec::with_capacity(paths.len());
+        for path in paths {
+            let mut options = OpenOptions::new();
+            options.read(true).write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            }
+            let file = options.open(path)?;
+            file.try_lock_exclusive().map_err(|error| {
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    AgentError::Session("session is in use by another process".into())
+                } else {
+                    AgentError::Io(error)
+                }
+            })?;
+            files.push(file);
+        }
+        Ok(SessionLease { _files: files })
+    }
+}
+/// Shared lock filename used by both `cortex-agent` and Huginn binaries to
+/// preserve mutual exclusion across the rename. On Unix `O_NOFOLLOW` prevents
+/// following a symlink.
+fn legacy_session_lock_path(uuid: &uuid::Uuid) -> PathBuf {
+    let filename = format!("cortex-agent-session-{}.lock", uuid.as_hyphenated());
+    #[cfg(unix)]
+    {
+        Path::new("/tmp").join(filename)
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join(filename)
+    }
+}
+fn db_error(error: rusqlite::Error) -> AgentError {
+    AgentError::Session(error.to_string())
+}
+#[async_trait]
+impl SessionStore for SqliteSessions {
+    async fn save(&self, session: &Session) -> Result<()> {
+        let data = serde_json::to_string(session)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| AgentError::Session("database lock poisoned".into()))?;
+        connection.execute("INSERT INTO sessions(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=CURRENT_TIMESTAMP",params![session.id,data]).map_err(db_error)?;
+        drop(connection);
+        Ok(())
+    }
+    async fn load(&self, id: &str) -> Result<Session> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| AgentError::Session("database lock poisoned".into()))?;
+        let data: String = connection
+            .query_row("SELECT data FROM sessions WHERE id=?1", [id], |row| {
+                row.get(0)
+            })
+            .map_err(db_error)?;
+        drop(connection);
+        let session: Session = serde_json::from_str(&data)?;
+        if session.id != id
+            || session.summary_through > session.messages.len()
+            || (session.summary_through > 0 && session.summary.is_none())
+            || session
+                .messages
+                .get(session.summary_through)
+                .is_some_and(|m| m.role != huginn_core::Role::User)
+        {
+            return Err(AgentError::Session(
+                "invalid session history or summary boundary".into(),
+            ));
+        }
+        Ok(session)
+    }
+    async fn list(&self) -> Result<Vec<SessionInfo>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| AgentError::Session("database lock poisoned".into()))?;
+        let mut statement = connection
+            .prepare("SELECT data FROM sessions ORDER BY updated_at DESC,id")
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(db_error)?;
+        let data = rows
+            .collect::<std::result::Result<Vec<String>, _>>()
+            .map_err(db_error)?;
+        drop(statement);
+        drop(connection);
+        data.into_iter()
+            .map(|data| {
+                let session: Session = serde_json::from_str(&data)?;
+                Ok(SessionInfo {
+                    id: session.id,
+                    workspace: session.workspace,
+                    interrupted: session.interrupted,
+                })
+            })
+            .collect()
+    }
+}
