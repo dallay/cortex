@@ -938,6 +938,7 @@ fn api_key_routes(usecases: Usecases) -> Router {
             "/api/api-keys/{id}/rotate",
             post(handlers::api_key::rotate_api_key),
         )
+        .layer(middleware::from_fn(authz::require_admin))
         .with_state(usecases)
 }
 
@@ -957,6 +958,7 @@ fn rate_limits_routes(store: handlers::rate_limits::RateLimitRuleStore) -> Route
             "/api/rate-limits/{scope}/{target}/status",
             get(handlers::rate_limits::get_status),
         )
+        .layer(middleware::from_fn(authz::require_admin))
         .with_state(store)
 }
 
@@ -969,6 +971,7 @@ fn usage_routes(usecases: Usecases) -> Router {
             "/api/providers/quota",
             get(handlers::provider_quota::list_provider_quota),
         )
+        .layer(middleware::from_fn(authz::require_admin))
         .with_state(usecases)
 }
 
@@ -991,5 +994,6 @@ fn cache_routes(usecases: Usecases) -> Router {
             "/api/cache/{signature}",
             delete(handlers::cache::delete_cache_entry),
         )
+        .layer(middleware::from_fn(authz::require_admin))
         .layer(axum::extract::Extension(cache))
 }
