@@ -10,7 +10,9 @@
  *   04 Triage — add triage/needs-classification, never invent a product.
  *
  * Invariants:
- *   - exactly one product/* (rook|agent|shared)
+ *   - exactly one product/* (rook|huginn|agent|shared)
+ *     `agent` is a preserved legacy alias for `huginn` and only appears on
+ *     historical issues; new classifications land on `product/huginn`.
  *   - exactly one type/* when determinable, else triage
  *   - at least one area/* when determinable, else triage
  *   - product is NEVER inferred from body keywords (avoids "Agent integration with Rook" doubles)
@@ -26,6 +28,17 @@ function loadRules(rulesPath) {
   const fallback = path.join(__dirname, '..', 'issue-labeler-rules.json');
   const raw = fs.readFileSync(rulesPath || fallback, 'utf8');
   return JSON.parse(raw);
+}
+
+// Resolve legacy product keywords (e.g. `agent`) to their canonical successor
+// (e.g. `huginn`) for newly classified issues. The mapping is applied to
+// user-supplied products only. Preserve an existing legacy label when the
+// selected input still uses that legacy name.
+function canonicalProduct(value, rules, existingProducts = []) {
+  if (!value || existingProducts.includes(value)) return value;
+  const mapping = (rules && rules.productAliases) || {};
+  const key = value.startsWith('product/') ? value.slice('product/'.length) : value;
+  return mapping[key] ? `product/${mapping[key]}` : value;
 }
 
 function firstNonEmptyLine(text) {
@@ -60,11 +73,19 @@ function parseFormSection(body, heading) {
   return collected.join('\n').trim();
 }
 
-function parseFormProduct(body, rules) {
+function parseFormProduct(body, rules, existingProducts = []) {
   const section = parseFormSection(body, rules.form.productHeading);
   if (!section) return { present: false, value: null };
   const v = firstNonEmptyLine(section).toLowerCase();
-  if (rules.products.includes(v)) return { present: true, value: `product/${v}` };
+  if (rules.products.includes(v)) {
+    return { present: true, value: canonicalProduct(`product/${v}`, rules, existingProducts) };
+  }
+  // Legacy form responses for the previous product name resolve to the
+  // canonical successor so historical issues keep their classification while
+  // new submissions land on the current canonical label.
+  if (rules.productAliases && rules.productAliases[v]) {
+    return { present: true, value: canonicalProduct(`product/${v}`, rules, existingProducts) };
+  }
   return { present: true, value: null, invalid: firstNonEmptyLine(section) };
 }
 
@@ -198,7 +219,7 @@ function classify(input, rules) {
     return { add, remove, reason: 'renovate-dashboard', desired: { product: rules.renovate.product } };
   }
 
-  const formProduct = parseFormProduct(body, rules);
+  const formProduct = parseFormProduct(body, rules, split.validProducts);
   const formArea = parseFormArea(body, rules);
   const conv = parseConventionalTitle(title, rules);
   const inferredAreas = inferAreas(title, body, rules);
@@ -212,7 +233,7 @@ function classify(input, rules) {
     desiredProduct = formProduct.value;
     productSource = 'form';
   } else if (!formProduct.present && conv.scopeValid && conv.scope) {
-    desiredProduct = `product/${conv.scope}`;
+    desiredProduct = canonicalProduct(`product/${conv.scope}`, rules, split.validProducts);
     productSource = 'title';
   } else if (!formProduct.present && !conv.scopeExplicit && split.validProducts.length === 1 && split.productsAll.length === 1) {
     desiredProduct = split.validProducts[0];
@@ -331,6 +352,7 @@ module.exports = {
   parseFormArea,
   parseConventionalTitle,
   inferAreas,
+  canonicalProduct,
   classify,
   run,
 };

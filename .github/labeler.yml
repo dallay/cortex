@@ -13,13 +13,13 @@ product/rook:
           - 'docs/providers.md'
           - 'docs/api.md'
 
-product/agent:
+product/huginn:
   - changed-files:
       - any-glob-to-any-file:
-          - 'apps/agent/**'
-          - 'crates/agent/**'
-          - 'docs/agent/**'
-          - 'scripts/agent-*.sh'
+          - 'apps/huginn/**'
+          - 'crates/huginn/**'
+          - 'docs/huginn/**'
+          - 'scripts/huginn-*.sh'
 
 product/shared:
   - changed-files:
@@ -55,7 +55,7 @@ area/core:
       - any-glob-to-any-file:
           - 'crates/domain/**'
           - 'crates/application/**'
-          - 'crates/agent/core/**'
+          - 'crates/huginn/core/**'
 
 area/providers:
   - changed-files:
@@ -71,8 +71,8 @@ area/dashboard:
 area/runtime:
   - changed-files:
       - any-glob-to-any-file:
-          - 'crates/agent/runtime/**'
-          - 'apps/agent/src/**'
+          - 'crates/huginn/runtime/**'
+          - 'apps/huginn/src/**'
 
 area/transport:
   - changed-files:

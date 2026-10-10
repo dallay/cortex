@@ -9,7 +9,7 @@ body:
       description: Which product owns this? Use Shared for cross-cutting work. Exactly one.
       options:
         - Rook
-        - Agent
+        - Huginn
         - Shared
     validations:
       required: true

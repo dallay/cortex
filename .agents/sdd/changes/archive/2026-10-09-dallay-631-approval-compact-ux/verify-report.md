@@ -1,5 +1,10 @@
 # Verification Report
 
+> **Naming provenance (2026-10-10):** See ADR-0011. Crate/binary names
+> in this report (`apps/agent`, `cortex-agent`, `agent-core`,
+> `agent-runtime`) are historical; live code uses
+> `apps/huginn`/`huginn`/`huginn-core`/`huginn-runtime`.
+
 **Change**: dallay-631-approval-compact-ux **Version**: 1.0
 
 ---

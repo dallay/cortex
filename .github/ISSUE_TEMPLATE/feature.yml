@@ -9,7 +9,7 @@ body:
       description: Which product should own this? Exactly one.
       options:
         - Rook
-        - Agent
+        - Huginn
         - Shared
     validations:
       required: true

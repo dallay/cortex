@@ -15,11 +15,28 @@ const add = (r) => [...r.add].sort();
 const remove = (r) => [...r.remove].sort();
 
 describe('conventional titles', () => {
-  it('fix(agent): MCP session recovery -> agent/bug/runtime, no triage', () => {
-    const r = classify({ title: 'fix(agent): improve MCP session recovery', body: '', existingLabels: [] }, rules);
-    assert.deepEqual(add(r), ['area/runtime', 'product/agent', 'type/bug']);
+  it('fix(huginn): MCP session recovery -> huginn/bug/runtime, no triage', () => {
+    const r = classify({ title: 'fix(huginn): improve MCP session recovery', body: '', existingLabels: [] }, rules);
+    assert.deepEqual(add(r), ['area/runtime', 'product/huginn', 'type/bug']);
     assert.deepEqual(remove(r), []);
     assert.equal(r.needsTriage, false);
+  });
+
+  // Legacy `agent` scope: should resolve to product/huginn for new issues.
+  it('fix(agent): legacy scope resolves to product/huginn, no triage', () => {
+    const r = classify({ title: 'fix(agent): improve MCP session recovery', body: '', existingLabels: [] }, rules);
+    assert.deepEqual(add(r).sort(), ['area/runtime', 'product/huginn', 'type/bug']);
+    assert.deepEqual(remove(r), []);
+    assert.equal(r.needsTriage, false);
+  });
+
+  // Legacy `product/agent` label already on the issue is not stripped.
+  it('legacy product/agent label is preserved when no new scope arrives', () => {
+    const r = classify(
+      { title: 'Some vague improvement', body: '', existingLabels: ['product/agent', 'type/chore', 'area/ci'] },
+      rules
+    );
+    assert.ok(![...r.remove].some((l) => l.startsWith('product/')), 'must not silently strip product/agent');
   });
 
   it('feat(rook): provider fallback -> rook/feature/providers', () => {
@@ -32,34 +49,70 @@ describe('conventional titles', () => {
     assert.ok(r.add.has('area/providers'), 'area/providers');
   });
 
-  it('test(agent): maps to type/test', () => {
-    const r = classify({ title: 'test(agent): session replay harness', body: '', existingLabels: [] }, rules);
+  it('test(huginn): maps to type/test', () => {
+    const r = classify({ title: 'test(huginn): session replay harness', body: '', existingLabels: [] }, rules);
     assert.ok(r.add.has('type/test'));
-    assert.ok(r.add.has('product/agent'));
+    assert.ok(r.add.has('product/huginn'));
   });
 
-  it('multi-scope fix(rook,agent): is ambiguous -> triage, no invented product', () => {
-    const t = parseConventionalTitle('fix(rook,agent): shared thing', rules);
+  it('multi-scope fix(rook,huginn): is ambiguous -> triage, no invented product', () => {
+    const t = parseConventionalTitle('fix(rook,huginn): shared thing', rules);
     assert.equal(t.scope, null);
-    const r = classify({ title: 'fix(rook,agent): shared thing', body: '', existingLabels: [] }, rules);
+    const r = classify({ title: 'fix(rook,huginn): shared thing', body: '', existingLabels: [] }, rules);
     assert.ok(![...r.add].some((l) => l.startsWith('product/')), 'must not invent product');
     assert.ok(r.add.has('triage/needs-classification'));
+  });
+});
+
+describe('legacy product selection', () => {
+  for (const source of ['title', 'form']) {
+    for (const product of ['agent', 'huginn']) {
+      it(`${source} ${product} preserves legacy naming or explicitly corrects it`, () => {
+        const input = {
+          title: `fix(${source === 'title' ? product : 'agent'}): session recovery`,
+          body: source === 'form' ? `### Product\n\n${product === 'agent' ? 'Agent' : 'Huginn'}` : '',
+          existingLabels: ['product/agent', 'type/bug', 'area/runtime'],
+        };
+        const result = classify(input, rules);
+        assert.equal(result.desired.product, `product/${product}`);
+        assert.deepEqual(add(result), product === 'huginn' ? ['product/huginn'] : []);
+        assert.deepEqual(remove(result), product === 'huginn' ? ['product/agent'] : []);
+        assert.equal(result.needsTriage, false);
+        const labels = input.existingLabels.filter((label) => !result.remove.has(label)).concat(add(result));
+        const repeated = classify({ ...input, existingLabels: labels }, rules);
+        assert.deepEqual(add(repeated), []);
+        assert.deepEqual(remove(repeated), []);
+      });
+    }
+  }
+
+  it('a legacy Agent form on a new issue selects Huginn', () => {
+    const result = classify({ title: 'fix: session recovery', body: '### Product\n\nAgent' }, rules);
+    assert.equal(result.desired.product, 'product/huginn');
+    assert.ok(!result.add.has('product/agent'));
   });
 });
 
 describe('issue forms (highest priority)', () => {
   it('form Rook/providers wins over title scope', () => {
     const body = '### Product\n\nRook\n\n### Technical Area\n\nproviders\n\n### Description\n\ntimeout';
-    const r = classify({ title: 'fix(agent): gateway timeout', body, existingLabels: ['type/bug'] }, rules);
+    const r = classify({ title: 'fix(huginn): gateway timeout', body, existingLabels: ['type/bug'] }, rules);
     assert.ok(r.add.has('product/rook'), 'form product wins');
     assert.ok(r.add.has('area/providers'));
     // type preserved from existing (form frontmatter), not overwritten by title
     assert.ok(!r.add.has('type/bug'), 'type already present -> no add');
   });
 
+  it('legacy "Agent" form value resolves to product/huginn', () => {
+    const body = '### Product\n\nAgent\n\n### Technical Area\n\nruntime';
+    const r = classify({ title: 'fix(rook): migrate to agent runtime', body, existingLabels: ['product/rook', 'type/bug'] }, rules);
+    assert.ok(r.add.has('product/huginn'), 'legacy Agent form must canonicalize to product/huginn');
+    assert.ok(r.remove.has('product/rook'));
+  });
+
   it('invalid form product -> triage, no fallback guessing', () => {
     const body = '### Product\n\nUnknownProduct\n\n### Technical Area\n\nruntime';
-    const r = classify({ title: 'fix(agent): x', body, existingLabels: [] }, rules);
+    const r = classify({ title: 'fix(huginn): x', body, existingLabels: [] }, rules);
     assert.ok(r.add.has('triage/needs-classification'));
     assert.ok(![...r.add].some((l) => l.startsWith('product/')));
   });
@@ -80,17 +133,17 @@ describe('ambiguity and human preservation', () => {
       { title: 'Flaky dashboard without scope', body: 'no form', existingLabels: ['product/rook', 'type/bug', 'area/dashboard'] },
       rules
     );
-    assert.ok(!r.add.has('product/agent'));
+    assert.ok(!r.add.has('product/huginn'));
     assert.deepEqual(remove(r).filter((l) => l.startsWith('product/')), []);
   });
 
   it('explicit form replaces conflicting product (safe correction)', () => {
-    const body = '### Product\n\nAgent\n\n### Technical Area\n\nruntime';
+    const body = '### Product\n\nHuginn\n\n### Technical Area\n\nruntime';
     const r = classify(
       { title: 'fix(rook): migrate to agent runtime', body, existingLabels: ['product/rook', 'type/bug'] },
       rules
     );
-    assert.ok(r.add.has('product/agent'));
+    assert.ok(r.add.has('product/huginn'));
     assert.ok(r.remove.has('product/rook'));
   });
 
@@ -104,7 +157,7 @@ describe('ambiguity and human preservation', () => {
 
   it('human type wins over stale title prefix', () => {
     const r = classify(
-      { title: 'fix(agent): old prefix', body: '', existingLabels: ['product/agent', 'type/feature', 'area/runtime'] },
+      { title: 'fix(huginn): old prefix', body: '', existingLabels: ['product/huginn', 'type/feature', 'area/runtime'] },
       rules
     );
     assert.ok(!r.add.has('type/bug'), 'must not fight human type');
@@ -175,10 +228,10 @@ describe('token matching (no substring false positives)', () => {
 });
 
 describe('explicit ambiguity requires triage', () => {
-  it('fix(rook,agent) with stale product/rook -> triage, no preserve', () => {
+  it('fix(rook,huginn) with stale product/rook -> triage, no preserve', () => {
     const r = classify(
       {
-        title: 'fix(rook,agent): shared thing',
+        title: 'fix(rook,huginn): shared thing',
         body: '',
         existingLabels: ['product/rook', 'type/bug', 'area/ci'],
       },
@@ -191,18 +244,36 @@ describe('explicit ambiguity requires triage', () => {
   });
 
   it('valid form product suppresses title ambiguity (form wins)', () => {
-    const body = '### Product\n\nAgent\n\n### Technical Area\n\nruntime';
+    const body = '### Product\n\nHuginn\n\n### Technical Area\n\nruntime';
     const r = classify(
       {
-        title: 'fix(rook,agent): x',
+        title: 'fix(rook,huginn): x',
         body,
         existingLabels: ['type/bug'],
       },
       rules
     );
-    assert.ok(r.add.has('product/agent'));
+    assert.ok(r.add.has('product/huginn'));
     assert.ok(!r.add.has('triage/needs-classification'), 'form authority must not triage on title ambiguity');
     assert.equal(r.needsTriage, false);
+  });
+
+  it('legacy "fix(rook,agent)" multi-scope still triages, form Agent resolves to huginn', () => {
+    const r = classify(
+      { title: 'fix(rook,agent): shared thing', body: '', existingLabels: [] },
+      rules
+    );
+    assert.ok(![...r.add].some((l) => l.startsWith('product/')), 'multi-scope must not invent product');
+    assert.ok(r.add.has('triage/needs-classification'));
+    const formR = classify(
+      {
+        title: 'fix(rook,agent): x',
+        body: '### Product\n\nAgent\n\n### Technical Area\n\nruntime',
+        existingLabels: ['type/bug'],
+      },
+      rules
+    );
+    assert.ok(formR.add.has('product/huginn'), 'form Agent must canonicalize to product/huginn');
   });
 });
 
@@ -225,9 +296,9 @@ describe('idempotence and preservation', () => {
   it('fully labeled issue + priority/security -> zero changes', () => {
     const r = classify(
       {
-        title: 'fix(agent): improve MCP session recovery',
+        title: 'fix(huginn): improve MCP session recovery',
         body: '',
-        existingLabels: ['product/agent', 'type/bug', 'area/runtime', 'priority/high', 'security'],
+        existingLabels: ['product/huginn', 'type/bug', 'area/runtime', 'priority/high', 'security'],
       },
       rules
     );
@@ -235,10 +306,34 @@ describe('idempotence and preservation', () => {
     assert.deepEqual(remove(r), []);
   });
 
+  it('legacy product/agent is preserved on a stable historical issue', () => {
+    const r = classify(
+      { title: 'no scope here', body: '', existingLabels: ['product/agent', 'type/chore'] },
+      rules
+    );
+    assert.ok(!r.remove.has('product/agent'), 'must not silently strip legacy product/agent');
+    assert.ok(!r.add.has('product/huginn'), 'must not silently migrate the label');
+  });
+
+  it('legacy product/agent survives a new fix(agent) title scope', () => {
+    // A historical issue still labelled product/agent must keep that
+    // label when a follow-up title reuses the legacy scope.
+    const r = classify(
+      {
+        title: 'fix(agent): trim cache',
+        body: '',
+        existingLabels: ['product/agent', 'type/bug', 'area/runtime'],
+      },
+      rules
+    );
+    assert.ok(!r.remove.has('product/agent'), 'must not strip legacy product/agent');
+    assert.ok(!r.add.has('product/huginn'), 'must not migrate the historical label');
+  });
+
   it('never touches priority/security/stale', () => {
     const r = classify(
       {
-        title: 'fix(agent): x',
+        title: 'fix(huginn): x',
         body: '',
         existingLabels: ['priority/low', 'security', 'stale'],
       },
@@ -251,9 +346,9 @@ describe('idempotence and preservation', () => {
   it('areas are additive, never removed', () => {
     const r = classify(
       {
-        title: 'fix(agent): MCP session + dashboard polish',
+        title: 'fix(huginn): MCP session + dashboard polish',
         body: '',
-        existingLabels: ['product/agent', 'type/bug', 'area/runtime'],
+        existingLabels: ['product/huginn', 'type/bug', 'area/runtime'],
       },
       rules
     );
@@ -263,9 +358,9 @@ describe('idempotence and preservation', () => {
   it('triage removed once fully classified', () => {
     const r = classify(
       {
-        title: 'fix(agent): improve MCP session recovery',
+        title: 'fix(huginn): improve MCP session recovery',
         body: '',
-        existingLabels: ['product/agent', 'type/bug', 'area/runtime', 'triage/needs-classification'],
+        existingLabels: ['product/huginn', 'type/bug', 'area/runtime', 'triage/needs-classification'],
       },
       rules
     );

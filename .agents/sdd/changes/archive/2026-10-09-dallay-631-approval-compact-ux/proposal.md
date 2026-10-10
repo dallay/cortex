@@ -1,5 +1,13 @@
 # Proposal: Approval numbering, header clarity, and explicit `/compact` for the agent CLI
 
+> **Naming provenance (2026-10-10):** This change predates the
+> product rename to **Huginn** (see ADR-0011). The original proposal
+> refers to `apps/agent`, `cortex-agent`, `agent-core` and
+> `agent-runtime`. Those names are historical and intentionally
+> preserved as-is so the decision record stays accurate; the
+> corresponding live paths are now `apps/huginn`, `huginn`,
+> `huginn-core`, and `huginn-runtime`.
+
 ## 1. Intent
 
 **Problem.** Manual acceptance of DALLAY-631 surfaced two product-level UX gaps in `apps/agent`:

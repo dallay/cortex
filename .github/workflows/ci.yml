@@ -44,6 +44,7 @@ jobs:
               - 'README.md'
             backend:
               - 'apps/rook/src/**'
+              - 'apps/huginn/**'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -745,13 +746,13 @@ jobs:
       - name: Run tests
         if: runner.os != 'Windows'
         run: cargo test --workspace --all-features
-      # The personal agent MVP targets macOS/Linux; keep Rook's Windows gates.
+      # The personal Huginn MVP targets macOS/Linux; keep Rook's Windows gates.
       - name: Run Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --workspace --all-features --exclude agent-core --exclude agent-runtime --exclude cortex-agent
+        run: cargo test --workspace --all-features --exclude huginn-core --exclude huginn-runtime --exclude huginn
       - name: Run clippy
         if: runner.os != 'Windows'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run Windows clippy
         if: runner.os == 'Windows'
-        run: cargo clippy --workspace --all-targets --exclude agent-core --exclude agent-runtime --exclude cortex-agent -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude huginn-core --exclude huginn-runtime --exclude huginn -- -D warnings

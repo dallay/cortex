@@ -8,9 +8,12 @@
 - name: product/rook
   color: "1d4ed8"
   description: "Rook LLM gateway, providers, routing, API and dashboard"
-- name: product/agent
+- name: product/huginn
   color: "8b5cf6"
-  description: "Standalone Cortex coding agent (provisional product name)"
+  description: "Huginn, the Cortex coding agent (personal Rust CLI and TUI)"
+- name: product/agent
+  color: "a78bfa"
+  description: "DEPRECATED — kept for historical issues. Use product/huginn for new issues."
 - name: product/shared
   color: "64748b"
   description: "Cortex-wide tooling, shared infrastructure and cross-product work"

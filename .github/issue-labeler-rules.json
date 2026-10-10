@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "products": ["rook", "agent", "shared"],
+  "products": ["rook", "agent", "huginn", "shared"],
   "areas": [
     "auth",
     "ci",
@@ -20,7 +20,10 @@
   "triageLabel": "triage/needs-classification",
   "managedPrefixes": ["product/", "type/", "area/", "triage/"],
   "preservePrefixes": ["priority/"],
-  "preserveExact": ["security", "stale"],
+  "preserveExact": ["security", "stale", "product/agent"],
+  "productAliases": {
+    "agent": "huginn"
+  },
   "form": {
     "productHeading": "Product",
     "areaHeading": "Technical Area"
@@ -40,7 +43,7 @@
     "improvement": "type/enhancement",
     "milestone": "type/milestone"
   },
-  "scopes": ["rook", "agent", "shared"],
+  "scopes": ["rook", "agent", "huginn", "shared"],
   "areaKeywords": {
     "area/ci": ["github actions", "workflow", "justfile", "lefthook", "pipeline", "ci "],
     "area/core": ["core", "domain", "usecase", "use-case", "shared-kernel"],

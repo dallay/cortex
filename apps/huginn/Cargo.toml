@@ -1,0 +1,31 @@
+[package]
+name = "huginn"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[[bin]]
+name = "huginn"
+path = "src/main.rs"
+
+[dependencies]
+huginn-core = { path = "../../crates/huginn/core" }
+huginn-runtime = { path = "../../crates/huginn/runtime" }
+anyhow.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+portable-pty = "0.9"
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "process", "time"] }
+
+[lints]
+workspace = true

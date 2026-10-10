@@ -7,8 +7,11 @@ The system is declarative and deterministic. No LLM is used. Consistency beats f
 
 Source of truth: `.github/labels.yml` (synced by `labels-sync.yml`, non-destructive).
 
-- `product/*` — owning product, exactly one per issue: `rook`, `agent`, `shared`.
-  PRs may touch several products; issues never do.
+- `product/*` — owning product, exactly one per issue: `rook`, `huginn`,
+  `shared`. The label `product/agent` is a deprecated alias for `product/huginn`
+  and is preserved on historical issues only — new submissions land on
+  `product/huginn` (see ADR-0011). PRs may touch several products; issues
+  never do.
 - `area/*` — technical areas, zero or more on PRs, at least one on classified issues:
   `auth`, `ci`, `core`, `dashboard`, `dependencies`, `docs`, `observability`,
   `providers`, `release`, `runtime`, `storage`, `testing`, `transport`.
@@ -33,9 +36,12 @@ Product is never inferred from body keywords. A body like
 
 ## Conventional titles
 
-Format: `prefix(scope): subject`, for example `fix(agent): improve MCP session recovery`.
+Format: `prefix(scope): subject`, for example `fix(huginn): improve MCP session recovery`.
+The legacy `agent` scope is still accepted and resolves to `product/huginn`
+for backward compatibility with historical titles.
 
-Scopes (must be exactly one): `rook`, `agent`, `shared`.
+Scopes (must be exactly one): `rook`, `huginn`, `shared`, plus the legacy
+`agent` alias.
 
 | Prefix | Type |
 | --- | --- |
@@ -49,7 +55,8 @@ Scopes (must be exactly one): `rook`, `agent`, `shared`.
 
 Examples:
 
-- `fix(agent): improve MCP session recovery` → `product/agent` + `type/bug` + `area/runtime`
+- `fix(huginn): improve MCP session recovery` → `product/huginn` + `type/bug` + `area/runtime`
+- `fix(agent): legacy scope still resolves to product/huginn` → `product/huginn` + `type/bug` + `area/runtime`
 - `feat(rook): add Anthropic fallback` → `product/rook` + `type/feature` + `area/providers`
 - `docs(shared): labeling policy` → `product/shared` + `type/chore` + `area/docs`
 
@@ -72,9 +79,10 @@ falls back to the title and then to existing labels.
 - Managed prefixes only: `product/`, `type/`, `area/`, `triage/`.
   `priority/*`, `security`, `stale`, and Renovate-managed `area/dependencies`
   plus any unmanaged label are never added or removed by ordinary classification.
-- Exclusivity: an issue never ends with `product/rook` and `product/agent` together.
-  An explicit product (form or title scope) may replace the previous one;
-  an ambiguous mention may not.
+- Exclusivity: an issue never ends with `product/rook` and `product/huginn`
+  together. An explicit product (form or title scope) may replace the previous
+  one; an ambiguous mention may not. The legacy label `product/agent` is
+  preserved on historical issues and is never auto-removed by the classifier.
 - Areas are additive: the classifier only adds missing `area/*`, never removes.
 - Types preserve humans: a single valid existing `type/*` wins over a stale title prefix.
   Titles only fill a missing type or resolve zero-or-many into one.

@@ -1,0 +1,21 @@
+# Copy to the OS config directory at cortex/huginn/config.toml, or use --config.
+provider = "openai" # "mock" for an offline diagnostic
+base_url = "http://127.0.0.1:8000/v1"
+model = "your-tool-capable-model"
+api_key_env = "HUGINN_API_KEY" # empty string disables authentication
+# Only HUGINN_API_KEY falls back to legacy AGENT_API_KEY when unavailable.
+# db = "/absolute/path/to/sessions.db" # default: OS data directory/cortex/huginn/
+timeout_secs = 120
+tool_timeout_secs = 60
+max_iterations = 20
+context_tokens = 32768
+max_output_tokens = 4096
+
+# Launch and each remote call require approval. No sandbox is provided.
+# Use an absolute executable path; the child environment is explicitly configured.
+# [[mcp]]
+# name = "local"
+# command = "/absolute/path/to/mcp-server"
+# args = ["--stdio"]
+# env = { PATH = "/usr/local/bin:/usr/bin:/bin" }
+# env_from = { SERVICE_TOKEN = "MY_SERVICE_TOKEN" }

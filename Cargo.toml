@@ -24,9 +24,9 @@ members = [
     "crates/infrastructure/combo-sqlite",
     "crates/infrastructure/alias-sqlite",
     "apps/rook",
-    "apps/agent",
-    "crates/agent/core",
-    "crates/agent/runtime",
+    "apps/huginn",
+    "crates/huginn/core",
+    "crates/huginn/runtime",
 ]
 
 [workspace.package]
