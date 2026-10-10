@@ -28,6 +28,7 @@ fn base_request(stream: bool) -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -157,6 +158,7 @@ async fn complete_sanitizes_error_body_sensitive_data() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -225,6 +227,7 @@ async fn stream_returns_error_on_429() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],

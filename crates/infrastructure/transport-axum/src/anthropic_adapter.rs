@@ -1,8 +1,8 @@
 // Anthropic adapter — translates between Anthropic wire format and domain model
 
 use rook_core::{
-    ApiKeyRestrictions, CompletionRequest, Message, MessageContent, RequestMetadata, Role,
-    StreamChunk,
+    ApiKeyRestrictions, CompletionRequest, Message, MessageContent, MessageToolCall,
+    RequestMetadata, Role, StreamChunk,
 };
 use serde::{Deserialize, Serialize};
 use shared_kernel::{CortexError, ModelId, RequestId};
@@ -56,6 +56,31 @@ pub enum AnthropicWireContentBlock {
 
 impl AnthropicMessage {
     fn into_domain_message(self) -> Message {
+        let mut tool_calls = Vec::new();
+        let content = match self.content {
+            AnthropicMessageContent::Text(text) => MessageContent::Text(text),
+            AnthropicMessageContent::Blocks(blocks) => {
+                let mut non_tool_content = None;
+                for block in blocks {
+                    match block {
+                        AnthropicWireContentBlock::ToolUse { id, name, input } => {
+                            tool_calls.push(MessageToolCall {
+                                id: Some(id),
+                                name,
+                                arguments: input,
+                            });
+                        }
+                        other => {
+                            if non_tool_content.is_none() {
+                                non_tool_content = anthropic_block_to_domain(other);
+                            }
+                        }
+                    }
+                }
+                non_tool_content.unwrap_or_else(|| MessageContent::Text(String::new()))
+            }
+        };
+
         Message {
             role: match self.role.as_str() {
                 "system" => Role::System,
@@ -63,14 +88,8 @@ impl AnthropicMessage {
                 "assistant" => Role::Assistant,
                 _ => Role::User,
             },
-            content: match self.content {
-                AnthropicMessageContent::Text(text) => MessageContent::Text(text),
-                AnthropicMessageContent::Blocks(blocks) => blocks
-                    .into_iter()
-                    .filter_map(anthropic_block_to_domain)
-                    .next()
-                    .unwrap_or_else(|| MessageContent::Text(String::new())),
-            },
+            content,
+            tool_calls,
         }
     }
 }
@@ -104,6 +123,7 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
             .map(|s| Message {
                 role: Role::System,
                 content: MessageContent::Text(s),
+                tool_calls: vec![],
             })
             .collect();
 
@@ -351,6 +371,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "Hello".to_string(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: None,
             usage: None,
@@ -370,6 +391,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "".to_string(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: Some(FinishReason::Stop),
             usage: Some(make_token_usage(10, 25)),
@@ -389,6 +411,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "part".to_string(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: None,
             usage: Some(make_token_usage(10, 5)), // Should be ignored
@@ -405,6 +428,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new("claude-3-5-sonnet"),
             delta: "".to_string(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: Some(FinishReason::Stop),
             usage: Some(make_token_usage(10, 25)),
@@ -436,6 +460,9 @@ mod tests {
             model: ModelId::new("claude-3-5-sonnet"),
             content: "Hello there".to_string(),
             content_blocks: vec![MessageContent::Text("Hello there".to_string())],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
             usage: TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
@@ -509,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_tool_use_block_converts_to_domain_tool_use() {
+    fn anthropic_tool_use_block_converts_to_neutral_domain_call() {
         let json = r#"{
             "model": "claude-3-5-sonnet",
             "messages": [{
@@ -529,10 +556,14 @@ mod tests {
         assert_eq!(domain.messages[0].role, rook_core::Role::Assistant);
         assert_eq!(
             domain.messages[0].content,
-            MessageContent::ToolUse {
-                id: "toolu_123".to_string(),
+            MessageContent::Text(String::new())
+        );
+        assert_eq!(
+            domain.messages[0].tool_calls[0],
+            rook_core::MessageToolCall {
+                id: Some("toolu_123".to_string()),
                 name: "get_weather".to_string(),
-                input: serde_json::json!({"city": "Paris"}),
+                arguments: serde_json::json!({"city": "Paris"}),
             }
         );
     }
@@ -549,6 +580,9 @@ mod tests {
                 name: "get_weather".to_string(),
                 input: serde_json::json!({"city": "Paris"}),
             }],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
             usage: make_token_usage(1, 2),
             latency_ms: 1,
             cache_hit: None,

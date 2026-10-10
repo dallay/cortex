@@ -271,6 +271,18 @@ impl std::fmt::Display for MessageContent {
 pub struct Message {
     pub role: Role,
     pub content: MessageContent,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<MessageToolCall>,
+}
+
+/// Complete provider-neutral function call attached to an assistant message
+/// or completion. `id` is optional because some providers do not supply one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageToolCall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,6 +301,12 @@ pub struct CompletionResponse {
     pub model: ModelId,
     pub content: String,
     pub content_blocks: Vec<MessageContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<MessageToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<FinishReason>,
     pub usage: TokenUsage,
     pub latency_ms: u64,
     /// Provider-level cache hit indicator (parsed from x-cache header).
@@ -306,6 +324,8 @@ pub struct StreamChunk {
     pub id: RequestId,
     pub model: ModelId,
     pub delta: String,
+    /// Provider reasoning/thinking text, separate from user-visible content.
+    pub thinking: Option<String>,
     /// Structured tool-call fragments carried independently from text deltas.
     pub tool_calls: Vec<ToolCallDelta>,
     pub finish_reason: Option<FinishReason>,
@@ -1246,6 +1266,7 @@ mod cache_key_tests {
             id: RequestId::new(),
             model: ModelId::new("gpt-4o"),
             messages: vec![Message {
+                tool_calls: vec![],
                 role: Role::User,
                 content: MessageContent::Text("hello".to_string()),
             }],
@@ -1304,6 +1325,7 @@ mod cache_key_tests {
         // Changing messages should change signature
         let mut req3 = make_request();
         req3.messages = vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("goodbye".to_string()),
         }];

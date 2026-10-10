@@ -43,3 +43,22 @@ pre-push:
     test:
       run: cargo test --workspace
       fail-fast: true
+
+# ---------- POST-CHECKOUT / POST-MERGE / POST-REWRITE ----------
+# AgentSync: sync agent config (skills, commands) after any
+# checkout, merge, or rewrite — keeps local tooling in sync
+# without inventing a second hook system.
+post-checkout:
+  commands:
+    agentsync-apply:
+      run: pnpm dlx @dallay/agentsync@latest apply || true
+
+post-merge:
+  commands:
+    agentsync-apply:
+      run: pnpm dlx @dallay/agentsync@latest apply || true
+
+post-rewrite:
+  commands:
+    agentsync-apply:
+      run: pnpm dlx @dallay/agentsync@latest apply || true

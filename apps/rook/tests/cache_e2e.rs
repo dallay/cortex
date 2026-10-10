@@ -15,6 +15,7 @@ fn test_request(model: &str, prompt: &str) -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new(model),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text(prompt.to_string()),
         }],
@@ -42,6 +43,9 @@ fn test_response(content: &str) -> CompletionResponse {
         model: ModelId::new("gpt-4"),
         content: content.to_string(),
         content_blocks: vec![MessageContent::Text(content.to_string())],
+        thinking: None,
+        tool_calls: vec![],
+        finish_reason: None,
         usage: TokenUsage {
             prompt_tokens: 10,
             completion_tokens: 20,

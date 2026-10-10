@@ -4315,6 +4315,7 @@ dependencies = [
  "futures",
  "hex",
  "models-catalog",
+ "providers-ollama",
  "providers-openai",
  "reqwest 0.12.28",
  "ring",

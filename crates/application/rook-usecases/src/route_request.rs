@@ -1157,6 +1157,9 @@ mod tests {
                 model: req.model.clone(),
                 content: "cached path".to_string(),
                 content_blocks: vec![rook_core::MessageContent::Text("cached path".to_string())],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,
@@ -1180,6 +1183,7 @@ mod tests {
                     id: RequestId::new(),
                     model: TEST_MODEL.clone(),
                     delta: "hel".to_string(),
+                    thinking: None,
                     tool_calls: vec![],
                     finish_reason: None,
                     usage: None,
@@ -1188,6 +1192,7 @@ mod tests {
                     id: RequestId::new(),
                     model: TEST_MODEL.clone(),
                     delta: "lo".to_string(),
+                    thinking: None,
                     tool_calls: vec![],
                     finish_reason: Some(rook_core::FinishReason::Stop),
                     usage: Some(TokenUsage {
@@ -1523,6 +1528,7 @@ mod tests {
             id: RequestId::new(),
             model: TEST_MODEL.clone(),
             messages: vec![Message {
+                tool_calls: vec![],
                 role: Role::User,
                 content: "hello".into(),
             }],
@@ -2048,6 +2054,7 @@ mod tests {
                         id: RequestId::new(),
                         model: TEST_MODEL.clone(),
                         delta: "start".to_string(),
+                        thinking: None,
                         tool_calls: vec![],
                         finish_reason: None,
                         usage: None,

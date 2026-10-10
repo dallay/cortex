@@ -12,6 +12,14 @@ source_dir = "."
 enabled = true
 marker = "AI Agent Symlinks"
 
+[mcp]
+enabled = true
+merge_strategy = "merge"
+
+[mcp_servers.deepwiki]
+type = "http"
+url = "https://mcp.deepwiki.com/mcp"
+
 # -----------------------------------------------------------------------------
 # Claude Code
 # -----------------------------------------------------------------------------

@@ -81,6 +81,7 @@ async fn test_circuit_states_returns_snapshot_for_all_providers() {
         id: RequestId::new(),
         model: ModelId::new("gpt-3.5"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("test".to_string()),
         }],

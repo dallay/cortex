@@ -415,6 +415,7 @@ mod tests {
             id: RequestId::new(),
             model: ModelId::new(model),
             messages: vec![Message {
+                tool_calls: vec![],
                 role: Role::User,
                 content: "test".into(),
             }],
@@ -467,6 +468,9 @@ mod tests {
                 model: req.model.clone(),
                 content: "ok".to_string(),
                 content_blocks: vec![rook_core::MessageContent::Text("ok".to_string())],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,
@@ -494,6 +498,7 @@ mod tests {
             id: shared_kernel::RequestId::new(),
             model: ModelId::new(model),
             messages: vec![Message {
+                tool_calls: vec![],
                 role: Role::User,
                 content: "hello".into(),
             }],
@@ -578,6 +583,9 @@ mod tests {
                     "provider-{}",
                     self.inner.id.as_str()
                 ))],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
                 usage: TokenUsage {
                     prompt_tokens: 1,
                     completion_tokens: 1,
