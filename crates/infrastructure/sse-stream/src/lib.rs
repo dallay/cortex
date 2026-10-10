@@ -9,6 +9,23 @@ pub struct SseBuffer {
     buffer: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SseBufferError {
+    EventTooLarge { max_bytes: usize },
+}
+
+impl std::fmt::Display for SseBufferError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EventTooLarge { max_bytes } => {
+                write!(f, "SSE event exceeds the {max_bytes}-byte limit")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SseBufferError {}
+
 impl SseBuffer {
     #[must_use]
     pub fn new() -> Self {
@@ -40,6 +57,55 @@ impl SseBuffer {
         }
 
         events
+    }
+
+    /// Push bytes while limiting the size of any one buffered SSE event.
+    ///
+    /// Unlike `push`, this processes input incrementally so a large event cannot
+    /// grow the internal buffer beyond the configured limit. Multiple complete
+    /// events in one input chunk are accepted independently.
+    pub fn push_with_max_event_bytes(
+        &mut self,
+        incoming: &[u8],
+        max_bytes: usize,
+    ) -> Result<Vec<String>, SseBufferError> {
+        let mut events = Vec::new();
+
+        for byte in incoming {
+            self.buffer.push(*byte);
+            let delimiter_len = if self.buffer.ends_with(b"\r\n\r\n") {
+                Some(4)
+            } else if self.buffer.ends_with(b"\n\n") {
+                Some(2)
+            } else {
+                None
+            };
+
+            if let Some(delimiter_len) = delimiter_len {
+                let event_len = self.buffer.len() - delimiter_len;
+                if event_len > max_bytes {
+                    self.buffer.clear();
+                    return Err(SseBufferError::EventTooLarge { max_bytes });
+                }
+                if let Ok(event) = String::from_utf8(self.buffer[..event_len].to_vec()) {
+                    events.push(strip_trailing_carriage_return(event));
+                }
+                self.buffer.clear();
+            } else if self.buffer.len() > max_bytes.saturating_add(3) {
+                self.buffer.clear();
+                return Err(SseBufferError::EventTooLarge { max_bytes });
+            }
+        }
+
+        Ok(events)
+    }
+
+    /// Return the number of buffered bytes that have not yet formed a complete
+    /// SSE event. Callers can use this at EOF to distinguish a clean close from
+    /// a truncated event.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.buffer.len()
     }
 }
 
