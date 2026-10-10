@@ -62,4 +62,24 @@ pub const DEFAULT_ALIASES: &[(&str, &str, Option<&str>)] = &[
         "llama-3.3-70b-versatile",
         Some("groq"),
     ),
+    // OpenAI dated variants
+    ("gpt-4-turbo-128k", "gpt-4-turbo-2024-04-09", Some("openai")),
+    ("gpt-4o-mini", "gpt-4o-mini-2024-07-18", Some("openai")),
+    // Anthropic dated variants
+    (
+        "claude-3-5-sonnet",
+        "claude-3-5-sonnet-20241022",
+        Some("anthropic"),
+    ),
+    (
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20241022",
+        Some("anthropic"),
+    ),
+    // Google Gemini dated variants
+    (
+        "gemini-1.5-flash-001",
+        "gemini-1.5-flash-latest",
+        Some("gemini"),
+    ),
 ];

@@ -130,13 +130,14 @@ impl RouteRequest {
         mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        // 0. Check if combo execution is requested
+        // 0. Resolve model alias if enabled (BEFORE combo dispatch and
+        // restrictions check, so combo execution also uses the canonical model)
+        self.resolve_model_alias(&mut req).await;
+
+        // 0a. Check if combo execution is requested
         if let Some(combo_id) = req.metadata.combo_id {
             return self.execute_combo(&combo_id, req, client_format).await;
         }
-
-        // 0a. Resolve model alias if enabled (BEFORE restrictions check)
-        self.resolve_model_alias(&mut req).await;
 
         let cache_key = req.cache_key();
         let start = Instant::now();
@@ -291,6 +292,12 @@ impl RouteRequest {
         Err(CortexError::all_providers_exhausted())
     }
 
+    /// Resolve `req.model` through the alias table (global scope only).
+    ///
+    /// Provider-scoped aliases are storage-ready (`find_by_alias` supports a
+    /// provider filter) but are deliberately NOT consulted here: the provider
+    /// hasn't been selected yet at this point, so request-time resolution is
+    /// global-only. Unknown models pass through unchanged.
     async fn resolve_model_alias(&self, req: &mut CompletionRequest) {
         if !self.alias_config.enabled {
             return;
@@ -1107,10 +1114,10 @@ mod tests {
     use async_trait::async_trait;
     use futures::{stream, StreamExt};
     use rook_core::{
-        ApiKeyId, CacheStats, CostBreakdown, HealthStatus, Message, ModelId, Pagination,
-        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry,
-        StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort,
-        UsageSummary,
+        ApiKeyId, CacheStats, Combo, ComboRepositoryError, CostBreakdown, HealthStatus, Message,
+        ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId, ProviderPort,
+        ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry, StreamChunk,
+        TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
@@ -1627,6 +1634,127 @@ mod tests {
             test_alias_config(),
             None, // telemetry
         )
+    }
+
+    struct AliasLookupSpy {
+        called: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ModelAliasRepositoryPort for AliasLookupSpy {
+        async fn find_by_alias(
+            &self,
+            alias: &ModelId,
+            _provider_id: Option<&ProviderId>,
+        ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+            assert_eq!(alias.as_str(), "gpt-4-turbo");
+            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Some(ModelAlias {
+                alias: ModelId::new("gpt-4-turbo"),
+                canonical: ModelId::new("gpt-4-turbo-2024-04-09"),
+                provider_id: None,
+                created_at: Utc::now(),
+            }))
+        }
+
+        async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+            Ok(false)
+        }
+
+        async fn seed(
+            &self,
+            _aliases: Vec<ModelAlias>,
+        ) -> Result<usize, ModelAliasRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct AliasOrderingComboRepository {
+        alias_lookup_called: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ComboRepositoryPort for AliasOrderingComboRepository {
+        async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find(&self, _id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError> {
+            assert!(
+                self.alias_lookup_called
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                "combo dispatch must happen after model alias resolution"
+            );
+            Ok(None)
+        }
+
+        async fn find_by_name(&self, _name: &str) -> Result<Option<Combo>, ComboRepositoryError> {
+            Ok(None)
+        }
+
+        async fn create(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+
+        async fn update(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ComboId) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_with_format_resolves_alias_before_combo_dispatch() {
+        let alias_lookup_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("test-provider"),
+            complete_error: None,
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(AliasOrderingComboRepository {
+                alias_lookup_called: alias_lookup_called.clone(),
+            })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(AliasLookupSpy {
+                called: alias_lookup_called.clone(),
+            }),
+            ModelAliasesConfig {
+                enabled: true,
+                auto_seed: false,
+            },
+            None,
+        );
+        let mut req = request();
+        req.model = ModelId::new("gpt-4-turbo");
+        req.metadata.combo_id = Some(ComboId::new());
+
+        // The combo is intentionally absent; reaching its lookup proves the
+        // alias lookup happened first. The expected not-found is incidental.
+        let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+
+        assert!(result.is_err());
+        assert!(alias_lookup_called.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]
