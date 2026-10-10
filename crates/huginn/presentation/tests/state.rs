@@ -62,6 +62,7 @@ fn resume_and_synchronize_commit_messages_once_not_mutable_tail() {
             text: "```rust\npartial".into(),
         },
         "Tool",
+        "Tool error",
     );
     assert_eq!(state.committed.len(), 1);
     assert_eq!(state.tail, "```rust\npartial");
@@ -163,6 +164,77 @@ async fn approval_cancel_is_fail_closed_and_next_request_uses_new_code() {
         .is_err());
     assert!(ui.prompt().await.is_none());
 }
+#[test]
+fn approval_preview_matches_line_adapter_semantics() {
+    use huginn_presentation::state::approval_preview;
+    let shell = approval_preview("native.shell", 2, "Directory: /tmp/work\nCommand: pwd");
+    assert!(shell.starts_with(
+        "Approval for native.shell (request #2 this turn):\nAction: native.shell\nEffect: run command in workspace (/tmp/work)\n"
+    ));
+    assert!(shell.ends_with("Directory: /tmp/work\nCommand: pwd"));
+    let edit = approval_preview(
+        "native.edit",
+        1,
+        "--- README.md\n+++ README.md\n@@\n-old\n+new",
+    );
+    assert!(edit.contains("\nEffect: edit README.md\n"));
+    let unknown = approval_preview("mcp.fixture.echo", 1, "just some text");
+    assert!(!unknown.contains("Effect:"));
+    assert!(unknown.contains("just some text"));
+}
+
+#[tokio::test]
+async fn approval_modal_numbers_requests_per_turn_and_resets() {
+    let ui = ui();
+    let first = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+    };
+    pending(&ui).await;
+    assert_eq!(ui.lock().modal.as_ref().unwrap().number, 1);
+    ui.resolve_modal(true);
+    assert!(first.await.unwrap().unwrap());
+    let second = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+    };
+    pending(&ui).await;
+    assert_eq!(ui.lock().modal.as_ref().unwrap().number, 2);
+    ui.resolve_modal(false);
+    assert!(!second.await.unwrap().unwrap());
+    // A new turn resets the numbering so its first approval is #1 again.
+    ui.begin(CancellationToken::new());
+    let third = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+    };
+    pending(&ui).await;
+    assert_eq!(ui.lock().modal.as_ref().unwrap().number, 1);
+    ui.resolve_modal(false);
+    assert!(!third.await.unwrap().unwrap());
+}
+
+#[test]
+fn tool_error_uses_contributed_label_and_marks_status() {
+    let ui = ui();
+    ui.emit(Event::ToolFinished {
+        id: "call-1".into(),
+        output: "boom".into(),
+        is_error: false,
+    });
+    assert!(ui.lock().tail.contains("Tool result: boom"));
+    assert!(!ui.lock().status_error);
+    ui.emit(Event::ToolFinished {
+        id: "call-2".into(),
+        output: "kaput".into(),
+        is_error: true,
+    });
+    assert!(ui.lock().tail.contains("Tool error: kaput"));
+    assert!(!ui.lock().tail.contains("failed"));
+    assert!(ui.lock().status_error);
+    assert_eq!(ui.lock().status, "Tool error");
+}
+
 #[test]
 fn projected_text_cannot_emit_terminal_escape_sequences() {
     let ui = ui();

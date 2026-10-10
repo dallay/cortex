@@ -78,6 +78,7 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
                         command: command.into(),
                         help: "probe".into(),
                         tool_label: "Probe".into(),
+                        tool_error_label: "Probe error".into(),
                     },
                 )
             };
@@ -136,6 +137,7 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
                         command: "/probe".into(),
                         help: "probe".into(),
                         tool_label: "Probe".into(),
+                        tool_error_label: "Probe error".into(),
                     },
                 )
                 .is_err();

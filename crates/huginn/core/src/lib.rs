@@ -1,4 +1,5 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
+pub mod approval;
 pub mod kernel;
 
 use async_trait::async_trait;

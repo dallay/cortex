@@ -12,7 +12,7 @@ fn start(mode: &str, cursor: bool) -> Pty {
 #[test]
 fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
     let mut pty = start("normal", true);
-    pty.wait_for("agent");
+    pty.wait_for("Huginn");
     pty.send("stream\r");
     pty.wait_for("chunk0");
     pty.send("next");
@@ -36,7 +36,7 @@ fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
 #[test]
 fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     let mut pty = start("normal", true);
-    pty.wait_for("agent");
+    pty.wait_for("Huginn");
     pty.send("approve\ry\r");
     pty.wait_for("END_OF_DIFF");
     let output = pty.output();
@@ -49,7 +49,7 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     pty.send("\x03");
     pty.finish(true);
     let mut pty = start("normal", true);
-    pty.wait_for("agent");
+    pty.wait_for("Huginn");
     pty.send("approve\r");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let fresh = loop {
@@ -97,7 +97,7 @@ fn unloading_active_plugin_allows_immediate_new_terminal_generation() {
 #[test]
 fn dropped_driver_cannot_consume_replacement_input() {
     let mut pty = start("drop-reopen", true);
-    pty.wait_for("agent");
+    pty.wait_for("Huginn");
     pty.send("reopen\r");
     pty.wait_for("NEW_GENERATION_READY");
     pty.send("replacement input\r");

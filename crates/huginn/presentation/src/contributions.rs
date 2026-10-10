@@ -14,7 +14,14 @@ use std::{
 pub struct Contribution {
     pub command: String,
     pub help: String,
+    /// Heading for successful tool results.
     pub tool_label: String,
+    /// Heading for failed tool results, rendered with error severity.
+    /// Together with `tool_label` this is the replaceable tool-result
+    /// *status* contribution: declarative wording plus severity, still
+    /// host-rendered. Per-tool typed views (diff, structured output)
+    /// remain a DALLAY-666 follow-up.
+    pub tool_error_label: String,
 }
 struct Entry {
     value: Contribution,
@@ -78,6 +85,18 @@ impl Contributions {
             .find(|(_, e)| !e.lifetime.is_cancelled())
             .map_or_else(|| "Tool result".into(), |(_, e)| e.value.tool_label.clone())
     }
+    pub fn tool_error_label(&self) -> String {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .rev()
+            .find(|(_, e)| !e.lifetime.is_cancelled())
+            .map_or_else(
+                || "Tool error".into(),
+                |(_, e)| e.value.tool_error_label.clone(),
+            )
+    }
 }
 pub struct Lease {
     registry: Arc<Contributions>,
@@ -112,6 +131,7 @@ impl Plugin for ConversationPlugin {
             command: "/help".into(),
             help: "Enter sends; Alt+Enter or Ctrl+J inserts a newline. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview.".into(),
             tool_label: "Tool output".into(),
+            tool_error_label: "Tool error".into(),
         })?);
         Ok(())
     }

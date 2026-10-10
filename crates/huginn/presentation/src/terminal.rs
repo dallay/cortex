@@ -1,6 +1,6 @@
 use crate::{
     contributions::Contributions,
-    state::{safe, Editor, Ui},
+    state::{approval_preview, safe, Editor, Ui},
     Connection, Presentation,
 };
 use async_trait::async_trait;
@@ -225,8 +225,9 @@ struct View {
     editor: Editor,
     tail: String,
     status: String,
+    status_error: bool,
     busy: bool,
-    modal: Option<(String, String, String, usize)>,
+    modal: Option<(String, u64, String, String, usize)>,
 }
 impl Driver {
     fn next_input(&self) -> Result<Option<Event>> {
@@ -251,16 +252,23 @@ impl Driver {
         if !self.guard.active.load(Ordering::SeqCst) {
             return Err(AgentError::Cancelled);
         }
+        // Render cost grows with the accumulated tail: every frame rewraps
+        // the whole in-flight text even though only the last screenful is
+        // shown. A wrapped-line cache invalidated on width change is tracked
+        // in DALLAY-665 with the load/latency measurements; the coalesced
+        // 33 ms tick only bounds how often this runs, not the work per run.
         let (committed, view) = {
             let mut state = self.ui.lock();
             let view = View {
                 editor: state.editor.clone(),
                 tail: state.tail.clone(),
                 status: state.status.clone(),
+                status_error: state.status_error,
                 busy: state.busy,
                 modal: state.modal.as_ref().map(|m| {
                     (
-                        format!("{}\n{}", safe(&m.request.action), safe(&m.request.preview)),
+                        approval_preview(&m.request.action, m.number, &m.request.preview),
+                        m.number,
                         m.code.clone(),
                         m.typed.clone(),
                         m.scroll,
@@ -283,7 +291,7 @@ impl Driver {
         let mut last_scroll = 0;
         self.screen.draw(|frame| {
             let area = frame.area();
-            if let Some((preview, code, typed, scroll)) = &view.modal {
+            if let Some((preview, number, code, typed, scroll)) = &view.modal {
                 let [body, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
                 let lines = wrapped(preview, body.width.saturating_sub(2));
@@ -297,8 +305,10 @@ impl Driver {
                     .take(usize::from(body.height.saturating_sub(2)))
                     .collect();
                 frame.render_widget(
-                    Paragraph::new(visible.join("\n"))
-                        .block(Block::bordered().title("Permission — full preview (PgUp/PgDn)")),
+                    Paragraph::new(visible.join("\n")).block(
+                        Block::bordered()
+                            .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
+                    ),
                     body,
                 );
                 frame.render_widget(
@@ -337,7 +347,7 @@ impl Driver {
                 .block(Block::bordered().title(if view.busy {
                     "Compose next prompt — Esc cancels turn"
                 } else {
-                    "agent — Enter sends / Alt+Enter newline / /help"
+                    "Huginn — Enter sends / Alt+Enter newline / /help"
                 })),
                 composer,
             );
@@ -348,9 +358,16 @@ impl Driver {
                 composer.x + 1 + (column as u16).min(editor_width.saturating_sub(1)),
                 composer.y + 1 + (row - offset) as u16,
             ));
-            frame.render_widget(Paragraph::new(safe(&view.status)), status);
+            frame.render_widget(
+                Paragraph::new(safe(&view.status)).style(if view.status_error {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default()
+                }),
+                status,
+            );
         })?;
-        if let Some((_, code, _, _)) = &view.modal {
+        if let Some((_, _, code, _, _)) = &view.modal {
             if let Some(modal) = self.ui.lock().modal.as_mut() {
                 if &modal.code == code {
                     modal.last_scroll = last_scroll;

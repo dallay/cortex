@@ -2,6 +2,7 @@
 use crate::{contributions::Contributions, Interaction};
 use async_trait::async_trait;
 use huginn_core::{
+    approval::{approval_header, effect_line},
     ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, Result, Session,
 };
 use std::{
@@ -88,8 +89,28 @@ impl Editor {
     }
 }
 
+/// Full approval preview for the permission modal.
+///
+/// Numbered header, action, optional `Effect:` summary and the complete
+/// preview. Semantics mirror the line adapter exactly because both derive
+/// from `huginn_core::approval`; only the confirmation mechanism differs
+/// (fresh typed code here, one-time yes/no there).
+pub fn approval_preview(action: &str, number: u64, preview: &str) -> String {
+    let mut text = format!(
+        "{}\nAction: {}",
+        approval_header(&safe(action), number),
+        safe(action)
+    );
+    if let Some(effect) = effect_line(preview) {
+        text.push_str(&format!("\nEffect: {}", safe(&effect)));
+    }
+    text.push_str(&format!("\n{}", safe(preview)));
+    text
+}
+
 pub struct Modal {
     pub epoch: u64,
+    pub number: u64,
     pub request: ApprovalRequest,
     pub code: String,
     pub typed: String,
@@ -113,6 +134,9 @@ pub struct UiState {
     pub editor: Editor,
     pub tail: String,
     pub status: String,
+    /// Set while the status describes a failed tool result; the host renders
+    /// it with error severity. Cleared on the next turn boundary.
+    pub status_error: bool,
     pub modal: Option<Modal>,
     pub busy: bool,
     pub turn_cancel: Option<CancellationToken>,
@@ -121,21 +145,31 @@ pub struct UiState {
     pub session_id: String,
     pub message_count: usize,
     pub epoch: u64,
+    /// Per-turn approval counter. Reset by `begin()` so each turn numbers
+    /// its first approval `#1`, mirroring the line adapter policy.
+    pub approvals_this_turn: u64,
 }
 impl UiState {
-    pub fn project(&mut self, event: Event, tool_label: &str) {
+    pub fn project(&mut self, event: Event, tool_label: &str, tool_error_label: &str) {
         match &event {
             Event::Text { text } => self.tail.push_str(&safe(text)),
             Event::ToolStarted { call } => self.status = format!("Tool: {}", safe(&call.name)),
             Event::ToolFinished {
                 output, is_error, ..
             } => {
-                self.tail.push_str(&format!(
-                    "\n{}{}: {}\n",
-                    safe(tool_label),
-                    if *is_error { " failed" } else { "" },
-                    safe(output)
-                ));
+                if *is_error {
+                    self.tail.push_str(&format!(
+                        "\n{}: {}\n",
+                        safe(tool_error_label),
+                        safe(output)
+                    ));
+                    self.status = safe(tool_error_label);
+                    self.status_error = true;
+                } else {
+                    self.tail
+                        .push_str(&format!("\n{}: {}\n", safe(tool_label), safe(output)));
+                    self.status_error = false;
+                }
             }
             Event::ApprovalRequested { request } => {
                 self.status = format!("Approval: {}", safe(&request.action))
@@ -143,8 +177,14 @@ impl UiState {
             Event::ApprovalResolved { approved, .. } => {
                 self.status = if *approved { "Approved" } else { "Denied" }.into()
             }
-            Event::TurnStarted { .. } => self.status = "Thinking…".into(),
-            Event::TurnFinished => self.status = "Ready".into(),
+            Event::TurnStarted { .. } => {
+                self.status = "Thinking…".into();
+                self.status_error = false;
+            }
+            Event::TurnFinished => {
+                self.status = "Ready".into();
+                self.status_error = false;
+            }
             Event::Error { message } => self.status = safe(message),
             Event::Compacted { .. } => self.status = "Context compacted; originals retained".into(),
             Event::Usage {
@@ -177,6 +217,7 @@ impl UiState {
         self.tail.clear();
         self.busy = false;
         self.turn_cancel = None;
+        self.status_error = false;
         if session.interrupted {
             self.status = "Interrupted: effect completion may be unknown; nothing replayed".into();
         }
@@ -247,7 +288,8 @@ impl Ui {
 impl EventSink for Ui {
     fn emit(&self, event: Event) {
         let label = self.contributions.tool_label();
-        self.lock().project(event, &label);
+        let error_label = self.contributions.tool_error_label();
+        self.lock().project(event, &label, &error_label);
         self.dirty.notify_one();
     }
 }
@@ -262,6 +304,13 @@ impl ApprovalPolicy for Ui {
         if cancel.is_cancelled() || self.stop.is_cancelled() {
             return Err(huginn_core::AgentError::Cancelled);
         }
+        // Per-turn counter, taken before the --allow short-circuit exactly
+        // like the line adapter policy so numbering matches across adapters.
+        let number = {
+            let mut state = self.lock();
+            state.approvals_this_turn += 1;
+            state.approvals_this_turn
+        };
         if self.allowed.contains(&request.action) {
             self.notice(format!(
                 "Authorized by --allow: {}\n{}",
@@ -277,6 +326,7 @@ impl ApprovalPolicy for Ui {
             let epoch = state.epoch;
             state.modal = Some(Modal {
                 epoch,
+                number,
                 request: request.clone(),
                 code: uuid::Uuid::new_v4().simple().to_string()[..8].into(),
                 typed: String::new(),
@@ -319,6 +369,7 @@ impl Interaction for Ui {
         let mut state = self.lock();
         state.busy = true;
         state.turn_cancel = Some(cancel);
+        state.approvals_this_turn = 0;
         drop(state);
         self.dirty.notify_one();
     }

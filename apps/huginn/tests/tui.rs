@@ -23,7 +23,9 @@ fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     let data = tempfile::tempdir().unwrap();
     let db = data.path().join("sessions.db");
     let mut pty = Pty::start(command(workspace.path(), &db), true);
-    pty.wait_for("agent");
+    // Regression guard for the post-rename product identity: the idle
+    // composer carries the Huginn title.
+    pty.wait_for("Huginn");
     pty.send("\x1b[200~hello\nsecond\x1b[201~\r");
     pty.wait_for("Offline mock: hello");
     pty.wait_for("second");
