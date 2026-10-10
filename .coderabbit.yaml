@@ -1,0 +1,350 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Cortex — CodeRabbit review policy
+# Source of truth: .agents/AGENTS.md, accepted ADRs, CI and SDD specifications.
+# Deterministic checks belong to CI; CodeRabbit reviews semantics and risks.
+
+inheritance: true
+language: en-US
+
+tone_instructions: >-
+  Precise, direct, evidence-based reviews. Prioritize correctness, security,
+  architecture, compatibility and regression risk. Cite the violated contract
+  and suggest the smallest safe fix. Avoid style-only comments and speculation.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: true
+  review_status: true
+  review_details: false
+  fail_commit_status: false
+  in_progress_fortune: false
+  poem: false
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  enable_prompt_for_ai_agents: true
+
+  # GitHub PR Labeler already owns labels and syncs them via .github/labeler.yml.
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+
+  auto_title_instructions: >-
+    Use a conventional commit title: feat, fix, refactor, perf, test, docs,
+    build, ci, chore or revert; optional scope; imperative, concise subject.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    drafts: false
+    base_branches:
+      - main
+      - develop
+    ignore_title_keywords:
+      - WIP
+      - DO NOT MERGE
+      - '[skip review]'
+    ignore_usernames:
+      - 'dependabot[bot]'
+      - 'renovate[bot]'
+      - 'github-actions[bot]'
+
+  # Evaluate unsolicited low-quality PRs without introducing new labels.
+  slop_detection:
+    enabled: true
+
+  # Keep Cargo.lock: dependency and supply-chain changes matter.
+  path_filters:
+    - '!**/target/**'
+    - '!**/node_modules/**'
+    - '!**/dist/**'
+    - '!**/coverage/**'
+    - '!**/playwright-report/**'
+    - '!**/test-results/**'
+    - '!**/.DS_Store'
+
+  path_instructions:
+    - path: 'crates/huginn/core/**'
+      instructions: |
+        HUGINN CORE — Follow ADR-0012 and the architecture guard in
+        .github/scripts/check-huginn-architecture.py.
+        - Keep domain types, ports and the service/plugin microkernel independent
+          of presentation and concrete runtime adapters.
+        - No direct filesystem, process, network, SQLite, HTTP, MCP or TUI APIs.
+        - Do not make core depend on huginn-application or outer crates.
+        - Review service resolution, generation identity, resource ownership,
+          dependency ordering, shutdown and stale-handle behavior.
+        - Distinguish Rust trait modularity from security sandboxing.
+
+    - path: 'crates/huginn/application/**'
+      instructions: |
+        HUGINN APPLICATION — Follow ADR-0012 and ADR-0007.
+        - Agent loops, policy and orchestration depend on inward ports only.
+        - No concrete reqwest, rusqlite, rmcp, ratatui or crossterm adapters.
+        - HostPolicy is the production approval authority; fail closed on
+          cancellation and unavailable presentation.
+        - Preserve cancellation propagation, bounded context/output budgets,
+          deterministic event transitions and recoverable errors.
+        - No bypass of the host's effect authorization through tools or plugins.
+
+    - path: 'crates/huginn/runtime/**'
+      instructions: |
+        HUGINN RUNTIME / PLUGINS — Follow ADR-0012.
+        - Built-in tools and MCP servers participate in plugin lifecycle.
+        - Publish staged registrations only after successful activation and
+          manifest validation; failed discovery must leave no partial tools.
+        - Own leases/tasks even when activation fails. Revoke registrations and
+          stale generation handles before awaiting owned work during teardown.
+        - Check atomic registration, idempotent cleanup, cancellation behavior,
+          concurrent access and resource leaks. Never imply already-completed
+          external side effects can be rolled back.
+        - Treat externally supplied commands, schemas and tool output as untrusted.
+
+    - path: 'crates/huginn/presentation/**'
+      instructions: |
+        HUGINN PRESENTATION — Follow ADR-0010 and ADR-0012.
+        - Presentation renders state and collects decisions; it does not own
+          approval policy or accept invocation grants as authority.
+        - Terminal input has one owner. No duplicate stdin reader or competing
+          Crossterm EventStream. Restore terminal state on error and shutdown.
+        - Host arbitrates focus, keymaps and declarative plugin UI contributions.
+        - Review streaming/backpressure, resize, scrollback, cancellation,
+          accessibility, stale contributions and PTY tests.
+
+    - path: 'apps/huginn/**'
+      instructions: |
+        HUGINN COMPOSITION ROOT — Follow ADR-0010 and ADR-0012.
+        - Bind concrete plugin services and adapters here, not in inward crates.
+        - Select exactly one interactive terminal owner per process.
+        - Preserve CLI/headless modes, stable machine-readable JSON and sessions.
+        - Require fresh host approval for external effects; never let buffered
+          input or plugin callbacks grant approval.
+        - Review config compatibility and restart/session ownership tests.
+
+    - path: 'crates/domain/**'
+      instructions: |
+        ROOK DOMAIN — Respect Clean Architecture boundaries.
+        - Keep business policies, domain models and port traits independent of
+          infrastructure implementations and transport DTOs.
+        - Do not let provider-specific wire formats or storage concerns leak in.
+        - Keep invariants explicit; avoid unchecked global mutable state.
+        - Shared-kernel must not become a dumping ground for cross-product code.
+
+    - path: 'crates/application/**'
+      instructions: |
+        ROOK APPLICATION — Orchestrate ports, not concrete adapters.
+        - Preserve routing, fallback, caching and audit contracts.
+        - Check authorization and identity boundaries, cancellation, retries,
+          error classifications and behavior under partial provider failures.
+        - Never create HTTP/SQLite implementations in use-case code.
+
+    - path: 'crates/infrastructure/**'
+      instructions: |
+        ROOK ADAPTERS — Keep infrastructure behind inward-facing ports.
+        - Respect provider contract translation, response streaming and errors.
+        - Check input bounds, authentication, secrets, SQLite transactions,
+          timeouts, retries, redaction and resource cleanup.
+        - Avoid blocking operations in async request paths.
+        - Ensure database and wire migrations remain compatible where required.
+
+    - path: '**/*.rs'
+      instructions: |
+        RUST WORKSPACE — Follow .agents/AGENTS.md and Cargo.toml lints.
+        - Avoid unsafe code (workspace deny), panics in recoverable runtime paths,
+          unchecked unwrap/expect on untrusted input and silent error swallowing.
+        - Check Send/Sync correctness, lock scope across await, cancellation,
+          task lifetimes, contention and allocation in hot paths.
+        - Prefer explicit Result errors and established project abstractions.
+        - Respect the repository policy of separate test targets, not new
+          inline #[cfg(test)] modules.
+        - Do not duplicate cargo fmt/clippy findings without semantic impact.
+
+    - path: '**/tests/**/*.rs'
+      instructions: |
+        RUST TESTS — Test externally observable behavior and invariants.
+        - Include success, failure, cancellation and cleanup paths for async IO.
+        - Use deterministic fakes and isolated temp storage; avoid timing races.
+        - For Huginn, cover plugin failure/rollback, stale generations,
+          approval denial, session ownership, TTY restoration and CLI fallback.
+        - Flag assertions that merely restate implementation details.
+
+    - path: 'apps/rook/dashboard/**'
+      instructions: |
+        ROOK DASHBOARD — Vue + TypeScript + Vitest + Playwright.
+        - Preserve API contracts, typed state and accessible interactions.
+        - Avoid unsafe HTML injection, leaked secrets and unhandled fetch errors.
+        - Verify loading, empty, error and permission-denied states.
+        - Favor semantic user-facing tests; avoid fragile implementation selectors.
+
+    - path: '.github/workflows/**'
+      instructions: |
+        GITHUB ACTIONS — Review least-privilege token permissions, pinned full
+        action SHAs, untrusted PR data, secret exposure and execution context.
+        - Preserve the existing CI required-gate behavior and path coverage.
+        - Never use pull_request_target to execute untrusted fork code.
+        - Do not duplicate actionlint/zizmor findings without added context.
+
+    - path: '**/Cargo.toml'
+      instructions: |
+        CARGO MANIFESTS — Verify inward crate dependency direction, MSRV,
+        new optional/target-specific dependencies, features and supply chain.
+        - Compare the workspace graph with the Huginn architecture guard.
+        - Avoid new dependency cycles or redundant crates.
+
+    - path: 'docs/huginn/**'
+      instructions: |
+        HUGINN DESIGN DOCUMENTS — Accepted ADRs are authoritative decisions.
+        - Preserve the distinction between implemented features, accepted plans
+          and unproven runtime isolation/security guarantees.
+        - Flag contradictions with ADR-0010 and ADR-0012 or current code.
+        - Do not require a formal SDD artifact for every routine change.
+
+    - path: '.agents/sdd/**'
+      instructions: |
+        SDD ARTIFACTS — Review consistency of scope, invariants and acceptance
+        criteria when this PR uses SDD. Never infer SDD is mandatory solely from
+        the number of changed files or the size of the feature.
+
+  pre_merge_checks:
+    # Begin advisory; promote only reliable checks to error after calibration.
+    docstrings:
+      mode: 'off'
+    title:
+      mode: warning
+      requirements: >-
+        Use Conventional Commits with an optional scope and a concise,
+        descriptive, imperative subject.
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+    custom_checks:
+      - name: 'Huginn Inward Dependency Boundaries'
+        mode: warning
+        instructions: |
+          PASS as not applicable unless the PR changes crates/huginn/, its Cargo
+          manifests, or the Huginn architecture guard. Verify ADR-0012:
+          core and application depend inward on ports and contain no concrete
+          IO, persistence or presentation adapters. Cite violating dependency
+          and source path. CI's check-huginn-architecture.py is authoritative
+          for deterministic graph and source checks.
+
+      - name: 'Plugin Lifecycle and Revocation'
+        mode: warning
+        instructions: |
+          PASS as not applicable unless plugin kernel, runtime, tool registry
+          or MCP lifecycle code changes. Check staged atomic publication, failure
+          rollback, lease ownership, cleanup order, generation-stale handles,
+          revocation and cancellation. Require focused tests for changed
+          invariants. Do not claim process or WASM isolation that is not built.
+
+      - name: 'Approvals and Terminal Authority'
+        mode: warning
+        instructions: |
+          PASS as not applicable unless Huginn approval, effect, CLI, session
+          or presentation behavior changes. Verify host-only approval authority,
+          fail-closed denial/cancellation, fresh effect decisions, one input
+          owner, safe terminal restoration and unchanged headless/JSON behavior.
+          Require negative/cancellation tests for affected trust boundaries.
+
+      - name: 'Rook Architecture and Provider Contracts'
+        mode: warning
+        instructions: |
+          PASS as not applicable unless Rook domain, application, infrastructure,
+          HTTP/provider or persistence code changes. Check inward dependencies,
+          port separation, auth enforcement, provider fallback error mapping,
+          stream cleanup, idempotence and consistency across storage and API.
+
+      - name: 'Security and Supply Chain Regressions'
+        mode: warning
+        instructions: |
+          PASS as not applicable for documentation-only PRs with no executable
+          changes. Review changed attack surfaces: secrets, command execution,
+          tools/MCP, untrusted schemas/output, HTTP auth and redirects, provider
+          credentials, dependency/CI changes and sensitive logging. Report
+          concrete exploitable paths; defer signature/lint facts to CI scanners.
+
+      - name: 'External Compatibility and Regression Tests'
+        mode: warning
+        instructions: |
+          PASS as not applicable for pure documentation, formatting or CI
+          housekeeping. Check externally observable changes to Rook HTTP APIs,
+          model/provider config, Huginn CLI/JSON, sessions and plugin contracts.
+          Flag undocumented breaking changes, migration gaps and missing tests
+          for changed behavior. Do not require TDD commit history.
+
+  tools:
+    clippy:
+      enabled: true
+    ast-grep:
+      essential_rules: true
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    trivy:
+      enabled: true
+    biome:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - '.agents/AGENTS.md'
+      - 'docs/architecture.md'
+      - 'docs/huginn/adr/*.md'
+      - '.agents/sdd/specs/**/*.md'
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto
+
+code_generation:
+  unit_tests:
+    path_instructions:
+      - path: '**/*.rs'
+        instructions: >-
+          Prefer separate Rust test targets, deterministic fakes and behavior
+          assertions. For plugin code test failure, revocation and cancellation.
+      - path: 'apps/rook/dashboard/**'
+        instructions: >-
+          Use Vitest for component/unit behavior and Playwright for critical
+          user flows; include error, empty and denied-permission states.
+
+chat:
+  auto_reply: true
+  art: false
