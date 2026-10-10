@@ -30,7 +30,7 @@ jobs:
       github: ${{ steps.filter.outputs.github }}
       labeler: ${{ steps.filter.outputs.labeler }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -74,13 +74,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
@@ -100,7 +100,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
@@ -115,13 +115,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
@@ -134,12 +134,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.labeler == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Run classifier tests
         run: node --test .github/scripts/issue-labeler.test.cjs
 
@@ -150,7 +150,7 @@ jobs:
     needs: [changes, build-dashboard]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -172,7 +172,7 @@ jobs:
     needs: [changes, build-dashboard]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -193,7 +193,7 @@ jobs:
     needs: [changes, build-dashboard, fmt, clippy]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -214,13 +214,13 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - name: Install dashboard dependencies
         run: pnpm install --filter @dallay/rook-dashboard
@@ -239,13 +239,13 @@ jobs:
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped')
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - name: Install dashboard dependencies
         run: pnpm install --filter @dallay/rook-dashboard
@@ -266,7 +266,7 @@ jobs:
     needs: [changes, build-dashboard]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -291,7 +291,7 @@ jobs:
     needs: [changes, build-dashboard]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -317,7 +317,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create reports directory
@@ -352,7 +352,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 50
           persist-credentials: false
@@ -387,7 +387,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Semgrep CLI
@@ -428,7 +428,7 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -444,7 +444,7 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: lcov.info
           flags: backend
@@ -463,13 +463,13 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - name: Install dashboard dependencies
         run: pnpm install --filter @dallay/rook-dashboard
@@ -477,7 +477,7 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json --coverage.reportsDirectory=coverage
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: apps/rook/dashboard/coverage/lcov.info
           flags: frontend
@@ -521,20 +521,20 @@ jobs:
             echo "::error::SONAR_TOKEN is required for SonarCloud analysis on this change."
             exit 1
           fi
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # Historial completo: lo exige Sonar para blame y decoracion de PRs
           persist-credentials: false
       - name: Cache SonarQube packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
@@ -580,7 +580,7 @@ jobs:
       - semgrep-pr
       - sonar
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Validate required CI outcomes
@@ -627,7 +627,7 @@ jobs:
         target:
           - x86_64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -657,7 +657,7 @@ jobs:
           - x86_64-pc-windows-msvc
           - aarch64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -687,7 +687,7 @@ jobs:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist
@@ -716,7 +716,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download dashboard dist

@@ -17,11 +17,11 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Audit label invariants
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           github-token: ${{ github.token }}
           script: |
