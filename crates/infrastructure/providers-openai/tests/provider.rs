@@ -1196,3 +1196,74 @@ async fn stream_returns_error_when_tool_calls_empty_at_finish() {
     let err = results[0].as_ref().expect_err("no tool deltas fail");
     assert!(err.to_string().contains("no tool-call deltas"));
 }
+
+#[tokio::test]
+async fn complete_parses_null_content_with_tool_calls() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-null-content",
+                "model": "gpt-4",
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{\"key\":\"value\"}"}
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let resp = provider.complete(&req).await.expect("complete succeeds");
+    assert_eq!(resp.content, "");
+    assert_eq!(
+        resp.content_blocks,
+        vec![rook_core::MessageContent::Text(String::new())]
+    );
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].name, "lookup");
+    assert_eq!(resp.finish_reason, Some(FinishReason::ToolCalls));
+}

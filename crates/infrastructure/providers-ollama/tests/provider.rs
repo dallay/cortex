@@ -954,3 +954,123 @@ async fn complete_does_not_send_auth_header_when_api_key_is_empty() {
         received[0].headers.get("Authorization")
     );
 }
+
+#[tokio::test]
+async fn complete_prefers_tool_calls_over_stop_done_reason() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/chat"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "qwen3",
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "lookup", "arguments": {"key": "value"}}}]
+                },
+                "done": true,
+                "done_reason": "stop"
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OllamaProvider::new(OllamaProviderConfig {
+        id: ProviderId::new("ollama-test"),
+        base_url: server.uri(),
+        models: vec![ModelId::new("qwen3")],
+        timeout_secs: 10,
+        api_key: None,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("qwen3"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let resp = provider.complete(&req).await.expect("complete succeeds");
+    assert_eq!(resp.finish_reason, Some(rook_core::FinishReason::ToolCalls));
+    assert_eq!(resp.tool_calls.len(), 1);
+}
+
+#[tokio::test]
+async fn stream_terminal_chunk_without_tool_calls_keeps_tool_calls_reason() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/chat"))
+        .respond_with(wiremock::ResponseTemplate::new(200)
+            .set_body_bytes(
+                "{\"model\":\"qwen3\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"function\":{\"name\":\"lookup\",\"arguments\":{\"key\":\"value\"}}}]},\"done\":false}\n\
+                 {\"model\":\"qwen3\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}\n"
+            )
+            .append_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+
+    let provider = OllamaProvider::new(OllamaProviderConfig {
+        id: ProviderId::new("ollama-test"),
+        base_url: server.uri(),
+        models: vec![ModelId::new("qwen3")],
+        timeout_secs: 10,
+        api_key: None,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("qwen3"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: true,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let chunks: Vec<_> = provider
+        .stream(&req)
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0].tool_calls.len(), 1);
+    assert_eq!(
+        chunks[1].finish_reason,
+        Some(rook_core::FinishReason::ToolCalls)
+    );
+}

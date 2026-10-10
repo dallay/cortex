@@ -317,7 +317,8 @@ struct OpenAIChoice {
 struct OpenAIMessageResp {
     #[allow(dead_code)]
     role: String,
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
     #[serde(default, alias = "reasoning_content", alias = "thinking")]
     thinking: Option<String>,
     #[serde(default)]
@@ -647,9 +648,9 @@ impl ProviderPort for OpenAIProvider {
             id: req.id.clone(),
             provider: self.config.id.clone(),
             model: ModelId::new(openai_resp.model),
-            content: choice.message.content.clone(),
+            content: choice.message.content.clone().unwrap_or_default(),
             content_blocks: vec![rook_core::MessageContent::Text(
-                choice.message.content.clone(),
+                choice.message.content.clone().unwrap_or_default(),
             )],
             thinking: choice.message.thinking.clone(),
             tool_calls: choice

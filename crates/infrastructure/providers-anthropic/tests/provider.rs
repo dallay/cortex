@@ -592,3 +592,75 @@ async fn stream_includes_system_message_in_request() {
         body
     );
 }
+
+#[tokio::test]
+async fn complete_maps_pause_turn_to_stop_finish_reason() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_pause",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "paused"}],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "pause_turn",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let resp = provider
+        .complete(&make_test_request("claude-3-5-sonnet"))
+        .await
+        .expect("complete succeeds");
+    assert_eq!(resp.finish_reason, Some(FinishReason::Stop));
+}
+
+#[tokio::test]
+async fn stream_maps_pause_turn_to_stop_finish_reason() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
+             data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.stream = true;
+    let chunks = provider
+        .stream(&req)
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    let final_chunk = chunks.last().unwrap();
+    assert_eq!(final_chunk.finish_reason, Some(FinishReason::Stop));
+}

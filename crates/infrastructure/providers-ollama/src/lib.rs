@@ -249,12 +249,29 @@ impl OllamaProvider {
         if !parsed.done {
             return None;
         }
-        match parsed.done_reason.as_deref() {
+        let mapped = match parsed.done_reason.as_deref() {
             Some(reason) => Self::map_finish_reason(reason),
             // Older Ollama responses omit done_reason. Keep the prior
             // compatibility behavior for absence only; unknown explicit
             // reasons remain unknown instead of being coerced to Stop.
             None => Some(rook_core::FinishReason::Stop),
+        };
+        let has_tool_calls = parsed
+            .message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| !calls.is_empty());
+        // Tool calls take precedence over a plain stop (or an absent/unknown
+        // reason), but an explicit truncation/content-filter signal is kept so
+        // potentially incomplete arguments are not reported as callable.
+        match (has_tool_calls, mapped) {
+            (
+                true,
+                None
+                | Some(rook_core::FinishReason::Stop)
+                | Some(rook_core::FinishReason::ToolCalls),
+            ) => Some(rook_core::FinishReason::ToolCalls),
+            _ => mapped,
         }
     }
 
@@ -550,9 +567,11 @@ impl ProviderPort for OllamaProvider {
         let request_id = req.id.clone();
 
         // Line-buffered SSE stream: accumulate bytes into lines, parse each complete line.
+        // `seen_tool_calls` remembers whether any chunk so far carried tool
+        // calls, so a terminal chunk that omits them still reports ToolCalls.
         let stream = futures::stream::unfold(
-            (resp.bytes_stream(), String::new()),
-            move |(mut byte_stream, mut line_buffer)| {
+            (resp.bytes_stream(), String::new(), false),
+            move |(mut byte_stream, mut line_buffer, mut seen_tool_calls)| {
                 let request_id = request_id.clone();
                 async move {
                     // Read next byte chunk
@@ -561,18 +580,34 @@ impl ProviderPort for OllamaProvider {
                         Some(Err(e)) => {
                             return Some((
                                 Err(CortexError::provider(format!("stream read failed: {e}"))),
-                                (byte_stream, line_buffer),
+                                (byte_stream, line_buffer, seen_tool_calls),
                             ));
                         }
                         None if line_buffer.trim().is_empty() => return None,
                         None => {
                             let final_line = std::mem::take(&mut line_buffer);
-                            let chunks = Self::parse_line_to_chunk(final_line, &request_id)
+                            let mut chunks = Self::parse_line_to_chunk(final_line, &request_id)
                                 .into_iter()
                                 .collect::<Vec<_>>();
+                            for chunk in chunks.iter_mut().flatten() {
+                                if !chunk.tool_calls.is_empty() {
+                                    seen_tool_calls = true;
+                                }
+                            }
+                            for chunk in chunks.iter_mut().flatten() {
+                                if chunk.usage.is_some()
+                                    && matches!(
+                                        chunk.finish_reason,
+                                        None | Some(rook_core::FinishReason::Stop)
+                                    )
+                                    && seen_tool_calls
+                                {
+                                    chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
+                                }
+                            }
                             return Some((
                                 Ok(futures::stream::iter(chunks)),
-                                (byte_stream, line_buffer),
+                                (byte_stream, line_buffer, seen_tool_calls),
                             ));
                         }
                     };
@@ -583,7 +618,7 @@ impl ProviderPort for OllamaProvider {
                         Err(e) => {
                             return Some((
                                 Err(CortexError::provider(format!("invalid utf-8: {e}"))),
-                                (byte_stream, line_buffer),
+                                (byte_stream, line_buffer, seen_tool_calls),
                             ));
                         }
                     };
@@ -593,14 +628,30 @@ impl ProviderPort for OllamaProvider {
                     let complete_lines = Self::extract_complete_lines(&mut line_buffer);
 
                     // Parse each line into StreamChunk
-                    let chunks: Vec<Result<StreamChunk, CortexError>> = complete_lines
+                    let mut chunks: Vec<Result<StreamChunk, CortexError>> = complete_lines
                         .into_iter()
                         .filter_map(|line| Self::parse_line_to_chunk(line, &request_id))
                         .collect();
+                    for chunk in chunks.iter_mut().flatten() {
+                        if !chunk.tool_calls.is_empty() {
+                            seen_tool_calls = true;
+                        }
+                    }
+                    for chunk in chunks.iter_mut().flatten() {
+                        if chunk.usage.is_some()
+                            && matches!(
+                                chunk.finish_reason,
+                                None | Some(rook_core::FinishReason::Stop)
+                            )
+                            && seen_tool_calls
+                        {
+                            chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
+                        }
+                    }
 
                     Some((
                         Ok(futures::stream::iter(chunks)),
-                        (byte_stream, line_buffer),
+                        (byte_stream, line_buffer, seen_tool_calls),
                     ))
                 }
             },
@@ -727,5 +778,28 @@ mod tests {
     #[test]
     fn test_role_to_string_developer() {
         assert_eq!(role_to_string(rook_core::Role::Developer), "developer");
+    }
+}
+
+#[cfg(test)]
+mod tool_call_finish_reason_tests {
+    use super::*;
+
+    #[test]
+    fn absent_done_reason_with_tool_calls_reports_tool_calls() {
+        let response: OllamaChatResponse = serde_json::from_value(serde_json::json!({
+            "model": "qwen3",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "lookup", "arguments": {}}}]
+            },
+            "done": true
+        }))
+        .unwrap();
+        assert_eq!(
+            OllamaProvider::finish_reason(&response),
+            Some(rook_core::FinishReason::ToolCalls)
+        );
     }
 }

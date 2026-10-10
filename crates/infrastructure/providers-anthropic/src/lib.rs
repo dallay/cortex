@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 fn map_anthropic_finish_reason(reason: &str) -> Option<FinishReason> {
     match reason {
-        "end_turn" | "stop_sequence" => Some(FinishReason::Stop),
+        "end_turn" | "stop_sequence" | "pause_turn" => Some(FinishReason::Stop),
         "max_tokens" => Some(FinishReason::Length),
         "tool_use" => Some(FinishReason::ToolCalls),
         "refusal" => Some(FinishReason::ContentFilter),
@@ -330,7 +330,8 @@ impl AnthropicProvider {
                 delta: String::new(),
                 thinking: None,
                 tool_calls: vec![],
-                finish_reason: map_anthropic_finish_reason(&delta.stop_reason),
+                finish_reason: map_anthropic_finish_reason(&delta.stop_reason)
+                    .or(Some(FinishReason::Stop)),
                 usage: Some(TokenUsage {
                     prompt_tokens: usage.input_tokens.unwrap_or(0),
                     completion_tokens: usage.output_tokens,
@@ -454,7 +455,8 @@ impl ProviderPort for AnthropicProvider {
             finish_reason: anthropic_resp
                 .stop_reason
                 .as_deref()
-                .and_then(map_anthropic_finish_reason),
+                .and_then(map_anthropic_finish_reason)
+                .or(Some(FinishReason::Stop)),
             usage: TokenUsage {
                 prompt_tokens: anthropic_resp.usage.input_tokens,
                 completion_tokens: anthropic_resp.usage.output_tokens,
