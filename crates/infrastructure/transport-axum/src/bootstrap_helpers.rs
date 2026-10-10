@@ -1,8 +1,8 @@
-//! Test helpers for bootstrap integration tests.
+//! Test helpers for bootstrap and routed transport integration tests.
 //!
-//! Constructs a minimal [`Arc<rook_usecases::RookUsecases>`] with only
-//! the fields needed by the bootstrap handlers wired up. All other fields are
-//! filled with panic stubs that are never called by bootstrap tests.
+//! Constructs a minimal [`Arc<rook_usecases::RookUsecases>`]. Unused services
+//! are panic stubs; the audit stub is a no-op so streaming route tests can
+//! exercise the normal error/success path without persistence.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -11,8 +11,8 @@ use models_catalog::StaticModelCatalog;
 use rook_core::{
     ApiFormat, ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionRequest,
     CompletionResponse, CortexResult, FormatTranslatorPort, ModelAlias, ModelAliasRepositoryError,
-    ModelAliasRepositoryPort, NewSession, PasswordHasher, RouterPort, Session, SessionId,
-    SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
+    ModelAliasRepositoryPort, NewSession, PasswordHasher, ProviderPort, RouterPort, Session,
+    SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
 };
 use rook_usecases::{
     BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
@@ -36,11 +36,33 @@ pub fn make_test_bootstrap_usecases(
     set_admin_password: SetAdminPassword,
     setup_token: Option<String>,
 ) -> Arc<rook_usecases::RookUsecases> {
+    make_test_bootstrap_usecases_with_providers(
+        user_repo,
+        password_hasher,
+        api_key_repo,
+        bootstrap_status,
+        set_admin_password,
+        setup_token,
+        Vec::new(),
+    )
+}
+
+/// Build test use cases with providers registered for request-routing tests.
+#[allow(clippy::too_many_arguments)]
+pub fn make_test_bootstrap_usecases_with_providers(
+    user_repo: Arc<dyn UserRepositoryPort>,
+    password_hasher: Arc<dyn PasswordHasher>,
+    api_key_repo: Arc<dyn ApiKeyRepositoryPort>,
+    bootstrap_status: BootstrapStatus,
+    set_admin_password: SetAdminPassword,
+    setup_token: Option<String>,
+    providers: Vec<Arc<dyn ProviderPort>>,
+) -> Arc<rook_usecases::RookUsecases> {
     let user_repo_for_login = user_repo.clone();
     let session_repo: Arc<dyn SessionRepositoryPort> = Arc::new(StubSessionRepo);
     // FallbackRouter implements both RouterPort and ProviderRegistryPort.
     // We use concrete type here and pass as dyn where needed.
-    let fallback_router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
     let format_translator: Arc<dyn FormatTranslatorPort> = Arc::new(StubFormatTranslator);
     let cache: Arc<dyn CachePort> = Arc::new(StubCache);
     let audit: Arc<dyn AuditPort> = Arc::new(StubAudit);
@@ -146,7 +168,9 @@ struct StubAudit;
 #[async_trait]
 impl AuditPort for StubAudit {
     async fn record(&self, _: AuditEntry) -> CortexResult<()> {
-        unreachable!("audit not called by bootstrap tests")
+        // Bootstrap tests ignore audit records; stream route tests need to
+        // complete audit writes without introducing a persistence dependency.
+        Ok(())
     }
 }
 
@@ -159,7 +183,7 @@ impl FormatTranslatorPort for StubFormatTranslator {
         _to: ApiFormat,
         req: CompletionRequest,
     ) -> CortexResult<CompletionRequest> {
-        // Pass through unchanged — never called by bootstrap tests
+        // Test providers use the OpenAI format, so no translation is required.
         Ok(req)
     }
 

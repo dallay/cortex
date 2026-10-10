@@ -14,6 +14,12 @@ use sse_stream::SseBuffer;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
+const MAX_TOOL_CALLS_PER_STREAM: usize = 64;
+const MAX_TOTAL_TOOL_CALL_ARGUMENT_BYTES: usize = 1_048_576;
+const MAX_TOOL_CALL_NAME_BYTES: usize = 4_096;
+const MAX_TOOL_CALL_ID_BYTES: usize = 256;
+const MAX_SSE_EVENT_BYTES: usize = 2_097_152;
+
 /// Map an OpenAI HTTP error response to a typed `CortexError`.
 ///
 /// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
@@ -114,7 +120,12 @@ impl OpenAIProvider {
         tool_call_validator: &mut ToolCallStreamValidator,
         bytes: &[u8],
     ) -> impl Stream<Item = Result<StreamChunk, CortexError>> {
-        let events = sse_buffer.push(bytes);
+        let events = match sse_buffer.push_with_max_event_bytes(bytes, MAX_SSE_EVENT_BYTES) {
+            Ok(events) => events,
+            Err(error) => {
+                return futures::stream::iter(vec![Err(CortexError::provider(error.to_string()))]);
+            }
+        };
         let chunks: Vec<Result<StreamChunk, CortexError>> = events
             .into_iter()
             .flat_map(|event_text| {
@@ -130,33 +141,34 @@ impl OpenAIProvider {
         request_id: &RequestId,
         tool_call_validator: &mut ToolCallStreamValidator,
     ) -> Vec<Result<StreamChunk, CortexError>> {
-        let mut chunks = Vec::new();
-        for data_line in event_text
+        let data = event_text
             .lines()
             .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-        {
-            if data_line.trim() == "[DONE]" {
-                if let Err(error) = tool_call_validator.finish_without_marker() {
-                    chunks.push(Err(error));
-                }
-                continue;
-            }
-
-            let parsed = match serde_json::from_str::<OpenAIStreamResponse>(data_line) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    chunks.push(Err(CortexError::provider(format!(
-                        "malformed OpenAI stream event: {error}"
-                    ))));
-                    continue;
-                }
-            };
-            match Self::response_to_chunk(parsed, request_id, tool_call_validator) {
-                Ok(chunk) => chunks.push(Ok(chunk)),
-                Err(error) => chunks.push(Err(error)),
-            }
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() {
+            return Vec::new();
         }
-        chunks
+
+        if data.trim() == "[DONE]" {
+            return tool_call_validator
+                .finish_without_marker()
+                .err()
+                .into_iter()
+                .map(Err)
+                .collect();
+        }
+
+        match serde_json::from_str::<OpenAIStreamResponse>(&data) {
+            Ok(parsed) => vec![Self::response_to_chunk(
+                parsed,
+                request_id,
+                tool_call_validator,
+            )],
+            Err(error) => vec![Err(CortexError::provider(format!(
+                "malformed OpenAI stream event: {error}"
+            )))],
+        }
     }
 
     fn response_to_chunk(
@@ -330,6 +342,7 @@ struct OpenAIStreamFunctionDelta {
 #[derive(Debug, Default)]
 struct ToolCallStreamValidator {
     calls: BTreeMap<u32, ToolCallAssembly>,
+    total_argument_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -342,6 +355,22 @@ struct ToolCallAssembly {
 impl ToolCallStreamValidator {
     fn observe(&mut self, deltas: &[OpenAIStreamToolCallDelta]) -> CortexResult<()> {
         for delta in deltas {
+            if delta
+                .id
+                .as_ref()
+                .is_some_and(|id| id.len() > MAX_TOOL_CALL_ID_BYTES)
+            {
+                return Err(CortexError::provider(format!(
+                    "OpenAI stream exceeded the tool-call id limit of {MAX_TOOL_CALL_ID_BYTES} bytes"
+                )));
+            }
+            if !self.calls.contains_key(&delta.index)
+                && self.calls.len() >= MAX_TOOL_CALLS_PER_STREAM
+            {
+                return Err(CortexError::provider(format!(
+                    "OpenAI stream exceeded the tool-call limit of {MAX_TOOL_CALLS_PER_STREAM}"
+                )));
+            }
             let call = self.calls.entry(delta.index).or_default();
             if let Some(id) = &delta.id {
                 match &call.id {
@@ -356,9 +385,22 @@ impl ToolCallStreamValidator {
                 }
             }
             if let Some(name) = &delta.function.name {
+                if call.name.len().saturating_add(name.len()) > MAX_TOOL_CALL_NAME_BYTES {
+                    return Err(CortexError::provider(format!(
+                        "OpenAI stream exceeded the tool-call name limit of {MAX_TOOL_CALL_NAME_BYTES} bytes"
+                    )));
+                }
                 call.name.push_str(name);
             }
             if let Some(arguments) = &delta.function.arguments {
+                let total_argument_bytes =
+                    self.total_argument_bytes.saturating_add(arguments.len());
+                if total_argument_bytes > MAX_TOTAL_TOOL_CALL_ARGUMENT_BYTES {
+                    return Err(CortexError::provider(format!(
+                        "OpenAI stream exceeded the total tool-call argument limit of {MAX_TOTAL_TOOL_CALL_ARGUMENT_BYTES} bytes"
+                    )));
+                }
+                self.total_argument_bytes = total_argument_bytes;
                 call.arguments.push_str(arguments);
             }
         }
@@ -367,6 +409,7 @@ impl ToolCallStreamValidator {
 
     fn validate_and_reset(&mut self) -> CortexResult<()> {
         let calls = std::mem::take(&mut self.calls);
+        self.total_argument_bytes = 0;
         if calls.is_empty() {
             return Err(CortexError::provider(
                 "OpenAI stream finished with tool_calls but no tool-call deltas",
@@ -654,23 +697,32 @@ impl ProviderPort for OpenAIProvider {
                                 ),
                             ));
                         }
-                        None => match tool_call_validator.finish_without_marker() {
-                            Ok(()) => return None,
-                            Err(error) => {
-                                terminated = true;
-                                return Some((
-                                    Err(error),
-                                    (
-                                        byte_stream,
-                                        sse_buffer,
-                                        tool_call_validator,
-                                        request_id,
-                                        pending,
-                                        terminated,
-                                    ),
-                                ));
+                        None => {
+                            let validation = if sse_buffer.pending_len() > 0 {
+                                Err(CortexError::provider(
+                                    "OpenAI stream ended with an incomplete SSE event",
+                                ))
+                            } else {
+                                tool_call_validator.finish_without_marker()
+                            };
+                            match validation {
+                                Ok(()) => return None,
+                                Err(error) => {
+                                    terminated = true;
+                                    return Some((
+                                        Err(error),
+                                        (
+                                            byte_stream,
+                                            sse_buffer,
+                                            tool_call_validator,
+                                            request_id,
+                                            pending,
+                                            terminated,
+                                        ),
+                                    ));
+                                }
                             }
-                        },
+                        }
                     }
                 }
             },

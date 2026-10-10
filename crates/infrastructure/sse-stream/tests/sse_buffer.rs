@@ -1,4 +1,4 @@
-use sse_stream::SseBuffer;
+use sse_stream::{SseBuffer, SseBufferError};
 
 #[test]
 fn emits_complete_event_from_single_push() {
@@ -76,4 +76,40 @@ fn default_creates_empty_buffer() {
     let events = buffer.push(b"data: hello\n\n");
 
     assert_eq!(events, vec!["data: hello".to_string()]);
+}
+
+#[test]
+fn bounded_push_rejects_an_event_over_the_limit() {
+    let mut buffer = SseBuffer::new();
+
+    let result = buffer.push_with_max_event_bytes(b"data: too large\n\n", 8);
+
+    assert_eq!(result, Err(SseBufferError::EventTooLarge { max_bytes: 8 }));
+}
+
+#[test]
+fn bounded_push_accepts_multiple_small_events_in_one_chunk() {
+    let mut buffer = SseBuffer::new();
+
+    let events = buffer
+        .push_with_max_event_bytes(b"data: a\n\ndata: b\n\n", 8)
+        .unwrap();
+
+    assert_eq!(events, vec!["data: a", "data: b"]);
+}
+
+#[test]
+fn bounded_push_preserves_partial_events_across_chunks() {
+    let mut buffer = SseBuffer::new();
+
+    assert!(buffer
+        .push_with_max_event_bytes(b"data: hel", 16)
+        .unwrap()
+        .is_empty());
+    assert_eq!(buffer.pending_len(), b"data: hel".len());
+
+    let events = buffer.push_with_max_event_bytes(b"lo\r\n\r\n", 16).unwrap();
+
+    assert_eq!(events, vec!["data: hello"]);
+    assert_eq!(buffer.pending_len(), 0);
 }

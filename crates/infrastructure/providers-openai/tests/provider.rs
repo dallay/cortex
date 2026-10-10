@@ -28,6 +28,32 @@ fn stream_request() -> CompletionRequest {
     }
 }
 
+async fn stream_results_from_body(
+    body: String,
+) -> Vec<Result<rook_core::StreamChunk, shared_kernel::CortexError>> {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+}
+
 // ---------------------------------------------------------------------------
 // health_check tests
 // ---------------------------------------------------------------------------
@@ -549,6 +575,177 @@ async fn stream_returns_error_when_connection_ends_before_tool_finish_reason() {
 }
 
 #[tokio::test]
+async fn stream_returns_error_for_eof_inside_sse_event() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0]
+        .as_ref()
+        .expect_err("unterminated SSE event must fail")
+        .to_string()
+        .contains("incomplete SSE event"));
+}
+
+#[tokio::test]
+async fn stream_joins_multiple_data_lines_in_one_sse_event() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+                r#"data: {"id":"chatcmpl-123","model":"gpt-4","#,
+                "\n",
+                r#"data: "choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}"#,
+                "\n\n",
+                "data: [DONE]\n\n"
+            )),
+        )
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let chunks = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("multiline data event parses");
+
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].delta, "Hi");
+    assert_eq!(chunks[0].finish_reason, Some(FinishReason::Stop));
+}
+
+#[tokio::test]
+async fn stream_rejects_more_than_sixty_four_tool_calls() {
+    let tool_calls: Vec<_> = (0..65)
+        .map(|index| {
+            serde_json::json!({
+                "index": index,
+                "id": format!("call-{index}"),
+                "type": "function",
+                "function": { "name": "lookup", "arguments": "{}" }
+            })
+        })
+        .collect();
+    let event = serde_json::json!({
+        "id": "chatcmpl-123",
+        "model": "gpt-4",
+        "choices": [{
+            "delta": { "tool_calls": tool_calls },
+            "finish_reason": null
+        }]
+    });
+    let results = stream_results_from_body(format!("data: {event}\n\n")).await;
+
+    let error = results
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .expect("too many tool calls must fail");
+    assert!(error.to_string().contains("tool-call limit"));
+}
+
+#[tokio::test]
+async fn stream_rejects_tool_arguments_over_one_megabyte() {
+    let event = serde_json::json!({
+        "id": "chatcmpl-123",
+        "model": "gpt-4",
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call-1",
+                    "function": {
+                        "name": "lookup",
+                        "arguments": "x".repeat(1_048_577)
+                    }
+                }]
+            },
+            "finish_reason": null
+        }]
+    });
+    let results = stream_results_from_body(format!("data: {event}\n\n")).await;
+
+    let error = results
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .expect("oversized tool arguments must fail");
+    assert!(error.to_string().contains("tool-call argument limit"));
+}
+
+#[tokio::test]
+async fn stream_limits_aggregate_arguments_across_tool_calls() {
+    let tool_calls: Vec<_> = (0..2)
+        .map(|index| {
+            serde_json::json!({
+                "index": index,
+                "id": format!("call-{index}"),
+                "function": {
+                    "name": "lookup",
+                    "arguments": "x".repeat(600_000)
+                }
+            })
+        })
+        .collect();
+    let event = serde_json::json!({
+        "id": "chatcmpl-123",
+        "model": "gpt-4",
+        "choices": [{ "delta": { "tool_calls": tool_calls }, "finish_reason": null }]
+    });
+    let results = stream_results_from_body(format!("data: {event}\n\n")).await;
+
+    let error = results
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .expect("aggregate argument limit must fail");
+    assert!(error.to_string().contains("total tool-call argument limit"));
+}
+
+#[tokio::test]
+async fn stream_rejects_an_sse_event_over_two_megabytes() {
+    let body = format!("data: {}", "x".repeat(2_097_153));
+    let results = stream_results_from_body(body).await;
+
+    let error = results
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .expect("oversized SSE event must fail");
+    assert!(error.to_string().contains("SSE event exceeds"));
+}
+
+#[tokio::test]
 async fn complete_parses_cached_tokens_and_reasoning_tokens() {
     // T5.1: OpenAI extended usage parses prompt_tokens_details.cached_tokens
     // and completion_tokens_details.reasoning_tokens.
@@ -631,7 +828,7 @@ async fn stream_request_includes_include_usage_option() {
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(
             wiremock::ResponseTemplate::new(200).set_body_string(
-                "data: {\"id\":\"chatcmpl-123\",\"model\":\"gpt-4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\ndata: [DONE]\n",
+                "data: {\"id\":\"chatcmpl-123\",\"model\":\"gpt-4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\ndata: [DONE]\n\n",
             ),
         )
         .mount(&server)
