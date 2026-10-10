@@ -251,3 +251,443 @@ async fn complete_returns_response_with_token_counts() {
     assert_eq!(resp.usage.cache_creation_tokens, None);
     assert_eq!(resp.usage.reasoning_tokens, None);
 }
+
+use futures::StreamExt;
+
+fn test_request(stream: bool) -> CompletionRequest {
+    CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("llama-3.3-70b"),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    }
+}
+
+#[tokio::test]
+async fn provider_metadata_and_availability() {
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: None,
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    assert_eq!(provider.id().as_str(), "groq-test");
+    assert_eq!(
+        provider.supported_models(),
+        &[ModelId::new("llama-3.3-70b")]
+    );
+    assert_eq!(provider.api_format(), rook_core::ApiFormat::OpenAI);
+    assert!(provider.is_available());
+
+    let empty_provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: String::new(),
+        base_url: None,
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    assert!(!empty_provider.is_available());
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_empty_choices() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-groq-empty",
+                "model": "llama-3.3-70b",
+                "choices": [],
+                "usage": { "prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10 }
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("no choices"));
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_invalid_json() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("invalid json"))
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("json parse failed"));
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_network_failure() {
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some("http://127.0.0.1:1".to_string()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("request failed"));
+}
+
+#[tokio::test]
+async fn complete_maps_http_errors_properly() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(401)
+                .set_body_json(serde_json::json!({"error": "invalid api key"})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "bad-key".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("authentication failed"));
+}
+
+#[tokio::test]
+async fn complete_maps_429_rate_limit_with_reset_header() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(429)
+                .insert_header("retry-after", "15")
+                .insert_header("x-ratelimit-reset", "123456789")
+                .set_body_json(serde_json::json!({"error": "rate limit"})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("rate limited") || err_msg.contains("429"));
+}
+
+#[tokio::test]
+async fn complete_maps_400_invalid_request() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(400)
+                .set_body_json(serde_json::json!({"error": "bad request"})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("bad request"));
+}
+
+#[tokio::test]
+async fn complete_maps_500_server_error() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(500)
+                .set_body_json(serde_json::json!({"error": "internal error"})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&test_request(false)).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("Groq error 500"));
+}
+
+#[tokio::test]
+async fn stream_returns_chunks_on_success() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+            concat!(
+                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+                "data: [DONE]\n\n",
+            )
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let chunks = provider
+        .stream(&test_request(true))
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.delta.as_str())
+            .collect::<String>(),
+        "Hello world"
+    );
+}
+
+#[tokio::test]
+async fn stream_parses_all_finish_reasons() {
+    let server = wiremock::MockServer::start().await;
+    let expected_reasons = [
+        ("stop", rook_core::FinishReason::Stop),
+        ("length", rook_core::FinishReason::Length),
+        ("content_filter", rook_core::FinishReason::ContentFilter),
+        ("tool_calls", rook_core::FinishReason::ToolCalls),
+    ];
+    let body = expected_reasons
+        .iter()
+        .map(|(reason, _)| {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "id": "1",
+                    "model": "m",
+                    "choices": [{"delta": {"content": "a"}, "finish_reason": reason}]
+                })
+            )
+        })
+        .collect::<String>();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let chunks = provider
+        .stream(&test_request(true))
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    assert_eq!(chunks.len(), expected_reasons.len());
+    for (chunk, (_, expected)) in chunks.iter().zip(expected_reasons) {
+        assert_eq!(chunk.finish_reason, Some(expected));
+    }
+}
+
+#[tokio::test]
+async fn stream_returns_error_on_http_error() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(429))
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.stream(&test_request(true)).await;
+    match res {
+        Err(e) => assert!(e.to_string().contains("rate limited") || e.to_string().contains("429")),
+        Ok(_) => panic!("Expected stream error on 429"),
+    }
+}
+
+#[tokio::test]
+async fn stream_returns_error_on_network_failure() {
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some("http://127.0.0.1:1".to_string()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let res = provider.stream(&test_request(true)).await;
+    match res {
+        Err(e) => assert!(e.to_string().contains("request failed")),
+        Ok(_) => panic!("Expected stream error on network failure"),
+    }
+}
+
+#[tokio::test]
+async fn stream_returns_error_on_invalid_utf8_bytes() {
+    let server = wiremock::MockServer::start().await;
+    // Send invalid utf-8 byte sequence
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![0xFF, 0xFE, 0xFD]))
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&test_request(true))
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 1);
+    let err = results[0].as_ref().expect_err("invalid utf8 fails");
+    assert!(err.to_string().contains("invalid utf-8"));
+}
+
+#[tokio::test]
+async fn stream_returns_error_on_malformed_json_event() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string("data: {invalid json}\n\n"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(server.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&test_request(true))
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 1);
+    let err = results[0].as_ref().expect_err("malformed json fails");
+    assert!(err.to_string().contains("failed to parse stream event"));
+}

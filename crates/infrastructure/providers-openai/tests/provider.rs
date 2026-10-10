@@ -882,3 +882,307 @@ async fn stream_request_includes_include_usage_option() {
     assert_eq!(final_usage.unwrap().prompt_tokens, 5);
     assert_eq!(final_usage.unwrap().completion_tokens, 2);
 }
+
+#[tokio::test]
+async fn provider_metadata_and_availability() {
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: "http://localhost".to_string(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    assert_eq!(provider.id().as_str(), "openai-test");
+    assert_eq!(provider.supported_models(), &[ModelId::new("gpt-4")]);
+    assert_eq!(provider.api_format(), rook_core::ApiFormat::OpenAI);
+    assert!(provider.is_available());
+
+    let empty_key_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: String::new(),
+        base_url: "http://localhost".to_string(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    assert!(!empty_key_provider.is_available());
+}
+
+#[tokio::test]
+async fn complete_supports_all_roles() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-roles",
+                "model": "gpt-4",
+                "choices": [{
+                    "message": { "role": "assistant", "content": "Done" },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11 }
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![
+            rook_core::Message {
+                role: Role::System,
+                content: rook_core::MessageContent::Text("sys".to_string()),
+            },
+            rook_core::Message {
+                role: Role::User,
+                content: rook_core::MessageContent::Text("user".to_string()),
+            },
+            rook_core::Message {
+                role: Role::Assistant,
+                content: rook_core::MessageContent::Text("asst".to_string()),
+            },
+            rook_core::Message {
+                role: Role::Developer,
+                content: rook_core::MessageContent::Text("dev".to_string()),
+            },
+        ],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let res = provider.complete(&req).await;
+    assert!(res.is_ok());
+
+    let requests = server.received_requests().await.expect("requests recorded");
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value =
+        serde_json::from_slice(&requests[0].body).expect("completion request is JSON");
+    let roles: Vec<_> = body["messages"]
+        .as_array()
+        .expect("messages is an array")
+        .iter()
+        .map(|message| message["role"].as_str().expect("role is a string"))
+        .collect();
+    assert_eq!(roles, ["system", "user", "assistant", "developer"]);
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_empty_choices() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-empty",
+                "model": "gpt-4",
+                "choices": [],
+                "usage": { "prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10 }
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&stream_request()).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("no choices"));
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_invalid_json() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("invalid json"))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let res = provider.complete(&stream_request()).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("json parse failed"));
+}
+
+#[tokio::test]
+async fn complete_returns_error_on_network_failure() {
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: "http://127.0.0.1:1".to_string(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let res = provider.complete(&stream_request()).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("request failed"));
+}
+
+#[tokio::test]
+async fn stream_returns_error_on_network_failure() {
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: "http://127.0.0.1:1".to_string(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 2,
+    })
+    .unwrap();
+
+    let res = provider.stream(&stream_request()).await;
+    match res {
+        Err(e) => assert!(e.to_string().contains("request failed")),
+        Ok(_) => panic!("Expected error on stream network failure"),
+    }
+}
+
+#[tokio::test]
+async fn stream_returns_error_when_tool_call_identity_changes() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file"}}]}}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_file"}}]}}]}"#,
+            "\n\n"
+        )))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_ok());
+    let err = results[1].as_ref().expect_err("changed identity fails");
+    assert!(err.to_string().contains("changed tool-call identity"));
+}
+
+#[tokio::test]
+async fn stream_parses_length_and_content_filter_finish_reasons() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"#,
+            "\n\n",
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"b"},"finish_reason":"content_filter"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n"
+        )))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let chunks = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    assert_eq!(chunks[0].finish_reason, Some(FinishReason::Length));
+    assert_eq!(chunks[1].finish_reason, Some(FinishReason::ContentFilter));
+}
+
+#[tokio::test]
+async fn stream_returns_error_when_tool_calls_empty_at_finish() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
+            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n"
+        )))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let results = provider
+        .stream(&stream_request())
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(results.len(), 1);
+    let err = results[0].as_ref().expect_err("no tool deltas fail");
+    assert!(err.to_string().contains("no tool-call deltas"));
+}

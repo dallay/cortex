@@ -256,3 +256,28 @@ async fn stream_returns_error_on_429() {
         err_msg
     );
 }
+
+#[tokio::test]
+async fn complete_returns_provider_error_on_500() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(500)
+                .set_body_json(serde_json::json!({"error": "internal_server_error"})),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = test_provider_with_key(server.uri(), "sk-test".to_string());
+    let req = base_request(false);
+
+    let result = provider.complete(&req).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("OpenAI error 500"),
+        "Expected 500 error, got: {}",
+        err
+    );
+}
