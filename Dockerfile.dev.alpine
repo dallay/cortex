@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.89-alpine AS builder
+FROM rust:1.99-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627 AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ COPY apps apps
 RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime
-FROM alpine:3.20
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 WORKDIR /app
 
