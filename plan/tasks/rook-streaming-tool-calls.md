@@ -37,7 +37,7 @@ Cerrar la brecha de la issue #279: preservar tool-call deltas OpenAI desde el pr
 - [x] RPI-008 — Añadir prueba RED y unir las líneas `data:` de un evento SSE antes del parseo.
 - [x] RPI-009 — Añadir pruebas RED y límites explícitos para tamaño de evento, cantidad de llamadas y argumentos.
 - [x] RPI-010 — Probar `/v1/chat/completions` por HTTP SSE, incluidos tools, finish_reason, `[DONE]` y error de upstream.
-- [ ] RPI-011 — Verificar crates afectados, formato, Clippy y publicar una PR de seguimiento.
+- [x] RPI-011 — Verificar crates afectados, formato, Clippy y publicar una PR de seguimiento.
 
 ## Evidencia
 - Inicial: `StreamChunk` solo contiene `delta: String`; el parser de OpenAI descarta `delta.tool_calls`; el DTO SSE de transporte solo serializa `role` y `content`.
@@ -54,6 +54,7 @@ Cerrar la brecha de la issue #279: preservar tool-call deltas OpenAI desde el pr
 - RED/GREEN RPI-010: prueba real por Router HTTP verifica tool-call fragments y finish_reason en SSE, `[DONE]` y propagación del EOF truncado como error SSE.
 - Verificación de seguimiento: todas las pruebas de `sse-stream`, providers afectados y `transport-axum` pasan; Clippy con `-D warnings`, formato y diff-check pasan.
 - Nombre del nuevo branch: `fix/rook-streaming-review-findings`; la PR #311 anterior fue mergeada por error y ahora el branch parte de `main` actualizado.
+- PR de seguimiento #312 creada en draft: https://github.com/dallay/cortex/pull/312.
 
 ## Estado
-Working — hallazgos P1/P2 y cobertura HTTP resueltos; suites y Clippy pasan; preparando nueva PR al branch fix/rook-streaming-review-findings.
+Ready — hallazgos P1/P2 y cobertura HTTP resueltos; suites y Clippy pasan; PR draft #312 abierta contra `main`.
