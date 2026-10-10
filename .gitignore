@@ -1,6 +1,7 @@
 # === Rust ===
 /target/
 /tmp/
+tmp
 /.playwright-mcp/
 
 # Cargo.lock is committed (pins deps)
