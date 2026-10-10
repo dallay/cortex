@@ -65,6 +65,9 @@ impl ProviderPort for FakeProvider {
             model: self.models[0].clone(),
             content: "test response".to_string(),
             content_blocks: vec![MessageContent::Text("test response".to_string())],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
             usage: TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
@@ -87,6 +90,7 @@ impl ProviderPort for FakeProvider {
             id: RequestId::new(),
             model: self.models[0].clone(),
             delta: "test".to_string(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: None,
             usage: None,
@@ -163,6 +167,7 @@ async fn allowed_models_contains_requested_model_passes() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("test".to_string()),
         }],
@@ -219,6 +224,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         id: RequestId::new(),
         model: ModelId::new("gpt-4o"),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("test".to_string()),
         }],
@@ -279,6 +285,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("test".to_string()),
         }],
@@ -335,6 +342,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         id: RequestId::new(),
         model: ModelId::new("claude-3"),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("test".to_string()),
         }],

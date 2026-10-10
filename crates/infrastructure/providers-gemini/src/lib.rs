@@ -10,6 +10,16 @@ use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
+fn map_gemini_finish_reason(reason: &str) -> Option<rook_core::FinishReason> {
+    match reason {
+        "STOP" => Some(rook_core::FinishReason::Stop),
+        "MAX_TOKENS" => Some(rook_core::FinishReason::Length),
+        "SAFETY" | "RECITATION" => Some(rook_core::FinishReason::ContentFilter),
+        "OTHER" => None,
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GeminiGenerateResponse {
     candidates: Vec<GeminiCandidate>,
@@ -270,6 +280,13 @@ impl ProviderPort for GeminiProvider {
             model: ModelId::new(model),
             content: content_text.clone(),
             content_blocks: vec![rook_core::MessageContent::Text(content_text)],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: parsed
+                .candidates
+                .first()
+                .and_then(|candidate| candidate.finish_reason.as_deref())
+                .and_then(map_gemini_finish_reason),
             usage: TokenUsage {
                 prompt_tokens,
                 completion_tokens,

@@ -8,6 +8,7 @@ fn stream_request() -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("test".to_string()),
         }],
@@ -291,6 +292,7 @@ async fn complete_returns_response_on_success() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -344,6 +346,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -419,6 +422,7 @@ async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("read and count".to_string()),
         }],
@@ -789,6 +793,7 @@ async fn complete_parses_cached_tokens_and_reasoning_tokens() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4o"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -847,6 +852,7 @@ async fn stream_request_includes_include_usage_option() {
         id: RequestId::new(),
         model: ModelId::new("gpt-4"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -946,18 +952,22 @@ async fn complete_supports_all_roles() {
             rook_core::Message {
                 role: Role::System,
                 content: rook_core::MessageContent::Text("sys".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::User,
                 content: rook_core::MessageContent::Text("user".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::Assistant,
                 content: rook_core::MessageContent::Text("asst".to_string()),
+                tool_calls: vec![],
             },
             rook_core::Message {
                 role: Role::Developer,
                 content: rook_core::MessageContent::Text("dev".to_string()),
+                tool_calls: vec![],
             },
         ],
         stream: false,
@@ -1185,4 +1195,75 @@ async fn stream_returns_error_when_tool_calls_empty_at_finish() {
     assert_eq!(results.len(), 1);
     let err = results[0].as_ref().expect_err("no tool deltas fail");
     assert!(err.to_string().contains("no tool-call deltas"));
+}
+
+#[tokio::test]
+async fn complete_parses_null_content_with_tool_calls() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-null-content",
+                "model": "gpt-4",
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{\"key\":\"value\"}"}
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let req = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("gpt-4"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: rook_core::MessageContent::Text("Hi".to_string()),
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: true,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+
+    let resp = provider.complete(&req).await.expect("complete succeeds");
+    assert_eq!(resp.content, "");
+    assert_eq!(
+        resp.content_blocks,
+        vec![rook_core::MessageContent::Text(String::new())]
+    );
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].name, "lookup");
+    assert_eq!(resp.finish_reason, Some(FinishReason::ToolCalls));
 }

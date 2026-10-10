@@ -1,5 +1,5 @@
 use providers_gemini::{GeminiProvider, GeminiProviderConfig};
-use rook_core::{CompletionRequest, HealthStatus, ModelId, ProviderPort, Role};
+use rook_core::{CompletionRequest, FinishReason, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 
 // ---------------------------------------------------------------------------
@@ -220,6 +220,7 @@ async fn complete_returns_response_with_token_counts() {
         id: RequestId::new(),
         model: ModelId::new("gemini-2.0-flash"),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: rook_core::MessageContent::Text("Hi".to_string()),
         }],
@@ -243,6 +244,7 @@ async fn complete_returns_response_with_token_counts() {
     assert!(result.is_ok());
     let resp = result.unwrap();
     assert_eq!(resp.content, "Hello, world!");
+    assert_eq!(resp.finish_reason, Some(FinishReason::Stop));
     // T5.3: Gemini parses promptTokenCount and candidatesTokenCount
     assert_eq!(resp.usage.prompt_tokens, 20);
     assert_eq!(resp.usage.completion_tokens, 12);

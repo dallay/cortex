@@ -96,6 +96,9 @@ impl ProviderPort for TestProvider {
                     model: model.clone(),
                     content: "successful response".to_string(),
                     content_blocks: vec![MessageContent::Text("successful response".to_string())],
+                    thinking: None,
+                    tool_calls: vec![],
+                    finish_reason: None,
                     usage: TokenUsage {
                         prompt_tokens: 10,
                         completion_tokens: 5,
@@ -188,6 +191,7 @@ fn make_request(model: &str) -> CompletionRequest {
         id: RequestId::new(),
         model: ModelId::new(model),
         messages: vec![Message {
+            tool_calls: vec![],
             role: Role::User,
             content: "hello".into(),
         }],

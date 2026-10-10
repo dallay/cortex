@@ -37,6 +37,9 @@ fn mock_completion_response(content: &str) -> CompletionResponse {
         model: ModelId::new("test-model"),
         content: content.to_string(),
         content_blocks: vec![MessageContent::Text(content.to_string())],
+        thinking: None,
+        tool_calls: vec![],
+        finish_reason: Some(rook_core::FinishReason::Stop),
         usage: TokenUsage {
             prompt_tokens: 10,
             completion_tokens: 5,
@@ -264,6 +267,9 @@ impl ProviderPort for RegistryTestProvider {
             model: req.model.clone(),
             content: self.content.to_string(),
             content_blocks: vec![MessageContent::Text(self.content.to_string())],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
             usage: TokenUsage {
                 prompt_tokens: 3,
                 completion_tokens: 5,
@@ -470,6 +476,7 @@ fn registry_domain_request() -> CompletionRequest {
         id: RequestId::new(),
         model: REGISTRY_TEST_MODEL.clone(),
         messages: vec![rook_core::Message {
+            tool_calls: vec![],
             role: Role::User,
             content: MessageContent::Text("hello through registry".to_string()),
         }],

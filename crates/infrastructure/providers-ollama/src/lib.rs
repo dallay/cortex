@@ -6,7 +6,7 @@ use providers_core::{process_bytes, role_to_string};
 use reqwest::{Client, StatusCode};
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, HealthStatus, ModelId, ProviderPort,
-    StreamChunk, TokenUsage,
+    StreamChunk, TokenUsage, ToolCallDelta, ToolCallFunctionDelta,
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
@@ -17,10 +17,28 @@ struct OllamaChatResponse {
     model: String,
     message: OllamaMessage,
     done: bool,
+    #[allow(dead_code)]
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    done_reason: Option<String>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
     #[serde(default)]
+    prompt_eval_cached_count: Option<u32>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
     eval_count: Option<u32>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    logprobs: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +46,26 @@ struct OllamaMessage {
     #[allow(dead_code)]
     role: String,
     content: String,
+    #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    images: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaToolCall {
+    #[serde(default)]
+    id: Option<String>,
+    function: OllamaFunctionCall,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaFunctionCall {
+    name: String,
+    arguments: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
@@ -94,10 +132,26 @@ impl OllamaProvider {
             .messages
             .iter()
             .map(|m| {
-                serde_json::json!({
+                let mut message = serde_json::json!({
                     "role": role_to_string(m.role),
                     "content": m.content.as_text(),
-                })
+                });
+                if !m.tool_calls.is_empty() {
+                    message["tool_calls"] = serde_json::Value::Array(
+                        m.tool_calls
+                            .iter()
+                            .map(|tool_call| {
+                                serde_json::json!({
+                                    "function": {
+                                        "name": tool_call.name,
+                                        "arguments": tool_call.arguments,
+                                    }
+                                })
+                            })
+                            .collect(),
+                    );
+                }
+                message
             })
             .collect();
         serde_json::json!({
@@ -139,23 +193,39 @@ impl OllamaProvider {
         let parsed: OllamaChatResponse = serde_json::from_str(&line).ok()?;
         let prompt_tokens = parsed.prompt_eval_count.unwrap_or(0);
         let completion_tokens = parsed.eval_count.unwrap_or(0);
+        if parsed.done {
+            Self::trace_timings(&parsed);
+        }
+        let finish_reason = Self::finish_reason(&parsed);
+        let tool_calls = parsed.message.tool_calls.unwrap_or_default();
 
         Some(Ok(StreamChunk {
             id: request_id.clone(),
             model: ModelId::new(parsed.model.clone()),
             delta: parsed.message.content,
-            tool_calls: vec![],
-            finish_reason: if parsed.done {
-                Some(rook_core::FinishReason::Stop)
-            } else {
-                None
-            },
+            thinking: parsed.message.thinking,
+            tool_calls: tool_calls
+                .into_iter()
+                .enumerate()
+                .map(|(index, tool_call)| ToolCallDelta {
+                    index: u32::try_from(index).unwrap_or(u32::MAX),
+                    id: tool_call.id,
+                    function: ToolCallFunctionDelta {
+                        name: Some(tool_call.function.name),
+                        arguments: Some(
+                            serde_json::to_string(&tool_call.function.arguments)
+                                .unwrap_or_else(|_| "null".to_string()),
+                        ),
+                    },
+                })
+                .collect(),
+            finish_reason,
             usage: if parsed.done {
                 Some(TokenUsage {
                     prompt_tokens,
                     completion_tokens,
                     total_tokens: prompt_tokens.saturating_add(completion_tokens),
-                    cache_read_tokens: None,
+                    cache_read_tokens: parsed.prompt_eval_cached_count.map(u64::from),
                     cache_creation_tokens: None,
                     reasoning_tokens: None,
                     estimated_cost_usd: None,
@@ -164,6 +234,88 @@ impl OllamaProvider {
                 None
             },
         }))
+    }
+
+    fn map_finish_reason(reason: &str) -> Option<rook_core::FinishReason> {
+        match reason {
+            "stop" => Some(rook_core::FinishReason::Stop),
+            "length" => Some(rook_core::FinishReason::Length),
+            "tool_calls" => Some(rook_core::FinishReason::ToolCalls),
+            _ => None,
+        }
+    }
+
+    fn finish_reason(parsed: &OllamaChatResponse) -> Option<rook_core::FinishReason> {
+        if !parsed.done {
+            return None;
+        }
+        let mapped = match parsed.done_reason.as_deref() {
+            Some(reason) => Self::map_finish_reason(reason),
+            // Older Ollama responses omit done_reason. Keep the prior
+            // compatibility behavior for absence only; unknown explicit
+            // reasons remain unknown instead of being coerced to Stop.
+            None => Some(rook_core::FinishReason::Stop),
+        };
+        let has_tool_calls = parsed
+            .message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| !calls.is_empty());
+        // Tool calls take precedence over a plain stop (or an absent/unknown
+        // reason), but an explicit truncation/content-filter signal is kept so
+        // potentially incomplete arguments are not reported as callable.
+        match (has_tool_calls, mapped) {
+            (
+                true,
+                None
+                | Some(rook_core::FinishReason::Stop)
+                | Some(rook_core::FinishReason::ToolCalls),
+            ) => Some(rook_core::FinishReason::ToolCalls),
+            _ => mapped,
+        }
+    }
+
+    /// Fold tool-call visibility across stream chunks: marks `seen` when any
+    /// chunk carries tool calls, then backfills a terminal `ToolCalls` finish
+    /// reason when an earlier chunk carried them but the terminal chunk omits
+    /// them. Returns the updated flag.
+    fn track_tool_calls(
+        chunks: &mut [Result<StreamChunk, CortexError>],
+        mut seen_tool_calls: bool,
+    ) -> bool {
+        for chunk in chunks.iter_mut().flatten() {
+            if !chunk.tool_calls.is_empty() {
+                seen_tool_calls = true;
+            }
+        }
+        for chunk in chunks.iter_mut().flatten() {
+            if chunk.usage.is_some()
+                && matches!(
+                    chunk.finish_reason,
+                    None | Some(rook_core::FinishReason::Stop)
+                )
+                && seen_tool_calls
+            {
+                chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
+            }
+        }
+        seen_tool_calls
+    }
+
+    fn trace_timings(parsed: &OllamaChatResponse) {
+        if parsed.total_duration.is_some()
+            || parsed.load_duration.is_some()
+            || parsed.prompt_eval_duration.is_some()
+            || parsed.eval_duration.is_some()
+        {
+            tracing::info!(
+                total_duration_ns = parsed.total_duration,
+                load_duration_ns = parsed.load_duration,
+                prompt_eval_duration_ns = parsed.prompt_eval_duration,
+                eval_duration_ns = parsed.eval_duration,
+                "Ollama response timings"
+            );
+        }
     }
 
     /// Extract complete lines from the line buffer.
@@ -369,8 +521,21 @@ impl ProviderPort for OllamaProvider {
             .await
             .map_err(|e| CortexError::provider(format!("json parse failed: {e}")))?;
 
+        Self::trace_timings(&parsed);
         let prompt_tokens = parsed.prompt_eval_count.unwrap_or(0);
         let completion_tokens = parsed.eval_count.unwrap_or(0);
+        let finish_reason = Self::finish_reason(&parsed);
+        let tool_calls = parsed
+            .message
+            .tool_calls
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tool_call| rook_core::MessageToolCall {
+                id: tool_call.id,
+                name: tool_call.function.name,
+                arguments: tool_call.function.arguments,
+            })
+            .collect();
 
         Ok(CompletionResponse {
             id: req.id.clone(),
@@ -378,11 +543,14 @@ impl ProviderPort for OllamaProvider {
             model: ModelId::new(parsed.model),
             content: parsed.message.content.clone(),
             content_blocks: vec![rook_core::MessageContent::Text(parsed.message.content)],
+            thinking: parsed.message.thinking,
+            tool_calls,
+            finish_reason,
             usage: TokenUsage {
                 prompt_tokens,
                 completion_tokens,
                 total_tokens: prompt_tokens.saturating_add(completion_tokens),
-                cache_read_tokens: None,
+                cache_read_tokens: parsed.prompt_eval_cached_count.map(u64::from),
                 cache_creation_tokens: None,
                 reasoning_tokens: None,
                 estimated_cost_usd: None, // Local model — no cost
@@ -426,9 +594,11 @@ impl ProviderPort for OllamaProvider {
         let request_id = req.id.clone();
 
         // Line-buffered SSE stream: accumulate bytes into lines, parse each complete line.
+        // `seen_tool_calls` remembers whether any chunk so far carried tool
+        // calls, so a terminal chunk that omits them still reports ToolCalls.
         let stream = futures::stream::unfold(
-            (resp.bytes_stream(), String::new()),
-            move |(mut byte_stream, mut line_buffer)| {
+            (resp.bytes_stream(), String::new(), false),
+            move |(mut byte_stream, mut line_buffer, mut seen_tool_calls)| {
                 let request_id = request_id.clone();
                 async move {
                     // Read next byte chunk
@@ -437,10 +607,21 @@ impl ProviderPort for OllamaProvider {
                         Some(Err(e)) => {
                             return Some((
                                 Err(CortexError::provider(format!("stream read failed: {e}"))),
-                                (byte_stream, line_buffer),
+                                (byte_stream, line_buffer, seen_tool_calls),
                             ));
                         }
-                        None => return None,
+                        None if line_buffer.trim().is_empty() => return None,
+                        None => {
+                            let final_line = std::mem::take(&mut line_buffer);
+                            let mut chunks = Self::parse_line_to_chunk(final_line, &request_id)
+                                .into_iter()
+                                .collect::<Vec<_>>();
+                            seen_tool_calls = Self::track_tool_calls(&mut chunks, seen_tool_calls);
+                            return Some((
+                                Ok(futures::stream::iter(chunks)),
+                                (byte_stream, line_buffer, seen_tool_calls),
+                            ));
+                        }
                     };
 
                     // Convert to UTF-8 string using providers_core::process_bytes
@@ -449,7 +630,7 @@ impl ProviderPort for OllamaProvider {
                         Err(e) => {
                             return Some((
                                 Err(CortexError::provider(format!("invalid utf-8: {e}"))),
-                                (byte_stream, line_buffer),
+                                (byte_stream, line_buffer, seen_tool_calls),
                             ));
                         }
                     };
@@ -459,14 +640,15 @@ impl ProviderPort for OllamaProvider {
                     let complete_lines = Self::extract_complete_lines(&mut line_buffer);
 
                     // Parse each line into StreamChunk
-                    let chunks: Vec<Result<StreamChunk, CortexError>> = complete_lines
+                    let mut chunks: Vec<Result<StreamChunk, CortexError>> = complete_lines
                         .into_iter()
                         .filter_map(|line| Self::parse_line_to_chunk(line, &request_id))
                         .collect();
+                    seen_tool_calls = Self::track_tool_calls(&mut chunks, seen_tool_calls);
 
                     Some((
                         Ok(futures::stream::iter(chunks)),
-                        (byte_stream, line_buffer),
+                        (byte_stream, line_buffer, seen_tool_calls),
                     ))
                 }
             },
@@ -524,6 +706,42 @@ mod tests {
     }
 
     #[test]
+    fn fragmented_ndjson_preserves_thinking_tool_calls_and_finish_reason() {
+        let line = r#"{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"checking","tool_calls":[{"function":{"name":"lookup","arguments":{"key":"value"}}}]},"done":true,"done_reason":"length"}"#;
+        let mut buffer = String::new();
+        let mut lines = Vec::new();
+        for fragment in line.as_bytes().chunks(11) {
+            buffer.push_str(std::str::from_utf8(fragment).unwrap());
+            lines.extend(OllamaProvider::extract_complete_lines(&mut buffer));
+        }
+        buffer.push('\n');
+        lines.extend(OllamaProvider::extract_complete_lines(&mut buffer));
+
+        assert_eq!(lines.len(), 1);
+        let chunk = OllamaProvider::parse_line_to_chunk(
+            lines.pop().unwrap(),
+            &shared_kernel::RequestId::new(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(chunk.thinking.as_deref(), Some("checking"));
+        assert_eq!(chunk.tool_calls[0].function.name.as_deref(), Some("lookup"));
+        assert_eq!(chunk.finish_reason, Some(rook_core::FinishReason::Length));
+    }
+
+    #[test]
+    fn unknown_ollama_done_reason_is_not_reported_as_stop() {
+        let response: OllamaChatResponse = serde_json::from_value(serde_json::json!({
+            "model": "qwen3",
+            "message": {"role": "assistant", "content": ""},
+            "done": true,
+            "done_reason": "future_reason"
+        }))
+        .unwrap();
+        assert_eq!(OllamaProvider::finish_reason(&response), None);
+    }
+
+    #[test]
     fn test_extract_complete_lines_no_newline() {
         let mut buffer = "no newline".to_string();
         let lines = OllamaProvider::extract_complete_lines(&mut buffer);
@@ -557,5 +775,28 @@ mod tests {
     #[test]
     fn test_role_to_string_developer() {
         assert_eq!(role_to_string(rook_core::Role::Developer), "developer");
+    }
+}
+
+#[cfg(test)]
+mod tool_call_finish_reason_tests {
+    use super::*;
+
+    #[test]
+    fn absent_done_reason_with_tool_calls_reports_tool_calls() {
+        let response: OllamaChatResponse = serde_json::from_value(serde_json::json!({
+            "model": "qwen3",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "lookup", "arguments": {}}}]
+            },
+            "done": true
+        }))
+        .unwrap();
+        assert_eq!(
+            OllamaProvider::finish_reason(&response),
+            Some(rook_core::FinishReason::ToolCalls)
+        );
     }
 }

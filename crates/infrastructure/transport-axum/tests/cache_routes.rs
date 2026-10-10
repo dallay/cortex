@@ -27,6 +27,9 @@ fn make_response(content: &str) -> CompletionResponse {
         provider: ProviderId::new("openai"),
         content: content.to_string(),
         content_blocks: vec![MessageContent::Text(content.to_string())],
+        thinking: None,
+        tool_calls: vec![],
+        finish_reason: None,
         usage: TokenUsage {
             prompt_tokens: 10,
             completion_tokens: 20,

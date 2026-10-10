@@ -352,6 +352,9 @@ mod tests {
             model: ModelId::new("test-model"),
             content: content.into(),
             content_blocks: vec![rook_core::MessageContent::Text(content.to_string())],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
             usage: TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 20,

@@ -217,6 +217,7 @@ impl GroqProvider {
             delta: choice
                 .and_then(|c| c.delta.content.clone())
                 .unwrap_or_default(),
+            thinking: None,
             tool_calls: vec![],
             finish_reason: choice
                 .and_then(|c| c.finish_reason.as_deref())
@@ -388,6 +389,9 @@ impl ProviderPort for GroqProvider {
             content_blocks: vec![rook_core::MessageContent::Text(
                 choice.message.content.clone(),
             )],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: Self::map_finish_reason(&choice.finish_reason),
             usage: TokenUsage {
                 prompt_tokens: groq_resp.usage.prompt_tokens,
                 completion_tokens: groq_resp.usage.completion_tokens,
