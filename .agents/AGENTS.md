@@ -10,9 +10,10 @@
 - **Task runner**: `just` (workspace root)
 - **Git hooks**: `lefthook` — install via `npx lefthook@latest install`
 - **Package manager**: `pnpm` (Node.js side, e.g. dashboard)
-- **MCP servers**: filesystem only in `opencode.json`. For SAST scanning, use
-  the `semgrep_scan` and `semgrep_supply_chain` tools directly — no repo-local
-  Semgrep config required.
+- **MCP servers**: configured in `.agents/agentsync.toml` under
+  `[mcp_servers]`. For SAST scanning, use the `semgrep_scan` and
+  `semgrep_supply_chain` tools directly — no repo-local Semgrep config
+  required.
 
 ## Safety — Code Generation
 

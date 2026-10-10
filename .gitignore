@@ -39,6 +39,7 @@ Thumbs.db
 # === Runtime indexes ===
 .codegraph/
 
+/.agents/rpi/
 # START AI Agent Symlinks
 .agent/commands
 .agent/commands.bak
@@ -87,4 +88,3 @@ Thumbs.db
 /GEMINI.md.bak
 /opencode.json
 # END AI Agent Symlinks
-/.agents/rpi/
