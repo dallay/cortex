@@ -9,7 +9,6 @@ const props = defineProps<{
 
 <template>
   <li
-    role="listitem"
     data-slot="breadcrumb-item"
     :class="cn('inline-flex items-center gap-1.5', props.class)"
   >

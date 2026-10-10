@@ -1,10 +1,300 @@
 // Integration tests for the rook DI container and provider builder
 
-use rook::di::build_provider_from_connection;
-use rook_core::{ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
+use std::sync::Arc;
+
+use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
+use rook::di::{
+    build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
+    build_rate_limiter_config,
+};
+use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
+}
+
+fn minimal_config_toml(extra: &str) -> String {
+    format!(
+        r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 60
+
+{extra}
+"#
+    )
+}
+
+fn cache_config_toml(enabled: bool) -> String {
+    format!(
+        r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = {enabled}
+ttl_secs = 60
+max_entries = 100
+"#
+    )
+}
+
+#[tokio::test]
+async fn build_cache_port_returns_in_memory_cache_when_enabled() {
+    let config: RookConfig = toml::from_str(&cache_config_toml(true)).expect("config parses");
+    let cache = build_cache_port(&config);
+
+    let result = cache.stats().await;
+    assert!(result.is_ok(), "in-memory cache should be functional");
+}
+
+#[tokio::test]
+async fn build_cache_port_returns_noop_cache_when_disabled() {
+    let config: RookConfig = toml::from_str(&cache_config_toml(false)).expect("config parses");
+    let cache = build_cache_port(&config);
+
+    let result = cache.stats().await;
+    assert!(result.is_ok(), "no-op cache should be functional too");
+}
+
+#[test]
+fn build_rate_limiter_config_maps_tiers_correctly() {
+    use std::collections::HashMap;
+
+    let mut tiers = HashMap::new();
+    tiers.insert(
+        ApiKeyTier::Free,
+        TierConfig {
+            requests_per_minute: 60,
+            requests_per_day: Some(500),
+            tokens_per_minute: Some(5000),
+        },
+    );
+    tiers.insert(
+        ApiKeyTier::Pro,
+        TierConfig {
+            requests_per_minute: 600,
+            requests_per_day: Some(5000),
+            tokens_per_minute: Some(50000),
+        },
+    );
+
+    let cfg = RateLimiterConfig {
+        enabled: true,
+        default_tier: ApiKeyTier::Free,
+        tiers,
+        ip_limits: Default::default(),
+    };
+
+    let result = build_rate_limiter_config(&cfg);
+
+    assert!(result.enabled);
+    assert_eq!(result.default_tier, ApiKeyTier::Free);
+    assert_eq!(result.tiers.len(), 2);
+
+    let free_tier = result
+        .tiers
+        .get(&ApiKeyTier::Free)
+        .expect("Free tier exists");
+    assert_eq!(free_tier.requests_per_minute, 60);
+    assert_eq!(free_tier.requests_per_day, Some(500));
+    assert_eq!(free_tier.tokens_per_minute, Some(5000));
+
+    let pro_tier = result.tiers.get(&ApiKeyTier::Pro).expect("Pro tier exists");
+    assert_eq!(pro_tier.requests_per_minute, 600);
+}
+
+#[test]
+fn build_rate_limiter_config_disabled() {
+    use std::collections::HashMap;
+
+    let cfg = RateLimiterConfig {
+        enabled: false,
+        default_tier: ApiKeyTier::Free,
+        tiers: HashMap::new(),
+        ip_limits: Default::default(),
+    };
+
+    let result = build_rate_limiter_config(&cfg);
+
+    assert!(!result.enabled);
+}
+
+// Mocks for build_api_key_auth and build_manage_connections tests
+mod api_key_auth_mocks {
+    use async_trait::async_trait;
+    use rook_core::{ProviderId, ProviderPort, RegistryError};
+    use std::sync::Arc;
+
+    // FakeProviderRepository for build_manage_connections test
+    pub struct FakeProviderRepository;
+
+    #[async_trait]
+    impl rook_core::ProviderRepositoryPort for FakeProviderRepository {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find(
+            &self,
+            _id: &rook_core::ConnectionId,
+        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(None)
+        }
+
+        async fn create(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+            _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _id: &rook_core::ConnectionId,
+        ) -> Result<(), rook_core::RepositoryError> {
+            Ok(())
+        }
+    }
+
+    pub struct FakeProviderRegistry;
+
+    impl rook_core::ProviderRegistryPort for FakeProviderRegistry {
+        fn providers(&self) -> Vec<ProviderId> {
+            vec![]
+        }
+
+        fn get(&self, _id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+            None
+        }
+
+        fn replace_all(&self, _providers: Vec<Arc<dyn ProviderPort>>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn upsert(&self, _provider: Arc<dyn ProviderPort>) -> Result<(), RegistryError> {
+            Ok(())
+        }
+
+        fn remove(&self, _id: &ProviderId) -> Result<(), RegistryError> {
+            Ok(())
+        }
+    }
+}
+
+use api_key_auth_mocks::{FakeProviderRegistry, FakeProviderRepository};
+use cortex_test_support::FakeApiKeyRepository;
+
+#[test]
+fn build_api_key_auth_disabled_returns_none() {
+    let config: RookConfig =
+        toml::from_str(&minimal_config_toml("[auth.api_keys]\nenabled = false"))
+            .expect("config parses");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let result = build_api_key_auth(&config, &repo, &registry);
+
+    assert!(result.is_ok());
+    let (auth_api, manage_keys) = result.unwrap();
+    assert!(auth_api.is_none());
+    assert!(manage_keys.is_none());
+}
+
+#[test]
+fn build_api_key_auth_enabled_returns_some() {
+    // Use in-memory SQLite so resolve_api_key_secret generates a transient secret
+    // automatically without needing to mutate the process environment.
+    let config: RookConfig = toml::from_str(
+        r#"
+[server]
+host = "127.0.0.1"
+port = 0
+
+[routing]
+strategy = "priority"
+
+[cache]
+enabled = false
+ttl_secs = 60
+
+[auth.api_keys]
+enabled = true
+
+[database]
+db_path = ":memory:"
+
+[provider_crud]
+enabled = false
+
+[rate_limiting]
+enabled = false
+"#,
+    )
+    .expect("config parses");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let result = build_api_key_auth(&config, &repo, &registry);
+
+    assert!(result.is_ok());
+    let (auth_api, manage_keys) = result.unwrap();
+    assert!(auth_api.is_some());
+    assert!(manage_keys.is_some());
+}
+
+// Mock for ModelCatalogPort
+mod model_catalog_mock {
+    use async_trait::async_trait;
+    use rook_core::ModelCatalogEntry;
+
+    pub struct FakeModelCatalog;
+
+    #[async_trait]
+    impl rook_core::ModelCatalogPort for FakeModelCatalog {
+        async fn list(&self) -> Vec<ModelCatalogEntry> {
+            vec![]
+        }
+    }
+}
+
+use model_catalog_mock::FakeModelCatalog;
+
+#[test]
+fn build_manage_connections_disabled_returns_none() {
+    let config: RookConfig =
+        toml::from_str(&minimal_config_toml("[provider_crud]\nenabled = false"))
+            .expect("config parses");
+    let provider_repo: Arc<dyn rook_core::ProviderRepositoryPort> =
+        Arc::new(FakeProviderRepository);
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+    let model_catalog: Arc<dyn rook_core::ModelCatalogPort> = Arc::new(FakeModelCatalog);
+
+    let result = build_manage_connections(&config, &provider_repo, &registry, &model_catalog);
+
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none());
 }
 
 // T7.1 — DI wires usage recorder with nullable port

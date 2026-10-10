@@ -29,7 +29,7 @@ function saveApiSettings() {
 }
 
 function saveGeneralSettings() {
-  // TODO: call API to save settings
+  // NOTE: settings persistence will call the API once the backend endpoint lands.
 }
 </script>
 
@@ -49,11 +49,12 @@ function saveGeneralSettings() {
       </div>
       <div class="p-4 space-y-4">
         <div>
-          <label class="text-sm font-medium block mb-1.5">
+          <label for="settings-base-url" class="text-sm font-medium block mb-1.5">
             {{ t('settings.baseUrl') }}
           </label>
           <div class="flex gap-2">
             <Input
+              id="settings-base-url"
               v-model="settings.customBaseUrl"
               :placeholder="fullBaseUrl"
               class="flex-1"
@@ -65,10 +66,10 @@ function saveGeneralSettings() {
           </p>
         </div>
         <div>
-          <label class="text-sm font-medium block mb-1.5">
+          <label for="settings-port" class="text-sm font-medium block mb-1.5">
             {{ t('settings.port') }}
           </label>
-          <Input v-model="settings.port" class="w-32" />
+          <Input id="settings-port" v-model="settings.port" class="w-32" />
         </div>
       </div>
     </section>
@@ -82,10 +83,11 @@ function saveGeneralSettings() {
       <div class="p-4 space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <label class="text-sm font-medium block">{{ t('settings.auditLog') }}</label>
+            <label for="settings-audit-log" class="text-sm font-medium block">{{ t('settings.auditLog') }}</label>
             <p class="text-xs text-muted-foreground">{{ t('settings.auditLogDescription') }}</p>
           </div>
           <input
+            id="settings-audit-log"
             type="checkbox"
             v-model="settings.enableAuditLog"
             class="h-4 w-4 rounded border-input"
@@ -93,10 +95,11 @@ function saveGeneralSettings() {
         </div>
         <div class="flex items-center justify-between">
           <div>
-            <label class="text-sm font-medium block">{{ t('settings.metrics') }}</label>
+            <label for="settings-metrics" class="text-sm font-medium block">{{ t('settings.metrics') }}</label>
             <p class="text-xs text-muted-foreground">{{ t('settings.metricsDescription') }}</p>
           </div>
           <input
+            id="settings-metrics"
             type="checkbox"
             v-model="settings.enableMetrics"
             class="h-4 w-4 rounded border-input"
@@ -113,10 +116,11 @@ function saveGeneralSettings() {
       </div>
       <div class="p-4 space-y-4">
         <div>
-          <label class="text-sm font-medium block mb-1.5">
+          <label for="settings-log-level" class="text-sm font-medium block mb-1.5">
             {{ t('settings.logLevel') }}
           </label>
           <select
+            id="settings-log-level"
             v-model="settings.logLevel"
             class="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
           >
@@ -127,10 +131,10 @@ function saveGeneralSettings() {
           </select>
         </div>
         <div>
-          <label class="text-sm font-medium block mb-1.5">
+          <label for="settings-max-concurrent" class="text-sm font-medium block mb-1.5">
             {{ t('settings.maxConcurrent') }}
           </label>
-          <Input v-model.number="settings.maxConcurrentRequests" type="number" class="w-32" />
+          <Input id="settings-max-concurrent" v-model.number="settings.maxConcurrentRequests" type="number" class="w-32" />
         </div>
         <div class="pt-2">
           <Button @click="saveGeneralSettings">{{ t('common.save') }}</Button>
