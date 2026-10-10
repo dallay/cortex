@@ -1,10 +1,10 @@
 //! Declarative, generation-scoped contributions: no input, callbacks or approvals.
 use crate::contributions_id;
+use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext},
     AgentError, CancellationToken, Result,
 };
-use async_trait::async_trait;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

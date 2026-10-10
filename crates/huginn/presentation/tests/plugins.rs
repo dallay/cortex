@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, State, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, EventSink, LoopService, Result, Session,
@@ -6,7 +7,6 @@ use huginn_presentation::{
     contributions::{Contributions, ConversationPlugin},
     contributions_id, presentation_id, PresentationService, RatatuiPlugin,
 };
-use async_trait::async_trait;
 use std::sync::Arc;
 
 struct EmptyLoop;

@@ -3,7 +3,6 @@ use crate::{
     state::{safe, Editor, Ui},
     Connection, Presentation,
 };
-use huginn_core::{AgentError, CancellationToken, Result, Session};
 use async_trait::async_trait;
 use crossterm::{
     cursor::Show,
@@ -13,6 +12,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+use huginn_core::{AgentError, CancellationToken, Result, Session};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},

@@ -1,9 +1,9 @@
 //! Deterministic state projection and UTF-8 composer, independent of terminal I/O.
 use crate::{contributions::Contributions, Interaction};
+use async_trait::async_trait;
 use huginn_core::{
     ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, Result, Session,
 };
-use async_trait::async_trait;
 use std::{
     collections::BTreeSet,
     sync::{Arc, Mutex, MutexGuard},

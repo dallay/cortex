@@ -3,12 +3,12 @@ pub mod contributions;
 pub mod state;
 mod terminal;
 
+use async_trait::async_trait;
+use contributions::Contributions;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     ApprovalPolicy, CancellationToken, EventSink, Result, Session,
 };
-use async_trait::async_trait;
-use contributions::Contributions;
 use std::{collections::BTreeSet, sync::Arc};
 
 pub fn presentation_id() -> ServiceId {

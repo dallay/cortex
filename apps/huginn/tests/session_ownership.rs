@@ -52,6 +52,10 @@ fn two_huginn_processes_contend_for_same_session_but_not_other_sessions() {
     owner_command.arg(workspace.path());
     owner_command.arg("--db");
     owner_command.arg(&db);
+    // The lease-contention intent needs the deterministic line adapter and
+    // its `huginn> ` prompt; default interactive resume owns the TTY with
+    // the Ratatui plugin instead.
+    owner_command.arg("--line-mode");
     owner_command.arg("resume");
     owner_command.arg(id.to_string());
     let mut owner = pair

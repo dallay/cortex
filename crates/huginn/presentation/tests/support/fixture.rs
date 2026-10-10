@@ -1,4 +1,5 @@
 //! Fault/stream fixture compiled only with the explicit test-driver feature.
+use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, LoopService, Message, Result,
@@ -7,7 +8,6 @@ use huginn_core::{
 use huginn_presentation::{
     contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
 };
-use async_trait::async_trait;
 use std::{sync::Arc, time::Duration};
 
 struct Engine;
