@@ -781,6 +781,18 @@ async fn complete_supports_all_roles() {
 
     let res = provider.complete(&req).await;
     assert!(res.is_ok());
+
+    let requests = server.received_requests().await.expect("requests recorded");
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value =
+        serde_json::from_slice(&requests[0].body).expect("completion request is JSON");
+    let roles: Vec<_> = body["messages"]
+        .as_array()
+        .expect("messages is an array")
+        .iter()
+        .map(|message| message["role"].as_str().expect("role is a string"))
+        .collect();
+    assert_eq!(roles, ["system", "user", "assistant", "developer"]);
 }
 
 #[tokio::test]

@@ -495,7 +495,11 @@ async fn stream_returns_chunks_on_success() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
-            "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n"
+            concat!(
+                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+                "data: [DONE]\n\n",
+            )
         ))
         .mount(&server)
         .await;
@@ -519,23 +523,41 @@ async fn stream_returns_chunks_on_success() {
         .collect::<Result<Vec<_>, _>>()
         .expect("chunks parse");
 
+    assert_eq!(chunks.len(), 2);
     assert_eq!(
         chunks
             .iter()
             .map(|chunk| chunk.delta.as_str())
             .collect::<String>(),
-        "Hello"
+        "Hello world"
     );
 }
 
 #[tokio::test]
 async fn stream_parses_all_finish_reasons() {
     let server = wiremock::MockServer::start().await;
+    let expected_reasons = [
+        ("stop", rook_core::FinishReason::Stop),
+        ("length", rook_core::FinishReason::Length),
+        ("content_filter", rook_core::FinishReason::ContentFilter),
+        ("tool_calls", rook_core::FinishReason::ToolCalls),
+    ];
+    let body = expected_reasons
+        .iter()
+        .map(|(reason, _)| {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "id": "1",
+                    "model": "m",
+                    "choices": [{"delta": {"content": "a"}, "finish_reason": reason}]
+                })
+            )
+        })
+        .collect::<String>();
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
-            "data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"a\"},\"finish_reason\":\"length\"}]}\n\n"
-        ))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
         .mount(&server)
         .await;
 
@@ -558,10 +580,10 @@ async fn stream_parses_all_finish_reasons() {
         .collect::<Result<Vec<_>, _>>()
         .expect("chunks parse");
 
-    assert_eq!(
-        chunks[0].finish_reason,
-        Some(rook_core::FinishReason::Length)
-    );
+    assert_eq!(chunks.len(), expected_reasons.len());
+    for (chunk, (_, expected)) in chunks.iter().zip(expected_reasons) {
+        assert_eq!(chunk.finish_reason, Some(expected));
+    }
 }
 
 #[tokio::test]
