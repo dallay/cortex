@@ -773,6 +773,30 @@ fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
     })
 }
 
+/// Middleware that rejects requests lacking the `admin` scope in the trusted
+/// `x-authz-auth-scopes` header stamped by the authz middleware.
+/// Apply this as a layer on route groups that require administrator access.
+pub async fn require_admin(request: Request, next: Next) -> Response {
+    let has_admin = request
+        .headers()
+        .get("x-authz-auth-scopes")
+        .and_then(|v| v.to_str().ok())
+        .map(|scopes| scopes.split(',').any(|s| s.trim() == "admin"))
+        .unwrap_or(false);
+
+    if !has_admin {
+        let body = serde_json::json!({
+            "error": {
+                "code": "INSUFFICIENT_SCOPE",
+                "message": "Admin scope required"
+            }
+        });
+        return (StatusCode::FORBIDDEN, Json(body)).into_response();
+    }
+
+    next.run(request).await
+}
+
 pub fn extract_api_key_id(req: &Request) -> Option<ApiKeyId> {
     extract_api_key_id_from_headers(req.headers())
 }
