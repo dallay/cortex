@@ -17,7 +17,6 @@ const resultKeys = {
   'gitleaks-pr': 'GITLEAKS_PR',
   'semgrep-pr': 'SEMGREP_PR',
   sonar: 'SONAR',
-  'test-ci-policy': 'TEST_CI_POLICY',
 };
 const outputKeys = {
   backend: 'CHANGES_BACKEND',
