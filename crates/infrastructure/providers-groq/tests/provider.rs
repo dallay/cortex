@@ -291,7 +291,10 @@ async fn provider_metadata_and_availability() {
     .unwrap();
 
     assert_eq!(provider.id().as_str(), "groq-test");
-    assert_eq!(provider.supported_models(), &[ModelId::new("llama-3.3-70b")]);
+    assert_eq!(
+        provider.supported_models(),
+        &[ModelId::new("llama-3.3-70b")]
+    );
     assert_eq!(provider.api_format(), rook_core::ApiFormat::OpenAI);
     assert!(provider.is_available());
 
@@ -399,7 +402,10 @@ async fn complete_maps_http_errors_properly() {
 
     let res = provider.complete(&test_request(false)).await;
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("authentication failed"));
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("authentication failed"));
 }
 
 #[tokio::test]
@@ -552,7 +558,10 @@ async fn stream_parses_all_finish_reasons() {
         .collect::<Result<Vec<_>, _>>()
         .expect("chunks parse");
 
-    assert_eq!(chunks[0].finish_reason, Some(rook_core::FinishReason::Length));
+    assert_eq!(
+        chunks[0].finish_reason,
+        Some(rook_core::FinishReason::Length)
+    );
 }
 
 #[tokio::test]
@@ -634,7 +643,9 @@ async fn stream_returns_error_on_malformed_json_event() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("data: {invalid json}\n\n"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string("data: {invalid json}\n\n"),
+        )
         .mount(&server)
         .await;
 
