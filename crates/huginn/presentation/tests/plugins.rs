@@ -207,7 +207,7 @@ async fn unload_invalidates_command_renderer_and_old_presentation_generation() {
     assert!(registry.command("/help").is_none());
     assert!(presentation
         .0
-        .open(&Session::new(".".into()), Default::default())
+        .open(&Session::new(".".into()))
         .await
         .is_err());
     supervisor.shutdown().await;

@@ -4,17 +4,13 @@ mod terminal;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use config::Config;
-use huginn_core::{CancellationToken, LoopService, ModelProvider, Session, SessionStore};
+use huginn_application::authorization::HostPolicy;
+use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
 use huginn_runtime::{
-    composition,
-    loop_engine::LoopConfig,
-    mcp::McpClients,
-    model::{MockProvider, OpenAiProvider},
-    sessions::SqliteSessions,
-    tools::Registry,
+    composition, loop_engine::LoopConfig, mcp, sessions::SqliteSessions, tools::Registry,
 };
 use std::{collections::BTreeSet, io::Write, path::PathBuf, sync::Arc};
-use terminal::{Input, Output, Policy};
+use terminal::{Input, LinePrompt, Output};
 
 #[derive(Parser)]
 #[command(name = "huginn", version, about = "Huginn, the Cortex coding agent")]
@@ -25,7 +21,7 @@ struct Cli {
     workspace: Option<PathBuf>,
     #[arg(long, global = true)]
     db: Option<PathBuf>,
-    #[arg(long,global=true,value_parser=["openai","mock"])]
+    #[arg(long, global = true)]
     provider: Option<String>,
     #[arg(long, global = true)]
     base_url: Option<String>,
@@ -155,36 +151,14 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let policy = Policy::new(
-        input.clone(),
-        cli.allow.into_iter().collect::<BTreeSet<_>>(),
-    );
+    let allowed = cli.allow.into_iter().collect::<BTreeSet<_>>();
+    let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
+    let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
     let output = Output { json: cli.json };
-    let model: Arc<dyn ModelProvider> = if config.provider == "mock" {
-        Arc::new(MockProvider)
-    } else {
-        let key = match config
-            .api_key_env
-            .as_deref()
-            .filter(|name| !name.is_empty())
-        {
-            Some(name) => Some(
-                config
-                    .resolve_api_key()?
-                    .with_context(|| format!("credential environment variable {name} is unset"))?,
-            ),
-            None => None,
-        };
-        Arc::new(OpenAiProvider::new(
-            config.base_url.as_deref().context("base_url is required")?,
-            config.model.clone().context("model is required")?,
-            key,
-            config.timeout_secs,
-        )?)
-    };
-    let registry = Arc::new(Registry::native(config.tool_timeout_secs)?);
+    let model = config.create_model()?;
+    let registry = Registry::default();
     let startup = CancellationToken::new();
-    let mut supervisor = composition::build(
+    let mut supervisor = composition::build_native(
         model.clone(),
         registry.clone(),
         sessions.clone(),
@@ -193,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             context_tokens: config.context_tokens,
             max_output_tokens: config.max_output_tokens,
         },
+        config.tool_timeout_secs,
     )
     .await?;
     if is_doctor {
@@ -219,31 +194,25 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if tui {
-        let result = tui_chat(
-            &config,
-            &registry,
-            &mut session,
-            &mut supervisor,
-            policy.allowed.clone(),
-        )
-        .await;
+        let result = tui_chat(&config, &mut session, &mut supervisor, allowed).await;
         supervisor.shutdown().await;
         return result;
     }
-    let mut mcp = Some(
-        interruptible(
-            startup.clone(),
-            McpClients::connect(
-                &config.mcp,
-                &session.workspace,
-                &registry,
-                &policy,
-                startup.clone(),
-                config.tool_timeout_secs,
-            ),
-        )
-        .await?,
-    );
+    if let Err(error) = mcp::register_plugins(
+        &mut supervisor,
+        &config.mcp,
+        &session.workspace,
+        policy.clone(),
+        startup.clone(),
+        config.tool_timeout_secs,
+    ) {
+        supervisor.shutdown().await;
+        return Err(error.into());
+    }
+    if let Err(error) = interruptible(startup, supervisor.start()).await {
+        supervisor.shutdown().await;
+        return Err(error.into());
+    }
     let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
     if !cli.json {
         eprintln!(
@@ -257,13 +226,13 @@ async fn main() -> anyhow::Result<()> {
     }
     let result = async {
         if let Some(prompt) = prompt {
-            policy.reset_turn();
+            prompt_adapter.reset_turn();
             let cancel = CancellationToken::new();
             return interruptible(
                 cancel.clone(),
                 implementation
                     .0
-                    .run(&mut session, prompt, &policy, &output, cancel),
+                    .run(&mut session, prompt, policy.as_ref(), &output, cancel),
             )
             .await
             .map_err(anyhow::Error::from);
@@ -304,13 +273,13 @@ async fn main() -> anyhow::Result<()> {
                 }
                 continue;
             }
-            policy.reset_turn();
+            prompt_adapter.reset_turn();
             let cancel = CancellationToken::new();
             if let Err(error) = interruptible(
                 cancel.clone(),
                 implementation
                     .0
-                    .run(&mut session, line, &policy, &output, cancel),
+                    .run(&mut session, line, policy.as_ref(), &output, cancel),
             )
             .await
             {
@@ -322,9 +291,6 @@ async fn main() -> anyhow::Result<()> {
     .await;
     drop(implementation);
     supervisor.shutdown().await;
-    if let Some(clients) = &mut mcp {
-        clients.shutdown().await?;
-    }
     result
 }
 
@@ -370,7 +336,6 @@ async fn run_compact(
 
 async fn tui_chat(
     config: &Config,
-    registry: &Arc<Registry>,
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
@@ -382,26 +347,14 @@ async fn tui_chat(
     supervisor.register(Box::new(ConversationPlugin::default()))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
-    let connection = presentation.0.open(session, allowed).await?;
+    let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
-    let mut mcp = None;
+    let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
         ui.begin(startup.clone());
-        mcp = Some(
-            interruptible(
-                startup.clone(),
-                McpClients::connect(
-                    &config.mcp,
-                    &session.workspace,
-                    registry,
-                    ui.as_ref(),
-                    startup,
-                    config.tool_timeout_secs,
-                ),
-            )
-            .await?,
-        );
+        mcp::register_plugins(supervisor, &config.mcp, &session.workspace, policy.clone(), startup.clone(), config.tool_timeout_secs)?;
+        interruptible(startup, supervisor.start()).await?;
         ui.synchronize(session);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
@@ -413,7 +366,7 @@ async fn tui_chat(
                     action: "session.compact".into(),
                     preview: "Older history will be summarized by the model. Original messages stay in the database. No effects are replayed.".into(),
                 };
-                match ui.approve(&request, cancel.clone()).await {
+                match policy.approve(&request, cancel.clone()).await {
                     Ok(true) => {
                         interruptible(
                             cancel.clone(),
@@ -432,7 +385,7 @@ async fn tui_chat(
                     cancel.clone(),
                     implementation
                         .0
-                        .run(session, prompt, ui.as_ref(), ui.as_ref(), cancel),
+                        .run(session, prompt, policy.as_ref(), ui.as_ref(), cancel),
                 )
                 .await
             };
@@ -446,9 +399,6 @@ async fn tui_chat(
     .await;
     // Restore the TTY before any shutdown error can be printed by the host.
     let restored = connection.finish().await;
-    if let Some(clients) = &mut mcp {
-        clients.shutdown().await?;
-    }
     result?;
     restored?;
     Ok(())

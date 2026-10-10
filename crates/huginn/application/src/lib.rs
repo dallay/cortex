@@ -1,0 +1,5 @@
+//! Agent use cases and trusted authorization policy; depends only on inward ports.
+pub mod authorization;
+pub mod composition;
+pub mod loop_engine;
+pub mod output;

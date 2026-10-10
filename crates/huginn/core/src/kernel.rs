@@ -46,6 +46,8 @@ pub struct PluginContext {
     staged: Services,
     pub cancellation: CancellationToken,
     tasks: Vec<JoinHandle<()>>,
+    resources: Vec<Box<dyn Any + Send + Sync>>,
+    commits: Vec<Box<dyn FnOnce() + Send + Sync>>,
 }
 impl PluginContext {
     /// Supervisor-assigned identity for generation-owned registrations.
@@ -74,8 +76,18 @@ impl PluginContext {
     pub fn own_task(&mut self, task: JoinHandle<()>) {
         self.tasks.push(task);
     }
+    /// Dispose an owned registration even when activation fails before deactivate.
+    pub fn own_resource<T: Any + Send + Sync>(&mut self, resource: T) {
+        self.resources.push(Box::new(resource));
+    }
+    /// Publish adapter registrations only after activation and manifest validation succeed.
+    pub fn on_commit(&mut self, publish: impl FnOnce() + Send + Sync + 'static) {
+        self.commits.push(Box::new(publish));
+    }
     async fn cleanup(&mut self) {
         self.cancellation.cancel();
+        self.commits.clear();
+        self.resources.clear();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         for mut task in self.tasks.drain(..) {
             if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
@@ -227,6 +239,8 @@ impl Supervisor {
                     staged: BTreeMap::new(),
                     cancellation: CancellationToken::new(),
                     tasks: vec![],
+                    resources: vec![],
+                    commits: vec![],
                 };
                 let result = e.plugin.activate(&mut ctx).await.and_then(|()| {
                     let declared: BTreeSet<_> =
@@ -242,6 +256,9 @@ impl Supervisor {
                 });
                 match result {
                     Ok(()) => {
+                        for publish in ctx.commits.drain(..) {
+                            publish();
+                        }
                         self.services.extend(ctx.staged.clone());
                         e.context = Some(ctx);
                         e.diagnostic.state = State::Active;

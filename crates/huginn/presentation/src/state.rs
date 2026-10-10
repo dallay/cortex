@@ -1,14 +1,11 @@
 //! Deterministic state projection and UTF-8 composer, independent of terminal I/O.
+use crate::approval::{approval_header, effect_line};
 use crate::{contributions::Contributions, Interaction};
 use async_trait::async_trait;
 use huginn_core::{
-    approval::{approval_header, effect_line},
-    ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, Result, Session,
+    ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Result, Session,
 };
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{mpsc, oneshot, Notify};
 
 pub fn safe(text: &str) -> String {
@@ -229,14 +226,12 @@ pub struct Ui {
     pub dirty: Notify,
     pub stop: CancellationToken,
     pub contributions: Arc<Contributions>,
-    allowed: BTreeSet<String>,
     requests: tokio::sync::Mutex<()>,
     prompts: tokio::sync::Mutex<mpsc::Receiver<String>>,
 }
 impl Ui {
     pub fn new(
         session: &Session,
-        allowed: BTreeSet<String>,
         contributions: Arc<Contributions>,
         stop: CancellationToken,
     ) -> (Arc<Self>, mpsc::Sender<String>) {
@@ -256,7 +251,6 @@ impl Ui {
             dirty: Notify::new(),
             stop,
             contributions,
-            allowed,
             requests: tokio::sync::Mutex::new(()),
             prompts: tokio::sync::Mutex::new(receiver),
         });
@@ -294,8 +288,23 @@ impl EventSink for Ui {
     }
 }
 #[async_trait]
-impl ApprovalPolicy for Ui {
-    async fn approve(&self, request: &ApprovalRequest, cancel: CancellationToken) -> Result<bool> {
+impl ApprovalPrompt for Ui {
+    fn is_available(&self) -> bool {
+        !self.stop.is_cancelled()
+    }
+    fn granted(&self, request: &ApprovalRequest) {
+        self.lock().approvals_this_turn += 1;
+        self.notice(format!(
+            "Authorized by --allow: {}\n{}",
+            safe(&request.action),
+            safe(&request.preview)
+        ));
+    }
+    async fn request_decision(
+        &self,
+        request: &ApprovalRequest,
+        cancel: CancellationToken,
+    ) -> Result<bool> {
         let _serial = tokio::select! {
             _ = cancel.cancelled() => return Err(huginn_core::AgentError::Cancelled),
             _ = self.stop.cancelled() => return Err(huginn_core::AgentError::Cancelled),
@@ -304,21 +313,12 @@ impl ApprovalPolicy for Ui {
         if cancel.is_cancelled() || self.stop.is_cancelled() {
             return Err(huginn_core::AgentError::Cancelled);
         }
-        // Per-turn counter, taken before the --allow short-circuit exactly
-        // like the line adapter policy so numbering matches across adapters.
+        // Count prompts and explicit host grants in the same per-turn sequence.
         let number = {
             let mut state = self.lock();
             state.approvals_this_turn += 1;
             state.approvals_this_turn
         };
-        if self.allowed.contains(&request.action) {
-            self.notice(format!(
-                "Authorized by --allow: {}\n{}",
-                safe(&request.action),
-                safe(&request.preview)
-            ));
-            return Ok(true);
-        }
         let (sender, receiver) = oneshot::channel();
         let epoch = {
             let mut state = self.lock();

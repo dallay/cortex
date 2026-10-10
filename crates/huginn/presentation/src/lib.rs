@@ -1,4 +1,5 @@
 //! Replaceable presentation capability. Terminal APIs stay inside this crate.
+pub mod approval;
 pub mod contributions;
 pub mod state;
 mod terminal;
@@ -7,9 +8,9 @@ use async_trait::async_trait;
 use contributions::Contributions;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
-    ApprovalPolicy, CancellationToken, EventSink, Result, Session,
+    ApprovalPrompt, CancellationToken, EventSink, Result, Session,
 };
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 pub fn presentation_id() -> ServiceId {
     ServiceId::new("agent:presentation", 1)
@@ -18,9 +19,9 @@ pub fn contributions_id() -> ServiceId {
     ServiceId::new("agent:ui-contributions", 1)
 }
 
-/// Host-only interaction seam; contributions never receive this authority.
+/// Host-only interaction seam for user input; permission policy stays with the host.
 #[async_trait]
-pub trait Interaction: ApprovalPolicy + EventSink {
+pub trait Interaction: ApprovalPrompt + EventSink {
     async fn prompt(&self) -> Option<String>;
     fn begin(&self, cancel: CancellationToken);
     fn synchronize(&self, session: &Session);
@@ -29,7 +30,7 @@ pub trait Interaction: ApprovalPolicy + EventSink {
 
 #[async_trait]
 pub trait Presentation: Send + Sync {
-    async fn open(&self, session: &Session, allowed: BTreeSet<String>) -> Result<Connection>;
+    async fn open(&self, session: &Session) -> Result<Connection>;
 }
 pub struct PresentationService(pub Arc<dyn Presentation>);
 

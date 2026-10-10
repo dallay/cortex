@@ -1,4 +1,4 @@
-use crate::tools::{bounded_text, Registry};
+use crate::tools::{bounded_text, Registry, ToolLease};
 use async_trait::async_trait;
 use huginn_core::{
     AgentError, ApprovalPolicy, ApprovalRequest, CancellationToken, PreparedAction, Result, Tool,
@@ -29,6 +29,8 @@ type Client = RunningService<RoleClient, ()>;
 type SharedClient = Arc<tokio::sync::Mutex<Client>>;
 pub struct McpClients {
     clients: Vec<SharedClient>,
+    tools: Vec<Arc<dyn Tool>>,
+    leases: Vec<ToolLease>,
     cancellations: Vec<rmcp::service::RunningServiceCancellationToken>,
 }
 impl McpClients {
@@ -40,12 +42,31 @@ impl McpClients {
         cancel: CancellationToken,
         timeout_secs: u64,
     ) -> Result<Self> {
+        let mut clients = Self::discover(configs, workspace, policy, cancel, timeout_secs).await?;
+        match registry.batch(std::mem::take(&mut clients.tools)) {
+            Ok(leases) => clients.leases = leases,
+            Err(error) => {
+                let _ = clients.shutdown().await;
+                return Err(error);
+            }
+        }
+        Ok(clients)
+    }
+    async fn discover(
+        configs: &[ServerConfig],
+        workspace: &Path,
+        policy: &dyn ApprovalPolicy,
+        cancel: CancellationToken,
+        timeout_secs: u64,
+    ) -> Result<Self> {
         let mut clients = Self {
             clients: vec![],
             cancellations: vec![],
+            tools: vec![],
+            leases: vec![],
         };
         if let Err(error) = clients
-            .initialize(configs, workspace, registry, policy, cancel, timeout_secs)
+            .initialize(configs, workspace, policy, cancel, timeout_secs)
             .await
         {
             let _ = clients.shutdown().await;
@@ -57,7 +78,6 @@ impl McpClients {
         &mut self,
         configs: &[ServerConfig],
         workspace: &Path,
-        registry: &Registry,
         policy: &dyn ApprovalPolicy,
         cancel: CancellationToken,
         timeout_secs: u64,
@@ -131,7 +151,7 @@ impl McpClients {
                 if serde_json::to_vec(&schema)?.len() > 16_384 {
                     return Err(AgentError::Tool("MCP schema exceeds 16 KiB".into()));
                 }
-                registry.insert(Arc::new(McpTool {
+                self.tools.push(Arc::new(McpTool {
                     client: client.clone(),
                     remote_name: tool.name.to_string(),
                     definition: ToolDefinition {
@@ -146,12 +166,14 @@ impl McpClients {
                     },
                     action: format!("mcp.{}.{}", config.name, tool.name),
                     timeout_secs,
-                }))?;
+                }));
             }
         }
         Ok(())
     }
     pub async fn shutdown(&mut self) -> Result<()> {
+        self.leases.clear();
+        self.tools.clear();
         let mut failed = false;
         for token in self.cancellations.drain(..) {
             token.cancel();
@@ -257,4 +279,78 @@ impl Tool for McpTool {
         }
         Ok(text)
     }
+}
+
+/// Each server participates in the kernel lifecycle, including discovery rollback.
+pub struct McpPlugin {
+    pub config: ServerConfig,
+    pub workspace: std::path::PathBuf,
+    pub policy: Arc<dyn ApprovalPolicy>,
+    pub cancel: CancellationToken,
+    pub timeout_secs: u64,
+}
+#[async_trait]
+impl huginn_core::kernel::Plugin for McpPlugin {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: format!("mcp.{}", self.config.name),
+            provides: vec![],
+            requires: vec![crate::tools::registry_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        let registry = ctx.resolve::<Registry>(&crate::tools::registry_id())?;
+        let mut clients = McpClients::discover(
+            std::slice::from_ref(&self.config),
+            &self.workspace,
+            self.policy.as_ref(),
+            self.cancel.clone(),
+            self.timeout_secs,
+        )
+        .await?;
+        // Own clients before any fallible registration. Failed activation waits for shutdown too.
+        let tools = std::mem::take(&mut clients.tools);
+        let cancel = ctx.cancellation.clone();
+        ctx.own_task(tokio::spawn(async move {
+            cancel.cancelled().await;
+            let _ = clients.shutdown().await;
+        }));
+        registry.register_batch(ctx, tools)
+    }
+}
+/// The host supplies its policy; presentation is never an authorization service.
+pub fn register_plugins(
+    supervisor: &mut huginn_core::kernel::Supervisor,
+    configs: &[ServerConfig],
+    workspace: &Path,
+    policy: Arc<dyn ApprovalPolicy>,
+    cancel: CancellationToken,
+    timeout_secs: u64,
+) -> Result<()> {
+    let mut names = std::collections::BTreeSet::new();
+    for config in configs {
+        if config.name.is_empty()
+            || config.name.len() > 32
+            || !config
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || !names.insert(&config.name)
+        {
+            return Err(AgentError::Configuration(
+                "MCP names must be unique ASCII letters/digits/underscores, up to 32 characters"
+                    .into(),
+            ));
+        }
+    }
+    for config in configs {
+        supervisor.register(Box::new(McpPlugin {
+            config: config.clone(),
+            workspace: workspace.into(),
+            policy: policy.clone(),
+            cancel: cancel.clone(),
+            timeout_secs,
+        }))?;
+    }
+    Ok(())
 }

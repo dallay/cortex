@@ -1,5 +1,4 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
-pub mod approval;
 pub mod kernel;
 
 use async_trait::async_trait;
@@ -243,3 +242,24 @@ pub struct ModelService(pub Arc<dyn ModelProvider>);
 pub struct ToolsService(pub Arc<dyn ToolRegistry>);
 pub struct SessionsService(pub Arc<dyn SessionStore>);
 pub struct LoopService(pub Arc<dyn AgentLoop>);
+
+/// Workspace context supplied by a replaceable adapter.
+#[async_trait]
+pub trait InstructionSource: Send + Sync {
+    async fn load(&self, workspace: &std::path::Path) -> Result<String>;
+}
+pub struct InstructionsService(pub Arc<dyn InstructionSource>);
+
+/// Presentation collects a fresh user decision; it receives no permission grants.
+#[async_trait]
+pub trait ApprovalPrompt: Send + Sync {
+    fn is_available(&self) -> bool {
+        true
+    }
+    async fn request_decision(
+        &self,
+        request: &ApprovalRequest,
+        cancel: CancellationToken,
+    ) -> Result<bool>;
+    fn granted(&self, _request: &ApprovalRequest) {}
+}

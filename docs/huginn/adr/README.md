@@ -27,6 +27,7 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md) | SQLite, configuration and runtime contracts | Accepted |
 | [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted |
 | [ADR-0011](0011-huginn-product-naming.md) | Huginn product naming and identity | Accepted |
+| [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) | Hexagonal application and lifecycle-owned capabilities | Accepted |
 
 ## Record format
 

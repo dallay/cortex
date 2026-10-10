@@ -136,8 +136,11 @@ build-targets:
 huginn-run *args:
     cargo run -p huginn -- "$@"
 
-huginn-test:
-    cargo test -p huginn-core -p huginn-runtime -p huginn-presentation -p huginn --all-features
+huginn-architecture:
+    python3 .github/scripts/check-huginn-architecture.py
+
+huginn-test: huginn-architecture
+    cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn --all-features
 
 # Run the backend (rook) in dev mode
 run:
@@ -236,6 +239,7 @@ ci-clippy: (_ci-header "3/9 clippy...")
     @cargo clippy --workspace --all-targets -- -D warnings
 
 ci-check: (_ci-header "4/9 cargo check...")
+    @python3 .github/scripts/check-huginn-architecture.py
     @cargo check --workspace
 
 ci-test-rust: (_ci-header "5/9 cargo test (Rust)...")
@@ -288,7 +292,7 @@ ci-local:
     run_step "1/9 markdown-lint"   pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
     run_step "2/9 fmt-check"       cargo fmt --all -- --check
     run_step "3/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
-    run_step "4/9 cargo check"     cargo check --workspace
+    run_step "4/9 architecture + cargo check" bash -c 'python3 .github/scripts/check-huginn-architecture.py && cargo check --workspace'
     run_step "5/9 cargo test"      cargo test --workspace --all-features
     run_step "6/9 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
     run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'

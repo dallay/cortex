@@ -70,3 +70,15 @@ pub fn load(workspace: &Path) -> Result<String> {
     }
     Ok(output)
 }
+
+/// Filesystem adapter: blocking discovery never runs on the executor thread.
+pub struct FilesystemInstructions;
+#[async_trait::async_trait]
+impl huginn_core::InstructionSource for FilesystemInstructions {
+    async fn load(&self, workspace: &Path) -> Result<String> {
+        let workspace = workspace.to_path_buf();
+        tokio::task::spawn_blocking(move || load(&workspace))
+            .await
+            .map_err(|_| AgentError::Configuration("instruction loading failed".into()))?
+    }
+}

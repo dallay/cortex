@@ -6,6 +6,8 @@
 - Decision basis: Explicit product direction: build a Pi-inspired extensible agent harness with Ratatui from the outset of the next interactive implementation phase.
 - Supersedes: ADR-0004's decision to defer TUI and use a line-oriented CLI as the long-term primary interactive experience. Refines ADR-0003's timing of UI/plugin extension investment; does not replace its composition or lifecycle guarantees.
 
+**Subsequent implementation decision (2026-10-11):** [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) separates host authorization from presentation prompts and makes the inward dependency and tool lifecycle rules executable in CI.
+
 ## Context
 
 The original CLI-first MVP in ADR-0004 already exists. Its line-oriented input/output implementation demonstrated the agent loop, sessions, approvals and MCP integration, but using this UI as the foundation for further interactive features would couple future plugin contributions to an unsuitable presentation surface.

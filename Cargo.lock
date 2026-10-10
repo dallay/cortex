@@ -1509,6 +1509,7 @@ dependencies = [
  "async-trait",
  "clap",
  "dirs",
+ "huginn-application",
  "huginn-core",
  "huginn-presentation",
  "huginn-runtime",
@@ -1519,6 +1520,17 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+]
+
+[[package]]
+name = "huginn-application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "huginn-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1542,6 +1554,7 @@ dependencies = [
  "async-trait",
  "crossterm",
  "futures",
+ "huginn-application",
  "huginn-core",
  "portable-pty",
  "ratatui",
@@ -1560,6 +1573,7 @@ dependencies = [
  "bytes",
  "fs2",
  "futures",
+ "huginn-application",
  "huginn-core",
  "libc",
  "process-wrap",

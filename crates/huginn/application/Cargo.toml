@@ -1,0 +1,16 @@
+[package]
+name = "huginn-application"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+huginn-core = { path = "../core" }
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

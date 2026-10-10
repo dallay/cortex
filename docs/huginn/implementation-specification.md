@@ -5,11 +5,12 @@
 | Crate | Responsibility |
 | --- | --- |
 | `huginn-core` | Typed ports, events, session model and service composition kernel |
-| `huginn-runtime` | Standard loop, HTTP/SSE, native tools, SQLite, instructions and MCP |
+| `huginn-application` | Standard loop, context/compaction, output policy and trusted host authorization |
+| `huginn-runtime` | HTTP/SSE, native/MCP tool plugins, SQLite, filesystem instructions and adapter factories |
 | `huginn-presentation` | Replaceable presentation contract, Ratatui driver, UI state and scoped contributions |
 | `huginn` | Configuration, composition root, terminal approvals and CLI |
 
-The runtime and presentation depend on the core; the CLI composes them. None depends on Rook.
+The application depends only on core ports and general-purpose libraries; runtime adapters depend inward. The CLI composes the application, runtime and presentation. None depends on Rook. [ADR-0012](adr/0012-hexagonal-application-and-plugin-lifecycle.md) records the enforced boundaries and lifecycle rules.
 Ports use async traits and typed errors. ModelProvider yields a stream of deltas;
 AgentLoop accepts a session, prompt, approval policy, event sink and cancellation
 token. The standard loop is registered through LoopService, so another native
@@ -28,7 +29,7 @@ This section governs **new** interactive behavior. The first vertical slice is i
 - **Default selection:** `chat` and interactive `resume` select Ratatui when both stdin/stdout are TTYs, `TERM` is set and non-dumb, and the initial size is at least 20×8. Unsupported initialization fails with a recovery hint, never silently switches readers. `--line-mode` selects the explicit recovery adapter, including piped recovery input. `run`, `resume --prompt`, `sessions` and `doctor` do not open a presentation. `--json` preserves the existing line/NDJSON adapter and never opens Ratatui or emits ANSI UI output.
 - **Plugin model:** all non-kernel features, including view/prompt functionality, commands, tool-result renderers and status contributions, register through kernel-managed services. Contributions are declarative and host-rendered; registration and cleanup belong to the plugin generation. User-authored plugin extensibility is a roadmap requirement, but a public dynamic ABI is not implied by the first built-in implementation.
 - **Focus/input:** host owns raw mode, stdin, keymap context, modal priority and terminal restoration. The legacy `Input::new()` is never constructed for TUI mode. One Tokio driver uses bounded, zero-timeout Crossterm polling at 33 ms intervals; no competing EventStream reader runs during stock inline cursor queries. Modal paste/repeat events are ignored, queued input is drained before display, and a fresh unpredictable eight-hex-digit challenge is armed only after drawing. Enter with a missing/wrong code denies, as does Esc. No answer grants nothing.
-- **Approvals:** Both adapters implement the existing `ApprovalPolicy` only and derive numbering plus `Effect:` summaries from the shared `huginn-core::approval` model, so semantics cannot drift. Approval views show the complete authorized action/diff, distinguish pending vs decided, bind to the request ID and reject stale confirmations; only policy grants authority. Plugin views are never authorities. The line adapter confirms with one-time yes/no; the TUI modal requires typing a fresh unpredictable code.
+- **Approvals:** Both adapters implement `ApprovalPrompt`; the application-owned `HostPolicy` implements `ApprovalPolicy` and applies exact invocation grants. Presentation never receives `--allow`. Shared numbering and `Effect:` summaries live in `huginn-presentation::approval`. Approval views show the complete authorized action/diff, distinguish pending vs decided, bind to the request ID and reject stale confirmations; only policy grants authority. Plugin views are never authorities. The line adapter confirms with one-time yes/no; the TUI modal requires typing a fresh unpredictable code.
 - **Streaming state:** `EventSink::emit` remains synchronous; it synchronously projects typed events into TUI-owned state with short critical sections and emits a coalesced dirty-frame signal. Token deltas fold into the mutable `tail`; the retained event log keeps only non-text authoritative transitions, so there is no unbounded token-to-frame queue. Renderers read snapshots. Persisted session messages and permissions are authoritative, unfinished tokens are ephemeral, and tool/approval transitions must not be silently dropped. If this contract proves inadequate, evolve `EventSink` explicitly with tests rather than hide overload losses.
 - **Scrollback:** preserve native history semantics. Keep mutable Markdown blocks/tables/code fences in a streaming tail until safe to commit; once committed, do not duplicate them on resize. PTY tests must cover cursor query races and Windows/SSH/tmux claims separately.
 - **Lifecycle:** `presentation.ratatui` requires the typed `agent:loop@1` capability and provides `agent:presentation@1` and `agent:ui-contributions@1`. `PresentationService` wraps a replaceable trait. A Supervisor-owned cleanup task stops and waits for active drivers on unload. Connection destruction synchronously restores raw mode/paste/cursor under a terminal-I/O lock; failed initialization and panics also restore. No alternate screen is entered.
@@ -52,6 +53,8 @@ transitive consumers before their provider. Cleanup and deactivation have deadli
 diagnostics preserve generation, state and errors. Native plugins are trusted and
 must register owned tasks through PluginContext. Hot reload and a public SDK are
 outside this contract.
+
+Each production native tool and MCP server activates through a plugin and owns generation-scoped tool registrations. Staged tools are invisible until activation commits; rollback/unload removes registrations and invalidates retained handles. MCP discovery never publishes a partial server batch.
 
 Tools expose definitions, prepare a payload and optional approval preview, then
 execute. The loop persists the assistant tool call before execution and persists

@@ -118,6 +118,7 @@ async fn manual_compaction_summarizes_every_complete_turn_without_splitting_tool
             requests: Mutex::new(vec![]),
         });
         let engine = StandardLoop {
+            instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model: model.clone(),
             tools: Arc::new(Registry::native(2).unwrap()),
             sessions: store.clone(),
@@ -218,6 +219,7 @@ async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
             requests: Mutex::new(vec![]),
         });
         let mut engine = StandardLoop {
+            instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model: model.clone(),
             tools: Arc::new(Registry::native(2).unwrap()),
             sessions: store.clone(),
@@ -305,6 +307,7 @@ async fn manual_compaction_honors_cancellation_before_persisting_summary() {
     });
     let lifecycle = CancellationToken::new();
     let engine = StandardLoop {
+        instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
         model: Arc::new(Model {
             chunks: 1,
             ending: Ending::Cancel,
@@ -378,6 +381,7 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             },
         };
         let engine = StandardLoop {
+            instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model: Arc::new(Model {
                 chunks: 1,
                 ending,
