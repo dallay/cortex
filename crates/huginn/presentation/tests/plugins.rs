@@ -55,6 +55,8 @@ async fn missing_loop_blocks_terminal_plugin_without_opening_stdin() {
 #[tokio::test]
 async fn contribution_registration_rejects_invalid_reserved_and_duplicate_commands() {
     struct ProbePlugin {
+        id: &'static str,
+        command: &'static str,
         outcomes: Arc<Mutex<Vec<bool>>>,
         hold: Arc<Mutex<Vec<Lease>>>,
     }
@@ -62,7 +64,7 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
     impl Plugin for ProbePlugin {
         fn manifest(&self) -> Manifest {
             Manifest {
-                id: "test.probe".into(),
+                id: self.id.into(),
                 provides: vec![],
                 requires: vec![contributions_id()],
             }
@@ -81,6 +83,7 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
             };
             let mut local = Vec::new();
             // Malformed names must fail without touching the registry.
+            // `/help-me` is malformed because `-` is not ASCII lowercase.
             for bad in [
                 "help",
                 "/",
@@ -93,26 +96,55 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
             ] {
                 local.push(attempt(bad).is_err());
             }
-            // First valid registration succeeds and is held for the test.
-            match attempt("/probe") {
+            // A syntactically valid registration succeeds and is held so the
+            // entry survives for the cross-generation collision below.
+            match attempt(self.command) {
                 Ok(lease) => {
                     local.push(true);
                     self.hold.lock().unwrap().push(lease);
                 }
                 Err(_) => local.push(false),
             }
-            // Same generation registering again is a duplicate even with a
-            // different command name.
-            local.push(attempt("/probe-two").is_err());
-            // A colliding command name from the same generation also fails.
-            // (Unreachable while the generation holds one entry, but the
-            // name-collision branch is covered by the duplicate check above
-            // sharing its error path.)
+            // The same generation registering again is a duplicate even with
+            // a different, syntactically valid command name.
+            local.push(attempt("/probetwo").is_err());
             self.outcomes.lock().unwrap().extend(local);
             Ok(())
         }
     }
+    // `test.probe-b` activates after `test.probe-a` (plugin id order) and
+    // re-attempts the already-taken `/probe` from its own generation, which
+    // must fail on the command-name collision branch.
+    struct CollisionPlugin {
+        outcomes: Arc<Mutex<Vec<bool>>>,
+    }
+    #[async_trait]
+    impl Plugin for CollisionPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "test.probe-b".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let registry = ctx.resolve::<Arc<Contributions>>(&contributions_id())?;
+            let taken = registry
+                .register(
+                    ctx,
+                    Contribution {
+                        command: "/probe".into(),
+                        help: "probe".into(),
+                        tool_label: "Probe".into(),
+                    },
+                )
+                .is_err();
+            self.outcomes.lock().unwrap().push(taken);
+            Ok(())
+        }
+    }
     let outcomes = Arc::new(Mutex::new(Vec::new()));
+    let hold = Arc::new(Mutex::new(Vec::new()));
     let mut supervisor = Supervisor::default();
     supervisor.register(Box::new(LoopPlugin)).unwrap();
     supervisor
@@ -120,15 +152,22 @@ async fn contribution_registration_rejects_invalid_reserved_and_duplicate_comman
         .unwrap();
     supervisor
         .register(Box::new(ProbePlugin {
+            id: "test.probe-a",
+            command: "/probe",
             outcomes: outcomes.clone(),
-            hold: Arc::new(Mutex::new(Vec::new())),
+            hold: hold.clone(),
+        }))
+        .unwrap();
+    supervisor
+        .register(Box::new(CollisionPlugin {
+            outcomes: outcomes.clone(),
         }))
         .unwrap();
     supervisor.start().await.unwrap();
     assert_eq!(
         *outcomes.lock().unwrap(),
-        vec![true; 10],
-        "every invalid/reserved/duplicate registration must be rejected and the valid one accepted"
+        vec![true; 11],
+        "invalid/reserved names rejected, valid accepted, same-generation duplicate and cross-generation collision rejected"
     );
     supervisor.shutdown().await;
 }
