@@ -209,8 +209,10 @@ fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
     drop(writer);
     // Bound the wait so a regression in the agent's shutdown path cannot
     // stall the test forever. Poll `try_wait` and only kill the child if the
-    // deadline expires; the reader thread is unblocked by the slave's EOF
-    // once the child exits.
+    // deadline expires; on the kill path we never call `reader_handle.join()`
+    // because the reader can remain blocked in `read()` even after the child
+    // dies, and a blocking join would defeat the deadline. The test fails
+    // and the thread is leaked on purpose.
     let shutdown_deadline = Instant::now() + Duration::from_secs(15);
     let status = loop {
         match child.try_wait().expect("try_wait must succeed") {
@@ -219,7 +221,6 @@ fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
                 if Instant::now() > shutdown_deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = reader_handle.join();
                     panic!("agent did not exit within shutdown deadline");
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -227,16 +228,24 @@ fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
         }
     };
     // Drain any remaining bytes the agent may have written between the last
-    // script line and the exit. The reader thread exits when the slave
-    // closes; bounding the join avoids a hang if a regression keeps the
-    // pty alive.
+    // script line and the exit. We only join the reader when it has already
+    // finished so a regression in the pty's read path cannot block the
+    // test; if the deadline expires the thread is leaked and the test
+    // fails. Collecting the captured output happens unconditionally.
     let reader_deadline = Instant::now() + Duration::from_secs(2);
     while !reader_handle.is_finished() && Instant::now() < reader_deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
-    let _ = reader_handle.join();
-    let output = captured.lock().expect("capture mutex poisoned").clone();
-    PtyRun { output, status }
+    let reader_output = if reader_handle.is_finished() {
+        reader_handle.join().ok();
+        captured.lock().expect("capture mutex poisoned").clone()
+    } else {
+        panic!("pty reader thread did not finish within deadline");
+    };
+    PtyRun {
+        output: reader_output,
+        status,
+    }
 }
 
 #[test]

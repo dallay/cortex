@@ -121,7 +121,22 @@ cancellation test with a real model, recorded in `docs/agent/validation.md`.
 - `complete_turn_ends` in `crates/agent/runtime/src/loop_engine.rs` walks
   `messages[from..]` for every assistant message and is O(n²) in the worst
   case. A single pass would be cheaper; deferred because the reviewer flagged
-  it as an observation, not a blocker.
+  it as an observation, not a blocker. Tracked as
+  [issue #310](https://github.com/dallay/cortex/issues/310).
+
+## Implementation drift from archived spec/design
+
+The archived `spec.md` and `design.md` describe the original approach: capture
+a parallel `Arc<StandardLoop>` in `main.rs` alongside `LoopService` so the
+binary can call `compact()` on the concrete type. The first review cycle
+(commit `7a4bec3`) replaced that with a capability method on the
+`AgentLoop` trait; the binary now resolves `LoopService` from the supervisor
+and calls `AgentLoop::compact` through the trait object, so no parallel
+handle exists. The archived `spec.md` (`§Composition and
+`AgentLoop::compact`) and `design.md` (the `loop_arc` design notes) still
+describe the superseded approach and remain as the historical record of
+what was proposed; this verify report is the authoritative "as implemented"
+view. No code or runtime behavior is affected.
 
 ---
 
