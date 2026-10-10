@@ -60,7 +60,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 > extremo el agente Cortex contra un gateway Rook en ejecución; `docs/agent/validation.md`
 > sigue marcando Rook como no compatible hasta que pase esa prueba. La issue #279
 > define este trabajo como no requerido para el MVP del agente personal.
-
+>
 > Los streams OpenAI aceptan hasta 64 tool calls, 1 MiB de argumentos agregados
 > y 2 MiB por evento SSE. Si se supera un límite o el stream termina con un
 > evento incompleto, el provider emite un error.
