@@ -10,6 +10,7 @@ name = "huginn"
 path = "src/main.rs"
 
 [dependencies]
+huginn-application = { path = "../../crates/huginn/application" }
 huginn-core = { path = "../../crates/huginn/core" }
 huginn-runtime = { path = "../../crates/huginn/runtime" }
 huginn-presentation = { path = "../../crates/huginn/presentation" }

@@ -66,6 +66,7 @@ fn fixture(
     let sessions = Arc::new(SqliteSessions::open(db).unwrap());
     (
         StandardLoop {
+            instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model,
             tools: Arc::new(Registry::native(2).unwrap()),
             sessions: sessions.clone(),

@@ -183,6 +183,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      - name: Enforce Huginn architecture boundaries
+        run: python3 .github/scripts/check-huginn-architecture.py
       - name: Check workspace
         run: cargo check --workspace
 
@@ -735,10 +737,10 @@ jobs:
       # The personal Huginn MVP targets macOS/Linux; keep Rook's Windows gates.
       - name: Run Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --workspace --all-features --exclude huginn-core --exclude huginn-runtime --exclude huginn
+        run: cargo test --workspace --all-features --exclude huginn-core --exclude huginn-application --exclude huginn-runtime --exclude huginn-presentation --exclude huginn
       - name: Run clippy
         if: runner.os != 'Windows'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run Windows clippy
         if: runner.os == 'Windows'
-        run: cargo clippy --workspace --all-targets --exclude huginn-core --exclude huginn-runtime --exclude huginn -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude huginn-core --exclude huginn-application --exclude huginn-runtime --exclude huginn-presentation --exclude huginn -- -D warnings

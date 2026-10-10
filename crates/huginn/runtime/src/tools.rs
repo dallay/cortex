@@ -12,27 +12,88 @@ use std::{
 };
 
 pub const MAX_FILE_BYTES: u64 = 1_048_576;
-pub const MAX_OUTPUT_BYTES: usize = 65_536;
-#[derive(Default)]
+pub use huginn_application::output::{bounded_text, MAX_OUTPUT_BYTES};
+#[derive(Default, Clone)]
 pub struct Registry {
-    tools: RwLock<BTreeMap<String, Arc<dyn Tool>>>,
+    tools: Arc<RwLock<BTreeMap<String, Arc<RegisteredTool>>>>,
+}
+struct RegisteredTool {
+    inner: Arc<dyn Tool>,
+    visible: std::sync::atomic::AtomicBool,
+    revoked: huginn_core::CancellationToken,
+    generation: u64,
+}
+impl RegisteredTool {
+    fn active(&self) -> bool {
+        self.visible.load(std::sync::atomic::Ordering::Acquire) && !self.revoked.is_cancelled()
+    }
+}
+#[async_trait]
+impl Tool for RegisteredTool {
+    fn definition(&self) -> ToolDefinition {
+        self.inner.definition()
+    }
+    async fn prepare(&self, call: &ToolCall, ctx: &ToolContext) -> Result<PreparedAction> {
+        if !self.active() {
+            return Err(AgentError::Tool("tool registration revoked".into()));
+        }
+        tokio::select! {
+            biased;
+            _ = self.revoked.cancelled() => Err(AgentError::Cancelled),
+            result = self.inner.prepare(call, ctx) => result,
+        }
+    }
+    async fn execute(&self, action: PreparedAction, ctx: &ToolContext) -> Result<String> {
+        if !self.active() {
+            return Err(AgentError::Tool("tool registration revoked".into()));
+        }
+        tokio::select! {
+            biased;
+            _ = self.revoked.cancelled() => Err(AgentError::Cancelled),
+            result = self.inner.execute(action, ctx) => result,
+        }
+    }
+}
+pub struct ToolLease {
+    registry: Registry,
+    name: String,
+    entry: Arc<RegisteredTool>,
+}
+impl Drop for ToolLease {
+    fn drop(&mut self) {
+        self.entry.revoked.cancel();
+        let mut tools = self
+            .registry
+            .tools
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if tools
+            .get(&self.name)
+            .is_some_and(|entry| Arc::ptr_eq(entry, &self.entry))
+        {
+            tools.remove(&self.name);
+        }
+    }
 }
 impl Registry {
+    /// Convenience for isolated adapter tests. Production uses NativeToolPlugin.
     pub fn native(timeout_secs: u64) -> Result<Self> {
         let registry = Self::default();
-        for kind in [
-            Kind::List,
-            Kind::Read,
-            Kind::Search,
-            Kind::Write,
-            Kind::Edit,
-            Kind::Shell,
-        ] {
-            registry.insert(Arc::new(NativeTool { kind, timeout_secs }))?;
+        for tool in native_tools(timeout_secs) {
+            registry.insert(tool)?;
         }
         Ok(registry)
     }
     pub fn insert(&self, tool: Arc<dyn Tool>) -> Result<()> {
+        self.insert_entry(tool, 0, true)?;
+        Ok(())
+    }
+    fn insert_entry(
+        &self,
+        tool: Arc<dyn Tool>,
+        generation: u64,
+        visible: bool,
+    ) -> Result<Arc<RegisteredTool>> {
         let name = tool.definition().name;
         let mut tools = self
             .tools
@@ -41,20 +102,158 @@ impl Registry {
         if tools.contains_key(&name) {
             return Err(AgentError::Tool(format!("duplicate tool {name}")));
         }
-        tools.insert(name, tool);
+        let entry = Arc::new(RegisteredTool {
+            inner: tool,
+            visible: std::sync::atomic::AtomicBool::new(visible),
+            revoked: huginn_core::CancellationToken::new(),
+            generation,
+        });
+        tools.insert(name, entry.clone());
         drop(tools);
+        Ok(entry)
+    }
+    /// Staged registration is invisible until the supervisor commits activation.
+    pub fn register(
+        &self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+        tool: Arc<dyn Tool>,
+    ) -> Result<()> {
+        self.register_batch(ctx, vec![tool])
+    }
+    pub(crate) fn register_batch(
+        &self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+        tools: Vec<Arc<dyn Tool>>,
+    ) -> Result<()> {
+        let mut entries = vec![];
+        for tool in tools {
+            let name = tool.definition().name;
+            let entry = self.insert_entry(tool, ctx.generation(), false)?;
+            ctx.own_resource(ToolLease {
+                registry: self.clone(),
+                name,
+                entry: entry.clone(),
+            });
+            entries.push(entry);
+        }
+        let registry = self.clone();
+        ctx.on_commit(move || {
+            let _guard = registry
+                .tools
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for entry in entries {
+                entry
+                    .visible
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        });
         Ok(())
+    }
+    /// Atomically publish an unscoped batch for the legacy standalone MCP API.
+    pub(crate) fn batch(&self, tools: Vec<Arc<dyn Tool>>) -> Result<Vec<ToolLease>> {
+        let mut leases = vec![];
+        for tool in tools {
+            let name = tool.definition().name;
+            let entry = self.insert_entry(tool, 0, false)?;
+            leases.push(ToolLease {
+                registry: self.clone(),
+                name,
+                entry,
+            });
+        }
+        let _guard = self
+            .tools
+            .write()
+            .map_err(|_| AgentError::Tool("registry unavailable".into()))?;
+        for lease in &leases {
+            lease
+                .entry
+                .visible
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        Ok(leases)
+    }
+    pub fn generation(&self, name: &str) -> Option<u64> {
+        self.tools
+            .read()
+            .ok()?
+            .get(name)
+            .filter(|entry| entry.active())
+            .map(|entry| entry.generation)
     }
 }
 impl ToolRegistry for Registry {
     fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools
             .read()
-            .map(|tools| tools.values().map(|t| t.definition()).collect())
+            .map(|tools| {
+                tools
+                    .values()
+                    .filter(|t| t.active())
+                    .map(|t| t.definition())
+                    .collect()
+            })
             .unwrap_or_default()
     }
     fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.read().ok()?.get(name).cloned()
+        self.tools
+            .read()
+            .ok()?
+            .get(name)
+            .filter(|entry| entry.active())
+            .map(|entry| entry.clone() as Arc<dyn Tool>)
+    }
+}
+pub fn native_tools(timeout_secs: u64) -> Vec<Arc<dyn Tool>> {
+    [
+        Kind::List,
+        Kind::Read,
+        Kind::Search,
+        Kind::Write,
+        Kind::Edit,
+        Kind::Shell,
+    ]
+    .into_iter()
+    .map(|kind| Arc::new(NativeTool { kind, timeout_secs }) as Arc<dyn Tool>)
+    .collect()
+}
+
+/// One capability and lease per native tool; no special bootstrap registration path.
+pub struct NativeToolPlugin(pub Arc<dyn Tool>);
+#[async_trait]
+impl huginn_core::kernel::Plugin for NativeToolPlugin {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: format!("native.{}", self.0.definition().name),
+            provides: vec![],
+            requires: vec![registry_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        let registry = ctx.resolve::<Registry>(&registry_id())?;
+        registry.register(ctx, self.0.clone())
+    }
+}
+pub fn registry_id() -> huginn_core::kernel::ServiceId {
+    huginn_core::kernel::ServiceId::new("agent:tool-registrations", 1)
+}
+pub struct RegistryPlugin(pub Registry);
+#[async_trait]
+impl huginn_core::kernel::Plugin for RegistryPlugin {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: "tools.registry".into(),
+            provides: vec![registry_id(), huginn_application::composition::tools_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        ctx.provide(
+            huginn_application::composition::tools_id(),
+            huginn_core::ToolsService(Arc::new(self.0.clone())),
+        )?;
+        ctx.provide(registry_id(), self.0.clone())
     }
 }
 
@@ -98,17 +297,7 @@ fn argument<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
         .as_str()
         .ok_or_else(|| AgentError::Tool(format!("{name} must be a string")))
 }
-pub fn bounded_text(mut text: String) -> String {
-    if text.len() > MAX_OUTPUT_BYTES {
-        let mut end = MAX_OUTPUT_BYTES;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-        text.push_str("\n[output truncated]");
-    }
-    text
-}
+
 fn skipped(name: &str) -> bool {
     matches!(
         name,

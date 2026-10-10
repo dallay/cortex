@@ -130,21 +130,39 @@ impl Config {
                 .with_context(|| format!("cannot read configuration {}", primary_path.display())),
         }
     }
+    pub fn create_model(&self) -> anyhow::Result<std::sync::Arc<dyn huginn_core::ModelProvider>> {
+        let factories = huginn_runtime::model::ProviderFactories::builtin();
+        let key =
+            if factories.uses_credentials(&self.provider)? {
+                match self.api_key_env.as_deref().filter(|name| !name.is_empty()) {
+                    Some(name) => Some(self.resolve_api_key()?.with_context(|| {
+                        format!("credential environment variable {name} is unset")
+                    })?),
+                    None => None,
+                }
+            } else {
+                None
+            };
+        Ok(factories.create(
+            &self.provider,
+            &huginn_runtime::model::ProviderConfig {
+                base_url: self.base_url.clone(),
+                model: self.model.clone(),
+                key,
+                timeout_secs: self.timeout_secs,
+            },
+        )?)
+    }
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            matches!(self.provider.as_str(), "openai" | "mock"),
-            "provider must be openai or mock"
-        );
-        if self.provider == "openai" {
-            anyhow::ensure!(
-                self.base_url.as_ref().is_some_and(|s| !s.trim().is_empty()),
-                "set base_url in config, --base-url, HUGINN_BASE_URL, or AGENT_BASE_URL"
-            );
-            anyhow::ensure!(
-                self.model.as_ref().is_some_and(|s| !s.trim().is_empty()),
-                "set model in config, --model, HUGINN_MODEL, or AGENT_MODEL"
-            );
-        }
+        huginn_runtime::model::ProviderFactories::builtin().create(
+            &self.provider,
+            &huginn_runtime::model::ProviderConfig {
+                base_url: self.base_url.clone(),
+                model: self.model.clone(),
+                key: None,
+                timeout_secs: self.timeout_secs,
+            },
+        )?;
         anyhow::ensure!(
             (1..=3600).contains(&self.timeout_secs) && (1..=3600).contains(&self.tool_timeout_secs),
             "timeouts must be between 1 and 3600 seconds"

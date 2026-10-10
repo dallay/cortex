@@ -1,17 +1,16 @@
 use huginn_core::{
-    ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, Message, Role, Session,
+    ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Message, Role, Session,
 };
 use huginn_presentation::{
     contributions::Contributions,
     state::{Editor, Ui, UiState},
     Interaction,
 };
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 fn ui() -> Arc<Ui> {
     Ui::new(
         &Session::new(".".into()),
-        BTreeSet::new(),
         Arc::new(Contributions::default()),
         CancellationToken::new(),
     )
@@ -105,7 +104,10 @@ async fn approval_retains_entire_diff_and_requires_fresh_armed_code() {
     let task = {
         let ui = ui.clone();
         let payload = payload.clone();
-        tokio::spawn(async move { ui.approve(&payload, CancellationToken::new()).await })
+        tokio::spawn(async move {
+            ui.request_decision(&payload, CancellationToken::new())
+                .await
+        })
     };
     pending(&ui).await;
     {
@@ -142,7 +144,7 @@ async fn approval_cancel_is_fail_closed_and_next_request_uses_new_code() {
     let task = {
         let ui = ui.clone();
         let cancel = cancel.clone();
-        tokio::spawn(async move { ui.approve(&request(), cancel).await })
+        tokio::spawn(async move { ui.request_decision(&request(), cancel).await })
     };
     pending(&ui).await;
     let old = ui.lock().modal.as_ref().unwrap().code.clone();
@@ -151,7 +153,10 @@ async fn approval_cancel_is_fail_closed_and_next_request_uses_new_code() {
     assert!(ui.lock().modal.is_none());
     let task = {
         let ui = ui.clone();
-        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+        tokio::spawn(async move {
+            ui.request_decision(&request(), CancellationToken::new())
+                .await
+        })
     };
     pending(&ui).await;
     assert_ne!(ui.lock().modal.as_ref().unwrap().code, old);
@@ -159,7 +164,7 @@ async fn approval_cancel_is_fail_closed_and_next_request_uses_new_code() {
     assert!(!task.await.unwrap().unwrap());
     ui.shutdown();
     assert!(ui
-        .approve(&request(), CancellationToken::new())
+        .request_decision(&request(), CancellationToken::new())
         .await
         .is_err());
     assert!(ui.prompt().await.is_none());
@@ -188,7 +193,10 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
     let ui = ui();
     let first = {
         let ui = ui.clone();
-        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+        tokio::spawn(async move {
+            ui.request_decision(&request(), CancellationToken::new())
+                .await
+        })
     };
     pending(&ui).await;
     assert_eq!(ui.lock().modal.as_ref().unwrap().number, 1);
@@ -196,7 +204,10 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
     assert!(first.await.unwrap().unwrap());
     let second = {
         let ui = ui.clone();
-        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+        tokio::spawn(async move {
+            ui.request_decision(&request(), CancellationToken::new())
+                .await
+        })
     };
     pending(&ui).await;
     assert_eq!(ui.lock().modal.as_ref().unwrap().number, 2);
@@ -206,7 +217,10 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
     ui.begin(CancellationToken::new());
     let third = {
         let ui = ui.clone();
-        tokio::spawn(async move { ui.approve(&request(), CancellationToken::new()).await })
+        tokio::spawn(async move {
+            ui.request_decision(&request(), CancellationToken::new())
+                .await
+        })
     };
     pending(&ui).await;
     assert_eq!(ui.lock().modal.as_ref().unwrap().number, 1);

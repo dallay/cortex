@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use huginn_core::{
-    approval::{approval_header, effect_line},
-    AgentError, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, Result,
+    AgentError, ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Result,
 };
+use huginn_presentation::approval::{approval_header, effect_line};
 use std::{
-    collections::BTreeSet,
     io::{BufRead, Write},
     sync::{Arc, Mutex},
 };
@@ -38,36 +37,20 @@ impl Input {
             .map_err(AgentError::Io)
     }
 }
-pub struct Policy {
+pub struct LinePrompt {
     pub input: Option<Arc<Input>>,
-    pub allowed: BTreeSet<String>,
     turn_count: Mutex<u64>,
 }
-impl Policy {
-    pub const fn new(input: Option<Arc<Input>>, allowed: BTreeSet<String>) -> Self {
+impl LinePrompt {
+    pub const fn new(input: Option<Arc<Input>>) -> Self {
         Self {
             input,
-            allowed,
             turn_count: Mutex::new(0),
         }
     }
-    /// Reset the per-turn approval counter. The CLI must call this before
-    /// every new turn so each turn's approvals number from #1 again.
-    pub fn reset_turn(&self) {
-        *self.turn_count.lock().expect("policy turn_count poisoned") = 0;
-    }
-    /// Inspect the current per-turn approval count. Exposed for tests and
-    /// any future UI that wants to summarize a turn's approvals.
-    #[allow(dead_code)]
-    pub fn turn_count(&self) -> u64 {
-        *self.turn_count.lock().expect("policy turn_count poisoned")
-    }
-}
-#[async_trait]
-impl ApprovalPolicy for Policy {
-    async fn approve(&self, request: &ApprovalRequest, cancel: CancellationToken) -> Result<bool> {
+    fn display(&self, request: &ApprovalRequest) {
         // Increment the per-turn counter. The counter is taken before the
-        // --allow short-circuit so a denied allow-listed action still counts.
+        // host grant so all displayed requests share one counter.
         let n = {
             let mut guard = self.turn_count.lock().expect("policy turn_count poisoned");
             *guard += 1;
@@ -83,10 +66,31 @@ impl ApprovalPolicy for Policy {
             eprintln!("  Effect: {}", safe(&effect));
         }
         eprintln!("{}", safe(&request.preview));
-        if self.allowed.contains(&request.action) {
-            eprintln!("Authorized by --allow for this invocation.");
-            return Ok(true);
-        }
+    }
+    /// Reset the per-turn approval counter. The CLI must call this before
+    /// every new turn so each turn's approvals number from #1 again.
+    pub fn reset_turn(&self) {
+        *self.turn_count.lock().expect("policy turn_count poisoned") = 0;
+    }
+    /// Inspect the current per-turn approval count. Exposed for tests and
+    /// any future UI that wants to summarize a turn's approvals.
+    #[allow(dead_code)]
+    pub fn turn_count(&self) -> u64 {
+        *self.turn_count.lock().expect("policy turn_count poisoned")
+    }
+}
+#[async_trait]
+impl ApprovalPrompt for LinePrompt {
+    fn granted(&self, request: &ApprovalRequest) {
+        self.display(request);
+        eprintln!("Authorized by --allow for this invocation.");
+    }
+    async fn request_decision(
+        &self,
+        request: &ApprovalRequest,
+        cancel: CancellationToken,
+    ) -> Result<bool> {
+        self.display(request);
         let Some(input) = &self.input else {
             eprintln!("Denied: no interactive approval or explicit action grant.");
             return Ok(false);
@@ -135,12 +139,9 @@ fn safe(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::safe;
-    use crate::terminal::Policy;
-    use huginn_core::{
-        approval::{approval_header, effect_line},
-        ApprovalPolicy, ApprovalRequest, CancellationToken,
-    };
+    use super::{approval_header, effect_line, safe};
+    use crate::terminal::LinePrompt;
+    use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken};
 
     #[test]
     fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {
@@ -231,7 +232,7 @@ mod tests {
         // Construct the policy with no terminal input so the test does not
         // depend on stdin: the counter is taken before the input short-circuit
         // and `approve` returns `Ok(false)` early when no input is available.
-        let policy = Policy::new(None, Default::default());
+        let policy = LinePrompt::new(None);
         // No interactions yet — the counter starts at zero.
         assert_eq!(policy.turn_count(), 0);
 
@@ -246,9 +247,9 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime must build");
-        let first_approved = runtime.block_on(policy.approve(&request, cancel.clone()));
+        let first_approved = runtime.block_on(policy.request_decision(&request, cancel.clone()));
         assert!(first_approved.is_ok());
-        let second_approved = runtime.block_on(policy.approve(&request, cancel));
+        let second_approved = runtime.block_on(policy.request_decision(&request, cancel));
         assert!(second_approved.is_ok());
         // The two calls advanced the counter to 2 within the same turn.
         assert_eq!(policy.turn_count(), 2);

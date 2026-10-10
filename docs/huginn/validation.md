@@ -3,6 +3,34 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## Hexagonal/plugin lifecycle refactor — 2026-10-11
+
+[ADR-0012](adr/0012-hexagonal-application-and-plugin-lifecycle.md) is implemented
+with an application crate, instruction port, host-owned authorization,
+generation-scoped native/MCP tool plugins and a Cargo architecture gate.
+
+- Focused five-package Huginn suite with all features and `--test-threads=1`:
+  **108 passed, 0 failed, 1 ignored**. The ignored legacy-binary interoperability
+  test needs `CORTEX_AGENT_LEGACY_BIN`; it is not claimed as verified.
+- All-target/all-feature Clippy with warnings denied, formatting, Rustdoc with
+  warnings denied, focused Markdown lint and architecture guard: passed.
+- The architecture guard includes a negative control with a renamed optional
+  dependency and runs in CI check, `just ci-check`, `just ci-local` and
+  `just huginn-test`.
+- New contract/lifecycle tests cover an entirely in-memory loop, exact host grants,
+  cancellation, unavailable presentation, staged visibility, failed activation,
+  stale handles, generation replacement and provider factory extension.
+- MCP rollback tests cover a valid tool followed by an invalid schema, a successful
+  server followed by startup failure, and removal with a retained tool handle.
+  Both standalone discovery and production plugin paths preserve registry snapshots.
+- Local sockets require execution outside the filesystem sandbox. A parallel
+  repeat encountered two Python MCP initialization timeouts; sequential validation
+  passed. New MCP lifecycle tests are kept in their own integration-test binary
+  to avoid increasing concurrency in the existing transport timing suite.
+
+This is focused macOS evidence. The full Rook/dashboard/Docker workspace gate and
+Linux terminal certification were not rerun for this refactor.
+
 ## Ratatui vertical slice — 2026-10-10
 
 The first [ADR-0010](adr/0010-ratatui-plugin-first-interactive-terminal.md) presentation plugin is implemented. Dependency pins: Ratatui 0.30.2, Crossterm 0.29.0; Tokio is resolved by `Cargo.lock`. Evidence here is automated macOS PTY evidence, **not** native Terminal.app/iTerm2, SSH, tmux, Linux or Windows certification. `--line-mode` remains the deliberate recovery route. The slice was rebased onto the Huginn rename (`agent-*` → `huginn-*`; service ids stay `agent:*`); `session_ownership` pins its lease owner to `--line-mode` because interactive `resume` opens Ratatui by default.

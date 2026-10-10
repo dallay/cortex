@@ -19,6 +19,9 @@ for line in sys.stdin:
     elif method == "tools/list":
         result = {"tools": [{"name": "echo", "description": "Echo fixture",
                              "inputSchema": {"type": "object", "properties": {}}}]}
+        if os.environ.get("BAD_SCHEMA"):
+            result["tools"].append({"name": "oversized", "inputSchema": {
+                "type": "object", "description": "x" * 17000}})
     elif method == "tools/call":
         with open(marker, "a", encoding="utf-8") as output:
             output.write("called\n")
