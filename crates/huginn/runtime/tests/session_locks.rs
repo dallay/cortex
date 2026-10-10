@@ -3,6 +3,7 @@ use huginn_core::AgentError;
 use huginn_runtime::sessions::SqliteSessions;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -16,6 +17,16 @@ fn legacy_lock_holder_helper() {
     let (Ok(id), Ok(ready_path)) = (std::env::var(HELPER_ID), std::env::var(HELPER_READY)) else {
         return;
     };
+    let ready_path = PathBuf::from(ready_path);
+    let temp_dir = std::env::temp_dir();
+    let Some(parent) = ready_path.parent() else {
+        return;
+    };
+    if ready_path.file_name().and_then(|name| name.to_str()) != Some("ready")
+        || !parent.starts_with(&temp_dir)
+    {
+        return;
+    }
     let path = std::path::Path::new("/tmp").join(format!("cortex-agent-session-{id}.lock"));
     let lock = OpenOptions::new()
         .read(true)
@@ -25,7 +36,7 @@ fn legacy_lock_holder_helper() {
         .open(path)
         .expect("open legacy lock file");
     lock.lock_exclusive().expect("hold legacy lock");
-    std::fs::write(ready_path, "ready").expect("signal lock readiness");
+    std::fs::write(&ready_path, "ready").expect("signal lock readiness");
     let mut release = [0; 1];
     let _ = std::io::stdin().read(&mut release);
     FileExt::unlock(&lock).expect("release legacy lock");
