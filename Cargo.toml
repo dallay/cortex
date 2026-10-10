@@ -27,6 +27,7 @@ members = [
     "apps/huginn",
     "crates/huginn/core",
     "crates/huginn/runtime",
+    "crates/huginn/presentation",
 ]
 
 [workspace.package]

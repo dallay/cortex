@@ -3,11 +3,37 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
-## New interactive frontend — pending implementation
+## Ratatui vertical slice — 2026-10-10
 
-The accepted [ADR-0010](adr/0010-ratatui-plugin-first-interactive-terminal.md) now selects Ratatui + Crossterm + Tokio as the next-phase interactive frontend through the plugin kernel. **None of the CLI results below validate that Ratatui has shipped or passed PTY acceptance.** The existing line-oriented CLI remains the currently implemented interface and a future explicit fallback.
+The first [ADR-0010](adr/0010-ratatui-plugin-first-interactive-terminal.md) presentation plugin is implemented. Dependency pins: Ratatui 0.30.2, Crossterm 0.29.0; Tokio is resolved by `Cargo.lock`. Evidence here is automated macOS PTY evidence, **not** native Terminal.app/iTerm2, SSH, tmux, Linux or Windows certification. `--line-mode` remains the deliberate recovery route. The slice was rebased onto the Huginn rename (`agent-*` → `huginn-*`; service ids stay `agent:*`); `session_ownership` pins its lease owner to `--line-mode` because interactive `resume` opens Ratatui by default.
 
-New TUI evidence will require: inline scrollback/resize and cursor-query PTY tests; plugin-driven command/render replacement; reliable stream projection and responsive editor; complete approval previews without stale-key acceptance; terminal restoration; macOS/Linux validation; and preservation of `run`/`--json`/diagnostic output. Record dependency versions, terminals and failures here when the code is implemented.
+- `cargo test -p huginn-presentation --all-features --tests`: 8 deterministic state/plugin tests and 7 PTY tests passed. Coverage includes UTF-8 multiline editing, one-time transcript synchronization, 10,000 synchronous text transitions plus critical events without a renderer, full large approval payloads, challenge freshness/cancellation, command/renderer unload and re-registration, missing dependencies, delayed stream typing/cancellation, stale/paste confirmation rejection, fresh approval, normal/panic/failed-init restoration, synchronous connection drop, unload→immediate reopen and drop→replacement input.
+- `cargo test -p huginn --tests`: 10 existing unit tests, 5 CLI tests and 2 new routing/PTY tests passed. The actual binary's default chat and interactive resume use the inline driver, save multiline prompts and preserve session messages. Non-TTY default failure and explicit piped line recovery passed. Existing JSON/run/doctor/sessions/manual-compaction checks remained green.
+- `cargo clippy -p huginn-presentation -p huginn --all-targets --all-features -- -D warnings`: passed. Formatting and focused Markdown lint passed. Post-review verification ran all 15 presentation tests and focused all-features Clippy against the final input-lease implementation.
+- Minimized cursor-query failure: an EventStream reader running while stock Ratatui inserted initial inline history caused cursor-position timeouts in two PTY tests. The driver now uses bounded zero-timeout Crossterm polling without a competing input thread; those tests pass. No custom terminal or copied upstream code was introduced. This is relevant to stock Ratatui #2640 and is tracked with the broader [DALLAY-665 compatibility gate](https://linear.app/dallay/issue/DALLAY-665).
+- Independent review found End→Up navigation, asynchronous connection-drop restoration and unload cleanup timing defects. Regressions failed before fixes and now pass. Supervisor-owned cleanup waits for terminal destruction; connection destruction restores raw mode synchronously.
+- Follow-up review found an input-revocation race because task abort is asynchronous. Both input paths now share the restoration lock and check generation activity before poll/read. Final focused review confirms this structurally addresses the race. The added drop→reopen→input PTY test passed before and after, so it is coverage, **not** a deterministic RED→GREEN reproduction of that race. `cargo tree` verified no presentation/Ratatui/Crossterm dependency in core/runtime/Rook.
+- Review follow-ups fixed with regression tests: Unicode bidi controls filtered in `safe()`; `UiState` event log bounded to non-text authoritative transitions; contribution command validation (invalid/reserved/same-generation duplicate/cross-generation collision) covered deterministically.
+- Review round 2 (scoped REQUEST CHANGES, no P0/P1) addressed with tests: out-of-scope Rook doc deletions reverted out of the PR; approval numbering (`request #N`) and `Effect:` summaries restored in the TUI modal through the shared `huginn-core::approval` model (line adapter rewired to the same functions, output byte-identical); contribution surface extended with a contributed failure heading rendered with error severity and scoped as status-only in the spec; composer title carries the Huginn identity with a PTY regression guard; O(tail) re-render cost noted in code and tracked with the DALLAY-665 load/latency measurements.
+- Known advisory: `codecov/patch/backend` reports ~78% against an 85% target. The Ratatui driver is verified by PTY tests that drive the binary as a subprocess, which `llvm-cov` cannot attribute; in-process presentation-crate coverage is ~86% regions. Overall `codecov/patch` passes and the repository gate (`just ci-local`) sets no coverage threshold.
+- Semgrep source scan before generation passed. The first dependency selection (Ratatui 0.29) exposed an `lru` advisory; selecting stock Ratatui 0.30.2 resolved it. The subsequent supply-chain scan reported no `Cargo.lock` findings, but 75 findings in existing non-Rust lockfiles; this is not a repository-wide clean security scan.
+
+Remaining DALLAY-665 evidence: semantic terminal-emulator scrollback/resize checks (including 100 rapid transitions), 10k-line/100 tok/s/10× burst and input-latency measurements, native-terminal versions, Linux, SSH/tmux, SIGHUP and subprocess handoff. Human approval usability and real-model TUI smoke remain unvalidated. The PTY harness responds to cursor queries as a simulated xterm; it does not certify xterm or any actual terminal product.
+
+### DALLAY-664 repository gate
+
+`just ci-local` completed successfully on 2026-10-10 in 496 seconds: Markdown,
+formatting, workspace Clippy/check, 936 Rust tests (including doctests), 179 Vitest
+tests, documentation, audit and Docker-backed browser E2E. Browser E2E reported
+83 passed and 7 skipped across Chromium/Firefox/WebKit. The final ownership-review
+change and added replacement-input PTY test also passed the subsequent focused
+presentation tests and all-features Clippy; the full gate's initial lint stages
+preceded that change. These dashboard E2E results are not Linux TUI evidence.
+
+Warnings: Vite reported a future native-config import-extension warning;
+`cargo audit --no-fetch` reported the existing yanked `chacha20` 0.10.0 warning.
+The audit stage remains non-blocking in the repository runner. Skipped browser
+tests and existing non-Rust supply-chain findings are not claimed as validated.
 
 ## Automated evidence
 
