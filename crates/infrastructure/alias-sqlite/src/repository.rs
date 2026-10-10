@@ -445,10 +445,10 @@ mod tests {
     async fn test_builtin_aliases_count() {
         let aliases = builtin_aliases();
 
-        // Verify we have at least 26 built-in aliases as per design
+        // Verify we have at least 30 built-in aliases as per DALLAY-381
         assert!(
-            aliases.len() >= 26,
-            "Expected at least 26 built-in aliases, got {}",
+            aliases.len() >= 30,
+            "Expected at least 30 built-in aliases, got {}",
             aliases.len()
         );
 

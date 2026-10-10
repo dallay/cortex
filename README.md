@@ -46,7 +46,9 @@ In an ecosystem with multiple LLM providers (OpenAI, Anthropic, Google, etc.), C
 
 - 🔌 **OpenAI-compatible API**: Drop-in replacement for existing OpenAI clients.
 - ✨ **Multi-provider routing**: Support for OpenAI, Anthropic, Ollama, Gemini, and Groq.
-- 🔄 **Automatic fallback**: Resilience against provider failures with configurable fallback chains.
+- 🔄 **Automatic fallback**: Resilience against provider failures with Combos (ordered fallback chains, `X-Rook-Combo`).
+- 🏷️ **Model aliasing**: Normalize variant names (`gpt-4-turbo` → dated canonical) with 30+ built-ins plus custom aliases.
+- 🌊 **Streaming**: OpenAI-compatible SSE streaming, including tool-call deltas.
 - 🚀 **Built-in caching**: Reduce costs and latency with TTL-based in-memory caching.
 - 📊 **Audit logging**: Full traceability of requests and responses backed by SQLite.
 - 🏗️ **Clean Architecture**: Built with Domain-Driven Design (DDD) for high maintainability.
@@ -57,10 +59,10 @@ In an ecosystem with multiple LLM providers (OpenAI, Anthropic, Google, etc.), C
 
 ### Prerequisites
 
-- **Rust 1.81 or later** (the version is pinned in `rust-toolchain.toml`)
+- **Rust 1.89 toolchain** (pinned in `rust-toolchain.toml`; MSRV 1.81 per `Cargo.toml`)
 - **Cargo** (included with Rust)
 - (Optional) **Just** task runner: `cargo install just`
-- (Optional for dashboard) **Node.js 18+** and **pnpm**
+- (Optional for dashboard) **Node.js** and **pnpm** (`pnpm@11` pinned in root `package.json`)
 
 ### Installation
 
@@ -86,10 +88,15 @@ Download pre-built binaries from [Releases](https://github.com/dallay/cortex/rel
    host = "127.0.0.1"
    port = 3773
 
-   [providers.openai]
-   api_key = "sk-..."
-   enabled = true
+   [routing]
+   strategy = "priority"
+
+   [database]
+   db_path = "~/.local/share/cortex/rook/rook.db"
    ```
+
+   > Providers are **not** configured in TOML. Create them at runtime via the
+   > Provider CRUD API (`POST /api/providers`). See the [Configuration Guide](docs/configuration.md).
 
 2. **Run the server**:
    ```bash
@@ -108,33 +115,38 @@ Download pre-built binaries from [Releases](https://github.com/dallay/cortex/rel
        "model": "gpt-4",
        "messages": [{"role": "user", "content": "Hello!"}]
      }'
-   ```
+    ```
+
+   This requires a completion provider configured for Rook; see the
+   [Configuration Guide](docs/configuration.md) before sending requests.
 
 ## 🛠 Usage
 
-### Multi-provider Fallback
-Configure a fallback chain to ensure your application stays online even if a provider fails:
+### Multi-provider fallback with Combos
+Define ordered provider/model fallback steps as `[[combos]]` in `rook.toml` or
+through the `/api/combos` CRUD API. Select one per request with
+`X-Rook-Combo`, or set `routing.default_combo`. See the
+[Configuration Guide](docs/configuration.md#combos-multi-step-fallback-chains)
+for the schema and execution behavior.
 
-```toml
-# In your rook.toml
-[[fallback_chains]]
-name = "robust-gpt4"
-chain = ["openai/gpt-4", "anthropic/claude-3-opus"]
-```
-
-### Dashboard Access
-Cortex comes with a built-in dashboard for management.
-On a fresh database, Rook enters **bootstrap mode**. Check the logs for a setup token and open the dashboard (if running locally, typically `http://localhost:4747` if you run it via `just run-dashboard`).
+### Dashboard access
+Rook serves an embedded dashboard at `/dashboard/` on the same port
+(e.g. `http://localhost:3773/dashboard/`). For frontend development use
+`just run-dashboard` (Vite at `http://localhost:4747/dashboard/`, proxied to the backend).
+On a fresh database Rook enters **bootstrap mode** — check the logs for the
+setup token. See [dashboard README](apps/rook/dashboard/README.md).
 
 ## ⚙️ Configuration
 
 See the [Configuration Guide](docs/configuration.md) for detailed options.
 
 **Quick reference**:
-- **Server**: host, port, timeouts, encryption settings.
-- **Providers**: API keys, endpoints, health check intervals.
-- **Cache**: TTL, size limits.
-- **Audit**: log location, rotation.
+- **Server**: host, port, health check interval.
+- **Routing**: strategy (`priority` | `round-robin` | `model-based`), optional `default_combo`.
+- **Providers**: managed through `/api/providers`; see the [Provider Management guide](docs/configuration.md#provider-management-dashboard).
+- **Combos**: managed via `/api/combos`, selected with `X-Rook-Combo` or `routing.default_combo`.
+- **Model aliases**: CRUD at `/api/models/aliases`; global aliases resolve before routing (provider-scoped records are not applied during resolution).
+- **Cache / DB / auth / rate limiting**: see full schema in the guide.
 
 ## 🏗 Architecture
 
@@ -142,18 +154,30 @@ Cortex follows Clean Architecture principles with clear separation of concerns:
 
 ```text
 cortex/
-├── apps/rook/              # Binary entry point, DI bootstrap
+├── apps/rook/              # Binary entry point, DI bootstrap + embedded dashboard
+├── apps/huginn/            # Personal Rust coding agent (CLI)
 ├── crates/
 │   ├── domain/             # Business logic
 │   │   ├── shared-kernel/  # Zero-deps common types
-│   │   └── rook-core/      # Domain models and ports
-│   ├── application/        # Use cases
-│   │   └── rook-usecases/  # Orchestration logic
-│   └── infrastructure/     # External adapters
-│       ├── providers-*/    # LLM provider clients
-│       ├── cache-memory/   # Caching implementation
-│       ├── audit-sqlite/   # Audit logging
-│       └── transport-axum/ # HTTP server
+│   │   └── rook-core/      # Domain models, ports, Combo entities
+│   ├── application/
+│   │   └── rook-usecases/  # Orchestration (RouteRequest, FallbackRouter, CRUD)
+│   ├── infrastructure/     # External adapters
+│   │   ├── providers-*/    # LLM clients: openai, anthropic, ollama, gemini, groq (+ core)
+│   │   ├── provider-sqlite/# Persisted provider connections
+│   │   ├── combo-sqlite/   # Combo persistence
+│   │   ├── alias-sqlite/   # Model aliases
+│   │   ├── auth-sqlite/    # API keys + auth
+│   │   ├── cache-memory/   # TTL in-memory cache
+│   │   ├── audit-sqlite/   # Audit logging
+│   │   ├── db-migration/   # SQLite migrations
+│   │   ├── models-catalog/ # Model metadata
+│   │   ├── sse-stream/     # Streaming (SSE)
+│   │   ├── observability/  # Tracing + metrics
+│   │   ├── encryption-inmemory/ # Credential encryption boundary
+│   │   └── transport-axum/ # HTTP server + OpenAI-compatible adapters
+│   ├── huginn/             # Huginn core, runtime + Ratatui presentation (no Rook dependency)
+│   └── test-support/       # Shared test fixtures
 └── docs/                   # Documentation
 ```
 
@@ -164,7 +188,7 @@ See [Architecture Documentation](docs/architecture.md) for details.
 | Tool | Status | Description |
 |------|--------|-------------|
 | [Rook](apps/rook/) | ✅ Active | AI proxy/router with multi-provider support |
-| [Huginn](docs/huginn/README.md) | 🚧 Experimental | Personal Rust coding agent (CLI and future TUI) |
+| [Huginn](docs/huginn/README.md) | 🚧 Personal MVP in progress | Local Rust coding agent: CLI + Ratatui TUI, streaming, native tools, SQLite sessions, MCP stdio |
 | *Future tools* | 🚧 Planned | TBD |
 
 ## 🛠 Development
@@ -210,24 +234,20 @@ just test-e2e
 ## 📚 Documentation
 
 - [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
+- [Configuration](docs/configuration.md) (providers via CRUD API, combos, aliases)
 - [Providers](docs/providers.md)
 - [API Reference](docs/api.md)
+- [Deployment](docs/deployment.md)
+- [API key troubleshooting](docs/api-key-troubleshooting.md)
+- [Rook dashboard](apps/rook/dashboard/README.md) (Vue SPA, embedded at `/dashboard/`)
+- [Local Docker testing](dev/README.md) (smoke, Playwright E2E, multi-distro)
+- [Huginn coding agent](docs/huginn/README.md)
 
 ## 🗺 Roadmap
 
-### Current Focus
-- 🔨 Dynamic provider registry
-- 🔐 Enhanced authentication and authorization
-- 📈 Advanced metrics and observability
-
-### Planned Features
-- [ ] Rate limiting and quota management
-- [ ] Request/response transformation
-- [ ] Plugin system
-- [ ] WebUI dashboard enhancements
-- [ ] Streaming support optimization
-- [ ] Additional provider integrations
+Project priorities evolve with active development. See the [GitHub issue
+tracker](https://github.com/dallay/cortex/issues) for current work and planned
+features rather than relying on a static roadmap in this README.
 
 ## 🤝 Contributing
 
