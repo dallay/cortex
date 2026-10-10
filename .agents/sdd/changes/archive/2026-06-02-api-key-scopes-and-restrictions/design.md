@@ -438,7 +438,7 @@ Each delta has `## MODIFIED Requirements`, `## ADDED Requirements`, and `## REMO
 ### Request flow with scopes and restrictions
 
 ```
-1. HTTP request arrives with X-API-Key: rk-abc123...
+1. HTTP request arrives with X-API-Key: <API_KEY>
    ↓
 2. authz.rs::check_scope extracts ApiKeySubject via find_active_by_hash
    → includes scopes: Vec<ApiKeyScope>, allowed_models: Vec<ModelId>, allowed_providers: Vec<ProviderId>

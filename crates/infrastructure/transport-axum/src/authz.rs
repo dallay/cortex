@@ -696,8 +696,8 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
 
     // Validate the session
     match validator.execute(&cookie_value).await {
-        Ok(Some(validated)) => {
-            // Session is valid - build subject with user info
+        Ok(Some(validated)) if validated.username == "admin" => {
+            // Session is valid and belongs to the admin user.
             let subject = Subject {
                 kind: AuthKind::Session,
                 id: validated.session.user_id.to_string(),
@@ -708,6 +708,7 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
             };
             AuthOutcome::allow(subject)
         }
+        Ok(Some(_)) => AuthOutcome::reject(StatusCode::FORBIDDEN, "INSUFFICIENT_SCOPE"),
         Ok(None) => {
             // Session not found, expired, or revoked
             AuthOutcome::reject(StatusCode::UNAUTHORIZED, "SESSION_NOT_FOUND")
@@ -956,7 +957,8 @@ mod tests {
     use chrono::{DateTime, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
-        ApiKeyTier,
+        ApiKeyTier, NewSession, NewUser, PasswordHash, Session, SessionId, SessionRepositoryError,
+        SessionRepositoryPort, User, UserId, UserRepositoryError, UserRepositoryPort,
     };
 
     use super::*;
@@ -1042,6 +1044,103 @@ mod tests {
         }
     }
 
+    struct FakeSessionRepository(Session);
+
+    #[async_trait]
+    impl SessionRepositoryPort for FakeSessionRepository {
+        async fn create(
+            &self,
+            _session: &NewSession,
+            _token_hash: &str,
+        ) -> Result<Session, SessionRepositoryError> {
+            unreachable!()
+        }
+
+        async fn find_by_token_hash(
+            &self,
+            _token_hash: &str,
+        ) -> Result<Option<Session>, SessionRepositoryError> {
+            Ok(Some(self.0.clone()))
+        }
+
+        async fn revoke(&self, _session_id: &SessionId) -> Result<(), SessionRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete_expired(&self) -> Result<u64, SessionRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct FakeUserRepository(User);
+
+    #[async_trait]
+    impl UserRepositoryPort for FakeUserRepository {
+        async fn find_by_username(
+            &self,
+            _username: &str,
+        ) -> Result<Option<User>, UserRepositoryError> {
+            Ok(Some(self.0.clone()))
+        }
+
+        async fn find_by_id(&self, _user_id: &UserId) -> Result<Option<User>, UserRepositoryError> {
+            Ok(Some(self.0.clone()))
+        }
+
+        async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+            Ok(true)
+        }
+
+        async fn create(&self, _user: &NewUser) -> Result<User, UserRepositoryError> {
+            Ok(self.0.clone())
+        }
+
+        async fn update_password_hash(
+            &self,
+            _user_id: &UserId,
+            _hash: &PasswordHash,
+        ) -> Result<(), UserRepositoryError> {
+            Ok(())
+        }
+    }
+
+    fn validated_session_config(username: &str) -> AuthzConfig {
+        let user_id = UserId::new();
+        let raw_token = b"valid-session-token";
+        let token_hash =
+            hex::encode(ring::digest::digest(&ring::digest::SHA256, raw_token).as_ref());
+        let user = User {
+            id: user_id.clone(),
+            username: username.to_string(),
+            password_hash: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let session = Session {
+            id: SessionId::new(),
+            token_hash,
+            user_id,
+            created_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            revoked: false,
+        };
+        let validator = Arc::new(ValidateSession::new(
+            Arc::new(FakeSessionRepository(session)),
+            Arc::new(FakeUserRepository(user)),
+        ));
+        AuthzConfig::new(Vec::new(), "test-secret").with_session_validator(validator)
+    }
+
+    fn management_cookie() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let cookie = URL_SAFE_NO_PAD.encode(b"valid-session-token");
+        headers.insert(
+            COOKIE,
+            HeaderValue::from_str(&format!("auth_token={cookie}")).unwrap(),
+        );
+        headers
+    }
+
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1056,6 +1155,41 @@ mod tests {
         config: &AuthzConfig,
     ) -> AuthOutcome {
         runtime().block_on(evaluate_policy(route_class, method, path, headers, config))
+    }
+
+    #[test]
+    fn management_allows_validated_admin_session_with_admin_scope() {
+        let outcome = evaluate(
+            AuthTier::Management,
+            &Method::GET,
+            "/api/providers",
+            &management_cookie(),
+            &validated_session_config("admin"),
+        );
+
+        assert!(outcome.allow);
+        let subject = outcome.subject.expect("validated admin subject");
+        assert_eq!(subject.label, "admin");
+        assert!(subject.scopes.iter().any(|scope| scope == "admin"));
+    }
+
+    #[test]
+    fn management_rejects_validated_non_admin_session_without_admin_scope() {
+        let outcome = evaluate(
+            AuthTier::Management,
+            &Method::GET,
+            "/api/providers",
+            &management_cookie(),
+            &validated_session_config("operator"),
+        );
+
+        assert!(!outcome.allow);
+        assert_eq!(outcome.status, Some(StatusCode::FORBIDDEN));
+        assert_eq!(outcome.code, Some("INSUFFICIENT_SCOPE"));
+        assert!(outcome
+            .subject
+            .as_ref()
+            .is_none_or(|subject| !subject.scopes.iter().any(|scope| scope == "admin")));
     }
 
     #[test]
