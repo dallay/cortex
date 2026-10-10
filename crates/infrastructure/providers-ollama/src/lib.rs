@@ -275,6 +275,33 @@ impl OllamaProvider {
         }
     }
 
+    /// Fold tool-call visibility across stream chunks: marks `seen` when any
+    /// chunk carries tool calls, then backfills a terminal `ToolCalls` finish
+    /// reason when an earlier chunk carried them but the terminal chunk omits
+    /// them. Returns the updated flag.
+    fn track_tool_calls(
+        chunks: &mut [Result<StreamChunk, CortexError>],
+        mut seen_tool_calls: bool,
+    ) -> bool {
+        for chunk in chunks.iter_mut().flatten() {
+            if !chunk.tool_calls.is_empty() {
+                seen_tool_calls = true;
+            }
+        }
+        for chunk in chunks.iter_mut().flatten() {
+            if chunk.usage.is_some()
+                && matches!(
+                    chunk.finish_reason,
+                    None | Some(rook_core::FinishReason::Stop)
+                )
+                && seen_tool_calls
+            {
+                chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
+            }
+        }
+        seen_tool_calls
+    }
+
     fn trace_timings(parsed: &OllamaChatResponse) {
         if parsed.total_duration.is_some()
             || parsed.load_duration.is_some()
@@ -589,22 +616,7 @@ impl ProviderPort for OllamaProvider {
                             let mut chunks = Self::parse_line_to_chunk(final_line, &request_id)
                                 .into_iter()
                                 .collect::<Vec<_>>();
-                            for chunk in chunks.iter_mut().flatten() {
-                                if !chunk.tool_calls.is_empty() {
-                                    seen_tool_calls = true;
-                                }
-                            }
-                            for chunk in chunks.iter_mut().flatten() {
-                                if chunk.usage.is_some()
-                                    && matches!(
-                                        chunk.finish_reason,
-                                        None | Some(rook_core::FinishReason::Stop)
-                                    )
-                                    && seen_tool_calls
-                                {
-                                    chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
-                                }
-                            }
+                            seen_tool_calls = Self::track_tool_calls(&mut chunks, seen_tool_calls);
                             return Some((
                                 Ok(futures::stream::iter(chunks)),
                                 (byte_stream, line_buffer, seen_tool_calls),
@@ -632,22 +644,7 @@ impl ProviderPort for OllamaProvider {
                         .into_iter()
                         .filter_map(|line| Self::parse_line_to_chunk(line, &request_id))
                         .collect();
-                    for chunk in chunks.iter_mut().flatten() {
-                        if !chunk.tool_calls.is_empty() {
-                            seen_tool_calls = true;
-                        }
-                    }
-                    for chunk in chunks.iter_mut().flatten() {
-                        if chunk.usage.is_some()
-                            && matches!(
-                                chunk.finish_reason,
-                                None | Some(rook_core::FinishReason::Stop)
-                            )
-                            && seen_tool_calls
-                        {
-                            chunk.finish_reason = Some(rook_core::FinishReason::ToolCalls);
-                        }
-                    }
+                    seen_tool_calls = Self::track_tool_calls(&mut chunks, seen_tool_calls);
 
                     Some((
                         Ok(futures::stream::iter(chunks)),
