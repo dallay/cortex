@@ -22,8 +22,14 @@ fn legacy_lock_holder_helper() {
     let Some(parent) = ready_path.parent() else {
         return;
     };
+    let Ok(canonical_parent) = parent.canonicalize() else {
+        return;
+    };
+    let Ok(canonical_temp_dir) = temp_dir.canonicalize() else {
+        return;
+    };
     if ready_path.file_name().and_then(|name| name.to_str()) != Some("ready")
-        || !parent.starts_with(&temp_dir)
+        || !canonical_parent.starts_with(&canonical_temp_dir)
     {
         return;
     }
