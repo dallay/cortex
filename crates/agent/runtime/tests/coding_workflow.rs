@@ -815,6 +815,9 @@ async fn compaction_preserves_history_and_tool_pairs() {
         session
             .messages
             .push(Message::tool(format!("old-{index}"), "read result".into()));
+        session
+            .messages
+            .push(Message::text(Role::Assistant, "previous answer"));
     }
     let original = session.messages.len();
     engine

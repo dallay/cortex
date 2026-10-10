@@ -100,6 +100,16 @@ is too large for a short acceptance run, use a separate TOML configuration with
 a smaller valid `context_tokens` budget and `max_output_tokens` below half that
 budget. Record those values and whether compaction actually occurred.
 
+```bash
+# Manual compaction — type /compact at the agent> prompt; /summarize is an
+# alias. The CLI asks for explicit confirmation before running the same
+# real-model summarizer the threshold would call. Originals remain in the
+# SQLite session.
+agent> /compact
+Compact session now? Older history will be summarized; originals stay in the database. [y/N] y
+Context compacted; original history retained.
+```
+
 **Note:** _did compaction fire? Did the original history stay intact (re-run
 `agent sessions` and inspect, or query the SQLite record directly)? If
 compaction failed, did the turn stop without losing the originals?_

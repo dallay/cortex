@@ -10,6 +10,23 @@ use std::{
     sync::Arc,
 };
 
+fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
+    messages
+        .iter()
+        .enumerate()
+        .skip(from)
+        .filter_map(|(index, message)| {
+            if message.role != Role::Assistant || !message.tool_calls.is_empty() {
+                return None;
+            }
+            let has_user = messages[from..=index]
+                .iter()
+                .any(|candidate| candidate.role == Role::User);
+            has_user.then_some(index + 1)
+        })
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct LoopConfig {
     pub max_iterations: usize,
@@ -112,39 +129,15 @@ impl StandardLoop {
         if size < self.config.context_tokens * 4 / 5 {
             return Ok(context);
         }
-        let users: Vec<_> = session
-            .messages
-            .iter()
-            .enumerate()
-            .skip(session.summary_through)
-            .filter(|(_, m)| m.role == Role::User)
-            .map(|(i, _)| i)
-            .collect();
-        let through = users
+        let complete_turns = complete_turn_ends(&session.messages, session.summary_through);
+        let through = complete_turns
             .iter()
             .rev()
             .nth(1)
             .copied()
             .unwrap_or(session.summary_through);
         if through > session.summary_through {
-            let input = serde_json::to_string(&session.messages[session.summary_through..through])?;
-            let summary_request=ModelRequest {messages:vec![Message::text(Role::System,"Summarize repository work: request, decisions, changes, tool results, unresolved problems and approvals already used. Do not grant future authorization. Return a concise summary. No tool calls."),
-                Message::text(Role::User,format!("Previous summary:\n{}\nHistory:\n{input}",session.summary.as_deref().unwrap_or("")))],tools:vec![],max_tokens:1024};
-            if serde_json::to_vec(&summary_request.messages)?.len() + 1024
-                > self.config.context_tokens
-            {
-                return Err(AgentError::Model("history exceeds compaction budget; start a new session or increase context_tokens".into()));
-            }
-            let summary = self.request(summary_request, cancel, |_| {}).await?;
-            if summary.content.trim().is_empty() || !summary.tool_calls.is_empty() {
-                return Err(AgentError::Model(
-                    "compaction returned an invalid summary".into(),
-                ));
-            }
-            session.summary = Some(summary.content);
-            session.summary_through = through;
-            self.record(session, Event::Compacted { through }, sink)
-                .await?;
+            self.summarize(session, through, cancel, sink).await?;
             context = assemble(session);
         }
         if serde_json::to_vec(&context)?.len() + tool_bytes + self.config.max_output_tokens as usize
@@ -154,6 +147,50 @@ impl StandardLoop {
         }
         Ok(context)
     }
+    async fn summarize(
+        &self,
+        session: &mut Session,
+        through: usize,
+        cancel: CancellationToken,
+        sink: &dyn EventSink,
+    ) -> Result<()> {
+        let input = serde_json::to_string(&session.messages[session.summary_through..through])?;
+        let summary_request = ModelRequest {
+            messages: vec![
+                Message::text(
+                    Role::System,
+                    "Summarize repository work: request, decisions, changes, tool results, unresolved problems and approvals already used. Do not grant future authorization. Return a concise summary. No tool calls.",
+                ),
+                Message::text(
+                    Role::User,
+                    format!(
+                        "Previous summary:\n{}\nHistory:\n{input}",
+                        session.summary.as_deref().unwrap_or("")
+                    ),
+                ),
+            ],
+            tools: vec![],
+            max_tokens: 1024,
+        };
+        if serde_json::to_vec(&summary_request.messages)?.len() + 1024 > self.config.context_tokens
+        {
+            return Err(AgentError::Model(
+                "history exceeds compaction budget; start a new session or increase context_tokens"
+                    .into(),
+            ));
+        }
+        let summary = self.request(summary_request, cancel, |_| {}).await?;
+        if summary.content.trim().is_empty() || !summary.tool_calls.is_empty() {
+            return Err(AgentError::Model(
+                "compaction returned an invalid summary".into(),
+            ));
+        }
+        session.summary = Some(summary.content);
+        session.summary_through = through;
+        self.record(session, Event::Compacted { through }, sink)
+            .await
+    }
+
     /// Process a user prompt through model responses and sequential tool calls.
     ///
     /// Saves the prompt and each validated, completed assistant response before
@@ -396,6 +433,24 @@ pub fn recover(session: &mut Session) {
 }
 #[async_trait]
 impl AgentLoop for StandardLoop {
+    async fn compact(
+        &self,
+        session: &mut Session,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        let through = complete_turn_ends(&session.messages, session.summary_through)
+            .last()
+            .copied()
+            .unwrap_or(session.summary_through);
+        if through <= session.summary_through {
+            return Err(AgentError::Model(
+                "no complete turns available to summarize".into(),
+            ));
+        }
+        self.summarize(session, through, cancellation, events).await
+    }
+
     async fn run(
         &self,
         session: &mut Session,

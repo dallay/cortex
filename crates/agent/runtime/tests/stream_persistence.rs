@@ -103,6 +103,106 @@ impl EventSink for Sink {
 }
 
 #[tokio::test]
+async fn manual_compaction_summarizes_every_complete_turn_without_splitting_tool_groups() {
+    for turn_count in [1, 2, 3] {
+        let workspace = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let db = data.path().join("sessions.db");
+        let store = Arc::new(CountingStore {
+            inner: SqliteSessions::open(&db).unwrap(),
+            snapshots: Mutex::new(vec![]),
+        });
+        let model = Arc::new(Model {
+            chunks: 1,
+            ending: Ending::Finished,
+            requests: Mutex::new(vec![]),
+        });
+        let engine = StandardLoop {
+            model: model.clone(),
+            tools: Arc::new(Registry::native(2).unwrap()),
+            sessions: store.clone(),
+            config: LoopConfig::default(),
+            lifecycle: CancellationToken::new(),
+        };
+        let sink = Sink {
+            events: Mutex::new(vec![]),
+            saves_at_text: Mutex::new(vec![]),
+            store,
+            cancel_on_text: None,
+        };
+        let mut session = Session::new(workspace.path().canonicalize().unwrap());
+        for turn in 0..turn_count {
+            session.messages.push(agent_core::Message::text(
+                Role::User,
+                format!("request {turn}"),
+            ));
+            session.messages.push(agent_core::Message {
+                role: Role::Assistant,
+                content: String::new(),
+                tool_calls: vec![agent_core::ToolCall {
+                    id: format!("call-{turn}"),
+                    name: "read".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            });
+            session.messages.push(agent_core::Message {
+                role: Role::Tool,
+                content: format!("result {turn}"),
+                tool_calls: vec![],
+                tool_call_id: Some(format!("call-{turn}")),
+            });
+            session.messages.push(agent_core::Message::text(
+                Role::Assistant,
+                format!("done {turn}"),
+            ));
+        }
+
+        let loop_service: Arc<dyn agent_core::AgentLoop> = Arc::new(engine);
+        loop_service
+            .compact(&mut session, &sink, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(session.summary_through, turn_count * 4);
+        assert_eq!(
+            sink.store
+                .inner
+                .load(&session.id)
+                .await
+                .unwrap()
+                .summary_through,
+            turn_count * 4
+        );
+        assert!(session
+            .summary
+            .as_deref()
+            .is_some_and(|summary| !summary.is_empty()));
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        assert!(sink.events.lock().unwrap().iter().any(|event| {
+            matches!(event, Event::Compacted { through } if *through == turn_count * 4)
+        }));
+        let history: Vec<agent_core::Message> = serde_json::from_str(
+            model.requests.lock().unwrap()[0].messages[1]
+                .content
+                .split("History:\n")
+                .nth(1)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(history.len(), turn_count * 4);
+        for chunk in history.chunks_exact(4) {
+            assert_eq!(chunk[1].tool_calls.len(), 1);
+            assert_eq!(
+                chunk[2].tool_call_id.as_deref(),
+                Some(chunk[1].tool_calls[0].id.as_str())
+            );
+            assert_eq!(chunk[3].role, Role::Assistant);
+        }
+    }
+}
+
+#[tokio::test]
 async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
     for chunks in [1, 128] {
         let workspace = tempfile::tempdir().unwrap();
@@ -193,6 +293,61 @@ async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
             .iter()
             .any(|m| { m.role == Role::Assistant && m.content == "é".repeat(chunks) }));
     }
+}
+
+#[tokio::test]
+async fn manual_compaction_honors_cancellation_before_persisting_summary() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let store = Arc::new(CountingStore {
+        inner: SqliteSessions::open(&data.path().join("sessions.db")).unwrap(),
+        snapshots: Mutex::new(vec![]),
+    });
+    let lifecycle = CancellationToken::new();
+    let engine = StandardLoop {
+        model: Arc::new(Model {
+            chunks: 1,
+            ending: Ending::Cancel,
+            requests: Mutex::new(vec![]),
+        }),
+        tools: Arc::new(Registry::native(2).unwrap()),
+        sessions: store.clone(),
+        config: LoopConfig::default(),
+        lifecycle,
+    };
+    let sink = Sink {
+        events: Mutex::new(vec![]),
+        saves_at_text: Mutex::new(vec![]),
+        store: store.clone(),
+        cancel_on_text: None,
+    };
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    session
+        .messages
+        .push(agent_core::Message::text(Role::User, "complete turn"));
+    session
+        .messages
+        .push(agent_core::Message::text(Role::Assistant, "response"));
+    let cancel = CancellationToken::new();
+    let loop_service: Arc<dyn agent_core::AgentLoop> = Arc::new(engine);
+    let result = {
+        let compact = loop_service.compact(&mut session, &sink, cancel.clone());
+        tokio::pin!(compact);
+        tokio::select! {
+            result = &mut compact => panic!("pending provider unexpectedly completed: {result:?}"),
+            _ = tokio::task::yield_now() => cancel.cancel(),
+        }
+        compact.as_mut().await
+    };
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert_eq!(session.summary_through, 0);
+    assert!(session.summary.is_none());
+    assert!(!sink
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, Event::Compacted { .. })));
 }
 
 #[tokio::test]

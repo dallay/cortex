@@ -223,6 +223,18 @@ pub trait AgentLoop: Send + Sync {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()>;
+
+    /// Compact completed conversation history when supported by this loop.
+    async fn compact(
+        &self,
+        _session: &mut Session,
+        _events: &dyn EventSink,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        Err(AgentError::Model(
+            "manual compaction is not supported by this agent loop".into(),
+        ))
+    }
 }
 
 // Wrappers let the composition kernel register trait objects through typed services.

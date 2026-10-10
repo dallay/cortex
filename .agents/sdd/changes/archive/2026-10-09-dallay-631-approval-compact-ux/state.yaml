@@ -1,0 +1,43 @@
+change: dallay-631-approval-compact-ux
+current_phase: archived
+completed:
+  - init
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+  - archive
+next: none
+archived_to: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux
+updated: "2026-10-09T15:00:00Z"
+
+metadata:
+  title: "Approval numbering, header clarity, and explicit /compact"
+  description: "Reduce accidental approval of a different change than the user intended; expose a confirmation-gated /compact trigger that reuses the existing real-model summarization."
+  priority: medium
+  related_issues:
+    - "DALLAY-631"
+  affected_packages:
+    - apps/agent
+    - crates/agent/runtime
+  stakeholder: kerrigan
+
+artifacts:
+  proposal: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux/proposal.md
+  spec: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux/spec.md
+  design: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux/design.md
+  tasks: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux/tasks.md
+  verify: .agents/sdd/changes/archive/2026-10-09-dallay-631-approval-compact-ux/verify-report.md
+
+verdict:
+  status: pass-with-warnings
+  notes: "Deterministic gates green. Interactive approval repeat and /compact acceptance still depend on a real terminal session; the prior local Ollama setup in docs/agent/validation.md covers them."
+
+# Implementation summary
+# Phase 1 (terminal): Policy::turn_count + reset_turn + new header + Effect: line in apps/agent/src/terminal.rs.
+# Phase 2 (runtime): StandardLoop::compact mirrors the summary branch of context() in crates/agent/runtime/src/loop_engine.rs.
+# Phase 3 (CLI): /compact and /summarize interception in apps/agent/src/main.rs; Arc<StandardLoop> captured alongside LoopService.
+# Phase 4 (tests): six effect_line unit tests; chat_compact_emits_ndjson_event_after_confirmation and chat_compact_decline_emits_no_compacted_event PTY tests; run_mode_forwards_compact_as_a_regular_prompt CLI test.
+# Phase 5 (docs): implementation-specification.md, linux-daily-use.md, validation.md updated.

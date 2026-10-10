@@ -75,7 +75,7 @@ impl McpClients {
                 return Err(AgentError::Configuration("MCP names must be unique ASCII letters/digits/underscores, up to 32 characters".into()));
             }
             let request=ApprovalRequest {id:uuid::Uuid::new_v4().to_string(),action:format!("mcp.{}.start",config.name),
-                preview:format!("Trusted local MCP server: {}\nCommand: {} {:?}\nDirectory: {}\nThis process is not sandboxed. Environment names: {:?}",
+                preview:format!("Server: {} (trusted local process; startup may have external side effects)\nCommand: {} {:?}\nWorking directory: {}\nSandboxing: none; process inherits host privileges.\nEnvironment variable names provided: {:?}",
                     config.name,config.command,config.args,workspace.display(),config.env.keys().chain(config.env_from.keys()).collect::<Vec<_>>())};
             if !policy.approve(&request, cancel.clone()).await? {
                 continue;
@@ -214,8 +214,9 @@ impl Tool for McpTool {
                 id: call.id.clone(),
                 action: self.action.clone(),
                 preview: format!(
-                    "MCP tool: {}\nArguments:\n{}",
-                    self.action,
+                    "Server/action: {}\nTool: {}\nArguments (sent to the configured MCP server; external effects depend on that server):\n{}",
+                    self.action.split('.').nth(1).unwrap_or("unknown"),
+                    self.remote_name,
                     serde_json::to_string_pretty(&call.arguments)?
                 ),
             }),
