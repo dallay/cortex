@@ -183,7 +183,6 @@ impl GroqProvider {
     ) -> Vec<Result<StreamChunk, CortexError>> {
         event_text
             .lines()
-            .filter_map(|l| l.strip_prefix("data: "))
             .filter_map(|line| {
                 parse_event_text(line).and_then(|event| match event {
                     SseEvent::Data(data) => Some(data),
