@@ -6,6 +6,7 @@ use crate::{
 };
 use huginn_core::CancellationToken;
 use std::{
+    any::Any,
     collections::BTreeMap,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -170,11 +171,47 @@ impl Registration {
     }
     fn invoke<T>(&self, callback: impl FnOnce() -> Result<T>) -> Result<T> {
         self.check()?;
-        let result = catch_unwind(AssertUnwindSafe(callback))
-            .map_err(|_| error("UI callback panicked"))??;
+        // `catch_unwind` still runs the process panic hook, and the
+        // presentation hook tears down raw mode plus writes to stderr. Park a
+        // capturing no-op hook while a recoverable callback runs so a caught
+        // plugin panic can neither corrupt the active terminal nor disable raw
+        // mode. Uncaught panics keep the installed hook. The swap is
+        // process-global and brief; callbacks must stay cheap and synchronous.
+        let previous = std::panic::take_hook();
+        let captured = Arc::new(Mutex::new(None::<String>));
+        let sink = captured.clone();
+        std::panic::set_hook(Box::new(move |info: &std::panic::PanicHookInfo| {
+            if let Ok(mut slot) = sink.lock() {
+                if slot.is_none() {
+                    *slot = Some(info.to_string());
+                }
+            }
+        }));
+        let result = catch_unwind(AssertUnwindSafe(callback));
+        std::panic::set_hook(previous);
+        let result = result.map_err(|payload| {
+            let message = captured
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone())
+                .or_else(|| panic_message(&payload));
+            match message.as_deref().map(text).transpose() {
+                Ok(Some(message)) => error(format!("UI callback panicked: {message}")),
+                _ => error("UI callback panicked"),
+            }
+        })??;
         self.check()?;
         Ok(result)
     }
+}
+
+fn panic_message(payload: &Box<dyn Any + Send>) -> Option<String> {
+    let payload: &(dyn Any + Send) = &**payload;
+    payload.downcast_ref::<String>().cloned().or_else(|| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_string())
+    })
 }
 struct Entry {
     registration: Registration,
@@ -244,7 +281,7 @@ impl Contributions {
             },
         );
         drop(entries);
-        ctx.own(Cleanup {
+        ctx.own_resource(Cleanup {
             registry: Arc::downgrade(self),
             id,
             generation: ctx.generation(),

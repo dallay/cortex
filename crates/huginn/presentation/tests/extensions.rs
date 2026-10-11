@@ -81,7 +81,6 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
     supervisor.start().await.unwrap();
     let ui = Ui::new(
         &Session::new(".".into()),
-        Default::default(),
         registry,
         CancellationToken::new(),
     )

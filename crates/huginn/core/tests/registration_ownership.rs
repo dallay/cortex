@@ -35,7 +35,7 @@ impl Plugin for Probe {
             "activation effects must remain staged"
         );
         *self.lifetime.lock().unwrap() = Some(lifetime);
-        ctx.own(Guard(self.drops.clone()));
+        ctx.own_resource(Guard(self.drops.clone()));
         if self.fail {
             Err(AgentError::Composition("injected".into()))
         } else {

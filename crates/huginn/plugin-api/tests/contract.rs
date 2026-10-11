@@ -338,7 +338,11 @@ async fn callback_output_is_sanitized_bounded_and_panics_become_errors() {
         CommandResult::Notice(View::text("[31mhello"))
     );
     assert!(ui.command("/large").unwrap().run("").is_err());
-    assert!(ui.command("/panic").unwrap().run("").is_err());
+    let panic = ui.command("/panic").unwrap().run("").unwrap_err();
+    assert!(
+        panic.to_string().contains("injected callback panic"),
+        "caught panic keeps its payload: {panic}"
+    );
     let input = ToolResult {
         tool: "alpha".into(),
         output: "exact".into(),
