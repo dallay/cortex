@@ -1,144 +1,57 @@
 # Cortex — Agent Instructions
 
-> Canonical source: `.agents/AGENTS.md`. All instruction files in the repo
-> (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`)
-> are symlinks managed by `agentsync`. Do not edit them directly; edit the
-> source and run `agentsync apply`.
+## Source of truth
 
-## Tooling
+- Edit this file, not the root `AGENTS.md` or generated instruction links. Sync them with `pnpm dlx @dallay/agentsync@latest apply`.
+- AgentSync targets are configured in `.agents/agentsync.toml`.
 
-- **Task runner**: `just` (workspace root)
-- **Git hooks**: `lefthook` — install via `npx lefthook@latest install`
-- **Package manager**: `pnpm` (Node.js side, e.g. dashboard)
-- **MCP servers**: configured in `.agents/agentsync.toml` under
-  `[mcp_servers]`. For SAST scanning, use the `semgrep_scan` and
-  `semgrep_supply_chain` tools directly — no repo-local Semgrep config
-  required.
+## Workspace map
 
-## Safety — Code Generation
+- Rust workspace: `apps/rook` is Rook's binary/DI entrypoint; `crates/domain`, `crates/application`, and `crates/infrastructure` hold its domain, use cases, and adapters.
+- Huginn is a separate Rust coding-agent application in `apps/huginn` and `crates/huginn/{core,application,runtime,presentation}`. Keep its dependency graph independent of Rook; `.github/scripts/check-huginn-architecture.py` enforces this.
+- Dashboard: Vue app in `apps/rook/dashboard`, embedded by Rook and served for development by Vite.
+- Workspace MSRV is Rust 1.81, but `rust-toolchain.toml` pins Rust 1.89; Huginn also declares 1.89.
 
-Before generating any code or shell commands, scan with the Semgrep tools:
+## Commands
 
-- `semgrep_scan` — for Rust, Docker, GitHub Actions, and general code quality
-- `semgrep_supply_chain` — after any lockfile change
+Run from the repository root unless noted:
 
-## Dev Commands
-
-```bash
-just fmt             # Format code
-just clippy          # Clippy (deny warnings)
-just test            # Full test suite (workspace)
-just ci-local        # Full CI locally (fail-fast: stops on first error)
-just ci-ci           # CI without E2E (skip Docker dependency)
-just ci-lint-only    # Lint + fmt only
-just ci-check-only   # Clippy + cargo check only
-just ci-test-only    # Rust + Vitest tests only
-
-# Focused runs
-cargo test -p rook --test '*'       # Single integration test file
-cargo test -p shared-kernel          # Single package tests
-cargo test -p rook-usecases --lib    # Unit tests only
-cd apps/rook/dashboard && pnpm exec vitest run  # Frontend unit tests
+```sh
+just fmt-check       # Rust formatting check
+just clippy          # Clippy for all targets; warnings are errors
+just test            # Rust workspace tests, all features
+just ci-lint-only    # Markdown lint + Rust formatting
+just ci-check-only   # Clippy + architecture check + cargo check
+just ci-test-only    # Rust tests + dashboard Vitest
+just ci-ci           # Full local CI except Playwright E2E
+just ci-local        # Required full verification gate, including Docker-backed E2E
+just huginn-test     # Huginn architecture check + focused workspace tests
 ```
 
-**CI order** (important): `markdownlint-cli2` → `cargo fmt --check` → `cargo clippy` →
-`cargo check` → `cargo test` → Vitest → `cargo doc` → `cargo audit` → Playwright e2e
+- `just ci-local` order: Markdown lint → fmt → Clippy → Huginn architecture check and `cargo check` → Rust tests → Vitest → docs → non-blocking `cargo audit` → Playwright E2E. E2E requires Docker; use `just ci-ci` to skip it.
+- Focus Rust tests with `cargo test -p <package>`; use `--lib` for library unit tests or `--test <name>` for an integration-test target. Dashboard tests: `cd apps/rook/dashboard && pnpm exec vitest run`; typecheck: `pnpm exec vue-tsc --noEmit` from that directory.
+- Dashboard dependencies are installed with `just dashboard-install` (or `just setup`). The project uses pnpm 11.
+- TDD is not enabled by default; follow explicit task/session requirements. Tests exist both inline and as integration targets.
 
-## Architecture
+## Non-obvious constraints
 
-```
-apps/rook (binary — main.rs, config.rs, di.rs, server.rs)
-  → transport-axum (HTTP, OpenAI/Anthropic adapters)
-    → rook-usecases (RouteRequest, FallbackRouter)
-      → rook-core (domain model, ports)
-        → shared-kernel (no deps — ProviderId, ModelId, CortexError)
-```
+- HTTP/TLS clients use `reqwest` with `rustls-tls` and default features disabled; do not add an OpenSSL dependency casually.
+- Provider CRUD persists and tests connections in SQLite, but does not hot-register them for completion traffic. TOML-configured providers serve requests; see `docs/architecture.md` §Provider CRUD Limitation.
+- TOML config supports `~` path expansion and `${ENV_VAR}` expansion for `api_key` values; see `apps/rook/src/config.rs`.
+- Credential encryption requires `provider_crud.enabled` and both `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT`.
+- `just db-reset` removes the SQLite database and its `-wal`/`-shm` companions together. Keep those files in sync; a stale WAL beside a fresh database can cause SQLite error 522.
+- Cross-compilation targets are in `rust-toolchain.toml`; `aarch64-unknown-linux-gnu` is not a supported CI cross-build target.
+- For security scanning, use the configured `semgrep_scan` tool for code and `semgrep_supply_chain` after lockfile changes.
 
-Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepositoryPort`, `KeyManager`
+## Verification
 
-## Package Map
-
-| Package                  | Purpose                                    |
-|--------------------------|--------------------------------------------|
-| `apps/rook`              | Binary — DI bootstrap                      |
-| `transport-axum`         | HTTP server, wire ↔ domain adapters        |
-| `rook-usecases`          | Request routing, fallback, health checks   |
-| `rook-core`              | Domain model, port traits                  |
-| `shared-kernel`          | Zero-deps types (IDs, errors)              |
-| `providers-{openai,anthropic,ollama,gemini,groq}` | Per-provider API implementations |
-| `cache-memory`           | DashMap TTL cache                          |
-| `audit-sqlite`           | SQLite audit log                           |
-| `encryption-inmemory`    | AES-256-GCM + Argon2id                     |
-| `provider-sqlite`        | Provider connection persistence             |
-
-## Important Quirks
-
-- **rustls only** — no OpenSSL. TLS via `rustls-tls` feature of `reqwest`.
-- **`~` and `${ENV_VAR}` expansion** in TOML config paths and `api_key` values
-  (`config.rs` handles this).
-- **No inline `#[cfg(test)]` modules** — tests are separate test targets, not
-  embedded in libs.
-- **lefthook install** — not in `package.json`. Use `npx lefthook@latest install`
-  or the standalone script in `lefthook.yml`.
-- **No hot provider registration** — Provider CRUD stores connections in SQLite
-  but TOML providers serve traffic.
-  See `docs/architecture.md` §Provider CRUD Limitation.
-- **Encryption requires `provider_crud.enabled`** plus `ENCRYPTION_PASSPHRASE`
-  and `ENCRYPTION_SALT` env vars.
-- **Frontend dashboard** at `apps/rook/dashboard/` — Vue.js + Vitest, separate
-  from Rust crate tests.
-
-## DB Reset
-
-```bash
-just db-reset   # Removes rook.db, rook.db-wal, rook.db-shm
-```
-Delete all three files together — a leftover `-wal` against a fresh DB causes
-SQLite error 522 ("file truncated") on startup.
-
-## Cross-Compilation
-
-Defined in `rust-toolchain.toml` (channel 1.89):
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
-`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
-`x86_64-apple-darwin`, `aarch64-apple-darwin`.
-
-`aarch64-unknown-linux-gnu` is **not cross-compiled in CI** — requires
-target-specific OpenSSL/ring headers.
-
-## Verification Gate
-
-**No work is done until `just ci-local` passes.** Run it before claiming
-completion. Flaky SQLite tests may need an isolated re-run.
-
-### Focused during iteration
-- `just fmt-check` — pre-commit hook
-- `just clippy` — pre-push hook
-- `just test-unit` — fast unit-only feedback
-- `just test-integration` — integration tests only
-- `just test-e2e` — Playwright suite (requires `just test-e2e-build` + Docker)
-
-## Testing Policy — TDD Scope
-
-TDD follows explicit project/session configuration, never by default.
-When enabled: failing test first, then RED → GREEN → REFACTOR.
-When disabled: ordinary functional checks only.
-
-- **TDD YES** — pure domain logic: use-cases, classifiers, parsers,
-  wire formats. Example: `issue-labeler.cjs classify()` invariants
-  (no invented product, human preservation, idempotence).
-- **TDD NO** — config / YAML / GitHub Actions / Renovate-pinned SHAs,
-  docs-only changes. Light validation only:
-  `ruby -ryaml YAML.load_file`, `node --check`, smoke run.
-- **Anti-pattern** — asserting implementation details like
-  `actions/checkout@<40-hex>` pinned SHA or path-filter literals.
-  If a policy check is needed, use a non-fragile shape
-  (e.g. `/uses:\s*actions\/checkout@[a-f0-9]{40}/`), never a literal SHA.
+- Before claiming implementation work is complete, run `just ci-local`; if the environment cannot run Docker E2E, report that and run `just ci-ci` instead.
+- For docs-only edits, run Markdown lint on the changed file (the workspace CI lint covers root Markdown and `docs/**/*.md`).
 
 ## References
 
-- [Architecture](docs/architecture.md) — layer diagram, data/config flow
-- [Configuration](docs/configuration.md) — TOML schema, provider examples
-- [Providers](docs/providers.md) — per-provider config, timeouts, health checks
-- [API Reference](docs/api.md) — endpoints, wire formats
-- `sdd` — SDD change artifacts
+- [Architecture](docs/architecture.md) — layer boundaries and runtime behavior
+- [Configuration](docs/configuration.md) — TOML schema and provider setup
+- [Providers](docs/providers.md) — provider-specific behavior
+- [API reference](docs/api.md) — endpoints and wire formats
+- [Huginn guide](docs/huginn/README.md) — Huginn architecture and workflow
