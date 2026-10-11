@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 
-const activeProducts = new Set(["rook", "huginn"]);
+import { readFile } from "node:fs/promises";
+
+const config = JSON.parse(await readFile("release-please-config.json", "utf8"));
+const products = Object.entries(config.packages ?? {}).map(([packagePath, settings]) => ({
+  name: settings.component,
+  prefixes: [`${packagePath}/`],
+}));
+const activeProducts = new Set(products.map(({ name }) => name));
 
 function productsForPaths(paths) {
-  const products = new Set();
+  const matched = new Set();
   for (const path of paths) {
-    if (path.startsWith("apps/rook/") || path.startsWith("crates/domain/rook-core/")) products.add("rook");
-    if (path.startsWith("apps/huginn/") || path.startsWith("crates/huginn/")) products.add("huginn");
-    // shared-kernel is currently a Rook dependency; Huginn owns a separate kernel.
-    if (path.startsWith("crates/domain/shared-kernel/")) products.add("rook");
+    for (const product of products) {
+      if (product.prefixes.some((prefix) => path.startsWith(prefix))) matched.add(product.name);
+    }
   }
-  return products;
+  return matched;
 }
 
 function assertEqual(actual, expected, label) {
@@ -24,11 +30,10 @@ function assertEqual(actual, expected, label) {
 assertEqual(productsForPaths(["apps/rook/src/main.rs"]), ["rook"], "Rook-only fixture");
 assertEqual(productsForPaths(["apps/huginn/src/main.rs"]), ["huginn"], "Huginn-only fixture");
 assertEqual(productsForPaths(["apps/rook/src/main.rs", "apps/huginn/src/main.rs"]), ["huginn", "rook"], "simultaneous fixture");
-assertEqual(productsForPaths(["crates/domain/shared-kernel/src/lib.rs"]), ["rook"], "shared dependency fixture");
+assertEqual(productsForPaths(["crates/domain/shared-kernel/src/lib.rs"]), [], "shared dependency outside product path fixture");
 
-const activeChanges = [...productsForPaths(["apps/huginn/src/main.rs"])].filter((product) => activeProducts.has(product));
-assertEqual(new Set(activeChanges), ["huginn"], "Huginn release PR scope");
-const unrelatedChanges = [...productsForPaths(["apps/huginn/src/main.rs"])].filter((product) => product !== "rook");
-assertEqual(new Set(unrelatedChanges), ["huginn"], "Huginn changes must not trigger Rook");
+const huginnChanges = productsForPaths(["apps/huginn/src/main.rs"]);
+assertEqual(new Set([...huginnChanges].filter((product) => activeProducts.has(product))), ["huginn"], "Huginn release PR scope");
+assertEqual(new Set([...huginnChanges].filter((product) => product === "rook")), [], "Huginn changes must not trigger Rook");
 
 console.log("Independent release fixtures passed: Rook, Huginn, simultaneous, shared dependency, and cross-product isolation.");

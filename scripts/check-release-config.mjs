@@ -20,10 +20,10 @@ assert(Object.keys(manifest).length === 2, "active manifest must track Rook and 
 assert(Object.keys(config.packages ?? {}).sort().join(",") === "apps/huginn,apps/rook", "active config must track Rook and Huginn independently");
 assert(Boolean(rook), "apps/rook must be configured");
 assert(Boolean(huginn), "apps/huginn must be configured");
-assert(rook.component === "rook", "apps/rook must use the rook component identity");
-assert(huginn.component === "huginn", "apps/huginn must use the huginn component identity");
-assert(rook["changelog-path"] === "CHANGELOG.md", "Rook must own apps/rook/CHANGELOG.md");
-assert(huginn["changelog-path"] === "CHANGELOG.md", "Huginn must own apps/huginn/CHANGELOG.md");
+assert(rook?.component === "rook", "apps/rook must use the rook component identity");
+assert(huginn?.component === "huginn", "apps/huginn must use the huginn component identity");
+assert(rook?.["changelog-path"] === "CHANGELOG.md", "Rook must own apps/rook/CHANGELOG.md");
+assert(huginn?.["changelog-path"] === "CHANGELOG.md", "Huginn must own apps/huginn/CHANGELOG.md");
 assert(manifest["apps/rook"] === "0.0.1", "active manifest must preserve Rook's current version");
 
 const huginnCargo = await readFile("apps/huginn/Cargo.toml", "utf8");

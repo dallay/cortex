@@ -148,9 +148,11 @@ Antes de habilitar los canales públicos de Rook se debe registrar evidencia de:
 
 Cargo ownership y publicación crates.io quedan fuera del gate de Rook GA.
 
-Huginn requiere además el rename en `main`, MVP acceptance, evidencia de
-Ratatui/PTY y contratos públicos estables `HUGINN_*`. Hasta entonces no aparece
-en el manifest activo ni tiene jobs públicos de distribución.
+Huginn ya está incluido en el manifest activo de Release Please y puede generar
+release PRs con versionado independiente. No tiene jobs públicos de distribución
+hasta completar el MVP acceptance (incluida la evidencia de Linux y Ratatui/PTY),
+verificar los contratos públicos estables `HUGINN_*` y superar el preflight de
+cada canal.
 
 ## Reintentos y releases parciales
 

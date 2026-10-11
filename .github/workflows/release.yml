@@ -22,9 +22,9 @@ env:
   RUST_TOOLCHAIN: "1.89"
 
 jobs:
-  # Huginn is intentionally absent from the active manifest until its external
-  # acceptance gates are complete. This job is the only dry-run entry point:
-  # it performs local checks and cannot create a PR, release or registry write.
+  # Huginn is tracked in the active manifest and can generate release PRs, but
+  # has no distribution jobs until its acceptance gates are complete. This job
+  # performs local checks only and cannot create a PR, release or registry write.
   validate-release-config:
     name: Validate release configuration (read-only)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
@@ -181,7 +181,8 @@ jobs:
           VERSION: ${{ needs.release-please.outputs.rook_release_version }}
         run: |
           set -euo pipefail
-          "target/${TARGET}/release/rook" --version | grep -F "${VERSION}"
+          actual_version="$("target/${TARGET}/release/rook" --version | awk '{print $NF}')"
+          test "${actual_version}" = "${VERSION}"
 
       - name: Verify Windows binary version
         if: runner.os == 'Windows'
@@ -189,7 +190,9 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.release-please.outputs.rook_release_version }}
-        run: .\target\$env:TARGET\release\rook.exe --version | Select-String -SimpleMatch $env:VERSION
+        run: |
+          $actualVersion = (& ".\target\$env:TARGET\release\rook.exe" --version).Trim().Split(' ')[-1]
+          if ($actualVersion -ne $env:VERSION) { throw "Expected version $env:VERSION, got $actualVersion" }
 
       - name: Upload release artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -355,6 +358,12 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.rook_release_tag }}
           fetch-depth: 0
+
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0

@@ -50,12 +50,13 @@ source-build Dockerfile. Build a local Rook binary first and place it at the
 architecture-specific context path:
 
 ```bash
-# Current validated local target
-cargo build --locked --release -p rook
+# Build on a Linux/amd64 host, or cross-compile this target with the required
+# Linux linker/toolchain installed. This Dockerfile consumes an amd64 Linux binary.
+cargo build --locked --release --target x86_64-unknown-linux-gnu -p rook
 mkdir -p docker-context
-cp target/release/rook docker-context/rook-amd64
+cp target/x86_64-unknown-linux-gnu/release/rook docker-context/rook-amd64
 cp apps/rook/Dockerfile docker-context/Dockerfile
-docker build -f docker-context/Dockerfile -t rook:local docker-context
+docker build --platform linux/amd64 -f docker-context/Dockerfile -t rook:local docker-context
 
 # Multi-architecture publishing is enabled only when the corresponding target
 # has product-specific build and smoke-test evidence. See docs/releasing.md.
