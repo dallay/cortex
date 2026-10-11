@@ -117,3 +117,38 @@ fn external_reference_command_and_selection_are_host_rendered() {
     pty.send("\x03");
     pty.finish(true);
 }
+
+#[test]
+fn long_plugin_dialog_window_keeps_selection_visible() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/long-pick\r");
+    pty.wait_for("Long dialog");
+    for _ in 0..39 {
+        pty.send("\x1b[B");
+    }
+    pty.wait_for("choice-39");
+    pty.send("\r");
+    pty.wait_for("Picked choice-39");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn unrecovered_panic_after_callbacks_still_restores_terminal() {
+    let mut pty = start("panic-after-callback", true);
+    pty.wait_for("Huginn");
+    pty.send("/boom\r");
+    pty.wait_for("UI callback panicked");
+    pty.send("panic-now\r");
+    let output = pty.finish(false);
+    assert!(
+        output.contains("uncaught panic after recovered callbacks"),
+        "{output}"
+    );
+    assert!(output.contains("\x1b[?2004l"), "{output}");
+    assert!(
+        format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"),
+        "raw mode not restored"
+    );
+}

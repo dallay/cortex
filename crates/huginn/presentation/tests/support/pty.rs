@@ -11,6 +11,7 @@ pub struct Pty {
     child: Box<dyn Child + Send + Sync>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<Mutex<String>>,
+    screen: Arc<Mutex<Screen>>,
     reader: Option<std::thread::JoinHandle<()>>,
 }
 impl Pty {
@@ -30,6 +31,8 @@ impl Pty {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let output = Arc::new(Mutex::new(String::new()));
         let captured = output.clone();
+        let screen = Arc::new(Mutex::new(Screen::new(30, 100)));
+        let painted = screen.clone();
         let reply = writer.clone();
         let thread = std::thread::spawn(move || {
             let mut bytes = [0; 4096];
@@ -41,6 +44,7 @@ impl Pty {
                 let queries = {
                     let mut output = captured.lock().unwrap();
                     output.push_str(&String::from_utf8_lossy(&bytes[..count]));
+                    painted.lock().unwrap().feed(&bytes[..count]);
                     output.matches("\x1b[6n").count()
                 };
                 if answer_cursor && queries > seen {
@@ -59,6 +63,7 @@ impl Pty {
             child,
             writer,
             output,
+            screen,
             reader: Some(thread),
         }
     }
@@ -70,13 +75,16 @@ impl Pty {
     pub fn output(&self) -> String {
         self.output.lock().unwrap().clone()
     }
+    fn screen_text(&self) -> String {
+        self.screen.lock().unwrap().text()
+    }
     pub fn wait_for(&self, needle: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !terminal_text(&self.output()).contains(needle) {
+        while !self.screen_text().contains(needle) {
             assert!(
                 Instant::now() < deadline,
-                "missing {needle:?}: {}",
-                self.output()
+                "missing {needle:?} on screen:\n{}",
+                self.screen_text()
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -108,27 +116,131 @@ impl Pty {
     }
 }
 
-/// PTY captures the terminal protocol, not the rendered screen. Ratatui may
-/// move the cursor between adjacent cells, so preserve a separator for cursor
-/// positioning while ignoring other CSI control sequences during assertions.
-fn terminal_text(output: &str) -> String {
-    let mut text = String::new();
-    let mut chars = output.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character != '\x1b' || chars.next_if_eq(&'[').is_none() {
-            text.push(character);
-            continue;
+/// Minimal screen model for visibility assertions. The PTY captures the terminal
+/// protocol, not pixels: Ratatui rewrites only changed cells, so a label split
+/// across diff frames never appears contiguously in raw bytes. This tracks
+/// cursor-addressed writes into a fixed grid; assertions search the grid.
+/// Stale cells are possible (no scrollback model), so only wait for text that
+/// has not appeared before in the same session.
+struct Screen {
+    cells: Vec<Vec<char>>,
+    rows: usize,
+    cols: usize,
+    row: usize,
+    col: usize,
+}
+impl Screen {
+    fn new(rows: usize, cols: usize) -> Self {
+        Self {
+            cells: vec![vec![' '; cols]; rows],
+            rows,
+            cols,
+            row: 0,
+            col: 0,
         }
-        for sequence_character in chars.by_ref() {
-            if ('@'..='~').contains(&sequence_character) {
-                if sequence_character == 'H' {
-                    text.push(' ');
+    }
+    fn text(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    fn put(&mut self, character: char) {
+        if self.row < self.rows && self.col < self.cols {
+            self.cells[self.row][self.col] = character;
+            self.col = (self.col + 1).min(self.cols - 1);
+        }
+    }
+    fn feed(&mut self, bytes: &[u8]) {
+        let chars: Vec<char> = String::from_utf8_lossy(bytes).chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            let character = chars[index];
+            index += 1;
+            if character == '\x1b' && chars.get(index) == Some(&'[') {
+                index += 1;
+                let mut params = String::new();
+                let mut final_byte = ' ';
+                for candidate in chars.iter().skip(index) {
+                    index += 1;
+                    if ('@'..='~').contains(candidate) {
+                        final_byte = *candidate;
+                        break;
+                    }
+                    params.push(*candidate);
                 }
-                break;
+                self.apply_csi(final_byte, &params);
+                continue;
+            }
+            match character {
+                '\n' => {
+                    self.row = (self.row + 1).min(self.rows - 1);
+                    self.col = 0;
+                }
+                '\r' => self.col = 0,
+                _ if character.is_control() => {}
+                _ => self.put(character),
             }
         }
     }
-    text
+    fn numbers(params: &str) -> Vec<usize> {
+        params
+            .trim_matches(|ch| ch == '?' || ch == '=')
+            .split(';')
+            .map(|part| part.parse().unwrap_or(0))
+            .collect()
+    }
+    fn apply_csi(&mut self, final_byte: char, params: &str) {
+        let numbers = Self::numbers(params);
+        let first = numbers.first().copied().unwrap_or(0);
+        let second = numbers.get(1).copied().unwrap_or(0);
+        let saturating = |value: usize| value.min(10_000);
+        match final_byte {
+            'H' | 'f' => {
+                self.row = first.saturating_sub(1).min(self.rows - 1);
+                self.col = second.saturating_sub(1).min(self.cols - 1);
+            }
+            'A' => self.row = self.row.saturating_sub(saturating(first.max(1))),
+            'B' | 'E' => {
+                self.row = (self.row + saturating(first.max(1))).min(self.rows - 1);
+                if final_byte == 'E' {
+                    self.col = 0;
+                }
+            }
+            'C' => self.col = (self.col + saturating(first.max(1))).min(self.cols - 1),
+            'D' => self.col = self.col.saturating_sub(saturating(first.max(1))),
+            'G' => self.col = first.saturating_sub(1).min(self.cols - 1),
+            'd' => self.row = first.saturating_sub(1).min(self.rows - 1),
+            'J' => {
+                if first == 2 {
+                    for row in &mut self.cells {
+                        row.fill(' ');
+                    }
+                } else {
+                    for row in self.row..self.rows {
+                        let from = if row == self.row { self.col } else { 0 };
+                        for cell in self.cells[row].iter_mut().skip(from) {
+                            *cell = ' ';
+                        }
+                    }
+                }
+            }
+            'K' => {
+                if self.row < self.rows {
+                    let (from, to) = match first {
+                        1 => (0, (self.col + 1).min(self.cols)),
+                        2 => (0, self.cols),
+                        _ => (self.col.min(self.cols), self.cols),
+                    };
+                    for cell in self.cells[self.row].iter_mut().take(to).skip(from) {
+                        *cell = ' ';
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Drop for Pty {

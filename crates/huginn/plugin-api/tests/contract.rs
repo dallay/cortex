@@ -105,6 +105,89 @@ async fn setup(
     (supervisor, ui, held)
 }
 #[tokio::test]
+async fn concurrent_recovered_panics_stay_isolated_and_keep_the_hook() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Barrier,
+    };
+    static HOOK_CALLS: AtomicUsize = AtomicUsize::new(0);
+    // Sentinel host hook: observe every panic, then delegate. It stands in for
+    // TerminalGuard's hook: recovered callback panics must reach the installed
+    // hook (which cooperates via the thread marker), and the hook must still be
+    // installed afterwards instead of a stale per-invocation replacement.
+    let previous = std::panic::take_hook();
+    let previous = Arc::new(Mutex::new(previous));
+    std::panic::set_hook(Box::new(move |info| {
+        HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+        if let Ok(previous) = previous.lock() {
+            previous(info);
+        }
+    }));
+    struct Flood {
+        count: usize,
+        barrier: Arc<Barrier>,
+    }
+    #[async_trait]
+    impl Plugin for Flood {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "flood".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+            for index in 0..self.count {
+                let barrier = self.barrier.clone();
+                ui.register(
+                    ctx,
+                    format!("flood.{index}"),
+                    Contribution::Command {
+                        name: format!("/flood-{index}"),
+                        handler: Arc::new(move |_| {
+                            barrier.wait();
+                            panic!("flood-payload-{index}")
+                        }),
+                    },
+                )?;
+            }
+            Ok(())
+        }
+    }
+    const THREADS: usize = 8;
+    let (mut supervisor, ui, _) = setup(false).await;
+    supervisor
+        .register(Box::new(Flood {
+            count: THREADS,
+            barrier: Arc::new(Barrier::new(THREADS)),
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let commands: Vec<_> = (0..THREADS)
+        .map(|index| ui.command(&format!("/flood-{index}")).unwrap())
+        .collect();
+    let baseline = HOOK_CALLS.load(Ordering::SeqCst);
+    std::thread::scope(|scope| {
+        for (index, command) in commands.iter().enumerate() {
+            scope.spawn(move || {
+                let failure = command.run("").unwrap_err();
+                assert!(
+                    failure
+                        .to_string()
+                        .contains(&format!("flood-payload-{index}")),
+                    "thread {index} got another thread's report: {failure}"
+                );
+            });
+        }
+    });
+    // Every recovered panic reached the installed hook, which was never
+    // replaced: a stale per-invocation hook would have swallowed observations.
+    // (No follow-up run here: the flood handlers rendezvous on a barrier that
+    // is spent once all threads have passed it.)
+    assert!(HOOK_CALLS.load(Ordering::SeqCst) >= baseline + THREADS);
+}
+#[tokio::test]
 async fn independent_contributions_dispatch_and_revoke_all_retained_handles() {
     let (mut supervisor, ui, held) = setup(false).await;
     supervisor
