@@ -128,6 +128,7 @@ struct Screen {
     cols: usize,
     row: usize,
     col: usize,
+    pending: Vec<u8>,
 }
 impl Screen {
     fn new(rows: usize, cols: usize) -> Self {
@@ -137,6 +138,7 @@ impl Screen {
             cols,
             row: 0,
             col: 0,
+            pending: Vec::new(),
         }
     }
     fn text(&self) -> String {
@@ -153,7 +155,25 @@ impl Screen {
         }
     }
     fn feed(&mut self, bytes: &[u8]) {
-        let chars: Vec<char> = String::from_utf8_lossy(bytes).chars().collect();
+        // Reads can split a multibyte character or a CSI sequence: buffer
+        // everything, parse only complete units, and keep the incomplete tail.
+        self.pending.extend_from_slice(bytes);
+        let complete = match std::str::from_utf8(&self.pending) {
+            Ok(_) => self.pending.len(),
+            Err(error) => match error.error_len() {
+                None => error.valid_up_to(),
+                Some(_) => self.pending.len(),
+            },
+        };
+        let text = String::from_utf8_lossy(&self.pending[..complete]).into_owned();
+        // Hold back a trailing ESC or an unfinished CSI (all-ASCII tail).
+        let hold = Self::csi_tail_len(&text);
+        let chunk: String = text[..text.len() - hold].chars().collect();
+        self.pending.drain(..complete - hold);
+        self.apply(&chunk);
+    }
+    fn apply(&mut self, text: &str) {
+        let chars: Vec<char> = text.chars().collect();
         let mut index = 0;
         while index < chars.len() {
             let character = chars[index];
@@ -183,6 +203,27 @@ impl Screen {
                 _ => self.put(character),
             }
         }
+    }
+    /// Byte length of a trailing incomplete escape sequence (ESC or unfinished
+    /// CSI), or 0 when the text ends on a complete unit. The tail is pure ASCII,
+    /// so its char length equals its byte length.
+    fn csi_tail_len(text: &str) -> usize {
+        let Some(start) = text.rfind('\x1b') else {
+            return 0;
+        };
+        let tail = &text[start..];
+        if tail == "\x1b" {
+            return 1;
+        }
+        if let Some(sequence) = tail.strip_prefix("\x1b[") {
+            if sequence.chars().all(|ch| {
+                ch.is_ascii_digit() || matches!(ch, ';' | ':' | '?' | ' ' | '#' | '$' | '\'')
+            }) && !sequence.chars().any(|ch| ('@'..='~').contains(&ch))
+            {
+                return tail.len();
+            }
+        }
+        0
     }
     fn numbers(params: &str) -> Vec<usize> {
         params
@@ -247,4 +288,35 @@ impl Drop for Pty {
     fn drop(&mut self) {
         let _ = self.child.kill();
     }
+}
+
+#[test]
+fn screen_buffers_split_csi_sequences_across_reads() {
+    let mut screen = Screen::new(30, 100);
+    screen.feed(b"\x1b[12;");
+    // Nothing painted yet: the unfinished sequence stays buffered.
+    assert!(!screen.text().contains('['));
+    screen.feed(b"5HX");
+    let row: String = screen.text().lines().nth(11).unwrap().into();
+    assert_eq!(row.chars().nth(4), Some('X'));
+    assert!(!screen.text().contains("[12;"));
+}
+
+#[test]
+fn screen_buffers_split_multibyte_characters_across_reads() {
+    let mut screen = Screen::new(30, 100);
+    // Em dash (U+2014) is three bytes; feed it in two reads.
+    screen.feed(&[0xE2, 0x80]);
+    assert!(!screen.text().contains('�'));
+    screen.feed(&[0x94]);
+    assert!(screen.text().contains('—'));
+    assert!(!screen.text().contains('�'));
+}
+
+#[test]
+fn screen_applies_complete_sequences_normally() {
+    let mut screen = Screen::new(30, 100);
+    screen.feed(b"\x1b[2;3HAB\x1b[0m");
+    let row: String = screen.text().lines().nth(1).unwrap().into();
+    assert_eq!(&row[2..4], "AB");
 }

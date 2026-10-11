@@ -97,6 +97,31 @@ impl Plugin for LongDialogPlugin {
                 handler: Arc::new(|_| Ok(CommandResult::Dialog("fixture.long-dialog".into()))),
             },
         )?;
+        let long_body: Vec<String> = (0..30).map(|index| format!("body-{index:02}")).collect();
+        let long_body_text = long_body.join("\n");
+        ui.register(
+            ctx,
+            "fixture.long-body-dialog".into(),
+            Contribution::Dialog(Dialog {
+                title: "Long body dialog".into(),
+                body: long_body_text,
+                choices: vec!["blong-00".into(), "blong-01".into(), "blong-02".into()],
+                on_select: Arc::new(|index| {
+                    Ok(View::text(format!(
+                        "Picked {}",
+                        ["blong-00", "blong-01", "blong-02"][index]
+                    )))
+                }),
+            }),
+        )?;
+        ui.register(
+            ctx,
+            "fixture.long-body-pick".into(),
+            Contribution::Command {
+                name: "/long-body-pick".into(),
+                handler: Arc::new(|_| Ok(CommandResult::Dialog("fixture.long-body-dialog".into()))),
+            },
+        )?;
         Ok(())
     }
 }

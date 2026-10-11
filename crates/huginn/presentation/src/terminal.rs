@@ -346,12 +346,19 @@ impl Driver {
                 let [body_area, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
                 let body = safe(body);
-                let mut text = format!("{body}\n");
+                // Window the body too: a long body must never push every choice
+                // out of view. One content row is always reserved so the
+                // selected choice stays visible and actionable.
+                let height = usize::from(body_area.height).saturating_sub(2);
+                let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+                let mut text = String::new();
+                for line in body.lines().take(body_rows) {
+                    text.push_str(line);
+                    text.push('\n');
+                }
                 // Keep the selected choice visible: window the list like the
                 // approval preview does, preserving marker and safe rendering.
-                let rows = usize::from(body_area.height)
-                    .saturating_sub(2)
-                    .saturating_sub(body.lines().count().max(1));
+                let rows = height.saturating_sub(body_rows);
                 let start = selected
                     .saturating_sub(rows.saturating_sub(1))
                     .min(choices.len().saturating_sub(rows));

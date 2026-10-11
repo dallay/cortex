@@ -135,6 +135,23 @@ fn long_plugin_dialog_window_keeps_selection_visible() {
 }
 
 #[test]
+fn long_plugin_dialog_body_never_hides_every_choice() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/long-body-pick\r");
+    pty.wait_for("Long body dialog");
+    pty.wait_for("body-00");
+    pty.wait_for("blong-00");
+    pty.send("\x1b[B");
+    pty.send("\x1b[B");
+    pty.wait_for("blong-02");
+    pty.send("\r");
+    pty.wait_for("Picked blong-02");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn unrecovered_panic_after_callbacks_still_restores_terminal() {
     let mut pty = start("panic-after-callback", true);
     pty.wait_for("Huginn");
