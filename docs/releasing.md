@@ -149,8 +149,9 @@ Antes de habilitar los canales públicos de Rook se debe registrar evidencia de:
 Cargo ownership y publicación crates.io quedan fuera del gate de Rook GA.
 
 Huginn requiere además el rename en `main`, MVP acceptance, evidencia de
-Ratatui/PTY y contratos públicos estables `HUGINN_*`. Hasta entonces no aparece
-en el manifest activo ni tiene jobs públicos de distribución.
+Ratatui/PTY y contratos públicos estables `HUGINN_*`. Huginn ya está incluido
+en el manifest activo de Release Please, pero no tendrá jobs públicos de
+distribución hasta que se cumplan estos gates.
 
 ## Reintentos y releases parciales
 
@@ -174,8 +175,9 @@ node scripts/release-fixtures.mjs
 ```
 
 Estos fixtures cubren cambios solo de Rook, solo de Huginn, cambios
-simultáneos, dependencias compartidas y aislamiento entre productos. Representan
-el contrato de scoping; el workflow real sigue siendo la validación final. El job `workflow_dispatch` con
+simultáneos, paths fuera de los paquetes configurados y aislamiento entre
+productos. Validan los prefijos de paths del config activo; la propagación de
+dependencias mediante `cargo-workspace` requiere el dry-run real de Release Please; el workflow real sigue siendo la validación final. El job `workflow_dispatch` con
 `dry_run: true` valida sintaxis y fixtures, pero no ejecuta Release Please. Para
 probar el cálculo real sin escrituras, usar una versión de CLI fijada, un
 checkout con historial y tags representativos y el config/manifest activos:

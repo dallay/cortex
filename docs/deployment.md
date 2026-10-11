@@ -46,16 +46,16 @@ ROOK_CONFIG=/app/config/rook.toml
 ### Build the Image
 
 The release `Dockerfile` consumes a prepared binary context; it is not a
-source-build Dockerfile. Build a local Rook binary first and place it at the
-architecture-specific context path:
+source-build Dockerfile. Run these commands on a Linux/amd64 host with the
+GNU Rust toolchain to build the binary for the supported container platform:
 
 ```bash
 # Current validated local target
-cargo build --locked --release -p rook
+cargo build --locked --release --target x86_64-unknown-linux-gnu -p rook
 mkdir -p docker-context
-cp target/release/rook docker-context/rook-amd64
+cp target/x86_64-unknown-linux-gnu/release/rook docker-context/rook-amd64
 cp apps/rook/Dockerfile docker-context/Dockerfile
-docker build -f docker-context/Dockerfile -t rook:local docker-context
+docker build --platform linux/amd64 -f docker-context/Dockerfile -t rook:local docker-context
 
 # Multi-architecture publishing is enabled only when the corresponding target
 # has product-specific build and smoke-test evidence. See docs/releasing.md.
