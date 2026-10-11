@@ -5,7 +5,7 @@ use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, Role, StreamChunk, TokenUsage,
+    ProviderPort, QuotaObservationRecorderPort, Role, StreamChunk, TokenUsage,
 };
 
 use providers_core::sanitize_body;
@@ -236,6 +236,7 @@ pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
     #[allow(dead_code)]
     client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
@@ -276,10 +277,34 @@ async fn map_anthropic_http_error(
 
 impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: AnthropicProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            quota_recorder,
+        }))
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_anthropic_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        for observation in observations {
+            if let Err(error) = recorder.record_observation(observation).await {
+                tracing::warn!(%error, "failed to record Anthropic quota observation");
+            }
+        }
     }
 
     fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
@@ -485,6 +510,8 @@ impl ProviderPort for AnthropicProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_anthropic_http_error(&self.config.id, resp).await);

@@ -29,5 +29,8 @@ Work unit 1 only. Provider response capture, quota handler/API changes, dashboar
 - [x] 2.1 Parse and normalize documented OpenAI, Anthropic Messages, and Groq response rate-limit headers; provider tests cover valid, missing, malformed, and reset values.
 - Actual diff after regression fix: 396/400 lines. RED reproduced project bucket returning 10,000 instead of 8,000; corrected bucket selection, then provider tests passed.
 - Validation: `cargo test -p providers-openai -p providers-anthropic -p providers-groq` (75 passed), `cargo fmt --all -- --check`, `cargo tree --locked -p providers-groq`, and `git diff --check` passed. `cargo audit --no-fetch` is unavailable (`cargo audit` not installed).
-- Unit 3–5 capture/API/dashboard work remains untouched. No polling, Anthropic Admin API, unsupported-provider inference, or 429 quota inference was added.
+- Unit 4–6 streaming/API/dashboard work remains untouched. No polling, Anthropic Admin API, unsupported-provider inference, or 429 quota inference was added.
 - Semgrep was not run: MCP tools and local CLI were unavailable.
+
+## Unit 3 — `feature/dallay-404-quota-capture-wiring` → `feature/dallay-404-quota-capture-api` (position 3)
+- [x] 3.1 Wired best-effort non-streaming success/error observation recording for OpenAI, Anthropic Messages, and Groq on canonical default endpoints only; runtime `ProviderId` preserved, `connection_id` remains null. Focused provider/app tests and `cargo fmt --all -- --check` passed; Semgrep unavailable.

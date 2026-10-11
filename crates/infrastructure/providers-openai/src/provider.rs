@@ -5,7 +5,8 @@ use futures::{Stream, StreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage, ToolCallDelta, ToolCallFunctionDelta,
+    ProviderPort, QuotaObservationRecorderPort, StreamChunk, TokenUsage, ToolCallDelta,
+    ToolCallFunctionDelta,
 };
 
 use providers_core::sanitize_body;
@@ -13,6 +14,7 @@ use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub fn parse_openai_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
@@ -166,14 +168,39 @@ pub struct OpenAIProviderConfig {
 pub struct OpenAIProvider {
     pub(crate) config: OpenAIProviderConfig,
     pub(crate) client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 impl OpenAIProvider {
     pub fn new(config: OpenAIProviderConfig) -> anyhow::Result<Self> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: OpenAIProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            quota_recorder,
+        })
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        for observation in observations {
+            if let Err(error) = recorder.record_observation(observation).await {
+                tracing::warn!(%error, "failed to record OpenAI quota observation");
+            }
+        }
     }
 
     fn message_to_openai(
@@ -729,6 +756,8 @@ impl ProviderPort for OpenAIProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_openai_http_error(&self.config.id, resp).await);

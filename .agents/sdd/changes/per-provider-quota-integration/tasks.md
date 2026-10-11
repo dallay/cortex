@@ -1,61 +1,62 @@
-# Tasks: Per-Provider Quota Integration
+# Tareas: Per-Provider Quota Integration
 
-## Review Workload Forecast
+## Previsión de carga de revisión
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | U1 250–350 (done); U2–5 180–390 each |
-| 400-line budget risk | Medium; each unit forecast below 400 |
-| Chained PRs recommended | Yes |
-| Suggested split | Five units; U1 done, U2–5 remain |
-| Delivery strategy | feature-branch-chain (user selected) |
-| Chain strategy | feature-branch-chain |
+- Estimación (incluye SDD): U1 250–350, U2 180–260 (completas); U3 220–350; U4 180–300; U5 300–390; U6 280–380 líneas.
+- Seis unidades; U1–U2 completas, U3–U6 pendientes. Riesgo: medio.
+- Entrega: `feature-branch-chain`, autorizada; sin GitHub Stack metadata.
 
-Decision needed before apply: No
-Chained PRs recommended: Yes
-Chain strategy: feature-branch-chain
-400-line budget risk: Medium
+Decisión requerida antes de aplicar: No
+PR encadenadas recomendadas: Sí
+Estrategia de cadena: `feature-branch-chain`
+Riesgo del límite de 400 líneas: Medio
 
-**Stop/replan gate:** if any unit is forecast or reaches 400 changed lines, stop and subdivide/replan; no waiver. User authorizes two additional local signed commits (five units total). No push/PR.
+**Stop/replan:** si el diff total de una unidad (incluido SDD) se estima o alcanza 400 líneas, detenerse y subdividir/replanificar; no size-exception. Commits locales firmados; no push/PR.
 
-### Suggested Work Units
+### Unidades de trabajo sugeridas
 
-Feature-branch chain only: integration branch `feature/dallay-404-per-provider-quota-integration-real-data-not-mock` → `main`; each unit bases on its predecessor. No GitHub Stack metadata. Linear `DALLAY-404`. U1 signed in `fb691f1`; U2 branch is clean, based on U1, no source changes.
+Rama de integración/tracker: `feature/dallay-404-per-provider-quota-integration-real-data-not-mock` → `main`. Issue/Linear: `DALLAY-404`. Cada unidad se basa en su predecesora inmediata.
 
-| Unit | Scope; estimate | Branch → base | Position / dependency |
-|------|----------------|---------------|----------------------|
-| 1 | Model, V6 storage, repository/retention; 250–350 (done) | `feature/dallay-404-quota-storage` → integration | 1; `fb691f1` |
-| 2 | OpenAI/Anthropic Messages/Groq parsing + tests; 180–260 | `feature/dallay-404-quota-capture-api` → U1 | 2; existing clean branch |
-| 3 | Adapter capture, best-effort recording, stream/error + identity tests; 250–350 | `feature/dallay-404-quota-capture-wiring` → U2 | 3 |
-| 4 | Quota endpoint/DTO, freshness, per-connection warnings + handler tests; 300–390 | `feature/dallay-404-quota-api` → U3 | 4 |
-| 5 | Dashboard/tests + stale UI spec reconciliation; 280–380 | `feature/dallay-404-quota-dashboard-spec` → U4 | 5 |
+| U | Alcance; estimación | Rama → base | Orden/dependencia |
+|---|--------------------|-------------|-------------------|
+| 1 | Persistencia; 250–350, completa | `feature/dallay-404-quota-storage` → rama de integración | 1; firmado `fb691f1` |
+| 2 | Parseo de headers OpenAI/Anthropic/Groq; 180–260, completa | `feature/dallay-404-quota-capture-api` → `feature/dallay-404-quota-storage` | 2; U1; firmado `dcdfd92` |
+| 3 | Captura normal/errores HTTP, registro en mejor esfuerzo, `ProviderId` runtime; 220–350 | `feature/dallay-404-quota-capture-wiring` → `feature/dallay-404-quota-capture-api` | 3; U2; rama actual limpia |
+| 4 | Captura streaming antes de consumir el body y aislamiento; 180–300 | `feature/dallay-404-quota-capture-streaming` → `feature/dallay-404-quota-capture-wiring` | 4; U3 |
+| 5 | Endpoint/DTO, vigencia y alertas por conexión; 300–390 | `feature/dallay-404-quota-api` → `feature/dallay-404-quota-capture-streaming` | 5; U4 |
+| 6 | Dashboard/pruebas y reconciliación de especificación UI; 280–380 | `feature/dallay-404-quota-dashboard-spec` → `feature/dallay-404-quota-api` | 6; U5 |
 
-Child diffs contain only their unit's changes; slices are local, not published PRs.
+No añadir plumbing redundante de `ConnectionId`. Mantener cada diff en su rama y ≤400 líneas.
 
-## Phase 1: Observation Storage — Unit 1 (Complete)
+## Fase 1: Persistencia — U1 (completa)
 
-- [x] 1.1 Add model/recorder port, V6 table/indexes, SQLite retention/persistence and DI/sweep wiring in the approved domain, migration, infrastructure and app files. No backfill or `usage_history` changes.
+- [x] 1.1 Añadir modelo/puerto recorder, V6, persistencia/retención SQLite y wiring DI/sweep en archivos aprobados. Sin backfill ni cambios en `usage_history`.
 
-## Phase 2: Provider Parsing — Unit 2
+## Fase 2: Parseo de headers — U2 (completa)
 
-- [x] 2.1 Parse/normalize documented OpenAI, Anthropic Messages, Groq response headers; provider tests cover valid, absent, malformed, and reset values.
+- [x] 2.1 Parsear headers documentados OpenAI, Anthropic Messages y Groq; probar valores válidos, ausentes, malformados y reset.
 
-## Phase 3: Capture and Recording — Unit 3
+## Fase 3: Captura HTTP — U3
 
-- [ ] 3.1 Capture after send (errors too, before stream consumption); wire best-effort recording without changing results. Test recorder failure, streams and runtime/connection identity.
+- [x] 3.1 Capturar respuestas normales/errores HTTP solo con endpoints canónicos por defecto; conectar registro en mejor esfuerzo sin alterar resultados y probar identidad con el `ProviderId` runtime existente.
 
-## Phase 4: Quota API — Unit 4
+## Fase 4: Streaming — U4
 
-- [ ] 4.1 Map local usage/trend, upstream observations/age/expiry and named 429 counts in `crates/infrastructure/transport-axum/src/{handlers/provider_quota.rs,provider_dto.rs}`; test mapping, unavailable≠zero, freshness, thresholds, no 429 warnings.
+- [ ] 4.1 Capturar headers streaming antes de consumir el body; permitir URLs canónicas OpenAI/Anthropic/Groq (incluidas URLs predeterminadas explícitas del UI); probar conservación del stream y aislamiento de la captura/fallos del recorder.
 
-## Phase 5: Dashboard and Contract — Unit 5
+## Fase 5: API — U5
 
-- [ ] 5.1 Update `apps/rook/dashboard/src/{lib/api.ts,composables/useProvidersQuota.ts,views/ProvidersQuotaView.vue,locales/{en,es}.json}` for separate local/upstream data, age/expiry and warnings; test stale, mixed, no-data.
-- [ ] 5.2 Reconcile `.agents/sdd/specs/providers-ui/spec.md`; remove stale placeholder/follow-up text, preserving approved semantics.
+- [ ] 5.1 Mapear uso local y observaciones upstream/edad/expiración, y conteos 429 en `crates/infrastructure/transport-axum/src/{handlers/provider_quota.rs,provider_dto.rs}`; probar no-disponible≠cero, vigencia, umbrales y ausencia de alertas 429.
 
-## Phase 6: Verification
+## Fase 6: Dashboard/spec — U6
 
-- [ ] 6.1 Run provider tests (`cargo test -p providers-openai -p providers-anthropic -p providers-groq`), app/handler tests (`cargo test -p rook -p transport-axum`), dashboard `cd apps/rook/dashboard && pnpm exec vitest run && pnpm exec vue-tsc --noEmit`.
-- [ ] 6.2 Run `just ci-local`; if Docker E2E is unavailable, run `just ci-ci` and report E2E not run (`just test-e2e` required for full verification).
+- [ ] 6.1 Actualizar `apps/rook/dashboard/src/{lib/api.ts,composables/useProvidersQuota.ts,views/ProvidersQuotaView.vue,locales/{en,es}.json}`; separar local/upstream; probar datos obsoletos, mixtos y ausentes.
+- [ ] 6.2 Reconciliar `.agents/sdd/specs/providers-ui/spec.md`; retirar placeholder/follow-up obsoleto sin cambiar semánticas.
 
-**Exact scope exclusions:** no polling; no Anthropic Admin API calls; no speculative Gemini/Ollama quota signals. No 429-derived utilization or incompatible aggregation; keep local/upstream separate.
+## Fase 7: Verificación/entrega
+
+- [ ] 7.1 Ejecutar proveedores (`cargo test -p providers-openai -p providers-anthropic -p providers-groq`), app/handlers (`cargo test -p rook -p transport-axum`) y dashboard `cd apps/rook/dashboard && pnpm exec vitest run && pnpm exec vue-tsc --noEmit`.
+- [ ] 7.2 Ejecutar `just ci-local`; sin Docker E2E, ejecutar `just ci-ci` e informar que no se ejecutó (`just test-e2e` requerido para verificación completa).
+- [ ] 7.3 En cada unidad entregada, crear un commit local firmado; no hacer push ni crear PR.
+
+**Semánticas/exclusiones:** uso local ≠ observaciones upstream; conservar reset/vigencia y 429 separado, sin usar 429 para calcular utilización ni emitir alertas de cuota. Sin polling, Anthropic Admin API ni señales especulativas de Gemini/Ollama; sin agregaciones incompatibles.

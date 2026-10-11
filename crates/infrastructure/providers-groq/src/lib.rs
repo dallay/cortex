@@ -6,7 +6,7 @@ use providers_core::{parse_event_text, role_to_string, sanitize_body, SseEvent};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage,
+    ProviderPort, QuotaObservationRecorderPort, StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
@@ -194,14 +194,39 @@ async fn map_groq_http_error(provider_id: &ProviderId, resp: reqwest::Response) 
 pub struct GroqProvider {
     config: GroqProviderConfig,
     client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 impl GroqProvider {
     pub fn new(config: GroqProviderConfig) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: GroqProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            quota_recorder,
+        }))
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_groq_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        for observation in observations {
+            if let Err(error) = recorder.record_observation(observation).await {
+                tracing::warn!(%error, "failed to record Groq quota observation");
+            }
+        }
     }
 
     fn build_stream_request(req: &CompletionRequest) -> GroqRequest {
@@ -444,6 +469,8 @@ impl ProviderPort for GroqProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_groq_http_error(&self.config.id, resp).await);
