@@ -73,11 +73,30 @@ cd cortex
 cargo build --release -p rook
 ```
 
+#### Rust installation from a product tag
+
+Rook GA supports installing directly from its immutable product tag. Publishing
+the internal crates to crates.io is a later distribution phase and is not a
+first-release requirement:
+
+```bash
+cargo install \
+  --git https://github.com/dallay/cortex.git \
+  --tag rook@vX.Y.Z \
+  --locked \
+  -p rook
+```
+
 #### Binary releases
 Download pre-built binaries from [Releases](https://github.com/dallay/cortex/releases) for:
-- Linux (x86_64, aarch64)
+- Linux (x86_64)
 - macOS (Intel, Apple Silicon)
-- Windows (x86_64, aarch64)
+- Windows (x86_64)
+
+Rook and Huginn are separate products with separate versions and release tags.
+See the [release and distribution contract](docs/releasing.md) before relying
+on a registry or container channel. Huginn's public distribution remains
+blocked until its acceptance gates are complete.
 
 ### Quick Start
 
@@ -238,6 +257,8 @@ just test-e2e
 - [Providers](docs/providers.md)
 - [API Reference](docs/api.md)
 - [Deployment](docs/deployment.md)
+- [Release and distribution contract](docs/releasing.md)
+- [ADR-0014: Product releases versus Cargo publishing](docs/adr/0014-separate-product-releases-from-cargo-publishing.md)
 - [API key troubleshooting](docs/api-key-troubleshooting.md)
 - [Rook dashboard](apps/rook/dashboard/README.md) (Vue SPA, embedded at `/dashboard/`)
 - [Local Docker testing](dev/README.md) (smoke, Playwright E2E, multi-distro)
