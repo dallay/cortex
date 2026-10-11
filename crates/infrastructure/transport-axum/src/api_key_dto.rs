@@ -27,3 +27,23 @@ impl<T> ListApiKeysResponseDto<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_api_keys_response_dto_serialization() {
+        let dto = ListApiKeysResponseDto::new(vec!["key_1", "key_2"], 2, 10, 0);
+        let val = serde_json::to_value(&dto).unwrap();
+        assert_eq!(val["keys"], serde_json::json!(["key_1", "key_2"]));
+        assert_eq!(
+            val["pagination"],
+            serde_json::json!({
+                "total": 2,
+                "limit": 10,
+                "offset": 0
+            })
+        );
+    }
+}

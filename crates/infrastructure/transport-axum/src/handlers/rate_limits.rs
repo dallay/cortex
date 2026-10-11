@@ -204,3 +204,147 @@ pub async fn get_status(
 
     Ok(Json(status))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashmap::DashMap;
+
+    #[tokio::test]
+    async fn test_rate_limits_handlers() {
+        let store: RateLimitRuleStore = Arc::new(DashMap::new());
+
+        // 1. List empty
+        let res = list_rules(State(store.clone())).await;
+        assert!(res.is_ok());
+
+        // 2. Create rule
+        let create_req = CreateRateLimitRuleRequest {
+            scope: RateLimitScope::ApiKey,
+            target: "key_abc".to_string(),
+            requests_per_minute: 100,
+            requests_per_day: Some(10000),
+            tokens_per_minute: None,
+        };
+        let res = create_rule(State(store.clone()), Json(create_req)).await;
+        assert!(res.is_ok());
+
+        // 3. List contains 1 rule and rule payload matches
+        let rules_res = list_rules(State(store.clone())).await;
+        assert!(rules_res.is_ok());
+        assert_eq!(store.len(), 1);
+        let stored_rule = store.iter().next().unwrap();
+        assert_eq!(stored_rule.value().scope, RateLimitScope::ApiKey);
+        assert_eq!(stored_rule.value().target, "key_abc");
+        assert_eq!(stored_rule.value().requests_per_minute, 100);
+        assert_eq!(stored_rule.value().requests_per_day, Some(10000));
+
+        // 4. Create invalid rules
+        let empty_target_req = CreateRateLimitRuleRequest {
+            scope: RateLimitScope::ApiKey,
+            target: "".to_string(),
+            requests_per_minute: 10,
+            requests_per_day: None,
+            tokens_per_minute: None,
+        };
+        match create_rule(State(store.clone()), Json(empty_target_req)).await {
+            Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected error"),
+        }
+
+        let invalid_global_req = CreateRateLimitRuleRequest {
+            scope: RateLimitScope::Global,
+            target: "ip_123".to_string(),
+            requests_per_minute: 10,
+            requests_per_day: None,
+            tokens_per_minute: None,
+        };
+        match create_rule(State(store.clone()), Json(invalid_global_req)).await {
+            Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected error"),
+        }
+
+        let zero_rpm_req = CreateRateLimitRuleRequest {
+            scope: RateLimitScope::IpAddress,
+            target: "127.0.0.1".to_string(),
+            requests_per_minute: 0,
+            requests_per_day: None,
+            tokens_per_minute: None,
+        };
+        match create_rule(State(store.clone()), Json(zero_rpm_req)).await {
+            Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected error"),
+        }
+
+        // 5. Update rule
+        let rule_id = store.iter().next().unwrap().key().clone();
+
+        let zero_rpm_update = UpdateRateLimitRuleRequest {
+            requests_per_minute: Some(0),
+            requests_per_day: None,
+            tokens_per_minute: None,
+        };
+        match update_rule(
+            State(store.clone()),
+            Path(rule_id.clone()),
+            Json(zero_rpm_update),
+        )
+        .await
+        {
+            Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected error"),
+        }
+
+        let valid_update = UpdateRateLimitRuleRequest {
+            requests_per_minute: Some(200),
+            requests_per_day: Some(20000),
+            tokens_per_minute: Some(50000),
+        };
+        let updated = update_rule(
+            State(store.clone()),
+            Path(rule_id.clone()),
+            Json(valid_update),
+        )
+        .await;
+        assert!(updated.is_ok());
+
+        match update_rule(
+            State(store.clone()),
+            Path("nonexistent".to_string()),
+            Json(UpdateRateLimitRuleRequest {
+                requests_per_minute: Some(10),
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await
+        {
+            Err(err) => assert_eq!(err.status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("expected error"),
+        }
+
+        // 6. Delete rule
+        let delete_res = delete_rule(State(store.clone()), Path(rule_id.clone())).await;
+        assert!(delete_res.is_ok());
+
+        match delete_rule(State(store.clone()), Path("nonexistent".to_string())).await {
+            Err(err) => assert_eq!(err.status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("expected error"),
+        }
+
+        // 7. Get status
+        let status_ok = get_status(Path(("api_key".to_string(), "key_123".to_string()))).await;
+        assert!(status_ok.is_ok());
+
+        let status_ip = get_status(Path(("ip_address".to_string(), "127.0.0.1".to_string()))).await;
+        assert!(status_ip.is_ok());
+
+        let status_global = get_status(Path(("global".to_string(), "global".to_string()))).await;
+        assert!(status_global.is_ok());
+
+        match get_status(Path(("invalid_scope".to_string(), "target".to_string()))).await {
+            Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+}
