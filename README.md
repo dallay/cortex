@@ -59,22 +59,79 @@ In an ecosystem with multiple LLM providers (OpenAI, Anthropic, Google, etc.), C
 
 ### Prerequisites
 
-- **Rust 1.89 toolchain** (pinned in `rust-toolchain.toml`; MSRV 1.81 per `Cargo.toml`)
-- **Cargo** (included with Rust)
-- (Optional) **Just** task runner: `cargo install just`
-- (Optional for dashboard) **Node.js** and **pnpm** (`pnpm@11` pinned in root `package.json`)
+**Required:**
+- **Rust** 1.81+ via [rustup](https://rustup.rs/) (toolchain 1.89 pinned in `rust-toolchain.toml`)
+- **Node.js** 24+ and **pnpm** (workspace + dashboard dependencies)
+- **[just](https://just.systems)** command runner (or GNU Make as alternative)
+
+**Optional:**
+- **Docker** (for E2E tests and containerized smoke testing)
+- **Python 3** (only for Huginn architecture checks)
+
+**Install just:**
+```bash
+# macOS
+brew install just
+
+# Windows
+winget install Casey.Just
+
+# Linux
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | sudo bash -s -- --to /usr/local/bin
+```
 
 ### Installation
 
-#### From source
+#### Option 1: Development setup (recommended for contributors)
+
+Clone and run the one-shot bootstrap:
+
+```bash
+git clone https://github.com/dallay/cortex.git
+cd cortex
+just setup
+```
+
+**What `just setup` installs:**
+1. Creates `.env` from `.env.example` (if missing)
+2. Installs workspace dependencies (`pnpm install --frozen-lockfile`)
+3. Installs Lefthook git hooks
+4. Verifies Rust toolchain (1.89, `rustfmt`, `clippy` from `rust-toolchain.toml`)
+5. Installs `cargo-watch` for hot-reload development
+6. Installs Playwright browsers (Chromium, Firefox, WebKit) for E2E tests
+
+After setup completes, start developing:
+
+```bash
+# Terminal 1: Backend (http://localhost:3773)
+just run
+
+# Terminal 2: Dashboard dev server (http://localhost:4747/dashboard/)
+just run-dashboard
+
+# Or use watch mode (auto-recompiles on save)
+just dev
+```
+
+See the [Development Guide](docs/development.md) for detailed workflows, testing strategies, and troubleshooting.
+
+> **Note for GNU Make users:** `make setup`, `make run`, etc. work identically.
+> `just` is the canonical runner; the `Makefile` is a maintained mirror.
+>
+> **Note for Windows users:** `just` and `make` work natively. Dev container
+> scripts (`dev/run.sh`, `dev/e2e/*.sh`) require Git Bash or WSL.
+
+#### Option 2: Build from source (production binary)
+
 ```bash
 git clone https://github.com/dallay/cortex.git
 cd cortex
 cargo build --release -p rook
 ```
 
-#### Binary releases
-Download pre-built binaries from [Releases](https://github.com/dallay/cortex/releases) for:
+#### Option 3: Pre-built binaries
+
+Download from [Releases](https://github.com/dallay/cortex/releases) for:
 - Linux (x86_64, aarch64)
 - macOS (Intel, Apple Silicon)
 - Windows (x86_64, aarch64)
@@ -193,55 +250,59 @@ See [Architecture Documentation](docs/architecture.md) for details.
 
 ## 🛠 Development
 
-### Setup
+See the [Development Guide](docs/development.md) for comprehensive workflows.
+
+**Quick reference:**
+
 ```bash
-# Clone and setup
-git clone https://github.com/dallay/cortex.git
-cd cortex
+# One-shot setup (first time only)
 just setup
+
+# Development servers
+just run              # Backend on :3773
+just run-dashboard    # Dashboard dev server on :4747
+just dev              # Watch mode (auto-check + test + clippy on save)
+
+# Quality checks
+just fmt              # Format code
+just clippy           # Lint (deny warnings)
+just test             # Full test suite
+just ci-local         # Full CI locally (fail-fast, same order as CI)
+
+# Focused testing
+just test-unit        # Unit tests only
+just test-integration # Integration tests only
+just test-e2e         # Playwright E2E (requires Docker + `just test-e2e-build`)
+
+# Utilities
+just doctor           # Verify toolchain
+just info             # Show effective paths/ports
+just kill-backend     # Kill stale process on :3773
+just db-reset         # Reset SQLite DB (rook.db + WAL + SHM)
 ```
 
-### Development commands
-```bash
-# Format code
-just fmt
-
-# Run linter
-just clippy
-
-# Run tests
-just test
-
-# Watch mode (auto-check, test, clippy)
-just dev
-
-# Full CI locally
-just ci-local
-```
-
-### Testing
-```bash
-# Run all tests
-cargo test --workspace
-
-# Run specific crate tests
-cargo test -p rook-core
-
-# Run E2E tests (requires Docker)
-just test-e2e
-```
+**For GNU Make users:** Replace `just` with `make` in all commands above.
 
 ## 📚 Documentation
 
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md) (providers via CRUD API, combos, aliases)
-- [Providers](docs/providers.md)
-- [API Reference](docs/api.md)
-- [Deployment](docs/deployment.md)
-- [API key troubleshooting](docs/api-key-troubleshooting.md)
-- [Rook dashboard](apps/rook/dashboard/README.md) (Vue SPA, embedded at `/dashboard/`)
-- [Local Docker testing](dev/README.md) (smoke, Playwright E2E, multi-distro)
-- [Huginn coding agent](docs/huginn/README.md)
+**Getting Started:**
+- [Development Guide](docs/development.md) — setup, workflows, testing, troubleshooting
+- [Contributing Guide](CONTRIBUTING.md) — PR workflow, commit conventions, code of conduct
+
+**Core Documentation:**
+- [Architecture](docs/architecture.md) — Clean Architecture layers, DDD boundaries
+- [Configuration](docs/configuration.md) — providers, combos, aliases, CRUD APIs
+- [Providers](docs/providers.md) — per-provider config, timeouts, health checks
+- [API Reference](docs/api.md) — OpenAI-compatible endpoints, wire formats
+
+**Operations:**
+- [Deployment](docs/deployment.md) — production checklist, observability
+- [API key troubleshooting](docs/api-key-troubleshooting.md) — common auth issues
+
+**Components:**
+- [Rook dashboard](apps/rook/dashboard/README.md) — Vue SPA at `/dashboard/`
+- [Local Docker testing](dev/README.md) — smoke, Playwright E2E, multi-distro
+- [Huginn coding agent](docs/huginn/README.md) — CLI + TUI, MCP stdio
 
 ## 🗺 Roadmap
 

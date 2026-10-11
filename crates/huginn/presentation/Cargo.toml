@@ -6,7 +6,7 @@ rust-version = "1.89"
 publish = false
 
 [features]
-test-driver = ["dep:huginn-application"]
+test-driver = ["dep:huginn-application", "dep:huginn-reference-extension"]
 
 [[bin]]
 name = "tui-fixture"
@@ -14,11 +14,11 @@ path = "tests/support/fixture.rs"
 required-features = ["test-driver"]
 
 [dependencies]
-# Used by the explicit PTY fixture host only.
+# Used by the explicit PTY fixture host only (tests/support/fixture.rs).
 huginn-application = { path = "../application", optional = true }
 huginn-core = { path = "../core" }
 huginn-plugin-api = { path = "../plugin-api" }
-huginn-reference-extension = { path = "../reference-extension" }
+huginn-reference-extension = { path = "../reference-extension", optional = true }
 async-trait.workspace = true
 futures.workspace = true
 tokio.workspace = true

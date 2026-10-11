@@ -34,6 +34,9 @@ pub struct McpClients {
     cancellations: Vec<rmcp::service::RunningServiceCancellationToken>,
 }
 impl McpClients {
+    /// Legacy/test-only standalone API for isolated discovery tests.
+    /// Production uses `McpPlugin` via `register_plugins` and the kernel supervisor.
+    #[doc(hidden)]
     pub async fn connect(
         configs: &[ServerConfig],
         workspace: &Path,
