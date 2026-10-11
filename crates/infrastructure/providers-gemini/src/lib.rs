@@ -463,7 +463,9 @@ mod tests {
             messages: vec![
                 rook_core::Message {
                     role: rook_core::Role::System,
-                    content: rook_core::MessageContent::Text("You are a helpful assistant.".to_string()),
+                    content: rook_core::MessageContent::Text(
+                        "You are a helpful assistant.".to_string(),
+                    ),
                     tool_calls: vec![],
                 },
                 rook_core::Message {

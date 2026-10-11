@@ -328,7 +328,8 @@ mod tests {
         let status_global = get_status(Path(("global".to_string(), "global".to_string()))).await;
         assert!(status_global.is_ok());
 
-        let status_invalid = get_status(Path(("invalid_scope".to_string(), "target".to_string()))).await;
+        let status_invalid =
+            get_status(Path(("invalid_scope".to_string(), "target".to_string()))).await;
         assert!(status_invalid.is_err());
     }
 }
