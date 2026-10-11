@@ -1,0 +1,16 @@
+[package]
+name = "huginn-plugin-api"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+huginn-core = { path = "../core" }
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

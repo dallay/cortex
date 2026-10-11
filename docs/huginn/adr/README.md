@@ -27,6 +27,7 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md) | SQLite, configuration and runtime contracts | Accepted |
 | [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted |
 | [ADR-0011](0011-huginn-product-naming.md) | Huginn product naming and identity | Accepted |
+| [ADR-0012](0012-authorable-plugin-contract-and-loading.md) | Authorable plugin contract and future loading strategy | Accepted |
 
 ## Record format
 
@@ -65,6 +66,7 @@ alternatives are preserved as research history.
   are preserved unchanged.
 - Supported real endpoint combinations and Rook compatibility.
 - Release tags and public distribution after personal MVP acceptance.
+- Runtime loading strategy for extensions — deferred by [ADR-0012](0012-authorable-plugin-contract-and-loading.md).
 
 Concrete contracts and limits are in the [implementation specification](../implementation-specification.md).
 ADR-0009 records the storage and configuration choices made for implementation.

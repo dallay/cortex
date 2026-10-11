@@ -28,6 +28,8 @@ members = [
     "crates/huginn/core",
     "crates/huginn/runtime",
     "crates/huginn/presentation",
+    "crates/huginn/plugin-api",
+    "crates/huginn/reference-extension",
 ]
 
 [workspace.package]

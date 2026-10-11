@@ -76,7 +76,10 @@ async fn main() -> Result<()> {
     let mut supervisor = Supervisor::default();
     supervisor.register(Box::new(EnginePlugin))?;
     supervisor.register(Box::new(RatatuiPlugin::default()))?;
-    supervisor.register(Box::new(ConversationPlugin::default()))?;
+    supervisor.register(Box::new(ConversationPlugin))?;
+    if std::env::args().nth(1).as_deref() == Some("extension") {
+        supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
+    }
     supervisor.start().await?;
     let mut session = Session::new(".".into());
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;

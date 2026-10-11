@@ -103,3 +103,17 @@ fn dropped_driver_cannot_consume_replacement_input() {
     pty.send("replacement input\r");
     pty.finish(true);
 }
+
+#[test]
+fn external_reference_command_and_selection_are_host_rendered() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/extension-info sample\r");
+    pty.wait_for("arguments: sample");
+    pty.send("/extension-choose\r");
+    pty.wait_for("Reference selection");
+    pty.send("\r");
+    pty.wait_for("Selected concise display");
+    pty.send("\x03");
+    pty.finish(true);
+}

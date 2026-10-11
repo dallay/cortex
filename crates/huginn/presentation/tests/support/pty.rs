@@ -72,7 +72,7 @@ impl Pty {
     }
     pub fn wait_for(&self, needle: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !self.output().contains(needle) {
+        while !terminal_text(&self.output()).contains(needle) {
             assert!(
                 Instant::now() < deadline,
                 "missing {needle:?}: {}",
@@ -107,6 +107,30 @@ impl Pty {
         self.output()
     }
 }
+
+/// PTY captures the terminal protocol, not the rendered screen. Ratatui may
+/// move the cursor between adjacent cells, so preserve a separator for cursor
+/// positioning while ignoring other CSI control sequences during assertions.
+fn terminal_text(output: &str) -> String {
+    let mut text = String::new();
+    let mut chars = output.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\x1b' || chars.next_if_eq(&'[').is_none() {
+            text.push(character);
+            continue;
+        }
+        for sequence_character in chars.by_ref() {
+            if ('@'..='~').contains(&sequence_character) {
+                if sequence_character == 'H' {
+                    text.push(' ');
+                }
+                break;
+            }
+        }
+    }
+    text
+}
+
 impl Drop for Pty {
     fn drop(&mut self) {
         let _ = self.child.kill();
