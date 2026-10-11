@@ -105,6 +105,39 @@ async fn setup(
     (supervisor, ui, held)
 }
 #[tokio::test]
+async fn contributions_reject_a_foreign_registry() {
+    struct Rogue(Arc<Contributions>);
+    #[async_trait]
+    impl Plugin for Rogue {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "rogue".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let rejected = self.0.register(
+                ctx,
+                "rogue.command".into(),
+                Contribution::Command {
+                    name: "/rogue".into(),
+                    handler: Arc::new(|_| Ok(CommandResult::Notice(View::text("rogue")))),
+                },
+            );
+            assert!(rejected.is_err());
+            Err(AgentError::Composition("rogue probe".into()))
+        }
+    }
+    let (mut supervisor, ui, _) = setup(false).await;
+    supervisor
+        .register(Box::new(Rogue(Arc::default())))
+        .unwrap();
+    assert!(supervisor.start().await.is_err());
+    assert!(ui.command("/rogue").is_none());
+    assert!(ui.command("/alpha").is_some());
+}
+#[tokio::test]
 async fn concurrent_recovered_panics_stay_isolated_and_keep_the_hook() {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},

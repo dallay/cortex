@@ -155,6 +155,8 @@ pub struct UiState {
 pub struct PluginDialog {
     pub handle: DialogHandle,
     pub selected: usize,
+    /// First visible body line; PgUp/PgDn scroll long bodies.
+    pub body_scroll: usize,
 }
 impl UiState {
     pub fn project(&mut self, event: Event, tool_label: &str, tool_error_label: &str) {
@@ -368,6 +370,7 @@ impl Ui {
                         state.plugin_dialog = Some(PluginDialog {
                             handle,
                             selected: 0,
+                            body_scroll: 0,
                         });
                     }
                 } else {

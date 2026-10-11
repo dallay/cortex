@@ -1570,6 +1570,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "huginn-plugin-api",
+ "tokio",
 ]
 
 [[package]]

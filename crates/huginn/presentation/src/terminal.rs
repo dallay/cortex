@@ -235,7 +235,7 @@ struct View {
     status_error: bool,
     busy: bool,
     modal: Option<(String, u64, String, String, usize)>,
-    plugin_dialog: Option<(String, String, Vec<String>, usize)>,
+    plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
     widgets: String,
 }
 impl Driver {
@@ -280,6 +280,7 @@ impl Driver {
                         dialog.handle.body().into(),
                         dialog.handle.choices().to_vec(),
                         dialog.selected,
+                        dialog.body_scroll,
                     )
                 }),
                 widgets: state
@@ -342,7 +343,7 @@ impl Driver {
                 );
                 return;
             }
-            if let Some((title, body, choices, selected)) = &view.plugin_dialog {
+            if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
                 let [body_area, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
                 let body = safe(body);
@@ -351,8 +352,10 @@ impl Driver {
                 // selected choice stays visible and actionable.
                 let height = usize::from(body_area.height).saturating_sub(2);
                 let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+                let body_lines: Vec<&str> = body.lines().collect();
+                let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
                 let mut text = String::new();
-                for line in body.lines().take(body_rows) {
+                for line in body_lines.into_iter().skip(first).take(body_rows) {
                     text.push_str(line);
                     text.push('\n');
                 }
@@ -376,7 +379,7 @@ impl Driver {
                 );
                 frame.render_widget(
                     Paragraph::new(
-                        "Arrows select; Enter chooses; Esc dismisses — not a permission grant",
+                        "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
                     ),
                     footer,
                 );
@@ -526,6 +529,8 @@ impl Driver {
                         dialog.selected = (dialog.selected + 1)
                             .min(dialog.handle.choices().len().saturating_sub(1))
                     }
+                    KeyCode::PageUp => dialog.body_scroll = dialog.body_scroll.saturating_sub(1),
+                    KeyCode::PageDown => dialog.body_scroll = dialog.body_scroll.saturating_add(1),
                     KeyCode::Enter => {
                         drop(state);
                         self.ui.choose_plugin_dialog();

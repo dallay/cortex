@@ -145,6 +145,12 @@ fn long_plugin_dialog_body_never_hides_every_choice() {
     pty.send("\x1b[B");
     pty.send("\x1b[B");
     pty.wait_for("blong-02");
+    // Scroll the 30-line body to its end: the final body line becomes visible
+    // while the selection stays actionable.
+    for _ in 0..30 {
+        pty.send("\x1b[6~");
+    }
+    pty.wait_for("body-29");
     pty.send("\r");
     pty.wait_for("Picked blong-02");
     pty.send("\x03");
