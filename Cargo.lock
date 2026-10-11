@@ -1500,6 +1500,7 @@ dependencies = [
  "huginn-application",
  "huginn-core",
  "huginn-presentation",
+ "huginn-reference-extension",
  "huginn-runtime",
  "portable-pty",
  "serde",
@@ -1536,6 +1537,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "huginn-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "huginn-core",
+ "tokio",
+]
+
+[[package]]
 name = "huginn-presentation"
 version = "0.1.0"
 dependencies = [
@@ -1544,12 +1554,23 @@ dependencies = [
  "futures",
  "huginn-application",
  "huginn-core",
+ "huginn-plugin-api",
+ "huginn-reference-extension",
  "portable-pty",
  "ratatui",
  "tempfile",
  "tokio",
  "unicode-width",
  "uuid",
+]
+
+[[package]]
+name = "huginn-reference-extension"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "huginn-plugin-api",
+ "tokio",
 ]
 
 [[package]]

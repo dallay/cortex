@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use huginn_core::{
     ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Result, Session,
 };
+use huginn_plugin_api::v1::{CommandResult, DialogHandle, ToolResult, View};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{mpsc, oneshot, Notify};
 
@@ -135,6 +137,9 @@ pub struct UiState {
     /// it with error severity. Cleared on the next turn boundary.
     pub status_error: bool,
     pub modal: Option<Modal>,
+    pub plugin_dialog: Option<PluginDialog>,
+    pub widgets: Vec<(String, View)>,
+    tool_names: BTreeMap<String, String>,
     pub busy: bool,
     pub turn_cancel: Option<CancellationToken>,
     pub committed: Vec<String>,
@@ -146,26 +151,54 @@ pub struct UiState {
     /// its first approval `#1`, mirroring the line adapter policy.
     pub approvals_this_turn: u64,
 }
+/// Ordinary selection only. It has no approval reply channel or policy access.
+pub struct PluginDialog {
+    pub handle: DialogHandle,
+    pub selected: usize,
+    /// First visible body line; PgUp/PgDn scroll long bodies.
+    pub body_scroll: usize,
+}
 impl UiState {
     pub fn project(&mut self, event: Event, tool_label: &str, tool_error_label: &str) {
+        let view = if let Event::ToolFinished {
+            output, is_error, ..
+        } = &event
+        {
+            Some(View {
+                title: if *is_error {
+                    tool_error_label
+                } else {
+                    tool_label
+                }
+                .into(),
+                body: output.clone(),
+                is_error: *is_error,
+            })
+        } else {
+            None
+        };
+        self.project_view(event, view);
+    }
+    fn project_view(&mut self, event: Event, view: Option<View>) {
         match &event {
             Event::Text { text } => self.tail.push_str(&safe(text)),
-            Event::ToolStarted { call } => self.status = format!("Tool: {}", safe(&call.name)),
+            Event::ToolStarted { call } => {
+                self.tool_names.insert(call.id.clone(), call.name.clone());
+                self.status = format!("Tool: {}", safe(&call.name));
+            }
             Event::ToolFinished {
                 output, is_error, ..
             } => {
-                if *is_error {
-                    self.tail.push_str(&format!(
-                        "\n{}: {}\n",
-                        safe(tool_error_label),
-                        safe(output)
-                    ));
-                    self.status = safe(tool_error_label);
-                    self.status_error = true;
-                } else {
-                    self.tail
-                        .push_str(&format!("\n{}: {}\n", safe(tool_label), safe(output)));
-                    self.status_error = false;
+                let view = view.unwrap_or_else(|| fallback(output, *is_error));
+                self.tail
+                    .push_str(&format!("\n{}\n", safe(&view.plain_text())));
+                self.status_error = *is_error || view.is_error;
+                if self.status_error {
+                    self.status = if view.title.is_empty() {
+                        "Tool error".into()
+                    } else {
+                        safe(&view.title)
+                    };
                 }
             }
             Event::ApprovalRequested { request } => {
@@ -198,10 +231,17 @@ impl UiState {
         }
     }
     pub fn synchronize(&mut self, session: &Session) {
+        self.synchronize_views(session, &BTreeMap::new());
+    }
+    fn synchronize_views(&mut self, session: &Session, views: &BTreeMap<usize, View>) {
         self.session_id.clone_from(&session.id);
-        for message in session.messages.iter().skip(self.message_count) {
-            let mut text = format!("{:?}: {}", message.role, safe(&message.content));
+        for (index, message) in session.messages.iter().enumerate().skip(self.message_count) {
+            let content = views
+                .get(&index)
+                .map_or_else(|| message.content.clone(), View::plain_text);
+            let mut text = format!("{:?}: {}", message.role, safe(&content));
             for call in &message.tool_calls {
+                self.tool_names.insert(call.id.clone(), call.name.clone());
                 text.push_str(&format!(
                     "\nTool: {} {}",
                     safe(&call.name),
@@ -221,6 +261,58 @@ impl UiState {
     }
 }
 
+fn fallback(output: &str, is_error: bool) -> View {
+    View {
+        title: if is_error {
+            "Tool error"
+        } else {
+            "Tool result"
+        }
+        .into(),
+        body: output.into(),
+        is_error,
+    }
+}
+fn render_result(registry: &Contributions, tool: &str, output: &str, is_error: bool) -> View {
+    let input = ToolResult {
+        tool: tool.into(),
+        output: output.into(),
+        is_error,
+    };
+    let mut view = registry
+        .renderer(tool)
+        .and_then(|renderer| renderer.render(&input).ok())
+        .unwrap_or_else(|| fallback(output, is_error));
+    view.is_error |= is_error;
+    view
+}
+fn session_views(
+    session: &Session,
+    registry: &Contributions,
+    from: usize,
+) -> BTreeMap<usize, View> {
+    let names: BTreeMap<_, _> = session
+        .messages
+        .iter()
+        .flat_map(|message| &message.tool_calls)
+        .map(|call| (call.id.as_str(), call.name.as_str()))
+        .collect();
+    session
+        .messages
+        .iter()
+        .enumerate()
+        .skip(from)
+        .filter_map(|(index, message)| {
+            let name = names.get(message.tool_call_id.as_deref()?)?;
+            // Persisted Message currently has no error bit; do not invent one.
+            Some((
+                index,
+                render_result(registry, name, &message.content, false),
+            ))
+        })
+        .collect()
+}
+
 pub struct Ui {
     pub state: Mutex<UiState>,
     pub dirty: Notify,
@@ -237,7 +329,7 @@ impl Ui {
     ) -> (Arc<Self>, mpsc::Sender<String>) {
         let (sender, receiver) = mpsc::channel(1);
         let mut state = UiState::default();
-        state.synchronize(session);
+        state.synchronize_views(session, &session_views(session, &contributions, 0));
         state.committed.insert(
             0,
             format!(
@@ -261,6 +353,60 @@ impl Ui {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+    /// Returns true only when a contributed command consumed the input.
+    /// No callback runs under a state/registry lock.
+    pub fn dispatch_command(&self, line: &str) -> bool {
+        let line = line.trim();
+        let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
+        let Some(command) = self.contributions.command(&line[..boundary]) else {
+            return false;
+        };
+        match command.run(line[boundary..].trim()) {
+            Ok(CommandResult::Notice(view)) => self.notice(view.plain_text()),
+            Ok(CommandResult::Dialog(id)) => {
+                if let Some(handle) = self.contributions.dialog(&id) {
+                    let mut state = self.lock();
+                    if state.modal.is_none() {
+                        state.plugin_dialog = Some(PluginDialog {
+                            handle,
+                            selected: 0,
+                            body_scroll: 0,
+                        });
+                    }
+                } else {
+                    self.notice(format!("Unavailable plugin dialog: {id}"));
+                }
+            }
+            Err(error) => self.notice(error.to_string()),
+        }
+        self.dirty.notify_one();
+        true
+    }
+    /// Tick-time refresh makes revocation remove transient views even when idle.
+    pub fn refresh_contributions(&self) -> bool {
+        let widgets = self.contributions.widgets();
+        let mut state = self.lock();
+        let expired = state
+            .plugin_dialog
+            .as_ref()
+            .is_some_and(|dialog| !dialog.handle.is_active());
+        if expired {
+            state.plugin_dialog.take();
+        }
+        let changed = state.widgets != widgets;
+        state.widgets = widgets;
+        drop(state);
+        expired || changed
+    }
+    pub fn choose_plugin_dialog(&self) {
+        let dialog = self.lock().plugin_dialog.take();
+        if let Some(dialog) = dialog {
+            match dialog.handle.choose(dialog.selected) {
+                Ok(view) => self.notice(view.plain_text()),
+                Err(error) => self.notice(error.to_string()),
+            }
+        }
+    }
     pub fn resolve_modal(&self, approved: bool) {
         let modal = self.lock().modal.take();
         if let Some(mut modal) = modal {
@@ -277,13 +423,24 @@ impl Ui {
             cancel.cancel();
         }
         state.modal.take();
+        state.plugin_dialog.take();
+        state.widgets.clear();
     }
 }
 impl EventSink for Ui {
     fn emit(&self, event: Event) {
-        let label = self.contributions.tool_label();
-        let error_label = self.contributions.tool_error_label();
-        self.lock().project(event, &label, &error_label);
+        let view = if let Event::ToolFinished {
+            id,
+            output,
+            is_error,
+        } = &event
+        {
+            let name = self.lock().tool_names.get(id).cloned().unwrap_or_default();
+            Some(render_result(&self.contributions, &name, output, *is_error))
+        } else {
+            None
+        };
+        self.lock().project_view(event, view);
         self.dirty.notify_one();
     }
 }
@@ -324,6 +481,7 @@ impl ApprovalPrompt for Ui {
             let mut state = self.lock();
             state.epoch += 1;
             let epoch = state.epoch;
+            state.plugin_dialog.take();
             state.modal = Some(Modal {
                 epoch,
                 number,
@@ -374,7 +532,9 @@ impl Interaction for Ui {
         self.dirty.notify_one();
     }
     fn synchronize(&self, session: &Session) {
-        self.lock().synchronize(session);
+        let from = self.lock().message_count;
+        let views = session_views(session, &self.contributions, from);
+        self.lock().synchronize_views(session, &views);
         self.dirty.notify_one();
     }
     fn notice(&self, text: String) {

@@ -51,6 +51,14 @@ impl TerminalGuard {
         HOOK.call_once(|| {
             let original = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
+                // A panic recovered by a UI contribution callback must not
+                // disturb the shared terminal: capture its report for the
+                // invoking thread instead of tearing down raw mode or writing
+                // over the viewport. All other panics keep full restoration.
+                if huginn_plugin_api::v1::in_recovered_callback() {
+                    huginn_plugin_api::v1::capture_recovered_panic(info.to_string());
+                    return;
+                }
                 if OWNER.load(Ordering::SeqCst) {
                     let _ = disable_raw_mode();
                     let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
@@ -227,6 +235,8 @@ struct View {
     status_error: bool,
     busy: bool,
     modal: Option<(String, u64, String, String, usize)>,
+    plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
+    widgets: String,
 }
 impl Driver {
     fn next_input(&self) -> Result<Option<Event>> {
@@ -264,6 +274,21 @@ impl Driver {
                 status: state.status.clone(),
                 status_error: state.status_error,
                 busy: state.busy,
+                plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
+                    (
+                        dialog.handle.title().into(),
+                        dialog.handle.body().into(),
+                        dialog.handle.choices().to_vec(),
+                        dialog.selected,
+                        dialog.body_scroll,
+                    )
+                }),
+                widgets: state
+                    .widgets
+                    .iter()
+                    .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
                 modal: state.modal.as_ref().map(|m| {
                     (
                         approval_preview(&m.request.action, m.number, &m.request.preview),
@@ -318,6 +343,48 @@ impl Driver {
                 );
                 return;
             }
+            if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
+                let [body_area, footer] =
+                    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+                let body = safe(body);
+                // Window the body too: a long body must never push every choice
+                // out of view. One content row is always reserved so the
+                // selected choice stays visible and actionable.
+                let height = usize::from(body_area.height).saturating_sub(2);
+                let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+                let body_lines: Vec<&str> = body.lines().collect();
+                let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
+                let mut text = String::new();
+                for line in body_lines.into_iter().skip(first).take(body_rows) {
+                    text.push_str(line);
+                    text.push('\n');
+                }
+                // Keep the selected choice visible: window the list like the
+                // approval preview does, preserving marker and safe rendering.
+                let rows = height.saturating_sub(body_rows);
+                let start = selected
+                    .saturating_sub(rows.saturating_sub(1))
+                    .min(choices.len().saturating_sub(rows));
+                for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
+                    text.push_str(&format!(
+                        "{} {}\n",
+                        if index == *selected { ">" } else { " " },
+                        safe(choice)
+                    ));
+                }
+                frame.render_widget(
+                    Paragraph::new(text)
+                        .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
+                    body_area,
+                );
+                frame.render_widget(
+                    Paragraph::new(
+                        "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
+                    ),
+                    footer,
+                );
+                return;
+            }
             let [tail, composer, status] = Layout::vertical([
                 Constraint::Min(1),
                 Constraint::Length(4),
@@ -358,7 +425,12 @@ impl Driver {
                 composer.y + 1 + (row - offset) as u16,
             ));
             frame.render_widget(
-                Paragraph::new(safe(&view.status)).style(if view.status_error {
+                Paragraph::new(if view.widgets.is_empty() {
+                    safe(&view.status)
+                } else {
+                    format!("{} | {}", safe(&view.status), view.widgets)
+                })
+                .style(if view.status_error {
                     Style::default().fg(Color::Red)
                 } else {
                     Style::default()
@@ -408,6 +480,7 @@ impl Driver {
                 _ = self.ui.stop.cancelled() => return Ok(()),
                 _ = lifecycle.cancelled() => return Ok(()),
                 _ = tick.tick() => {
+                    dirty |= self.ui.refresh_contributions();
                     for _ in 0..256 {
                         let Some(event) = self.next_input()? else { break; };
                         self.input(event, &prompts);
@@ -422,7 +495,7 @@ impl Driver {
     fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>) {
         let mut state = self.ui.lock();
         if let Event::Paste(text) = &event {
-            if state.modal.is_none() {
+            if state.modal.is_none() && state.plugin_dialog.is_none() {
                 state.editor.insert(text);
             }
             return;
@@ -442,7 +515,30 @@ impl Driver {
             }
             drop(state);
             self.ui.resolve_modal(false);
+            self.ui.lock().plugin_dialog.take();
             return;
+        }
+        if state.modal.is_none() {
+            if let Some(dialog) = state.plugin_dialog.as_mut() {
+                match key.code {
+                    KeyCode::Esc => {
+                        state.plugin_dialog.take();
+                    }
+                    KeyCode::Up => dialog.selected = dialog.selected.saturating_sub(1),
+                    KeyCode::Down => {
+                        dialog.selected = (dialog.selected + 1)
+                            .min(dialog.handle.choices().len().saturating_sub(1))
+                    }
+                    KeyCode::PageUp => dialog.body_scroll = dialog.body_scroll.saturating_sub(1),
+                    KeyCode::PageDown => dialog.body_scroll = dialog.body_scroll.saturating_add(1),
+                    KeyCode::Enter => {
+                        drop(state);
+                        self.ui.choose_plugin_dialog();
+                    }
+                    _ => {}
+                }
+                return;
+            }
         }
         if let Some(modal) = state.modal.as_mut() {
             match key.code {
@@ -494,9 +590,13 @@ impl Driver {
                     self.ui.stop.cancel();
                     return;
                 }
-                if let Some(help) = self.ui.contributions.command(&line) {
-                    state.committed.push(safe(&help));
-                } else if prompts.try_send(line).is_ok() {
+                drop(state);
+                if self.ui.dispatch_command(&line) {
+                    self.ui.lock().editor = Editor::default();
+                    return;
+                }
+                let mut state = self.ui.lock();
+                if prompts.try_send(line).is_ok() {
                     state.busy = true;
                 } else {
                     return;

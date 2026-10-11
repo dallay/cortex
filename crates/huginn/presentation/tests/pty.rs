@@ -103,3 +103,75 @@ fn dropped_driver_cannot_consume_replacement_input() {
     pty.send("replacement input\r");
     pty.finish(true);
 }
+
+#[test]
+fn external_reference_command_and_selection_are_host_rendered() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/extension-info sample\r");
+    pty.wait_for("arguments: sample");
+    pty.send("/extension-choose\r");
+    pty.wait_for("Reference selection");
+    pty.send("\r");
+    pty.wait_for("Selected concise display");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn long_plugin_dialog_window_keeps_selection_visible() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/long-pick\r");
+    pty.wait_for("Long dialog");
+    for _ in 0..39 {
+        pty.send("\x1b[B");
+    }
+    pty.wait_for("choice-39");
+    pty.send("\r");
+    pty.wait_for("Picked choice-39");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn long_plugin_dialog_body_never_hides_every_choice() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/long-body-pick\r");
+    pty.wait_for("Long body dialog");
+    pty.wait_for("body-00");
+    pty.wait_for("blong-00");
+    pty.send("\x1b[B");
+    pty.send("\x1b[B");
+    pty.wait_for("blong-02");
+    // Scroll the 30-line body to its end: the final body line becomes visible
+    // while the selection stays actionable.
+    for _ in 0..30 {
+        pty.send("\x1b[6~");
+    }
+    pty.wait_for("body-29");
+    pty.send("\r");
+    pty.wait_for("Picked blong-02");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn unrecovered_panic_after_callbacks_still_restores_terminal() {
+    let mut pty = start("panic-after-callback", true);
+    pty.wait_for("Huginn");
+    pty.send("/boom\r");
+    pty.wait_for("UI callback panicked");
+    pty.send("panic-now\r");
+    let output = pty.finish(false);
+    assert!(
+        output.contains("uncaught panic after recovered callbacks"),
+        "{output}"
+    );
+    assert!(output.contains("\x1b[?2004l"), "{output}");
+    assert!(
+        format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"),
+        "raw mode not restored"
+    );
+}

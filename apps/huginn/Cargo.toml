@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.89"
 publish = false
 
+[features]
+default = ["reference-extension"]
+reference-extension = ["dep:huginn-reference-extension"]
+
 [[bin]]
 name = "huginn"
 path = "src/main.rs"
@@ -14,6 +18,7 @@ huginn-application = { path = "../../crates/huginn/application" }
 huginn-core = { path = "../../crates/huginn/core" }
 huginn-runtime = { path = "../../crates/huginn/runtime" }
 huginn-presentation = { path = "../../crates/huginn/presentation" }
+huginn-reference-extension = { path = "../../crates/huginn/reference-extension", optional = true }
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true

@@ -10,13 +10,12 @@ use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     ApprovalPrompt, CancellationToken, EventSink, Result, Session,
 };
+pub use huginn_plugin_api::v1::contributions_id;
+use huginn_plugin_api::v1::UiService;
 use std::sync::Arc;
 
 pub fn presentation_id() -> ServiceId {
     ServiceId::new("agent:presentation", 1)
-}
-pub fn contributions_id() -> ServiceId {
-    ServiceId::new("agent:ui-contributions", 1)
 }
 
 /// Host-only interaction seam for user input; permission policy stays with the host.
@@ -113,7 +112,7 @@ impl Plugin for RatatuiPlugin {
             }
         }));
         self.lifecycle = Some(ctx.cancellation.clone());
-        ctx.provide(contributions_id(), contributions.clone())?;
+        ctx.provide(contributions_id(), UiService(contributions.clone()))?;
         ctx.provide(
             presentation_id(),
             PresentationService(Arc::new(terminal::Ratatui {

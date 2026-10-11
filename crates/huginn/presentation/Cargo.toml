@@ -17,6 +17,8 @@ required-features = ["test-driver"]
 # Used by the explicit PTY fixture host only.
 huginn-application = { path = "../application", optional = true }
 huginn-core = { path = "../core" }
+huginn-plugin-api = { path = "../plugin-api" }
+huginn-reference-extension = { path = "../reference-extension" }
 async-trait.workspace = true
 futures.workspace = true
 tokio.workspace = true

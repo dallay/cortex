@@ -344,7 +344,9 @@ async fn tui_chat(
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
     supervisor.register(Box::new(RatatuiPlugin::default()))?;
-    supervisor.register(Box::new(ConversationPlugin::default()))?;
+    supervisor.register(Box::new(ConversationPlugin))?;
+    #[cfg(feature = "reference-extension")]
+    supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
     let connection = presentation.0.open(session).await?;

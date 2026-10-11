@@ -5,6 +5,9 @@ use huginn_core::{
     AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, LoopService, Message, Result,
     Role, Session,
 };
+use huginn_plugin_api::v1::{
+    contributions_id, CommandResult, Contribution, Dialog, UiService, View,
+};
 use huginn_presentation::{
     contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
 };
@@ -24,6 +27,9 @@ impl AgentLoop for Engine {
         session
             .messages
             .push(Message::text(Role::User, prompt.clone()));
+        if prompt == "panic-now" {
+            panic!("uncaught panic after recovered callbacks");
+        }
         if prompt == "approve" {
             let approved = policy
                 .approve(
@@ -55,6 +61,94 @@ impl AgentLoop for Engine {
     }
 }
 struct EnginePlugin;
+/// Test-only 40-choice dialog: overflows the PTY viewport so tests can prove
+/// the selected choice stays visible while navigating past the first page.
+struct LongDialogPlugin;
+#[async_trait]
+impl Plugin for LongDialogPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.long-dialog".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+        let choices: Vec<String> = (0..40).map(|index| format!("choice-{index:02}")).collect();
+        let options = choices.clone();
+        ui.register(
+            ctx,
+            "fixture.long-dialog".into(),
+            Contribution::Dialog(Dialog {
+                title: "Long dialog".into(),
+                body: "Navigate past the first page.".into(),
+                choices,
+                on_select: Arc::new(move |index| {
+                    Ok(View::text(format!("Picked {}", options[index])))
+                }),
+            }),
+        )?;
+        ui.register(
+            ctx,
+            "fixture.long-pick".into(),
+            Contribution::Command {
+                name: "/long-pick".into(),
+                handler: Arc::new(|_| Ok(CommandResult::Dialog("fixture.long-dialog".into()))),
+            },
+        )?;
+        let long_body: Vec<String> = (0..30).map(|index| format!("body-{index:02}")).collect();
+        let long_body_text = long_body.join("\n");
+        ui.register(
+            ctx,
+            "fixture.long-body-dialog".into(),
+            Contribution::Dialog(Dialog {
+                title: "Long body dialog".into(),
+                body: long_body_text,
+                choices: vec!["blong-00".into(), "blong-01".into(), "blong-02".into()],
+                on_select: Arc::new(|index| {
+                    Ok(View::text(format!(
+                        "Picked {}",
+                        ["blong-00", "blong-01", "blong-02"][index]
+                    )))
+                }),
+            }),
+        )?;
+        ui.register(
+            ctx,
+            "fixture.long-body-pick".into(),
+            Contribution::Command {
+                name: "/long-body-pick".into(),
+                handler: Arc::new(|_| Ok(CommandResult::Dialog("fixture.long-body-dialog".into()))),
+            },
+        )?;
+        Ok(())
+    }
+}
+/// Test-only recovered panic through the normal command-dispatch path.
+struct BoomPlugin;
+#[async_trait]
+impl Plugin for BoomPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.boom".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+        ui.register(
+            ctx,
+            "fixture.boom".into(),
+            Contribution::Command {
+                name: "/boom".into(),
+                handler: Arc::new(|_| panic!("recovered boom for PTY")),
+            },
+        )?;
+        Ok(())
+    }
+}
 #[async_trait]
 impl Plugin for EnginePlugin {
     fn manifest(&self) -> Manifest {
@@ -76,7 +170,14 @@ async fn main() -> Result<()> {
     let mut supervisor = Supervisor::default();
     supervisor.register(Box::new(EnginePlugin))?;
     supervisor.register(Box::new(RatatuiPlugin::default()))?;
-    supervisor.register(Box::new(ConversationPlugin::default()))?;
+    supervisor.register(Box::new(ConversationPlugin))?;
+    if std::env::args().nth(1).as_deref() == Some("extension") {
+        supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
+        supervisor.register(Box::new(LongDialogPlugin))?;
+    }
+    if std::env::args().nth(1).as_deref() == Some("panic-after-callback") {
+        supervisor.register(Box::new(BoomPlugin))?;
+    }
     supervisor.start().await?;
     let mut session = Session::new(".".into());
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
