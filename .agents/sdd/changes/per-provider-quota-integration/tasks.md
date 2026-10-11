@@ -4,52 +4,58 @@
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | 650–950 |
-| 400-line budget risk | High |
+| Estimated changed lines | U1 250–350 (done); U2–5 180–390 each |
+| 400-line budget risk | Medium; each unit forecast below 400 |
 | Chained PRs recommended | Yes |
-| Suggested split | PR 1 storage; PR 2 capture/API; PR 3 dashboard/spec |
+| Suggested split | Five units; U1 done, U2–5 remain |
 | Delivery strategy | feature-branch-chain (user selected) |
 | Chain strategy | feature-branch-chain |
 
 Decision needed before apply: No
 Chained PRs recommended: Yes
 Chain strategy: feature-branch-chain
-400-line budget risk: High
+400-line budget risk: Medium
 
-Apply gate: Unblocked; proceed once the integration and work-unit branches are created or confirmed. Keep units independently reviewable; no additional approval or GitHub Stack workflow is required.
+**Stop/replan gate:** if any unit is forecast or reaches 400 changed lines, stop and subdivide/replan; no waiver. User authorizes two additional local signed commits (five units total). No push/PR.
 
 ### Suggested Work Units
 
-Topology: integration branch `feature/dallay-404-per-provider-quota-integration-real-data-not-mock` branches from `main`. Unit PR bases: integration branch → Unit 1 → Unit 2. After verification, propose the integrated result to `main`. Feature-branch chain only; no GitHub Stack metadata. Source: Linear `DALLAY-404`; do not infer GitHub numbering or encode issue metadata.
+Feature-branch chain only: integration branch `feature/dallay-404-per-provider-quota-integration-real-data-not-mock` → `main`; each unit bases on its predecessor. No GitHub Stack metadata. Linear `DALLAY-404`. U1 signed in `fb691f1`; U2 branch is clean, based on U1, no source changes.
 
-| Unit | Goal | PR branch → base | Dependency |
-|------|------|-----------------|------------|
-| 1 | Domain model, V6 storage, repository and retention | `feature/dallay-404-quota-storage` → `feature/dallay-404-per-provider-quota-integration-real-data-not-mock` | Position 1; no work-unit dependency. |
-| 2 | Verified response capture and distinct quota API | `feature/dallay-404-quota-capture-api` → `feature/dallay-404-quota-storage` | Position 2; depends on Unit 1. |
-| 3 | Honest quota UI, contract and documentation | `feature/dallay-404-quota-dashboard-spec` → `feature/dallay-404-quota-capture-api` | Position 3; depends on Unit 2. |
+| Unit | Scope; estimate | Branch → base | Position / dependency |
+|------|----------------|---------------|----------------------|
+| 1 | Model, V6 storage, repository/retention; 250–350 (done) | `feature/dallay-404-quota-storage` → integration | 1; `fb691f1` |
+| 2 | OpenAI/Anthropic Messages/Groq parsing + tests; 180–260 | `feature/dallay-404-quota-capture-api` → U1 | 2; existing clean branch |
+| 3 | Adapter capture, best-effort recording, stream/error + identity tests; 250–350 | `feature/dallay-404-quota-capture-wiring` → U2 | 3 |
+| 4 | Quota endpoint/DTO, freshness, per-connection warnings + handler tests; 300–390 | `feature/dallay-404-quota-api` → U3 | 4 |
+| 5 | Dashboard/tests + stale UI spec reconciliation; 280–380 | `feature/dallay-404-quota-dashboard-spec` → U4 | 5 |
 
-Keep PRs autonomous; child diffs exclude earlier units. Create/confirm branches from stated bases.
+Child diffs contain only their unit's changes; slices are local, not published PRs.
 
-## Phase 1: Observation Storage
+## Phase 1: Observation Storage — Unit 1 (Complete)
 
-- [x] 1.1 Add observation model/recorder port in `crates/domain/rook-core/src/{model.rs,ports.rs}` with source, metric, identity, scope/window, limit/remaining, reset and observation time.
-- [x] 1.2 Add isolated table/indexes in `crates/infrastructure/db-migration/src/migrations/V6__provider_quota_observations.sql`; no backfill or `usage_history` changes.
-- [x] 1.3 Implement SQLite persistence/quota-only `retention_days` cleanup in `crates/infrastructure/audit-sqlite/src/lib.rs`; wire recorder and existing sweep in `apps/rook/src/{di.rs,usage_retention.rs}`. Test migration, round-trip, identity, retention.
+- [x] 1.1 Add model/recorder port, V6 table/indexes, SQLite retention/persistence and DI/sweep wiring in the approved domain, migration, infrastructure and app files. No backfill or `usage_history` changes.
 
-## Phase 2: Capture and API
+## Phase 2: Provider Parsing — Unit 2
 
-- [ ] 2.1 Parse documented OpenAI, Anthropic Messages and Groq headers in provider adapters; preserve success/error metadata before stream consumption. Test valid/missing/malformed/reset cases.
-- [ ] 2.2 Record best-effort without changing completion results; test response/error/stream and recorder failure. No polling or Anthropic Admin API calls.
-- [ ] 2.3 Extend `crates/infrastructure/transport-axum/src/{handlers/provider_quota.rs,provider_dto.rs}` with distinct local usage/trend, upstream observations/age/expiry and named 429 counts. Test mapping, unavailable≠zero, freshness, no 429 warnings.
-- [ ] 2.4 Classify per managed connection and compatible metric/window/scope using reported values and its thresholds; suppress invalid, unknown-expiry or threshold-less cases. Test 0.8/0.95 and incompatibilities.
+- [x] 2.1 Parse/normalize documented OpenAI, Anthropic Messages, Groq response headers; provider tests cover valid, absent, malformed, and reset values.
 
-## Phase 3: Dashboard and Contract
+## Phase 3: Capture and Recording — Unit 3
 
-- [ ] 3.1 Update `apps/rook/dashboard/src/lib/api.ts` and `composables/useProvidersQuota.ts`; test deserialization, unavailable/stale/history.
-- [ ] 3.2 Update `views/ProvidersQuotaView.vue` and `locales/{en,es}.json` for separate local trend/upstream history, per-connection warnings, age/expiry, unsupported/unavailable, 429 frequency. Test no-data/mixed-data.
-- [ ] 3.3 Replace placeholder contract in `.agents/sdd/specs/providers-ui/spec.md`; verify no mocked/follow-up banner remains.
+- [ ] 3.1 Capture after send (errors too, before stream consumption); wire best-effort recording without changing results. Test recorder failure, streams and runtime/connection identity.
 
-## Phase 4: Verification
+## Phase 4: Quota API — Unit 4
 
-- [ ] 4.1 Run focused Rust migration/repository, parser/capture and handler tests; dashboard `pnpm exec vitest run` and `pnpm exec vue-tsc --noEmit`.
-- [ ] 4.2 Run `just ci-local`; if Docker E2E is unavailable, run `just ci-ci` and report E2E not run (`just test-e2e` required for full verification).
+- [ ] 4.1 Map local usage/trend, upstream observations/age/expiry and named 429 counts in `crates/infrastructure/transport-axum/src/{handlers/provider_quota.rs,provider_dto.rs}`; test mapping, unavailable≠zero, freshness, thresholds, no 429 warnings.
+
+## Phase 5: Dashboard and Contract — Unit 5
+
+- [ ] 5.1 Update `apps/rook/dashboard/src/{lib/api.ts,composables/useProvidersQuota.ts,views/ProvidersQuotaView.vue,locales/{en,es}.json}` for separate local/upstream data, age/expiry and warnings; test stale, mixed, no-data.
+- [ ] 5.2 Reconcile `.agents/sdd/specs/providers-ui/spec.md`; remove stale placeholder/follow-up text, preserving approved semantics.
+
+## Phase 6: Verification
+
+- [ ] 6.1 Run provider tests (`cargo test -p providers-openai -p providers-anthropic -p providers-groq`), app/handler tests (`cargo test -p rook -p transport-axum`), dashboard `cd apps/rook/dashboard && pnpm exec vitest run && pnpm exec vue-tsc --noEmit`.
+- [ ] 6.2 Run `just ci-local`; if Docker E2E is unavailable, run `just ci-ci` and report E2E not run (`just test-e2e` required for full verification).
+
+**Exact scope exclusions:** no polling; no Anthropic Admin API calls; no speculative Gemini/Ollama quota signals. No 429-derived utilization or incompatible aggregation; keep local/upstream separate.

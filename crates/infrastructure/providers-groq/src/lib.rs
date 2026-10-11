@@ -13,6 +13,84 @@ use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, 
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
+pub fn parse_groq_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    [
+        ("requests", "requests", "day"),
+        ("tokens", "tokens", "minute"),
+    ]
+    .into_iter()
+    .filter_map(|(metric, suffix, window)| {
+        let limit = groq_header_number(headers, &format!("x-ratelimit-limit-{suffix}"))?;
+        let remaining = groq_header_number(headers, &format!("x-ratelimit-remaining-{suffix}"))?;
+        let reset_after_milliseconds = headers
+            .get(format!("x-ratelimit-reset-{suffix}"))
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_groq_reset_milliseconds);
+        Some(QuotaObservation {
+            provider_kind: ProviderKind::Groq,
+            provider: provider.clone(),
+            connection_id: None,
+            metric: metric.to_string(),
+            source: "response_headers".to_string(),
+            scope: Some("organization".to_string()),
+            window: Some(window.to_string()),
+            limit: Some(limit),
+            remaining: Some(remaining),
+            reset_at: None,
+            reset_after_milliseconds,
+            observed_at,
+        })
+    })
+    .collect()
+}
+
+fn groq_header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = headers.get(name)?.to_str().ok()?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
+fn parse_groq_reset_milliseconds(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut rest = value;
+    let mut total = 0.0_f64;
+    while !rest.is_empty() {
+        let number_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if number_end == 0 {
+            return None;
+        }
+        let amount = rest[..number_end].parse::<f64>().ok()?;
+        let unit_end = rest[number_end..]
+            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .map(|offset| number_end + offset)
+            .unwrap_or(rest.len());
+        let unit = &rest[number_end..unit_end];
+        let multiplier = match unit {
+            "h" => 3_600_000.0,
+            "m" => 60_000.0,
+            "s" => 1_000.0,
+            "ms" => 1.0,
+            _ => return None,
+        };
+        total += amount * multiplier;
+        if !total.is_finite() || total > u64::MAX as f64 || unit.is_empty() {
+            return None;
+        }
+        rest = &rest[unit_end..];
+    }
+    Some(total.round() as u64)
+}
+
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
     #[allow(dead_code)]

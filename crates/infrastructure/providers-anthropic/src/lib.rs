@@ -14,6 +14,64 @@ use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, 
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
+pub fn parse_anthropic_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    let buckets = [
+        ("requests", "anthropic-ratelimit-", "requests"),
+        ("tokens", "anthropic-ratelimit-", "tokens"),
+        ("input_tokens", "anthropic-ratelimit-", "input-tokens"),
+        ("output_tokens", "anthropic-ratelimit-", "output-tokens"),
+        (
+            "priority_input_tokens",
+            "anthropic-priority-",
+            "input-tokens",
+        ),
+        (
+            "priority_output_tokens",
+            "anthropic-priority-",
+            "output-tokens",
+        ),
+    ];
+    buckets
+        .into_iter()
+        .filter_map(|(metric, prefix, header_metric)| {
+            let limit =
+                anthropic_header_number(headers, &format!("{prefix}{header_metric}-limit"))?;
+            let remaining =
+                anthropic_header_number(headers, &format!("{prefix}{header_metric}-remaining"))?;
+            let reset_at = headers
+                .get(format!("{prefix}{header_metric}-reset"))
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| value.with_timezone(&chrono::Utc));
+            Some(QuotaObservation {
+                provider_kind: ProviderKind::Anthropic,
+                provider: provider.clone(),
+                connection_id: None,
+                metric: metric.to_string(),
+                source: "response_headers".to_string(),
+                scope: None,
+                window: Some("minute".to_string()),
+                limit: Some(limit),
+                remaining: Some(remaining),
+                reset_at,
+                reset_after_milliseconds: None,
+                observed_at,
+            })
+        })
+        .collect()
+}
+
+fn anthropic_header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = headers.get(name)?.to_str().ok()?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
 fn map_anthropic_finish_reason(reason: &str) -> Option<FinishReason> {
     match reason {
         "end_turn" | "stop_sequence" | "pause_turn" => Some(FinishReason::Stop),

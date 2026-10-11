@@ -24,3 +24,10 @@
 
 ## Handoff
 Work unit 1 only. Provider response capture, quota handler/API changes, dashboard, and later work units remain unimplemented. No user/operator acceptance is claimed; technical verification remains for the SDD verify phase.
+
+## Unit 2 — `feature/dallay-404-quota-capture-api` → `feature/dallay-404-quota-storage` (position 2)
+- [x] 2.1 Parse and normalize documented OpenAI, Anthropic Messages, and Groq response rate-limit headers; provider tests cover valid, missing, malformed, and reset values.
+- Actual diff after regression fix: 396/400 lines. RED reproduced project bucket returning 10,000 instead of 8,000; corrected bucket selection, then provider tests passed.
+- Validation: `cargo test -p providers-openai -p providers-anthropic -p providers-groq` (75 passed), `cargo fmt --all -- --check`, `cargo tree --locked -p providers-groq`, and `git diff --check` passed. `cargo audit --no-fetch` is unavailable (`cargo audit` not installed).
+- Unit 3–5 capture/API/dashboard work remains untouched. No polling, Anthropic Admin API, unsupported-provider inference, or 429 quota inference was added.
+- Semgrep was not run: MCP tools and local CLI were unavailable.
