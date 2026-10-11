@@ -278,6 +278,65 @@ async fn collisions_are_explicit_and_failed_second_author_preserves_first() {
     assert_eq!(ui.len(), 4);
 }
 #[tokio::test]
+async fn recovered_callback_marker_is_thread_scoped_and_cleared() {
+    struct Marker {
+        seen: Arc<Mutex<Vec<bool>>>,
+    }
+    #[async_trait]
+    impl Plugin for Marker {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "marker".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+            let seen = self.seen.clone();
+            ui.register(
+                ctx,
+                "marker.command".into(),
+                Contribution::Command {
+                    name: "/mark".into(),
+                    handler: Arc::new(move |_| {
+                        seen.lock().unwrap().push(in_recovered_callback());
+                        Ok(CommandResult::Notice(View::text("marked")))
+                    }),
+                },
+            )?;
+            ui.register(
+                ctx,
+                "marker.panic".into(),
+                Contribution::Command {
+                    name: "/mark-panic".into(),
+                    handler: Arc::new(|_| panic!("marker panic payload")),
+                },
+            )?;
+            Ok(())
+        }
+    }
+    let (mut supervisor, ui, _) = setup(false).await;
+    let seen = Arc::new(Mutex::new(vec![]));
+    supervisor
+        .register(Box::new(Marker { seen: seen.clone() }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    assert!(!in_recovered_callback());
+    ui.command("/mark").unwrap().run("").unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![true]);
+    assert!(!in_recovered_callback());
+    // Stray host reports outside `invoke` are ignored and never leak.
+    capture_recovered_panic("stray".into());
+    let failure = ui.command("/mark-panic").unwrap().run("").unwrap_err();
+    assert!(
+        failure.to_string().contains("marker panic payload"),
+        "unexpected report: {failure}"
+    );
+    assert!(!failure.to_string().contains("stray"));
+    assert!(!in_recovered_callback());
+}
+#[tokio::test]
 async fn callback_output_is_sanitized_bounded_and_panics_become_errors() {
     struct Outputs;
     #[async_trait]

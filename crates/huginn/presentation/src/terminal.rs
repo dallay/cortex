@@ -51,6 +51,14 @@ impl TerminalGuard {
         HOOK.call_once(|| {
             let original = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
+                // A panic recovered by a UI contribution callback must not
+                // disturb the shared terminal: capture its report for the
+                // invoking thread instead of tearing down raw mode or writing
+                // over the viewport. All other panics keep full restoration.
+                if huginn_plugin_api::v1::in_recovered_callback() {
+                    huginn_plugin_api::v1::capture_recovered_panic(info.to_string());
+                    return;
+                }
                 if OWNER.load(Ordering::SeqCst) {
                     let _ = disable_raw_mode();
                     let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
@@ -337,8 +345,17 @@ impl Driver {
             if let Some((title, body, choices, selected)) = &view.plugin_dialog {
                 let [body_area, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-                let mut text = format!("{}\n", safe(body));
-                for (index, choice) in choices.iter().enumerate() {
+                let body = safe(body);
+                let mut text = format!("{body}\n");
+                // Keep the selected choice visible: window the list like the
+                // approval preview does, preserving marker and safe rendering.
+                let rows = usize::from(body_area.height)
+                    .saturating_sub(2)
+                    .saturating_sub(body.lines().count().max(1));
+                let start = selected
+                    .saturating_sub(rows.saturating_sub(1))
+                    .min(choices.len().saturating_sub(rows));
+                for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
                     text.push_str(&format!(
                         "{} {}\n",
                         if index == *selected { ">" } else { " " },

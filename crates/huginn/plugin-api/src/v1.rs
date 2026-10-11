@@ -7,6 +7,7 @@ use crate::{
 use huginn_core::CancellationToken;
 use std::{
     any::Any,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -171,30 +172,17 @@ impl Registration {
     }
     fn invoke<T>(&self, callback: impl FnOnce() -> Result<T>) -> Result<T> {
         self.check()?;
-        // `catch_unwind` still runs the process panic hook, and the
-        // presentation hook tears down raw mode plus writes to stderr. Park a
-        // capturing no-op hook while a recoverable callback runs so a caught
-        // plugin panic can neither corrupt the active terminal nor disable raw
-        // mode. Uncaught panics keep the installed hook. The swap is
-        // process-global and brief; callbacks must stay cheap and synchronous.
-        let previous = std::panic::take_hook();
-        let captured = Arc::new(Mutex::new(None::<String>));
-        let sink = captured.clone();
-        std::panic::set_hook(Box::new(move |info: &std::panic::PanicHookInfo| {
-            if let Ok(mut slot) = sink.lock() {
-                if slot.is_none() {
-                    *slot = Some(info.to_string());
-                }
-            }
-        }));
+        // Mark this thread so the host panic hook captures the report instead
+        // of printing or tearing down shared terminal state. `catch_unwind`
+        // alone still runs the process hook, which would corrupt the active
+        // terminal for a panic recovered here. No process-wide hook is
+        // replaced, so other threads keep the installed hook; the marker lives
+        // only for this synchronous call, matching the callback's requirements.
+        let _recovered = RecoveredGuard::enter();
         let result = catch_unwind(AssertUnwindSafe(callback));
-        std::panic::set_hook(previous);
+        drop(_recovered);
         let result = result.map_err(|payload| {
-            let message = captured
-                .lock()
-                .ok()
-                .and_then(|slot| slot.clone())
-                .or_else(|| panic_message(&payload));
+            let message = take_recovered_report().or_else(|| panic_message(&payload));
             match message.as_deref().map(text).transpose() {
                 Ok(Some(message)) => error(format!("UI callback panicked: {message}")),
                 _ => error("UI callback panicked"),
@@ -202,6 +190,68 @@ impl Registration {
         })??;
         self.check()?;
         Ok(result)
+    }
+}
+
+thread_local! {
+    /// Set while the current thread runs a recoverable extension callback.
+    static RECOVERED_CALLBACK: Cell<bool> = const { Cell::new(false) };
+    /// Panic report captured by the host hook for the current callback.
+    static RECOVERED_REPORT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Whether the calling thread is inside a recoverable extension callback.
+///
+/// Host panic hooks consult this to capture a report instead of printing or
+/// tearing down shared terminal state: a panic recovered by `invoke` must not
+/// disturb other threads or the active terminal. Always false outside `invoke`.
+/// Host-only coordination; extensions never call this.
+pub fn in_recovered_callback() -> bool {
+    RECOVERED_CALLBACK
+        .try_with(|active| active.get())
+        .unwrap_or(false)
+}
+
+/// Record the panic report for the current recovered callback. Host hooks only;
+/// ignored unless the calling thread is inside `invoke`.
+pub fn capture_recovered_panic(report: String) {
+    if !in_recovered_callback() {
+        return;
+    }
+    let _ = RECOVERED_REPORT.try_with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut() {
+            if slot.is_none() {
+                *slot = Some(report);
+            }
+        }
+    });
+}
+
+fn take_recovered_report() -> Option<String> {
+    RECOVERED_REPORT
+        .try_with(|slot| slot.try_borrow_mut().ok().and_then(|mut slot| slot.take()))
+        .unwrap_or_default()
+}
+
+/// Restores the recovered-callback marker when the synchronous call ends. The
+/// marker stays set while `catch_unwind` contains the unwind, which is exactly
+/// when the host hook runs.
+struct RecoveredGuard {
+    previous: bool,
+}
+impl RecoveredGuard {
+    fn enter() -> Option<Self> {
+        RECOVERED_CALLBACK
+            .try_with(|active| {
+                let previous = active.replace(true);
+                Self { previous }
+            })
+            .ok()
+    }
+}
+impl Drop for RecoveredGuard {
+    fn drop(&mut self) {
+        let _ = RECOVERED_CALLBACK.try_with(|active| active.set(self.previous));
     }
 }
 

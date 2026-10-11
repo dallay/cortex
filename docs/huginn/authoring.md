@@ -20,10 +20,13 @@ declarative and host-rendered:
 - dialogs expose bounded text and choices, never an approval response;
 - widgets publish text into a named host-owned status slot.
 
-The host sanitizes returned text, applies size limits, catches callback panics,
-and decides whether a contribution is visible. Extensions cannot write ANSI,
-read the TTY, install arbitrary key handlers, grant tool permissions, or mutate
-`ApprovalPolicy`.
+The host sanitizes returned text, applies size limits, converts callback panics
+into errors, and decides whether a contribution is visible. The plugin API
+exposes no terminal input, ANSI output, key handling, tool-permission grants, or
+approval-policy mutation. That boundary is contractual and API-surface only:
+in-process native extensions share the host process and are trusted code, not
+sandboxed or isolated. Authors must not use process or OS I/O (spawning
+processes, opening the TTY, writing escape sequences) to bypass it.
 
 ## Reference extension
 
