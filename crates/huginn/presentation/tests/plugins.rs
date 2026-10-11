@@ -91,7 +91,7 @@ async fn unload_invalidates_command_renderer_and_old_presentation_generation() {
     assert!(registry.is_empty());
     assert!(presentation
         .0
-        .open(&Session::new(".".into()), Default::default())
+        .open(&Session::new(".".into()))
         .await
         .is_err());
     supervisor.shutdown().await;

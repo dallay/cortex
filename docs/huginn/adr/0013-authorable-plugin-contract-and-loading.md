@@ -1,9 +1,9 @@
-# ADR-0012: Authorable plugin contract and future loading strategy
+# ADR-0013: Authorable plugin contract and future loading strategy
 
 - Status: Accepted for the in-process contract; runtime loading deferred
 - Date: 2026-10-11
 - Product: Huginn
-- Relates to: [ADR-0003](0003-minimal-service-composition-kernel.md), [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md)
+- Relates to: [ADR-0003](0003-minimal-service-composition-kernel.md), [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md), [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md)
 
 ## Context
 

@@ -108,5 +108,5 @@ isolation, or process/IPC isolation in this contract.
 
 The compatibility, discovery, lifecycle, sandbox, and versioning analysis for
 WASM, IPC/process, and native-loader options is recorded in
-[ADR-0012](adr/0012-authorable-plugin-contract-and-loading.md). A future loader
+[ADR-0013](adr/0013-authorable-plugin-contract-and-loading.md). A future loader
 must be selected explicitly before claiming any of those properties.

@@ -22,7 +22,6 @@ use ratatui::{
     Terminal, TerminalOptions, Viewport,
 };
 use std::{
-    collections::BTreeSet,
     io::{IsTerminal, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -115,7 +114,7 @@ pub struct Ratatui {
 }
 #[async_trait]
 impl Presentation for Ratatui {
-    async fn open(&self, session: &Session, allowed: BTreeSet<String>) -> Result<Connection> {
+    async fn open(&self, session: &Session) -> Result<Connection> {
         let mut drivers = self
             .drivers
             .lock()
@@ -150,7 +149,7 @@ impl Presentation for Ratatui {
             },
         )?;
         let stop = CancellationToken::new();
-        let (ui, prompts) = Ui::new(session, allowed, self.contributions.clone(), stop.clone());
+        let (ui, prompts) = Ui::new(session, self.contributions.clone(), stop.clone());
         let done = CancellationToken::new();
         drivers.push((stop.clone(), done.clone()));
         drop(drivers);

@@ -331,3 +331,71 @@ impl ModelProvider for MockProvider {
         Ok(futures::stream::iter(output.into_iter().map(Ok)).boxed())
     }
 }
+
+/// Adapter construction lives outside the CLI, loop and kernel.
+pub struct ProviderConfig {
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub key: Option<String>,
+    pub timeout_secs: u64,
+}
+pub type ProviderFactory = fn(&ProviderConfig) -> Result<std::sync::Arc<dyn ModelProvider>>;
+#[derive(Default)]
+pub struct ProviderFactories(BTreeMap<String, (ProviderFactory, bool)>);
+impl ProviderFactories {
+    pub fn register(
+        &mut self,
+        name: &str,
+        credentials: bool,
+        factory: ProviderFactory,
+    ) -> Result<()> {
+        if self.0.contains_key(name) {
+            return Err(AgentError::Configuration(format!(
+                "duplicate provider {name}"
+            )));
+        }
+        self.0.insert(name.into(), (factory, credentials));
+        Ok(())
+    }
+    pub fn builtin() -> Self {
+        let mut factories = Self::default();
+        factories
+            .register("mock", false, |_| Ok(std::sync::Arc::new(MockProvider)))
+            .expect("unique builtin");
+        factories
+            .register("openai", true, |config| {
+                Ok(std::sync::Arc::new(OpenAiProvider::new(
+                    config
+                        .base_url
+                        .as_deref()
+                        .ok_or_else(|| AgentError::Configuration("base_url is required".into()))?,
+                    config
+                        .model
+                        .clone()
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| AgentError::Configuration("model is required".into()))?,
+                    config.key.clone(),
+                    config.timeout_secs,
+                )?))
+            })
+            .expect("unique builtin");
+        factories
+    }
+    pub fn uses_credentials(&self, name: &str) -> Result<bool> {
+        self.0
+            .get(name)
+            .map(|(_, credentials)| *credentials)
+            .ok_or_else(|| AgentError::Configuration(format!("unknown provider {name}")))
+    }
+    pub fn create(
+        &self,
+        name: &str,
+        config: &ProviderConfig,
+    ) -> Result<std::sync::Arc<dyn ModelProvider>> {
+        let (factory, _) = self
+            .0
+            .get(name)
+            .ok_or_else(|| AgentError::Configuration(format!("unknown provider {name}")))?;
+        factory(config)
+    }
+}

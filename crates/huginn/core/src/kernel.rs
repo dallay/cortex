@@ -66,7 +66,8 @@ pub struct PluginContext {
     pub cancellation: CancellationToken,
     tasks: Vec<JoinHandle<()>>,
     published: Arc<AtomicBool>,
-    owned: Vec<Box<dyn Send + Sync>>,
+    resources: Vec<Box<dyn Any + Send + Sync>>,
+    commits: Vec<Box<dyn FnOnce() + Send + Sync>>,
 }
 impl PluginContext {
     pub fn activation(&self) -> Activation {
@@ -75,11 +76,6 @@ impl PluginContext {
             published: self.published.clone(),
             cancellation: self.cancellation.clone(),
         }
-    }
-    /// Own a registration guard or other synchronous cleanup resource.
-    /// Disposed even when activation fails or the supervisor is dropped.
-    pub fn own<T: Send + Sync + 'static>(&mut self, resource: T) {
-        self.owned.push(Box::new(resource));
     }
     /// Supervisor-assigned identity for generation-owned registrations.
     pub const fn generation(&self) -> u64 {
@@ -107,9 +103,18 @@ impl PluginContext {
     pub fn own_task(&mut self, task: JoinHandle<()>) {
         self.tasks.push(task);
     }
+    /// Dispose an owned registration even when activation fails before deactivate.
+    pub fn own_resource<T: Any + Send + Sync>(&mut self, resource: T) {
+        self.resources.push(Box::new(resource));
+    }
+    /// Publish adapter registrations only after activation and manifest validation succeed.
+    pub fn on_commit(&mut self, publish: impl FnOnce() + Send + Sync + 'static) {
+        self.commits.push(Box::new(publish));
+    }
     async fn cleanup(&mut self) {
         self.cancellation.cancel();
-        self.owned.clear();
+        self.commits.clear();
+        self.resources.clear();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         for mut task in self.tasks.drain(..) {
             if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
@@ -263,7 +268,8 @@ impl Supervisor {
                     cancellation: CancellationToken::new(),
                     tasks: vec![],
                     published: Arc::new(AtomicBool::new(false)),
-                    owned: vec![],
+                    resources: vec![],
+                    commits: vec![],
                 };
                 let result = e.plugin.activate(&mut ctx).await.and_then(|()| {
                     let declared: BTreeSet<_> =
@@ -279,6 +285,9 @@ impl Supervisor {
                 });
                 match result {
                     Ok(()) => {
+                        for publish in ctx.commits.drain(..) {
+                            publish();
+                        }
                         self.services.extend(ctx.staged.clone());
                         ctx.published.store(true, Ordering::Release);
                         e.context = Some(ctx);

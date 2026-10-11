@@ -11,6 +11,7 @@ path = "tests/support/session_lock_holder.rs"
 test = false
 
 [dependencies]
+huginn-application = { path = "../application" }
 huginn-core = { path = "../core" }
 async-trait.workspace = true
 futures.workspace = true

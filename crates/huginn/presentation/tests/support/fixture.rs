@@ -83,13 +83,13 @@ async fn main() -> Result<()> {
     supervisor.start().await?;
     let mut session = Session::new(".".into());
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
-    let connection = presentation.0.open(&session, Default::default()).await?;
+    let connection = presentation.0.open(&session).await?;
     if std::env::args().nth(1).as_deref() == Some("drop-reopen") {
         let ui = connection.ui.clone();
         assert_eq!(ui.prompt().await.as_deref(), Some("reopen"));
         drop(connection);
         assert!(!crossterm::terminal::is_raw_mode_enabled()?);
-        let next = presentation.0.open(&session, Default::default()).await?;
+        let next = presentation.0.open(&session).await?;
         next.ui.notice("NEW_GENERATION_READY".into());
         assert_eq!(next.ui.prompt().await.as_deref(), Some("replacement input"));
         next.finish().await?;
@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
         let next = supervisor
             .resolve::<PresentationService>(&presentation_id())?
             .0
-            .open(&session, Default::default())
+            .open(&session)
             .await?;
         next.finish().await?;
         drop(connection);
@@ -124,11 +124,12 @@ async fn main() -> Result<()> {
         panic!("intentional PTY restoration fixture");
     }
     let ui = connection.ui.clone();
+    let policy = huginn_application::authorization::HostPolicy::new(ui.clone(), Default::default());
     while let Some(prompt) = ui.prompt().await {
         let cancel = CancellationToken::new();
         ui.begin(cancel.clone());
         let result = Engine
-            .run(&mut session, prompt, ui.as_ref(), ui.as_ref(), cancel)
+            .run(&mut session, prompt, &policy, ui.as_ref(), cancel)
             .await;
         ui.synchronize(&session);
         if let Err(error) = result {

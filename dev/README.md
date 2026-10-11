@@ -70,7 +70,7 @@ dashboard runs locally via `pnpm dev`, Playwright drives Chromium + Firefox + We
 
 **Port**: `3773` on host → `3773` in container  
 **Database**: `/tmp/rook-e2e.db` inside the container (tmpfs-backed, gone when container is removed)  
-**Dashboard**: `http://localhost:4747` (Vite dev server on your machine)  
+**Dashboard**: `http://localhost:4747/dashboard/` (Vite dev server on your machine)
 **Admin password**: `Admin123456-` (seeded automatically via `rook seed-admin`)
 
 ### Prerequisites
@@ -107,7 +107,7 @@ just test-e2e-dev
 # or: dev/e2e/run-api-keys-e2e.sh
 
 # In a second terminal — start the dashboard
-just run-dashboard   # http://localhost:4747
+just run-dashboard   # http://localhost:4747/dashboard/
 
 # In a third terminal — run specific tests
 cd apps/rook/dashboard
@@ -119,7 +119,7 @@ just test-e2e-cleanup
 # or: dev/e2e/run-api-keys-e2e.sh --cleanup
 ```
 
-Log in at `http://localhost:4747` with:
+Log in at `http://localhost:4747/dashboard/` with:
 - **Email**: `admin@rook.local`
 - **Password**: `Admin123456-`
 
@@ -131,7 +131,7 @@ cache disabled, DB at `/tmp/rook-e2e.db` (inside container).
 ### Dockerfile used
 
 `Dockerfile.dev` at the **repo root** (not `dev/Dockerfile.dev`).
-This is the production-grade image that includes the dashboard build.
+This image includes the dashboard build embedded in the Rook binary.
 
 ---
 

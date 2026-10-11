@@ -27,7 +27,8 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md) | SQLite, configuration and runtime contracts | Accepted |
 | [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted |
 | [ADR-0011](0011-huginn-product-naming.md) | Huginn product naming and identity | Accepted |
-| [ADR-0012](0012-authorable-plugin-contract-and-loading.md) | Authorable plugin contract and future loading strategy | Accepted |
+| [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) | Hexagonal application and lifecycle-owned capabilities | Accepted |
+| [ADR-0013](0013-authorable-plugin-contract-and-loading.md) | Authorable plugin contract and future loading strategy | Accepted |
 
 ## Record format
 
@@ -49,6 +50,8 @@ This directory is the canonical versioned decision log for the agent in Cortex.
 The Obsidian rust-agent-harness-research collection remains the research home;
 its DEC and R decision entries provide historical context.
 
+Implementation: [`apps/huginn`](../../../apps/huginn/), [`core`](../../../crates/huginn/core/), [`runtime`](../../../crates/huginn/runtime/).
+
 The repository placement and MCP trust decisions here refine earlier research
 that left placement undecided or assumed stronger external-runtime isolation.
 The external research notes now link to these canonical MVP decisions; their older
@@ -56,7 +59,7 @@ alternatives are preserved as research history.
 
 ## Current interactive architecture
 
-[ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) is the controlling decision for new interactive UI development. It partially supersedes ADR-0004's TUI deferral. The implemented line-oriented CLI remains a supported transitional/fallback adapter, not the architectural target. Start the Ratatui presentation plugin now while keeping agent core UI-agnostic and all functional capabilities replaceable via plugin services. PTY tests determine necessary terminal workarounds; they are not a prerequisite for selecting Ratatui.
+[ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) controls interactive UI development and partially supersedes ADR-0004's TUI deferral. The Ratatui presentation plugin is the interactive implementation; the line-oriented CLI remains a supported recovery adapter. The agent core stays UI-agnostic and functional capabilities remain replaceable via plugin services. PTY tests determine necessary terminal workarounds; they are not a prerequisite for selecting Ratatui.
 
 ## Remaining decisions
 
@@ -66,7 +69,7 @@ alternatives are preserved as research history.
   are preserved unchanged.
 - Supported real endpoint combinations and Rook compatibility.
 - Release tags and public distribution after personal MVP acceptance.
-- Runtime loading strategy for extensions — deferred by [ADR-0012](0012-authorable-plugin-contract-and-loading.md).
+- Runtime loading strategy for extensions — deferred by [ADR-0013](0013-authorable-plugin-contract-and-loading.md).
 
 Concrete contracts and limits are in the [implementation specification](../implementation-specification.md).
 ADR-0009 records the storage and configuration choices made for implementation.
