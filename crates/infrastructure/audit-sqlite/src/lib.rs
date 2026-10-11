@@ -1,9 +1,11 @@
 // audit-sqlite — SQLite-backed implementation of AuditPort
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use rook_core::{
-    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, RequestStatus, UsageEntry,
-    UsageFilters, UsageRecorderPort, UsageSummary,
+    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, ProviderKind, QuotaObservation,
+    QuotaObservationRecorderPort, RequestStatus, UsageEntry, UsageFilters, UsageRecorderPort,
+    UsageSummary,
 };
 use rusqlite::{params, Connection};
 use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId, ProviderId, RequestId};
@@ -167,6 +169,152 @@ impl SqliteUsageRepository {
         }
 
         Ok(total_deleted)
+    }
+
+    /// Delete only expired upstream quota observations; local usage is untouched.
+    pub async fn delete_quota_observations_older_than(
+        &self,
+        retention_days: u32,
+    ) -> CortexResult<u64> {
+        let conn = self.conn.lock().await;
+        let deleted = conn
+            .execute(
+                "DELETE FROM provider_quota_observations
+                 WHERE datetime(observed_at) < datetime('now', '-' || ?1 || ' days')",
+                [retention_days],
+            )
+            .map_err(|e| CortexError::provider(format!("sqlite quota retention failed: {e}")))?;
+        Ok(deleted as u64)
+    }
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for SqliteUsageRepository {
+    async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()> {
+        let reset_after_milliseconds = observation
+            .reset_after_milliseconds
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|e| CortexError::provider(format!("invalid quota reset duration: {e}")))?;
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO provider_quota_observations (
+                provider_kind, provider_runtime_id, connection_id, metric, source,
+                scope, window, quota_limit, remaining, reset_at,
+                reset_after_milliseconds, observed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                observation.provider_kind.as_str(),
+                observation.provider.to_string(),
+                observation.connection_id.map(|id| id.to_string()),
+                observation.metric,
+                observation.source,
+                observation.scope,
+                observation.window,
+                observation.limit,
+                observation.remaining,
+                observation.reset_at.map(|value| value.to_rfc3339()),
+                reset_after_milliseconds,
+                observation.observed_at.to_rfc3339(),
+            ],
+        )
+        .map_err(|e| CortexError::provider(format!("sqlite quota insert failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        provider: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_kind, provider_runtime_id, connection_id, metric, source,
+                        scope, window, quota_limit, remaining, reset_at,
+                        reset_after_milliseconds, observed_at
+                 FROM provider_quota_observations
+                 WHERE (?1 IS NULL OR provider_runtime_id = ?1)
+                 ORDER BY observed_at DESC, id DESC",
+            )
+            .map_err(|e| CortexError::provider(format!("sqlite quota list prepare failed: {e}")))?;
+        let rows = stmt
+            .query_map([provider.map(|id| id.to_string())], |row| {
+                let provider_kind: String = row.get(0)?;
+                let provider_kind =
+                    ProviderKind::try_from(provider_kind.as_str()).map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
+                            0,
+                            "provider_kind".to_string(),
+                            rusqlite::types::Type::Text,
+                        )
+                    })?;
+                let connection_id: Option<String> = row.get(2)?;
+                let connection_id = connection_id
+                    .map(|id| {
+                        ConnectionId::parse_str(&id).map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                2,
+                                "connection_id".to_string(),
+                                rusqlite::types::Type::Text,
+                            )
+                        })
+                    })
+                    .transpose()?;
+                let reset_at: Option<String> = row.get(9)?;
+                let reset_at = reset_at
+                    .map(|value| {
+                        DateTime::parse_from_rfc3339(&value)
+                            .map(|date| date.with_timezone(&Utc))
+                            .map_err(|_| {
+                                rusqlite::Error::InvalidColumnType(
+                                    9,
+                                    "reset_at".to_string(),
+                                    rusqlite::types::Type::Text,
+                                )
+                            })
+                    })
+                    .transpose()?;
+                let observed_at: String = row.get(11)?;
+                let observed_at = DateTime::parse_from_rfc3339(&observed_at)
+                    .map(|date| date.with_timezone(&Utc))
+                    .map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
+                            11,
+                            "observed_at".to_string(),
+                            rusqlite::types::Type::Text,
+                        )
+                    })?;
+                let reset_after_milliseconds: Option<i64> = row.get(10)?;
+                Ok(QuotaObservation {
+                    provider_kind,
+                    provider: ProviderId::new(row.get::<_, String>(1)?),
+                    connection_id,
+                    metric: row.get(3)?,
+                    source: row.get(4)?,
+                    scope: row.get(5)?,
+                    window: row.get(6)?,
+                    limit: row.get(7)?,
+                    remaining: row.get(8)?,
+                    reset_at,
+                    reset_after_milliseconds: reset_after_milliseconds
+                        .map(|value| {
+                            u64::try_from(value).map_err(|_| {
+                                rusqlite::Error::InvalidColumnType(
+                                    10,
+                                    "reset_after_milliseconds".to_string(),
+                                    rusqlite::types::Type::Integer,
+                                )
+                            })
+                        })
+                        .transpose()?,
+                    observed_at,
+                })
+            })
+            .map_err(|e| CortexError::provider(format!("sqlite quota list failed: {e}")))?;
+        rows.map(|row| {
+            row.map_err(|e| CortexError::provider(format!("sqlite quota row failed: {e}")))
+        })
+        .collect()
     }
 }
 
@@ -774,6 +922,110 @@ mod usage_tests {
             let deleted = repo.delete_older_than(90).await.expect("delete");
             assert_eq!(deleted, 1);
             assert_eq!(repo.count(UsageFilters::default()).await.expect("count"), 1);
+        });
+    }
+
+    fn quota_observation(provider: &str, connection_id: Option<ConnectionId>) -> QuotaObservation {
+        QuotaObservation {
+            provider_kind: ProviderKind::OpenAI,
+            provider: ProviderId::new(provider),
+            connection_id,
+            metric: "requests".to_string(),
+            source: "x-ratelimit-remaining-requests".to_string(),
+            scope: Some("project".to_string()),
+            window: Some("1m".to_string()),
+            limit: Some(100.0),
+            remaining: Some(73.0),
+            reset_at: Some(timestamp(3)),
+            // 7.66 seconds as reported by fractional-duration headers such as Groq's.
+            reset_after_milliseconds: Some(7_660),
+            observed_at: timestamp(2),
+        }
+    }
+
+    #[test]
+    fn quota_observation_round_trips_values_nulls_and_runtime_identity() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let connection = ConnectionId::new();
+            let mut expected = quota_observation("openai-runtime-a", Some(connection));
+            expected.scope = None;
+            expected.remaining = None;
+            repo.record_observation(expected.clone())
+                .await
+                .expect("record quota");
+            repo.record_observation(quota_observation("openai-runtime-b", None))
+                .await
+                .expect("record second runtime");
+
+            let rows = repo.list_observations(None).await.expect("list quota");
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[1], expected);
+            assert_eq!(rows[1].provider, ProviderId::new("openai-runtime-a"));
+            assert_eq!(rows[1].connection_id, Some(connection));
+            assert_eq!(rows[1].scope, None);
+            assert_eq!(rows[1].remaining, None);
+            assert_eq!(rows[1].reset_at, Some(timestamp(3)));
+            assert_eq!(rows[1].reset_after_milliseconds, Some(7_660));
+
+            let filtered = repo
+                .list_observations(Some(ProviderId::new("openai-runtime-b")))
+                .await
+                .expect("filter runtime");
+            assert_eq!(filtered.len(), 1);
+            assert_eq!(filtered[0].provider, ProviderId::new("openai-runtime-b"));
+        });
+    }
+
+    #[test]
+    fn v6_migration_adds_isolated_quota_storage() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let conn = repo.conn.lock().await;
+            let table_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'provider_quota_observations'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("quota table exists");
+            let usage_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'usage_history'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("usage table exists");
+            assert_eq!(table_count, 1);
+            assert_eq!(usage_count, 1);
+        });
+    }
+
+    #[test]
+    fn quota_retention_deletes_only_expired_quota_rows() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            repo.record_observation(quota_observation("openai", None))
+                .await
+                .expect("old quota");
+            let mut recent_quota = quota_observation("openai", None);
+            recent_quota.observed_at = Utc::now();
+            repo.record_observation(recent_quota)
+                .await
+                .expect("recent quota");
+
+            let mut old_usage = entry("openai", "gpt-4o", 1, Some(0.1));
+            old_usage.timestamp = Utc::now() - Duration::days(120);
+            repo.record(old_usage).await.expect("old usage");
+
+            assert_eq!(
+                repo.delete_quota_observations_older_than(90).await.unwrap(),
+                1
+            );
+            assert_eq!(repo.list_observations(None).await.unwrap().len(), 1);
+            assert_eq!(repo.count(UsageFilters::default()).await.unwrap(), 1);
         });
     }
 }

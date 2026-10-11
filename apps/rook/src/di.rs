@@ -20,7 +20,8 @@ use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
     ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, ModelCatalogPort,
     PasswordHasher, ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort,
-    ProviderRepositoryPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
+    ProviderRepositoryPort, QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort,
+    UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -62,6 +63,9 @@ pub struct RookContainer {
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
     /// Concrete usage repository — used for retention sweep task.
     pub usage_repository: Arc<SqliteUsageRepository>,
+    /// Upstream quota observation recorder — kept distinct from local usage history.
+    #[allow(dead_code)] // Consumed by the response-capture work unit in the feature chain.
+    pub quota_observation_recorder: Arc<dyn QuotaObservationRecorderPort>,
     /// Usage config — retention_days and sweep_interval_hours for retention sweep.
     pub usage_config: crate::config::UsageConfig,
 }
@@ -217,6 +221,8 @@ impl RookContainer {
                 .map_err(|e| anyhow::anyhow!("failed to create usage repository: {e}"))?,
         );
         let usage_recorder: Option<Arc<dyn UsageRecorderPort>> = Some(sqlite_usage.clone());
+        let quota_observation_recorder: Arc<dyn QuotaObservationRecorderPort> =
+            sqlite_usage.clone();
 
         // 7c. Combo repository — SQLite-backed combo storage
         let combo_repo: Arc<dyn ComboRepositoryPort> =
@@ -377,6 +383,7 @@ impl RookContainer {
             rate_limit_store,
             format_registry,
             usage_repository: sqlite_usage,
+            quota_observation_recorder,
             usage_config: config.usage.clone(),
         })
     }

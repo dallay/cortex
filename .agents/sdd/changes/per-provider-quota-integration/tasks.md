@@ -32,9 +32,9 @@ Keep PRs autonomous; child diffs exclude earlier units. Create/confirm branches 
 
 ## Phase 1: Observation Storage
 
-- [ ] 1.1 Add observation model/recorder port in `crates/domain/rook-core/src/{model.rs,ports.rs}` with source, metric, identity, scope/window, limit/remaining, reset and observation time.
-- [ ] 1.2 Add isolated table/indexes in `crates/infrastructure/db-migration/src/migrations/V6__provider_quota_observations.sql`; no backfill or `usage_history` changes.
-- [ ] 1.3 Implement SQLite persistence/quota-only `retention_days` cleanup in `crates/infrastructure/audit-sqlite/src/lib.rs`; wire recorder and existing sweep in `apps/rook/src/{di.rs,usage_retention.rs}`. Test migration, round-trip, identity, retention.
+- [x] 1.1 Add observation model/recorder port in `crates/domain/rook-core/src/{model.rs,ports.rs}` with source, metric, identity, scope/window, limit/remaining, reset and observation time.
+- [x] 1.2 Add isolated table/indexes in `crates/infrastructure/db-migration/src/migrations/V6__provider_quota_observations.sql`; no backfill or `usage_history` changes.
+- [x] 1.3 Implement SQLite persistence/quota-only `retention_days` cleanup in `crates/infrastructure/audit-sqlite/src/lib.rs`; wire recorder and existing sweep in `apps/rook/src/{di.rs,usage_retention.rs}`. Test migration, round-trip, identity, retention.
 
 ## Phase 2: Capture and API
 

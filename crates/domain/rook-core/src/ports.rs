@@ -14,7 +14,8 @@ use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, Prov
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, SignatureEntry, StreamChunk, UsageEntry, UsageFilters, UsageSummary,
+    HealthStatus, Pagination, QuotaObservation, SignatureEntry, StreamChunk, UsageEntry,
+    UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
@@ -168,6 +169,17 @@ pub trait UsageRecorderPort: Send + Sync {
     async fn summary(&self, filters: UsageFilters) -> CortexResult<UsageSummary>;
 
     async fn cost_breakdown(&self, filters: UsageFilters) -> CortexResult<CostBreakdown>;
+}
+
+/// Persistence boundary for actual upstream quota observations.
+#[async_trait]
+pub trait QuotaObservationRecorderPort: Send + Sync {
+    async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()>;
+
+    async fn list_observations(
+        &self,
+        provider: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>>;
 }
 
 // ---------------------------------------------------------------------------
