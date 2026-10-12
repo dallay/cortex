@@ -5,7 +5,7 @@ use futures::{Stream, TryStreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, Role, StreamChunk, TokenUsage,
+    ProviderPort, QuotaObservationRecorderPort, Role, StreamChunk, TokenUsage,
 };
 
 use providers_core::sanitize_body;
@@ -13,6 +13,64 @@ use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::sync::Arc;
+
+pub fn parse_anthropic_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    let buckets = [
+        ("requests", "anthropic-ratelimit-", "requests"),
+        ("tokens", "anthropic-ratelimit-", "tokens"),
+        ("input_tokens", "anthropic-ratelimit-", "input-tokens"),
+        ("output_tokens", "anthropic-ratelimit-", "output-tokens"),
+        (
+            "priority_input_tokens",
+            "anthropic-priority-",
+            "input-tokens",
+        ),
+        (
+            "priority_output_tokens",
+            "anthropic-priority-",
+            "output-tokens",
+        ),
+    ];
+    buckets
+        .into_iter()
+        .filter_map(|(metric, prefix, header_metric)| {
+            let limit =
+                anthropic_header_number(headers, &format!("{prefix}{header_metric}-limit"))?;
+            let remaining =
+                anthropic_header_number(headers, &format!("{prefix}{header_metric}-remaining"))?;
+            let reset_at = headers
+                .get(format!("{prefix}{header_metric}-reset"))
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| value.with_timezone(&chrono::Utc));
+            Some(QuotaObservation {
+                provider_kind: ProviderKind::Anthropic,
+                provider: provider.clone(),
+                connection_id: None,
+                metric: metric.to_string(),
+                source: "response_headers".to_string(),
+                scope: None,
+                window: Some("minute".to_string()),
+                limit: Some(limit),
+                remaining: Some(remaining),
+                reset_at,
+                reset_after_milliseconds: None,
+                observed_at,
+            })
+        })
+        .collect()
+}
+
+fn anthropic_header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = headers.get(name)?.to_str().ok()?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
 
 fn map_anthropic_finish_reason(reason: &str) -> Option<FinishReason> {
     match reason {
@@ -178,6 +236,7 @@ pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
     #[allow(dead_code)]
     client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
@@ -218,10 +277,34 @@ async fn map_anthropic_http_error(
 
 impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: AnthropicProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            quota_recorder,
+        }))
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_anthropic_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        for observation in observations {
+            if let Err(error) = recorder.record_observation(observation).await {
+                tracing::warn!(%error, "failed to record Anthropic quota observation");
+            }
+        }
     }
 
     fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
@@ -427,6 +510,8 @@ impl ProviderPort for AnthropicProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_anthropic_http_error(&self.config.id, resp).await);

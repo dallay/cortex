@@ -5,7 +5,8 @@ use futures::{Stream, StreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage, ToolCallDelta, ToolCallFunctionDelta,
+    ProviderPort, QuotaObservationRecorderPort, StreamChunk, TokenUsage, ToolCallDelta,
+    ToolCallFunctionDelta,
 };
 
 use providers_core::sanitize_body;
@@ -13,6 +14,107 @@ use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::sync::Arc;
+
+pub fn parse_openai_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    let mut observations = Vec::new();
+    for (metric, scope, prefix) in [
+        ("requests", None, "x-ratelimit-"),
+        ("tokens", None, "x-ratelimit-"),
+        ("tokens", Some("project"), "x-ratelimit-"),
+    ] {
+        let names = match (metric, scope.is_some()) {
+            ("requests", _) => ("limit-requests", "remaining-requests", "reset-requests"),
+            ("tokens", true) => (
+                "limit-project-tokens",
+                "remaining-project-tokens",
+                "reset-project-tokens",
+            ),
+            ("tokens", false) => ("limit-tokens", "remaining-tokens", "reset-tokens"),
+            _ => continue,
+        };
+        let (Some(limit), Some(remaining)) = (
+            header_number(headers, &format!("{prefix}{}", names.0)),
+            header_number(headers, &format!("{prefix}{}", names.1)),
+        ) else {
+            continue;
+        };
+        observations.push(QuotaObservation {
+            provider_kind: ProviderKind::OpenAI,
+            provider: provider.clone(),
+            connection_id: None,
+            metric: metric.to_string(),
+            source: "response_headers".to_string(),
+            scope: scope.map(str::to_string),
+            window: None,
+            limit: Some(limit),
+            remaining: Some(remaining),
+            reset_at: None,
+            reset_after_milliseconds: header_value(headers, &format!("{prefix}{}", names.2))
+                .and_then(parse_rate_reset_milliseconds),
+            observed_at,
+        });
+    }
+    observations
+}
+
+fn header_value<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name)?.to_str().ok()
+}
+
+fn header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = header_value(headers, name)?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
+fn parse_rate_reset_milliseconds(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut rest = value;
+    let mut total = 0.0_f64;
+    while !rest.is_empty() {
+        let number_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if number_end == 0 {
+            return None;
+        }
+        let amount = rest[..number_end].parse::<f64>().ok()?;
+        let unit_end = rest[number_end..]
+            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .map(|offset| number_end + offset)
+            .unwrap_or(rest.len());
+        let unit = &rest[number_end..unit_end];
+        let multiplier = match unit {
+            "h" => 3_600_000.0,
+            "m" => 60_000.0,
+            "s" => 1_000.0,
+            "ms" => 1.0,
+            _ => return None,
+        };
+        total += amount * multiplier;
+        if !total.is_finite() || total > u64::MAX as f64 {
+            return None;
+        }
+        rest = &rest[number_end + unit.len()..];
+        if unit.is_empty() {
+            return None;
+        }
+    }
+    if total < 0.0 {
+        None
+    } else {
+        Some(total.round() as u64)
+    }
+}
 
 const MAX_TOOL_CALLS_PER_STREAM: usize = 64;
 const MAX_TOTAL_TOOL_CALL_ARGUMENT_BYTES: usize = 1_048_576;
@@ -66,14 +168,39 @@ pub struct OpenAIProviderConfig {
 pub struct OpenAIProvider {
     pub(crate) config: OpenAIProviderConfig,
     pub(crate) client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 impl OpenAIProvider {
     pub fn new(config: OpenAIProviderConfig) -> anyhow::Result<Self> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: OpenAIProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            quota_recorder,
+        })
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        for observation in observations {
+            if let Err(error) = recorder.record_observation(observation).await {
+                tracing::warn!(%error, "failed to record OpenAI quota observation");
+            }
+        }
     }
 
     fn message_to_openai(
@@ -629,6 +756,8 @@ impl ProviderPort for OpenAIProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_openai_http_error(&self.config.id, resp).await);

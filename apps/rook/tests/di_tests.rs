@@ -291,7 +291,7 @@ fn build_manage_connections_disabled_returns_none() {
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
     let model_catalog: Arc<dyn rook_core::ModelCatalogPort> = Arc::new(FakeModelCatalog);
 
-    let result = build_manage_connections(&config, &provider_repo, &registry, &model_catalog);
+    let result = build_manage_connections(&config, &provider_repo, &registry, &model_catalog, None);
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());

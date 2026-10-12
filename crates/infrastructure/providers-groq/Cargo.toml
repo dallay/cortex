@@ -16,6 +16,7 @@ reqwest = { version = "0.12", features = ["json", "stream"], default-features = 
 sse-stream = { path = "../sse-stream" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
