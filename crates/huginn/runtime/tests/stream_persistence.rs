@@ -192,7 +192,7 @@ async fn manual_compaction_summarizes_every_complete_turn_without_splitting_tool
         )
         .unwrap();
         assert_eq!(history.len(), turn_count * 4);
-        for chunk in history.chunks_exact(4) {
+        for chunk in history.as_chunks::<4>().0 {
             assert_eq!(chunk[1].tool_calls.len(), 1);
             assert_eq!(
                 chunk[2].tool_call_id.as_deref(),
