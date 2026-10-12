@@ -1,211 +1,153 @@
-# Contrato de releases y distribución de Cortex
+# Cortex Release and Distribution Contract
 
-Este documento define cómo se liberan los productos de Cortex. La regla
-principal es separar tres conceptos:
+This document defines how Cortex products are released. Keep three concepts
+separate:
 
-1. **Producto:** Rook y, posteriormente, Huginn.
-2. **Arquitectura:** crates internos organizados por responsabilidades y
-   boundaries.
-3. **Distribución:** canales mediante los cuales se instala cada producto.
+1. **Products:** Rook and Huginn.
+2. **Architecture:** internal crates organized by responsibility and boundaries.
+3. **Distribution:** the channels through which each product is installed.
 
-No tienen que compartir el mismo ciclo de vida.
+These do not need to share a lifecycle.
 
-## Identidad de productos
+## Product identity
 
-Cortex es el repositorio y el ecosistema. Los productos actuales son:
+Cortex is the repository and ecosystem. Its current products are:
 
-| Producto | Binario | Código principal | Tag | Estado público |
+| Product | Binary | Primary code | Tag | Public status |
 | --- | --- | --- | --- | --- |
-| Rook | `rook` | `apps/rook` | `rook@vX.Y.Z` | Pipeline activo; distribución pública condicionada a preflight |
-| Huginn | `huginn` | `apps/huginn` | `huginn@vX.Y.Z` | Release Please activo; distribución pública espera aceptación y preflight |
+| Rook | `rook` | `apps/rook` | `rook@vX.Y.Z` | Active pipeline; public distribution requires preflight |
+| Huginn | `huginn` | `apps/huginn` | `huginn@vX.Y.Z` | Release Please active; public distribution awaits MVP acceptance and channel preflight |
 
-No existe un release de producto `cortex@vX.Y.Z`. Los tags históricos de Rook
-sin prefijo se conservan y nunca se reescriben. Los releases nuevos usan
-`rook@vX.Y.Z`.
+There is no `cortex@vX.Y.Z` product release. Historical unprefixed Rook tags
+are retained and never rewritten. New releases use `rook@vX.Y.Z`.
 
 ## Release Please
 
-El repositorio usa manifest mode:
+The repository uses manifest mode:
 
-- `.release-please-manifest.json` y `release-please-config.json` contienen los
-  dos productos activos de versionado independiente: Rook y Huginn.
-- La activación de Huginn en Release Please permite release PRs y tags de
-  producto; la revisión y merge de esas PRs queda bajo control humano.
-- Los jobs de build, GitHub assets y distribución siguen condicionados al
-  output de Rook. La presencia de Huginn en Release Please no lo añade a esos
-  canales.
-- `separate-pull-requests: true` mantiene separados los release PRs.
-- `always-update: true` sincroniza la metadata del producto.
-- `include-component-in-tag: true` y `tag-separator: "@"` hacen explícitos los
-  tags.
-- El plugin `cargo-workspace` puede actualizar dependencias Rust reales, pero
-  la co-localización en el repositorio no debe activar un producto ajeno.
+- `.release-please-manifest.json` and `release-please-config.json` track Rook
+  and Huginn as independently versioned products.
+- Activating Huginn in Release Please allows it to generate release PRs and
+  product tags. A human controls whether those PRs are reviewed and merged.
+- Build, GitHub asset, and distribution jobs consume only Rook's outputs.
+  Tracking Huginn in Release Please does not add it to those channels.
+- `separate-pull-requests: true` keeps product release PRs separate.
+- `always-update: true` synchronizes product metadata.
+- `include-component-in-tag: true` and `tag-separator: "@"` make product tags
+  explicit.
+- The `cargo-workspace` plugin can update actual Rust dependencies. However,
+  repository co-location alone must not release an unrelated product.
 
-El workflow de producción consume únicamente outputs path-scoped:
-`apps/rook--release_created`, `apps/rook--version`,
-`apps/rook--tag_name` y `apps/rook--sha`. El workflow consume también outputs path-scoped de Huginn (`apps/huginn--release_created`, `apps/huginn--version`, `apps/huginn--tag_name` y `apps/huginn--sha`), pero por ahora no hay jobs de distribución conectados a esos outputs. Los root outputs están prohibidos.
+The production workflow consumes only path-scoped outputs:
 
-## Regla de build inmutable
+- `apps/rook--release_created`
+- `apps/rook--version`
+- `apps/rook--tag_name`
+- `apps/rook--sha`
 
-Cada job de distribución hace checkout del tag del producto y verifica que
-`HEAD` coincida con el SHA entregado por Release Please. Nunca se construye
-desde `main` mutable.
+The workflow also reads Huginn's path-scoped outputs
+(`apps/huginn--release_created`, `apps/huginn--version`,
+`apps/huginn--tag_name`, and `apps/huginn--sha`), but no distribution jobs are
+connected to them. Root-level outputs are prohibited.
 
-Cada archive nativo contiene el binario del producto, usa el nombre del
-producto, SemVer y Rust target, y tiene un sidecar SHA-256. La salida de
-`<binary> --version` debe coincidir con el SemVer del release sin la `v`.
+Every distribution job checks out the exact product tag and verifies that
+`HEAD` matches the SHA provided by Release Please. Builds must use that immutable
+source revision. Retries for the same tag must either verify and reuse matching
+artifacts or fail; they must not silently replace artifacts from another SHA.
 
-## Canales de distribución de Rook GA
+Before enabling any public distribution channel, record evidence for:
 
-### GitHub Releases — obligatorio
+1. Channel ownership and credentials.
+2. Product-specific supported targets and smoke tests.
+3. Clean installation, checksum validation, and `<binary> --version`.
+4. Artifact-to-tag-to-SHA traceability.
+5. Explicit go/no-go authorization for that channel.
 
-El release de Rook recibe únicamente sus archives y checksums. Los nombres
-usan `rook-<version>-<target>`. Los artefactos se generan desde el tag y SHA
-exactos.
+## Distribution channels
 
-### npm — obligatorio
+Each channel has its own gate. `RELEASE_PUBLICATION_ENABLED` protects Rook's
+npm and Docker publication jobs. The human decision to merge a Rook release PR
+is the go/no-go for creating its GitHub Release; the required channel checks
+must be complete before that merge. GitHub Release asset upload, npm, Docker
+Hub, GHCR, and crates.io are distinct distribution actions and must not be
+inferred from one another.
 
-El paquete base es `@dallay/rook`. Los paquetes de plataforma activos son:
+### GitHub Releases — required
 
-```text
-@dallay/rook-darwin-arm64
-@dallay/rook-darwin-x64
-@dallay/rook-linux-x64
-@dallay/rook-windows-x64
-```
+A Rook release contains only its archives and checksums. Asset names include
+the product and target, for example `rook-v1.2.3-x86_64-unknown-linux-gnu.tar.gz`.
+Archives contain the binary and `SHA256SUMS`. A release summary records the
+version, tag, SHA, and distribution job results.
 
-Los paquetes de plataforma se publican primero. Después se publica el wrapper
-base con `optionalDependencies` de la misma versión exacta. Los nombres no
-contienen backticks ni otros caracteres accidentales.
+### Cargo — `cargo install --git`
 
-Solo se incluyen plataformas con evidencia de build y smoke test de Rook.
-Huginn debe definir su propia matriz; no hereda automáticamente la de Rook.
+Rook GA supports installation directly from the Git repository. This does not
+publish internal crates to crates.io. A crates.io release is deferred until
+there is a separate product and ownership decision for every crate intended for
+publication.
 
-### Docker Hub y GHCR — obligatorios
+### npm — required for Rook
 
-Las imágenes son product-scoped:
+The package `@dallay/rook` is a platform-independent wrapper. It declares an
+optional dependency on exactly one platform package, whose lifecycle scripts
+are disabled. The wrapper resolves the platform package's binary and reports
+clear errors if it is unavailable. Platform packages contain the target binary
+at `bin/rook` and declare no install scripts.
 
-```text
-dallay/rook:<version>
-ghcr.io/dallay/rook:<version>
-```
+Every npm package uses the product version. Publication requires an authorized
+release, verified provenance and ownership, matching platform artifacts, and a
+successful package validation. Retries must not overwrite an already published
+version with different contents.
 
-La matriz inicial habilitada es `linux/amd64`. `linux/arm64` se incorporará
-solo cuando exista evidencia específica de build y smoke test. Tags móviles
-como `latest` son locales al producto.
+### Docker — required for Rook
 
-El contenedor de Rook es un gateway HTTP y puede tener healthcheck. El futuro
-contenedor de Huginn será un contrato de CLI/agent y no copiará el startup ni
-el healthcheck de Rook.
+The Rook image uses a prepared Linux/amd64 binary at
+`docker-context/rook-amd64`. It runs as a non-root user and exposes port 3773.
+Multi-architecture publication remains disabled until every target has
+product-specific build and smoke-test evidence.
 
-### Cargo/crates.io — fase posterior, no bloquea Rook GA
+### Huginn — future distribution
 
-`cargo install rook` desde crates.io no es requisito del primer lanzamiento.
-El canal Rust soportado en Rook GA es:
+Huginn distribution requires DALLAY-634 MVP acceptance, stable public
+`HUGINN_*` contracts, Ratatui/PTY evidence, and the preflight for each channel.
+Huginn must define its own target matrix, binary naming, checksums, npm package,
+and container contract. It must not inherit Rook's packaging assumptions.
 
-```bash
-cargo install \
-  --git https://github.com/dallay/cortex.git \
-  --tag rook@vX.Y.Z \
-  --locked \
-  -p rook
-```
+## Release inputs and validation
 
-Los crates internos permanecen privados/no publicados en esta fase. No se
-reestructura Clean Architecture para satisfacer únicamente una restricción de
-packaging de Cargo.
+`workflow_dispatch` with `dry_run: true` validates the workflow YAML and Release
+Please JSON syntax only. It does not run Release Please, create release PRs or
+tags, create GitHub Releases, publish registry packages, or push images. Normal
+workflow runs consume the active `release-please-config.json` and
+`.release-please-manifest.json`.
 
-La publicación en crates.io queda como una fase posterior. Cuando se active:
+Run `actionlint .github/workflows/release.yml` and the YAML/JSON syntax checks
+when changing workflow or Release Please configuration. Publication jobs must
+remain conditioned on explicit release outputs and the channel authorization
+gate. A green syntax check is not proof of Release Please path-scoping behavior;
+verify release calculations with the actual Release Please tool before claiming
+that internal crate changes trigger the intended product.
 
-1. se verifica ownership de los nombres, especialmente los nombres genéricos;
-2. se calcula el cierre transitivo real de dependencias de Rook;
-3. se renombran crates si hace falta un namespace reconocible, por ejemplo
-   `cortex-shared-kernel`;
-4. se añaden versiones a las dependencias path usando path + version;
-5. se publican solo los crates necesarios, en orden topológico;
-6. se publica `rook` después de que el cierre esté disponible.
+## Retries and partial releases
 
-Los crates publicados no serán productos comerciales ni tendrán releases de
-producto propios, pero sí serán unidades técnicas de versionado: una versión
-publicada es inmutable y una corrección posterior requiere otra versión.
+A failed platform build blocks aggregate GitHub assets and the npm wrapper that
+depends on all platform packages. Docker publication is independent and may
+succeed while npm fails. A retry must inspect registry state first, skip exact
+published versions, and never overwrite a conflicting version. Publish missing
+channels without rebuilding or mutating an artifact associated with an existing
+tag.
 
-## Dry-run y gates
+## Ownership and setup
 
-`workflow_dispatch` con `dry_run: true` es read-only. Valida metadata activa,
-fixtures de independencia, YAML, JSON y paquetes npm. No ejecuta el action
-Release Please y no abre release PRs, tags, GitHub Releases, publicaciones de
-registries ni pushes de imágenes. El action normal lee
-`release-please-config.json` y `.release-please-manifest.json`, donde están
-configurados ambos productos.
+Each product must own:
 
-Antes de habilitar los canales públicos de Rook se debe registrar evidencia de:
+- one manifest entry and one package configuration;
+- one changelog, component tag, and release PR;
+- path-scoped Release Please outputs;
+- product-specific build and distribution jobs;
+- channel ownership, credentials, preflight evidence, and retry rules.
 
-1. ownership de npm, Docker Hub y GHCR;
-2. GitHub App, npm trusted publishing/provenance y credenciales Docker;
-3. targets soportados y sus smoke tests;
-4. instalación limpia, checksum y `<binary> --version`;
-5. trazabilidad entre artefacto, tag y SHA.
-
-Cargo ownership y publicación crates.io quedan fuera del gate de Rook GA.
-
-Huginn ya está incluido en el manifest activo de Release Please y puede generar
-release PRs con versionado independiente. No tiene jobs públicos de distribución
-hasta completar el MVP acceptance (incluida la evidencia de Linux y Ratatui/PTY),
-verificar los contratos públicos estables `HUGINN_*` y superar el preflight de
-cada canal.
-
-## Reintentos y releases parciales
-
-Las versiones de registries y assets de GitHub son inmutables. Un reintento:
-
-1. reutiliza el mismo tag y SHA;
-2. comprueba qué outputs ya existen;
-3. publica únicamente los faltantes;
-4. vuelve a verificar checksums y `--version`;
-5. nunca incrementa la versión solo para recuperar un job parcial.
-
-Un release parcial es un fallo visible, no un éxito.
-
-## Fixtures de independencia
-
-Ejecutar localmente:
-
-```bash
-node scripts/check-release-config.mjs
-node scripts/release-fixtures.mjs
-```
-
-Estos fixtures cubren cambios solo de Rook, solo de Huginn, cambios
-simultáneos, dependencias compartidas y aislamiento entre productos. Representan
-el contrato de scoping; el workflow real sigue siendo la validación final. El job `workflow_dispatch` con
-`dry_run: true` valida sintaxis y fixtures, pero no ejecuta Release Please. Para
-probar el cálculo real sin escrituras, usar una versión de CLI fijada, un
-checkout con historial y tags representativos y el config/manifest activos:
-
-```bash
-npx --yes release-please@<VERSION> release-pr \
-  --repo-url=dallay/cortex \
-  --config-file=release-please-config.json \
-  --manifest-file=.release-please-manifest.json \
-  --dry-run
-```
-
-El comando requiere contexto de repositorio Git y puede consultar GitHub; no
-proporcionar credenciales de escritura. El workflow actual solo parsea los
-archivos y ejecuta fixtures, no invoca este CLI.
-
-## Agregar un producto futuro
-
-Agregar Muninn u otro producto debe ser declarativo:
-
-1. cerrar primero el rename y el contrato público;
-2. añadir su path y versión al manifest;
-3. añadir una entrada con component, changelog y metadata versionada;
-4. añadir jobs que consuman únicamente sus outputs path-scoped y SHA;
-5. añadir fixtures, smoke tests e identidades de canales;
-6. verificar ownership y credenciales antes de habilitar writes.
-
-No se crea una versión global de Cortex ni se copia un workflow monolítico sin
-cambiar identidad, targets, contrato de contenedor y gates del producto. Huginn
-ya participa en release PRs de Release Please; sus jobs de distribución se
-habilitarán después de DALLAY-634 y del preflight del canal.
+A future product such as Muninn must not create a global Cortex version or
+change existing component identities. Add it as a separate manifest-mode
+component after defining its ownership, path scope, tag, artifacts, distribution
+channels, and gates.

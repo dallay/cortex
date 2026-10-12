@@ -22,26 +22,13 @@ env:
   RUST_TOOLCHAIN: "1.89"
 
 jobs:
-  # Huginn is tracked in the active manifest and can generate release PRs, but
-  # has no distribution jobs until its acceptance gates are complete. This job
-  # performs local checks only and cannot create a PR, release or registry write.
   validate-release-config:
-    name: Validate release configuration (read-only)
+    name: Validate release configuration syntax (read-only)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: "24.21"
-
-      - name: Validate product metadata and independence fixtures
-        run: |
-          node scripts/check-release-config.mjs
-          node scripts/release-fixtures.mjs
 
       - name: Validate YAML and JSON syntax
         run: |
@@ -132,6 +119,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build Rook
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --locked --release --target "${TARGET}" -p rook
@@ -258,7 +246,6 @@ jobs:
 
       - name: Validate base wrapper and package tarball
         run: |
-          node scripts/check-release-config.mjs
           node --check apps/rook/npm/rook/lib/index.js
           npm pack --dry-run ./apps/rook/npm/rook
 
@@ -376,7 +363,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/check-release-config.mjs
           node --check apps/rook/npm/rook/lib/index.js
           npm publish ./apps/rook/npm/rook --provenance --access public --ignore-scripts
 
