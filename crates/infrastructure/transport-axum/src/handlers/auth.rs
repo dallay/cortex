@@ -215,14 +215,21 @@ pub async fn get_me_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl 
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// GET /login — generate CSRF token for browser clients
+/// GET /login — return CSRF token for browser clients
 ///
-/// Sets csrf_token cookie and returns the token in the response body.
-/// The client must echo this token back in the X-CSRF-Token header
+/// Reuses the incoming `csrf_token` cookie when it is well-formed so repeated
+/// token fetches do not rotate the value out from under WebKit's delayed
+/// cookie jar. Sets csrf_token cookie and returns the token in the response
+/// body. The client must echo this token back in the X-CSRF-Token header
 /// for state-changing requests (POST, PUT, DELETE).
-pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
-    // Generate CSRF token
-    let token = generate_csrf_token();
+pub async fn get_login_handler(
+    State(_usecases): State<Arc<RookUsecases>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Reuse a well-formed incoming token; otherwise generate a fresh one.
+    let token = extract_cookie(&headers, "csrf_token")
+        .filter(|value| is_valid_csrf_token(value))
+        .unwrap_or_else(generate_csrf_token);
 
     let secure = !cfg!(debug_assertions);
     let cookie = build_csrf_token_cookie(&token, secure);
@@ -232,6 +239,14 @@ pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> im
     });
 
     (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
+}
+
+/// Check that a presented CSRF token has the expected shape: 32 bytes
+/// encoded as unpadded base64url.
+fn is_valid_csrf_token(value: &str) -> bool {
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .is_ok_and(|bytes| bytes.len() == 32)
 }
 
 /// Generate a 32-byte random CSRF token encoded as base64url

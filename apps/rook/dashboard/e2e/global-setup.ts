@@ -58,6 +58,17 @@ async function saveAuthState(): Promise<void> {
     throw new Error('[globalSetup] Login response did not include auth_token cookie')
   }
 
+  // The POST /login body carries the same csrf_token the backend set as an
+  // HttpOnly cookie. Persist it so UI tests start with the cookie present;
+  // combined with GET /login reuse this avoids the WebKit delayed Set-Cookie
+  // race on the first state-changing request (issue #82).
+  const loginBody = (await loginRes.json()) as { csrf_token?: string }
+  const csrfTokenFromLogin = loginBody.csrf_token
+  if (!csrfTokenFromLogin) {
+    await browser.close()
+    throw new Error('[globalSetup] Login response did not include csrf_token in body')
+  }
+
   await context.addCookies([
     {
       name: 'auth_token',
@@ -72,10 +83,15 @@ async function saveAuthState(): Promise<void> {
       sameSite: 'Lax',
       secure: false,
     },
-    // csrf_token is intentionally NOT stored in storageState.
-    // The backend sets it as HttpOnly (XSS protection) and delivers it via
-    // GET /login response body. The frontend fetches a fresh token before
-    // each state-changing request — no need to persist it across sessions.
+    {
+      name: 'csrf_token',
+      value: csrfTokenFromLogin,
+      domain: 'localhost',
+      path: '/',
+      httpOnly: true,
+      sameSite: 'Strict',
+      secure: false,
+    },
   ])
 
   // Navigate to the app so Vue router and auth store initialise with the cookie.
