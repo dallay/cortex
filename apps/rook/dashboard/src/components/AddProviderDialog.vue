@@ -46,13 +46,14 @@ import {
   PROVIDER_KINDS,
   type ProviderKind,
 } from "@/config/providerCatalog";
-import {OAUTH_FLOW_TYPES, type OAuthFlowType} from "@/lib/api";
-import type {
-  CreateProviderRequest,
-  ProviderConnectionResponse,
-  TestConnectionResponse,
-  UpdateProviderRequest,
-  WireAuthType,
+import {
+  OAUTH_FLOW_TYPES,
+  type CreateProviderRequest,
+  type OAuthFlowType,
+  type ProviderConnectionResponse,
+  type TestConnectionResponse,
+  type UpdateProviderRequest,
+  type WireAuthType,
 } from "@/lib/api";
 
 type DialogMode = "create" | "edit";
@@ -675,9 +676,11 @@ onUnmounted(stopOAuthPolling);
               :disabled="oauthBusy"
               data-testid="oauth-tenant-id"
             />
-            <Label for="oauthFlowType">{{ t('providers.oauth.flowType') }}</Label>
+            <Label id="oauthFlowTypeLabel" for="oauthFlowType">
+              {{ t('providers.oauth.flowType') }}
+            </Label>
             <Select v-model="form.oauthFlowType" :disabled="oauthBusy">
-              <SelectTrigger id="oauthFlowType">
+              <SelectTrigger id="oauthFlowType" aria-labelledby="oauthFlowTypeLabel">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -703,7 +706,7 @@ onUnmounted(stopOAuthPolling);
               data-testid="oauth-project-id"
             />
           </div>
-          <div v-if="oauthMessage" class="space-y-2" role="status" aria-live="polite">
+          <output v-if="oauthMessage" class="space-y-2" aria-live="polite">
             <p class="text-sm">{{ oauthMessage }}</p>
             <p v-if="oauthUserCode" class="font-mono text-lg font-semibold">
               {{ oauthUserCode }}
@@ -726,7 +729,7 @@ onUnmounted(stopOAuthPolling);
             >
               {{ t('providers.oauth.openAuthorizationPage') }}
             </a>
-          </div>
+          </output>
         </div>
 
         <!-- Base URL (hidden for managed-cloud providers where the

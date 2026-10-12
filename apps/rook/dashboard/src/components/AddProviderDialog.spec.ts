@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
 import type { ProviderConnectionResponse } from "@/lib/api";
@@ -155,9 +155,9 @@ vi.mock("@/components/ui/input", () => ({
 vi.mock("@/components/ui/label", () => ({
 	Label: defineComponent({
 		name: "Label",
-		props: { for: String },
+		props: { for: String, id: String },
 		setup(props, { slots }) {
-			return () => h("label", { for: props.for }, slots.default?.());
+			return () => h("label", { for: props.for, id: props.id }, slots.default?.());
 		},
 	}),
 }));
@@ -266,13 +266,14 @@ vi.mock("@/components/ui/select", () => ({
 	}),
 	SelectTrigger: defineComponent({
 		name: "SelectTrigger",
-		props: { id: String, dataTestid: String },
+		props: { id: String, dataTestid: String, ariaLabelledby: String },
 		setup(props, { slots, attrs }) {
 			return () =>
 				h(
 					"div",
 					{
 						id: props.id,
+						"aria-labelledby": props.ariaLabelledby,
 						"data-testid":
 							props.dataTestid ??
 							(attrs["data-testid"] as string) ??
@@ -617,6 +618,10 @@ beforeEach(() => {
 	mockState.providerById.value = new Map();
 });
 
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -665,6 +670,31 @@ beforeEach(() => {
 		await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
 
 		expect(connect.element.disabled).toBe(false);
+	});
+
+	it("associates the OAuth flow label and announces authorization status", async () => {
+		const open = vi.spyOn(globalThis, "open").mockReturnValue(null);
+		const wrapper = mountDialog({providerKind: "azure-openai"});
+		await flushPromises();
+		await setInputValue(wrapper, "input-displayName", "Azure prod");
+		await setInputValue(wrapper, "oauth-client-id", "client-id");
+		await setInputValue(
+			wrapper,
+			"input-baseUrl",
+			"https://resource.openai.azure.com",
+		);
+		await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
+		await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+		await flushPromises();
+
+		expect(wrapper.find("label#oauthFlowTypeLabel").exists()).toBe(true);
+		expect(
+			wrapper.find('[id="oauthFlowType"][aria-labelledby="oauthFlowTypeLabel"]')
+				.exists(),
+		).toBe(true);
+		expect(wrapper.find("output[aria-live='polite']").exists()).toBe(true);
+		expect(open).toHaveBeenCalled();
+		wrapper.unmount();
 	});
 });
 

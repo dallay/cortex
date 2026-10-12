@@ -315,7 +315,6 @@ fn validate_credential_shape(conn: &ProviderConnection) -> Result<(), Repository
                 scope,
                 id_token,
                 project_id,
-                expires_at: _,
                 ..
             },
         ) if [
