@@ -3,9 +3,53 @@
 // These tests verify that the circuit breaker state is properly exposed
 // through HTTP endpoints as specified in the health-circuit-visibility change.
 
-use rook_core::HealthPort;
-use rook_usecases::{FallbackRouter, HealthCheck, RoutingStrategy};
+use async_trait::async_trait;
+use axum::{
+    body::{to_bytes, Body},
+    http::{Request, StatusCode},
+};
+use rook_core::{
+    HealthPort, NewUser, PasswordHash, User, UserId, UserRepositoryError, UserRepositoryPort,
+};
+use rook_usecases::{
+    BootstrapStatus, FallbackRouter, HealthCheck, RoutingStrategy, SetAdminPassword,
+};
 use std::sync::Arc;
+use tower::ServiceExt;
+use transport_axum::{
+    authz::AuthzConfig, bootstrap_helpers::make_test_bootstrap_usecases, ApiKeyRateLimiter,
+    CsrfGuard, IpRateLimiter, LoginRateLimiter,
+};
+
+// The public health route does not access user persistence.
+struct UnusedUserRepository;
+
+#[async_trait]
+impl UserRepositoryPort for UnusedUserRepository {
+    async fn find_by_username(&self, _: &str) -> Result<Option<User>, UserRepositoryError> {
+        unreachable!("health route does not access users")
+    }
+
+    async fn find_by_id(&self, _: &UserId) -> Result<Option<User>, UserRepositoryError> {
+        unreachable!("health route does not access users")
+    }
+
+    async fn has_any_user(&self) -> Result<bool, UserRepositoryError> {
+        unreachable!("health route does not access users")
+    }
+
+    async fn create(&self, _: &NewUser) -> Result<User, UserRepositoryError> {
+        unreachable!("health route does not access users")
+    }
+
+    async fn update_password_hash(
+        &self,
+        _: &UserId,
+        _: &PasswordHash,
+    ) -> Result<(), UserRepositoryError> {
+        unreachable!("health route does not access users")
+    }
+}
 
 #[tokio::test]
 async fn test_health_includes_circuit_fields() {
@@ -142,13 +186,41 @@ async fn test_weak_reference_pattern_for_graceful_shutdown() {
 
 #[tokio::test]
 async fn test_health_response_includes_app_name_and_version() {
-    let json = serde_json::json!({
-        "status": "healthy",
-        "app_name": "Rook",
-        "version": "0.1.0",
-        "providers": []
-    });
+    let user_repo = Arc::new(UnusedUserRepository);
+    let password_hasher = Arc::new(encryption_inmemory::Argon2idHasher::new());
+    let usecases = make_test_bootstrap_usecases(
+        user_repo.clone(),
+        password_hasher.clone(),
+        Arc::new(cortex_test_support::FakeApiKeyRepository::default()),
+        BootstrapStatus::new(user_repo.clone()),
+        SetAdminPassword::new(user_repo, password_hasher),
+        None,
+    );
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["app_name"], "Rook");
-    assert_eq!(json["version"], "0.1.0");
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 }
