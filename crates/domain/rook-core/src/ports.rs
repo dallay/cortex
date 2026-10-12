@@ -56,6 +56,17 @@ pub trait ProviderPort: Send + Sync + 'static {
     ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
 }
 
+/// Supplies an OAuth access token for a provider connection.
+/// `force_refresh` is used only after the upstream rejects a request with 401.
+#[async_trait]
+pub trait OAuthTokenPort: Send + Sync {
+    async fn access_token(
+        &self,
+        connection_id: &ConnectionId,
+        force_refresh: bool,
+    ) -> CortexResult<String>;
+}
+
 // ---------------------------------------------------------------------------
 // FormatTranslatorPort — explicit domain-pivot format routing
 // ---------------------------------------------------------------------------

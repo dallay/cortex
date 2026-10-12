@@ -67,7 +67,7 @@ const providerName = computed(() =>
   entry.value ? t(entry.value.displayNameKey) : "",
 );
 
-const {providers, loading, error, fetch, test, update, remove} =
+const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
   useProviders();
 const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
 const {byKind} = useProviderCatalog();
@@ -130,6 +130,19 @@ async function handleTest(id: string) {
     const next = new Set(testingIds.value);
     next.delete(id);
     testingIds.value = next;
+  }
+}
+
+async function handleOAuthRefresh(id: string) {
+  if (!providerKindParam.value) return;
+  busyIds.value = new Set([...busyIds.value, id]);
+  try {
+    await refreshOAuth(providerKindParam.value, id);
+    await fetch();
+  } finally {
+    const next = new Set(busyIds.value);
+    next.delete(id);
+    busyIds.value = next;
   }
 }
 
@@ -261,6 +274,7 @@ void byKind;
         :testing="isTesting(conn.id)"
         :busy="isBusy(conn.id)"
         @test="handleTest"
+        @refresh="handleOAuthRefresh"
         @edit="openEditDialog"
         @delete="handleDelete"
         @toggle="handleToggle"

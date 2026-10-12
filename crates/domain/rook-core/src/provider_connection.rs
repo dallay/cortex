@@ -31,6 +31,9 @@ pub enum Credentials {
         scope: EncryptedBlob,
         id_token: EncryptedBlob,
         project_id: EncryptedBlob,
+        oauth_client_id: String,
+        oauth_client_secret: Option<EncryptedBlob>,
+        oauth_tenant_id: Option<String>,
     },
 }
 
@@ -80,6 +83,7 @@ pub enum ProviderKind {
     OllamaCloud,
     Gemini,
     Groq,
+    AzureOpenAI,
 }
 
 impl ProviderKind {
@@ -91,6 +95,7 @@ impl ProviderKind {
             Self::OllamaCloud => "ollama-cloud",
             Self::Gemini => "gemini",
             Self::Groq => "groq",
+            Self::AzureOpenAI => "azure-openai",
         }
     }
 }
@@ -106,6 +111,7 @@ impl TryFrom<&str> for ProviderKind {
             "ollama-cloud" => Ok(Self::OllamaCloud),
             "gemini" => Ok(Self::Gemini),
             "groq" => Ok(Self::Groq),
+            "azure-openai" => Ok(Self::AzureOpenAI),
             _ => Err(ValidationError::InvalidProviderKind),
         }
     }
@@ -142,6 +148,9 @@ pub enum ValidationError {
     OAuthFieldMissing(&'static str),
     OAuthEmailInvalid,
     OAuthExpiresAtPast,
+    AzureOpenAIRequiresEndpoint,
+    AzureOpenAIRequiresDeployment,
+    AzureOpenAIRequiresOAuth,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -164,6 +173,18 @@ impl std::fmt::Display for ValidationError {
             Self::OAuthFieldMissing(field) => write!(f, "OAuth {field} must not be empty"),
             Self::OAuthEmailInvalid => write!(f, "OAuth email format is invalid"),
             Self::OAuthExpiresAtPast => write!(f, "OAuth expires_at must be in the future"),
+            Self::AzureOpenAIRequiresEndpoint => {
+                write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
+            }
+            Self::AzureOpenAIRequiresDeployment => {
+                write!(
+                    f,
+                    "Azure OpenAI requires a deployment name as default_model"
+                )
+            }
+            Self::AzureOpenAIRequiresOAuth => {
+                write!(f, "Azure OpenAI connections require OAuth authentication")
+            }
         }
     }
 }

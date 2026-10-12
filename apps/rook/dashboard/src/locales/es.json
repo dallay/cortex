@@ -142,6 +142,10 @@
 				"name": "Google Gemini",
 				"description": "Modelos Gemini de Google con soporte multimodal."
 			},
+			"azureOpenai": {
+				"name": "Azure OpenAI",
+				"description": "Modelos OpenAI alojados en Azure con autenticación Microsoft Entra ID."
+			},
 			"groq": {
 				"name": "Groq",
 				"description": "Inferencia rápida en LPU de Groq para modelos de código abierto."
@@ -244,6 +248,31 @@
 			"cancel": "Cancelar",
 			"delete": "Eliminar",
 			"oauthComingSoon": "La autenticación OAuth aún no está soportada en esta versión."
+		},
+		"oauth": {
+			"clientId": "ID del cliente OAuth",
+			"clientSecret": "Secreto del cliente OAuth (opcional para clientes públicos)",
+			"tenantId": "ID del tenant de Microsoft Entra",
+			"azureDeploymentPlaceholder": "mi-deployment-gpt-4o",
+			"azureDeploymentHelp": "Escribe el nombre del deployment de Azure. Rook lo enviará como model.",
+			"googleProjectId": "ID del proyecto de Google Cloud",
+			"flowType": "Flujo de autorización",
+			"authorizationCode": "Autorización en el navegador",
+			"deviceCode": "Código de dispositivo (sin navegador)",
+			"connect": "Conectar cuenta",
+			"starting": "Iniciando autorización segura…",
+			"startFailed": "No se pudo iniciar la autorización. Revisa la configuración OAuth.",
+			"waiting": "Esperando la autorización del proveedor…",
+			"openVerificationPage": "Abrir la página de verificación",
+			"openAuthorizationPage": "Abrir la página de autorización",
+			"openAuthorizationLink": "Permite las ventanas emergentes o usa el enlace para continuar.",
+			"refresh": "Renovar token OAuth",
+			"expiresAt": "El token vence {date}",
+			"status": {
+				"connected": "OAuth conectado",
+				"expired": "El token OAuth venció",
+				"reauthentication_required": "Se requiere volver a autorizar"
+			}
 		}
 	},
 	"combos": {

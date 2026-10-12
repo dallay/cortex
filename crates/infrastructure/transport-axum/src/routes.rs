@@ -83,7 +83,9 @@ pub fn router(
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
-        router = router.merge(provider_routes::router(usecases.clone()));
+        router = router
+            .merge(provider_routes::router(usecases.clone()))
+            .merge(crate::oauth_routes::router(usecases.clone()));
     }
 
     if usecases.manage_api_keys.is_some() {

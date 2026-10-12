@@ -152,6 +152,52 @@ export interface ProviderConnectionResponse {
   testStatus: TestStatusResponse;
   createdAt: string;
   updatedAt: string;
+  oauthStatus?: "connected" | "expired" | "reauthentication_required";
+  oauthExpiresAt?: number;
+  oauthClientId?: string;
+  oauthTenantId?: string | null;
+}
+
+export const OAUTH_FLOW_TYPES = {
+  AUTHORIZATION_CODE: "authorizationCode",
+  DEVICE_CODE: "deviceCode",
+} as const;
+
+export type OAuthFlowType = (typeof OAUTH_FLOW_TYPES)[keyof typeof OAUTH_FLOW_TYPES];
+
+export interface OAuthFlowStartRequest {
+  flowType: OAuthFlowType;
+  connectionId?: string;
+  providerRuntimeId: string;
+  name: string;
+  priority: number;
+  isActive: boolean;
+  config: ConnectionConfigInput;
+  clientId: string;
+  clientSecret?: string;
+  tenantId?: string;
+  redirectUri: string;
+  projectId?: string;
+}
+
+export interface OAuthFlowStartResponse {
+  flowId: string;
+  authorizationUrl: string | null;
+  userCode: string | null;
+  verificationUri: string | null;
+  message: string | null;
+  intervalSecs: number | null;
+  expiresInSecs: number;
+}
+
+export interface OAuthStatusResponse {
+  flowId?: string;
+  connectionId?: string;
+  providerKind?: ProviderKind;
+  status: string;
+  message?: string | null;
+  expiresAt?: number;
+  updatedAt?: string;
 }
 
 export interface ConnectionConfigResponse {
@@ -549,6 +595,42 @@ function createApiClient() {
       );
     },
 
+    async startOAuthFlow(
+      provider: ProviderKind,
+      data: OAuthFlowStartRequest,
+    ): Promise<OAuthFlowStartResponse> {
+      return request<OAuthFlowStartResponse>(`/api/oauth/${provider}/authorize`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    },
+
+    async getOAuthStatus(
+      provider: ProviderKind,
+      params: {flowId?: string; connectionId?: string},
+    ): Promise<OAuthStatusResponse> {
+      const query = new URLSearchParams();
+      if (params.flowId) query.set("flowId", params.flowId);
+      if (params.connectionId) query.set("connectionId", params.connectionId);
+      return request<OAuthStatusResponse>(
+        `/api/oauth/${provider}/status?${query.toString()}`,
+      );
+    },
+
+    async refreshOAuth(provider: ProviderKind, connectionId: string): Promise<void> {
+      return request<void>(`/api/oauth/${provider}/refresh`, {
+        method: "POST",
+        body: JSON.stringify({connectionId}),
+      });
+    },
+
+    async disconnectOAuth(provider: ProviderKind, connectionId: string): Promise<void> {
+      return request<void>(`/api/oauth/${provider}`, {
+        method: "DELETE",
+        body: JSON.stringify({connectionId}),
+      });
+    },
+
     async getProvidersQuota(): Promise<ProvidersQuotaResponse> {
       return request<ProvidersQuotaResponse>("/api/providers/quota");
     },
@@ -641,6 +723,9 @@ export interface OAuthCredentialsInput {
   scope: string;
   idToken: string;
   projectId: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthTenantId?: string;
 }
 
 export interface ConnectionConfigInput {

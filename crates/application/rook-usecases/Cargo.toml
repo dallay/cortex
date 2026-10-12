@@ -12,6 +12,7 @@ observability = { path = "../../infrastructure/observability" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 futures = "0.3"
+reqwest = { workspace = true }
 async-stream = "0.3"
 uuid = { version = "1", features = ["v4"] }
 

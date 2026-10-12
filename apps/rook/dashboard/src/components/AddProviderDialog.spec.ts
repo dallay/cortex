@@ -51,6 +51,8 @@ const mockState = {
 	update: vi.fn(),
 	remove: vi.fn(),
 	fetch: vi.fn(),
+	startOAuthFlow: vi.fn(),
+	getOAuthStatus: vi.fn(),
 	providerById: { value: new Map<string, ProviderConnectionResponse>() },
 };
 
@@ -64,6 +66,8 @@ vi.mock("@/composables/useProviders", () => ({
 			return fn(payload);
 		},
 		fetch: (...args: unknown[]) => mockState.fetch(...args),
+		startOAuthFlow: (...args: unknown[]) => mockState.startOAuthFlow(...args),
+		getOAuthStatus: (...args: unknown[]) => mockState.getOAuthStatus(...args),
 		providerById: mockState.providerById,
 	}),
 }));
@@ -594,6 +598,22 @@ beforeEach(() => {
 	mockState.remove.mockResolvedValue(true);
 	mockState.fetch.mockReset();
 	mockState.fetch.mockResolvedValue(undefined);
+	mockState.startOAuthFlow.mockReset();
+	mockState.startOAuthFlow.mockResolvedValue({
+		flowId: "flow-1",
+		authorizationUrl: null,
+		userCode: "ABCD-EFGH",
+		verificationUri: "https://login.example/activate",
+		message: "Authorize this device",
+		intervalSecs: 5,
+		expiresInSecs: 600,
+	});
+	mockState.getOAuthStatus.mockReset();
+	mockState.getOAuthStatus.mockResolvedValue({
+		flowId: "flow-1",
+		status: "pending",
+		message: "Waiting",
+	});
 	mockState.providerById.value = new Map();
 });
 
@@ -601,7 +621,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("AddProviderDialog — create mode", () => {
+	describe("AddProviderDialog — create mode", () => {
 	it("renders without a kind selector when providerKind is pre-scoped (ollama)", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();
@@ -623,6 +643,28 @@ describe("AddProviderDialog — create mode", () => {
 		const wrapper = mountDialog({ mode: "create" });
 		await flushPromises();
 		expect(wrapper.find('[data-testid="delete-button"]').exists()).toBe(false);
+	});
+
+	it("requires Azure deployment settings before enabling OAuth authorization", async () => {
+		const wrapper = mountDialog({providerKind: "azure-openai"});
+		await flushPromises();
+
+		const connect = wrapper.find<HTMLButtonElement>(
+			'[data-testid="oauth-connect-button"]',
+		);
+		expect(connect.exists()).toBe(true);
+		expect(connect.element.disabled).toBe(true);
+
+		await setInputValue(wrapper, "input-displayName", "Azure prod");
+		await setInputValue(wrapper, "oauth-client-id", "client-id");
+		await setInputValue(
+			wrapper,
+			"input-baseUrl",
+			"https://resource.openai.azure.com",
+		);
+		await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
+
+		expect(connect.element.disabled).toBe(false);
 	});
 });
 

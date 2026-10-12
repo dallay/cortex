@@ -142,6 +142,10 @@
 				"name": "Google Gemini",
 				"description": "Google's Gemini models with multimodal support."
 			},
+			"azureOpenai": {
+				"name": "Azure OpenAI",
+				"description": "Azure-hosted OpenAI models authenticated with Microsoft Entra ID."
+			},
 			"groq": {
 				"name": "Groq",
 				"description": "Groq's fast LPU inference for open-source models."
@@ -244,6 +248,31 @@
 			"cancel": "Cancel",
 			"delete": "Delete",
 			"oauthComingSoon": "OAuth authentication is not yet supported in this release."
+		},
+		"oauth": {
+			"clientId": "OAuth client ID",
+			"clientSecret": "OAuth client secret (optional for public clients)",
+			"tenantId": "Microsoft Entra tenant ID",
+			"azureDeploymentPlaceholder": "my-gpt-4o-deployment",
+			"azureDeploymentHelp": "Enter the Azure deployment name. Rook sends it as the model value.",
+			"googleProjectId": "Google Cloud project ID",
+			"flowType": "Authorization flow",
+			"authorizationCode": "Browser authorization",
+			"deviceCode": "Device code (headless)",
+			"connect": "Connect account",
+			"starting": "Starting secure authorization…",
+			"startFailed": "Could not start authorization. Check the OAuth client settings.",
+			"waiting": "Waiting for provider authorization…",
+			"openVerificationPage": "Open the verification page",
+			"openAuthorizationPage": "Open the authorization page",
+			"openAuthorizationLink": "Allow pop-ups or use the link below to continue.",
+			"refresh": "Refresh OAuth token",
+			"expiresAt": "Token expires {date}",
+			"status": {
+				"connected": "OAuth connected",
+				"expired": "OAuth token expired",
+				"reauthentication_required": "Reauthorization required"
+			}
 		}
 	},
 	"combos": {

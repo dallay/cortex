@@ -13,6 +13,52 @@ fn conn_id() -> ConnectionId {
     ConnectionId::default()
 }
 
+#[test]
+fn azure_openai_connection_uses_configured_deployment_as_model() {
+    let credentials = DecryptedCredentials::OAuth {
+        email: "operator@example.com".to_string(),
+        access_token: "azure-access-token".to_string(),
+        refresh_token: "azure-refresh-token".to_string(),
+        expires_at: i64::MAX,
+        scope: "https://cognitiveservices.azure.com/.default".to_string(),
+        id_token: String::new(),
+        project_id: String::new(),
+        oauth_client_id: "azure-client".to_string(),
+        oauth_client_secret: None,
+        oauth_tenant_id: Some("tenant-id".to_string()),
+    };
+
+    let provider = build_provider_from_connection(
+        &conn_id(),
+        ProviderKind::AzureOpenAI,
+        &credentials,
+        Some("https://example.openai.azure.com".to_string()),
+        vec![ModelId::new("deployment-chat")],
+    )
+    .expect("Azure provider should build from OAuth credentials");
+
+    assert!(provider.supports_model(&ModelId::new("deployment-chat")));
+}
+
+#[test]
+fn azure_openai_rejects_static_api_key_authentication() {
+    let credentials = DecryptedCredentials::ApiKey {
+        api_key: "not-an-entra-token".to_string(),
+    };
+    let result = build_provider_from_connection(
+        &conn_id(),
+        ProviderKind::AzureOpenAI,
+        &credentials,
+        Some("https://example.openai.azure.com".to_string()),
+        vec![ModelId::new("deployment-chat")],
+    );
+
+    assert!(matches!(
+        result,
+        Err(rook::di::ProviderBuildError::AzureOpenAIRequiresOAuth)
+    ));
+}
+
 fn minimal_config_toml(extra: &str) -> String {
     format!(
         r#"
@@ -396,6 +442,9 @@ fn build_provider_from_connection_oauth_access_token_used_as_api_key() {
         scope: "read".to_string(),
         id_token: "id-token".to_string(),
         project_id: "project".to_string(),
+        oauth_client_id: String::new(),
+        oauth_client_secret: None,
+        oauth_tenant_id: None,
     };
     let id = conn_id();
     let result =
