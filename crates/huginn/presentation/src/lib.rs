@@ -74,9 +74,22 @@ impl Drop for Connection {
     }
 }
 
-#[derive(Default)]
 pub struct RatatuiPlugin {
     lifecycle: Option<CancellationToken>,
+    model_configured: bool,
+}
+impl Default for RatatuiPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+impl RatatuiPlugin {
+    pub const fn new(model_configured: bool) -> Self {
+        Self {
+            lifecycle: None,
+            model_configured,
+        }
+    }
 }
 #[async_trait]
 impl Plugin for RatatuiPlugin {
@@ -119,6 +132,7 @@ impl Plugin for RatatuiPlugin {
                 contributions,
                 lifecycle: ctx.cancellation.clone(),
                 drivers,
+                model_configured: self.model_configured,
             })),
         )
     }

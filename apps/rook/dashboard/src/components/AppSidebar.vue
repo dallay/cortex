@@ -9,8 +9,10 @@ import {
 	SidebarHeader,
 } from "@/components/ui/sidebar";
 import { useNavigation } from "@/composables/useNavigation";
+import { useHealth } from "@/composables/useHealth";
 
 const { navMain, navSecondary } = useNavigation();
+const { appName } = useHealth();
 </script>
 
 <template>
@@ -19,11 +21,11 @@ const { navMain, navSecondary } = useNavigation();
       <div class="flex items-center gap-2 px-2 py-1">
         <div
           class="flex aspect-square size-8 items-center justify-center rounded-full bg-sidebar-primary-foreground">
-          <img src="/rook-icon.svg" alt="Rook"
+          <img src="/rook-icon.svg" :alt="appName"
                class="size-6 dark:brightness-200 dark:contrast-125"/>
         </div>
         <div class="grid flex-1 text-left text-2xl leading-tight">
-          <span class="truncate font-medium">Rook</span>
+          <span class="truncate font-medium">{{ appName }}</span>
         </div>
       </div>
     </SidebarHeader>

@@ -76,9 +76,7 @@ impl Drop for ToolLease {
     }
 }
 impl Registry {
-    /// Legacy/test-only convenience for isolated adapter/contract tests.
-    /// Production uses `NativeToolPlugin` via `RegistryPlugin` and the kernel supervisor.
-    #[doc(hidden)]
+    /// Convenience for isolated adapter tests. Production uses NativeToolPlugin.
     pub fn native(timeout_secs: u64) -> Result<Self> {
         let registry = Self::default();
         for tool in native_tools(timeout_secs) {
@@ -86,9 +84,6 @@ impl Registry {
         }
         Ok(registry)
     }
-    /// Legacy/test-only unscoped insertion. Production uses `register`/`register_batch`
-    /// through `PluginContext` so tools stay invisible until activation commits.
-    #[doc(hidden)]
     pub fn insert(&self, tool: Arc<dyn Tool>) -> Result<()> {
         self.insert_entry(tool, 0, true)?;
         Ok(())

@@ -267,16 +267,14 @@ impl Screen {
                     }
                 }
             }
-            'K' => {
-                if self.row < self.rows {
-                    let (from, to) = match first {
-                        1 => (0, (self.col + 1).min(self.cols)),
-                        2 => (0, self.cols),
-                        _ => (self.col.min(self.cols), self.cols),
-                    };
-                    for cell in self.cells[self.row].iter_mut().take(to).skip(from) {
-                        *cell = ' ';
-                    }
+            'K' if self.row < self.rows => {
+                let (from, to) = match first {
+                    1 => (0, (self.col + 1).min(self.cols)),
+                    2 => (0, self.cols),
+                    _ => (self.col.min(self.cols), self.cols),
+                };
+                for cell in self.cells[self.row].iter_mut().take(to).skip(from) {
+                    *cell = ' ';
                 }
             }
             _ => {}

@@ -237,14 +237,7 @@ test.describe('API Keys - Create Flow', () => {
     await expect(page.getByText(/label is required/i)).toBeVisible()
   })
 
-  test('creates API key with valid form data', async ({ page, browserName }) => {
-    // issue #82: The e2e Docker image is built from the current main branch, which
-    // still has the CSRF race. The Rust fix (commit cead68a) is in main but not in
-    // the running container. Skip until the image is rebuilt with the updated auth handler.
-    test.skip(
-      browserName === 'webkit',
-      'webKit CSRF fix: e2e image needs rebuild with updated Rust auth handler',
-    )
+  test('creates API key with valid form data', async ({ page }) => {
 
     await page.getByRole('button', { name: /create api key/i }).click()
 
@@ -330,12 +323,7 @@ test.describe('API Keys - Edit Flow', () => {
     await expect(page.getByLabel(/label/i)).toHaveValue(editLabel)
   })
 
-  test('updates key successfully', async ({ page, browserName }, testInfo: TestInfo) => {
-    // See the comment on the "Create Flow" test above.
-    test.skip(
-      browserName === 'webkit',
-      'webKit CSRF fix: waiting for Docker image rebuild with updated Rust backend',
-    )
+  test('updates key successfully', async ({ page }, testInfo: TestInfo) => {
 
     const updatedLabel = `updated-key-label-${testInfo.workerIndex}`
 
@@ -398,12 +386,7 @@ test.describe('API Keys - Revoke Flow', () => {
     await expect(page.getByText(/revoke api key/i)).toBeVisible()
   })
 
-  test('revokes key successfully and removes it from the list', async ({ page, browserName }) => {
-    // See the comment on the "Create Flow" test above.
-    test.skip(
-      browserName === 'webkit',
-      'webKit CSRF fix: waiting for Docker image rebuild with updated Rust backend',
-    )
+  test('revokes key successfully and removes it from the list', async ({ page }) => {
 
     await page.reload()
     await page.waitForLoadState('networkidle')
@@ -532,9 +515,7 @@ test.describe('API Keys - Provider Restrictions', () => {
   // ---------------------------------------------------------------------------
   // Test: Create API key with provider restrictions
   // ---------------------------------------------------------------------------
-  test('creates API key with provider restrictions via UI', async ({ page, browserName }) => {
-    // Skip WebKit due to CSRF race condition (tracked separately)
-    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+  test('creates API key with provider restrictions via UI', async ({ page }) => {
 
     const keyLabel = `key-with-providers-${test.info().workerIndex}`
 
@@ -592,8 +573,7 @@ test.describe('API Keys - Provider Restrictions', () => {
   // 4. Bug: Backend returned "unknown provider(s): stale-id-123"
   // 5. Fix: Backend silently filters stale-id-123, saves successfully
   // ---------------------------------------------------------------------------
-  test('edit API key with stale provider IDs succeeds (stale IDs filtered)', async ({ page, browserName }) => {
-    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+  test('edit API key with stale provider IDs succeeds (stale IDs filtered)', async ({ page }) => {
 
     const keyLabel = `key-with-stale-providers-${test.info().workerIndex}`
 
@@ -660,8 +640,7 @@ test.describe('API Keys - Provider Restrictions', () => {
   // ---------------------------------------------------------------------------
   // Test: Update API key to add valid provider to existing restrictions
   // ---------------------------------------------------------------------------
-  test('adds new provider to restricted API key via UI', async ({ page, browserName }) => {
-    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+  test('adds new provider to restricted API key via UI', async ({ page }) => {
 
     const keyLabel = `key-to-add-provider-${test.info().workerIndex}`
 
@@ -780,8 +759,7 @@ test.describe('API Keys - Provider Restrictions', () => {
   // ---------------------------------------------------------------------------
   // Test: Clear all provider restrictions (set to unrestricted)
   // ---------------------------------------------------------------------------
-  test('clears provider restrictions via UI', async ({ page, browserName }) => {
-    test.skip(browserName === 'webkit', 'WebKit CSRF fix pending Docker image rebuild')
+  test('clears provider restrictions via UI', async ({ page }) => {
 
     const keyLabel = `key-to-clear-restrictions-${test.info().workerIndex}`
 
