@@ -211,9 +211,10 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     if is_doctor {
         if config.model_readiness() == ModelReadiness::Unconfigured {
-            supervisor.shutdown().await;
-            let report = doctor_report(&config, &session, serde_json::json!([]), "unconfigured")?;
+            let report =
+                doctor_report(&config, &session, supervisor.diagnostics(), "unconfigured")?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+            supervisor.shutdown().await;
             return Ok(());
         }
         // Surface legacy env-var warnings even when the user only ran
