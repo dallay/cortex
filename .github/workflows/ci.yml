@@ -192,6 +192,7 @@ jobs:
   test:
     name: Test (Rust)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [changes, build-dashboard, fmt, clippy]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:

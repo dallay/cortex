@@ -233,11 +233,13 @@ mod tests {
         let rules_res = list_rules(State(store.clone())).await;
         assert!(rules_res.is_ok());
         assert_eq!(store.len(), 1);
-        let stored_rule = store.iter().next().unwrap();
-        assert_eq!(stored_rule.value().scope, RateLimitScope::ApiKey);
-        assert_eq!(stored_rule.value().target, "key_abc");
-        assert_eq!(stored_rule.value().requests_per_minute, 100);
-        assert_eq!(stored_rule.value().requests_per_day, Some(10000));
+        {
+            let stored_rule = store.iter().next().unwrap();
+            assert_eq!(stored_rule.value().scope, RateLimitScope::ApiKey);
+            assert_eq!(stored_rule.value().target, "key_abc");
+            assert_eq!(stored_rule.value().requests_per_minute, 100);
+            assert_eq!(stored_rule.value().requests_per_day, Some(10000));
+        }
 
         // 4. Create invalid rules
         let empty_target_req = CreateRateLimitRuleRequest {
