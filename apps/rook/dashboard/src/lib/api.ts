@@ -130,6 +130,8 @@ export interface UpdateApiKeyRequest {
 
 export interface HealthResponse {
   status: "healthy" | "degraded" | "no_providers_configured";
+  app_name?: string;
+  version?: string;
   providers: ProviderHealth[];
 }
 
@@ -273,7 +275,7 @@ function getBaseUrl(): string {
     return globalScope.__ROOK_API_BASE__;
   }
   const stored =
-    typeof globalThis.localStorage !== "undefined"
+    globalThis.localStorage !== undefined
       ? globalThis.localStorage.getItem(STORAGE_KEY)
       : null;
   if (stored) return stored;
@@ -356,29 +358,33 @@ function createApiClient() {
       credentials: "include", // Include cookies for session auth
     });
 
-    // Retry once on CSRF failure: the cached token may be stale (server
-    // rotation) or the cookie may not have landed in the jar yet (WebKit
-    // race described in issue #82). On a real authz error (e.g. 403 from a
-    // route's permission check) the body will not mention csrf_missing or
-    // csrf_mismatch, so we leave the response alone and let it throw below.
-    if (isStateChanging && response.status === 403) {
+    // Retry on CSRF failure with backoff: the cached token may be stale or
+    // the cookie may not have landed in the jar yet (WebKit delayed
+    // Set-Cookie described in issue #82). GET /login now reuses a valid
+    // incoming cookie, so waiting briefly before refetching lets the jar
+    // sync and avoids rotating to a new token. On a real authz error
+    // (e.g. 403 from a route's permission check) the body will not mention
+    // csrf_missing or csrf_mismatch, so we leave the response alone.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!isStateChanging || response.status !== 403) break;
       const probe = await response
         .clone()
         .text()
         .catch(() => "");
-      if (probe.includes("csrf_missing") || probe.includes("csrf_mismatch")) {
-        cachedCsrfToken = null;
-        try {
-          headers["X-CSRF-Token"] = await getCsrfToken();
-          response = await fetch(url, {
-            ...options,
-            headers,
-            credentials: "include",
-          });
-        } catch (err) {
-          console.warn("[Rook API] CSRF token refresh failed:", err);
-          // Fall through to the error path with the 403 response
-        }
+      if (!probe.includes("csrf_missing") && !probe.includes("csrf_mismatch")) break;
+      cachedCsrfToken = null;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+        headers["X-CSRF-Token"] = await getCsrfToken();
+        response = await fetch(url, {
+          ...options,
+          headers,
+          credentials: "include",
+        });
+      } catch (err) {
+        console.warn("[Rook API] CSRF token refresh failed:", err);
+        // Fall through to the error path with the 403 response
+        break;
       }
     }
 

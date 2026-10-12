@@ -1,144 +1,67 @@
-# Cortex — Agent Instructions
+# Cortex — Agent instructions
 
-> Canonical source: `.agents/AGENTS.md`. All instruction files in the repo
-> (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`)
-> are symlinks managed by `agentsync`. Do not edit them directly; edit the
-> source and run `agentsync apply`.
+Cortex includes Rook, an AI provider proxy and router, and Huginn,
+a local programming agent. See `README.md` for the current scope.
 
-## Tooling
+## Source of truth
 
-- **Task runner**: `just` (workspace root)
-- **Git hooks**: `lefthook` — install via `npx lefthook@latest install`
-- **Package manager**: `pnpm` (Node.js side, e.g. dashboard)
-- **MCP servers**: configured in `.agents/agentsync.toml` under
-  `[mcp_servers]`. For SAST scanning, use the `semgrep_scan` and
-  `semgrep_supply_chain` tools directly — no repo-local Semgrep config
-  required.
+- Edit `.agents/AGENTS.md`; the root `AGENTS.md` and the instructions for other
+  agents are links managed by `.agents/agentsync.toml`.
+  Do not replace those links with standalone files.
+- Get the versions from `rust-toolchain.toml`, manifests, and CI.
+  Do not duplicate versions or package inventories in this file.
+- Consult `Cargo.toml` and `pnpm-workspace.yaml` for workspace limits.
+  Keep a single workspace and a root pnpm lockfile; CI rejects copies
+  inside the dashboard.
+- `justfile` is the canonical runner; `Makefile` is its mirror.
+  If you change a recipe, update both.
+- MCP configuration and sync destinations are in
+  `.agents/agentsync.toml`; do not copy its inventory here.
 
-## Safety — Code Generation
+## Architecture and documentation on demand
 
-Before generating any code or shell commands, scan with the Semgrep tools:
+Read only the sources related to the change:
 
-- `semgrep_scan` — for Rust, Docker, GitHub Actions, and general code quality
-- `semgrep_supply_chain` — after any lockfile change
+- Rook layers, responsibilities, and flow: `docs/architecture.md`.
+- HTTP contracts: `docs/api.md`; configuration: `docs/configuration.md`;
+  provider behavior: `docs/providers.md`.
+- Huginn limits and behavior: `docs/huginn/README.md`.
+- Dashboard: `apps/rook/dashboard/README.md`.
+- Preparation, tests, and diagnostics: `docs/development.md`.
+- Containers and E2E: `dev/README.md`.
+- Deployment: `docs/deployment.md`; contributions: `CONTRIBUTING.md`.
 
-## Dev Commands
+If the documentation and code differ, verify the behavior in code,
+manifests, and tests before turning the explanation into a rule.
 
-```bash
-just fmt             # Format code
-just clippy          # Clippy (deny warnings)
-just test            # Full test suite (workspace)
-just ci-local        # Full CI locally (fail-fast: stops on first error)
-just ci-ci           # CI without E2E (skip Docker dependency)
-just ci-lint-only    # Lint + fmt only
-just ci-check-only   # Clippy + cargo check only
-just ci-test-only    # Rust + Vitest tests only
+## Work and validation
 
-# Focused runs
-cargo test -p rook --test '*'       # Single integration test file
-cargo test -p shared-kernel          # Single package tests
-cargo test -p rook-usecases --lib    # Unit tests only
-cd apps/rook/dashboard && pnpm exec vitest run  # Frontend unit tests
-```
+- Discover the recipes with `just --list`; use `just info` for paths and ports.
+- Initial setup: `just setup`; check tools with `just doctor`.
+- Focused Rust: `cargo test -p <package>`; an integration target:
+  `cargo test -p <package> --test <target> [filter]`.
+- Focused dashboard:
+  `pnpm --filter @dallay/rook-dashboard exec vitest run [file]`.
+- Markdown: `pnpm exec markdownlint-cli2 ".agents/AGENTS.md"` for this source;
+  `just ci-lint` for the regular documentation set.
+- Use focused tests during iteration. Pre-PR validation is
+  `just ci-local`; `just ci-ci` skips E2E and is not equivalent to full validation.
+  Check its requirements in `docs/development.md`; do not copy the sequence here.
+- E2E requires Docker, dependencies, and browsers installed, plus the
+  `just test-e2e-build` image. Consult `dev/README.md` before running it.
+- TDD follows the explicit project or session setup. To fix
+  behavior errors, add a regression test; do not use tests that lock in SHAs or
+  implementation details for documentation changes.
+- Report which checks you ran and which failed or were not run.
+  Do not present partial validation as full CI.
 
-**CI order** (important): `markdownlint-cli2` → `cargo fmt --check` → `cargo clippy` →
-`cargo check` → `cargo test` → Vitest → `cargo doc` → `cargo audit` → Playwright e2e
+## Operational limits
 
-## Architecture
-
-```
-apps/rook (binary — main.rs, config.rs, di.rs, server.rs)
-  → transport-axum (HTTP, OpenAI/Anthropic adapters)
-    → rook-usecases (RouteRequest, FallbackRouter)
-      → rook-core (domain model, ports)
-        → shared-kernel (no deps — ProviderId, ModelId, CortexError)
-```
-
-Key ports: `ProviderPort`, `RouterPort`, `CachePort`, `AuditPort`, `ProviderRepositoryPort`, `KeyManager`
-
-## Package Map
-
-| Package                  | Purpose                                    |
-|--------------------------|--------------------------------------------|
-| `apps/rook`              | Binary — DI bootstrap                      |
-| `transport-axum`         | HTTP server, wire ↔ domain adapters        |
-| `rook-usecases`          | Request routing, fallback, health checks   |
-| `rook-core`              | Domain model, port traits                  |
-| `shared-kernel`          | Zero-deps types (IDs, errors)              |
-| `providers-{openai,anthropic,ollama,gemini,groq}` | Per-provider API implementations |
-| `cache-memory`           | DashMap TTL cache                          |
-| `audit-sqlite`           | SQLite audit log                           |
-| `encryption-inmemory`    | AES-256-GCM + Argon2id                     |
-| `provider-sqlite`        | Provider connection persistence             |
-
-## Important Quirks
-
-- **rustls only** — no OpenSSL. TLS via `rustls-tls` feature of `reqwest`.
-- **`~` and `${ENV_VAR}` expansion** in TOML config paths and `api_key` values
-  (`config.rs` handles this).
-- **No inline `#[cfg(test)]` modules** — tests are separate test targets, not
-  embedded in libs.
-- **lefthook install** — not in `package.json`. Use `npx lefthook@latest install`
-  or the standalone script in `lefthook.yml`.
-- **No hot provider registration** — Provider CRUD stores connections in SQLite
-  but TOML providers serve traffic.
-  See `docs/architecture.md` §Provider CRUD Limitation.
-- **Encryption requires `provider_crud.enabled`** plus `ENCRYPTION_PASSPHRASE`
-  and `ENCRYPTION_SALT` env vars.
-- **Frontend dashboard** at `apps/rook/dashboard/` — Vue.js + Vitest, separate
-  from Rust crate tests.
-
-## DB Reset
-
-```bash
-just db-reset   # Removes rook.db, rook.db-wal, rook.db-shm
-```
-Delete all three files together — a leftover `-wal` against a fresh DB causes
-SQLite error 522 ("file truncated") on startup.
-
-## Cross-Compilation
-
-Defined in `rust-toolchain.toml` (channel 1.89):
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
-`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
-`x86_64-apple-darwin`, `aarch64-apple-darwin`.
-
-`aarch64-unknown-linux-gnu` is **not cross-compiled in CI** — requires
-target-specific OpenSSL/ring headers.
-
-## Verification Gate
-
-**No work is done until `just ci-local` passes.** Run it before claiming
-completion. Flaky SQLite tests may need an isolated re-run.
-
-### Focused during iteration
-- `just fmt-check` — pre-commit hook
-- `just clippy` — pre-push hook
-- `just test-unit` — fast unit-only feedback
-- `just test-integration` — integration tests only
-- `just test-e2e` — Playwright suite (requires `just test-e2e-build` + Docker)
-
-## Testing Policy — TDD Scope
-
-TDD follows explicit project/session configuration, never by default.
-When enabled: failing test first, then RED → GREEN → REFACTOR.
-When disabled: ordinary functional checks only.
-
-- **TDD YES** — pure domain logic: use-cases, classifiers, parsers,
-  wire formats. Example: `issue-labeler.cjs classify()` invariants
-  (no invented product, human preservation, idempotence).
-- **TDD NO** — config / YAML / GitHub Actions / Renovate-pinned SHAs,
-  docs-only changes. Light validation only:
-  `ruby -ryaml YAML.load_file`, `node --check`, smoke run.
-- **Anti-pattern** — asserting implementation details like
-  `actions/checkout@<40-hex>` pinned SHA or path-filter literals.
-  If a policy check is needed, use a non-fragile shape
-  (e.g. `/uses:\s*actions\/checkout@[a-f0-9]{40}/`), never a literal SHA.
-
-## References
-
-- [Architecture](docs/architecture.md) — layer diagram, data/config flow
-- [Configuration](docs/configuration.md) — TOML schema, provider examples
-- [Providers](docs/providers.md) — per-provider config, timeouts, health checks
-- [API Reference](docs/api.md) — endpoints, wire formats
-- `sdd` — SDD change artifacts
+- Do not reset data as part of routine testing. If a reset is authorized,
+  use `just db-reset`: it removes the SQLite database, WAL, and SHM together.
+- Commits use Conventional Commits, without AI attribution.
+- Check `.agents/skills/` for specialized procedures and
+  `.agents/sdd/` for existing SDD changes. Do not start SDDs solely based on size
+  or file count: explicit selection is required.
+- Keep this file as an operational contract: invariants and references,
+  not copies of the README, directory trees, or tool manuals.

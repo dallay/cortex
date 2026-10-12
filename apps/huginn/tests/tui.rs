@@ -18,6 +18,36 @@ fn command(workspace: &Path, db: &Path) -> CommandBuilder {
     command
 }
 #[test]
+fn first_run_opens_tui_without_configured_model() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    command.args(["--workspace"]);
+    command.arg(workspace.path());
+    command.args(["--db"]);
+    command.arg(&db);
+    command.env("HOME", home.path());
+    command.env("XDG_CONFIG_HOME", home.path());
+    command.env_remove("HUGINN_BASE_URL");
+    command.env_remove("HUGINN_MODEL");
+    command.env_remove("HUGINN_API_KEY");
+    command.env_remove("AGENT_BASE_URL");
+    command.env_remove("AGENT_MODEL");
+    command.env_remove("AGENT_API_KEY");
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.wait_for("No model configured");
+    pty.send("hello\r");
+    pty.wait_for("Set HUGINN_BASE_URL and HUGINN_MODEL");
+    // Enter must work again after the unconfigured prompt is rejected.
+    pty.send("/quit\r");
+    let output = pty.finish(true);
+    assert!(!output.contains("Offline mock:"), "got: {output}");
+}
+
+#[test]
 fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();

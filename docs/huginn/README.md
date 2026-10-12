@@ -27,7 +27,6 @@ huginn --workspace /path/to/repository --json run "Explain the project"
 huginn sessions
 huginn resume SESSION_UUID
 huginn resume SESSION_UUID --prompt "Continue the task"
-huginn doctor
 ```
 
 Interactive `chat` (or no subcommand) uses the Ratatui TUI when attached to a
@@ -35,9 +34,11 @@ terminal. `--line-mode` selects the line-oriented recovery adapter; `--json`
 emits machine-readable events instead.
 
 `doctor` validates configuration and reports services without contacting the
-model or launching MCP. It currently requires configured credentials to be
-present. `--db` selects another session database; `--config` selects a
-TOML file.
+model or launching MCP. `huginn doctor` succeeds without model settings or
+credentials and reports `model_readiness: "unconfigured"`. Inference commands
+such as `run` and `resume --prompt` require a configured model and any credentials
+required by the provider. `--db` selects another session database; `--config`
+selects a TOML file.
 
 ## Configuration and permissions
 

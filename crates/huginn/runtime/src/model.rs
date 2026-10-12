@@ -292,6 +292,22 @@ impl SseParser {
     }
 }
 
+/// Sentinel used only when no inference provider has been configured.
+/// It never fabricates a response and fails before any model request is sent.
+pub struct UnconfiguredModelProvider;
+#[async_trait]
+impl ModelProvider for UnconfiguredModelProvider {
+    async fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancel: CancellationToken,
+    ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+        Err(AgentError::Configuration(
+            "No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL before requesting inference.".into(),
+        ))
+    }
+}
+
 /// An offline provider for exercising the same loop and read-only tool path.
 pub struct MockProvider;
 #[async_trait]
