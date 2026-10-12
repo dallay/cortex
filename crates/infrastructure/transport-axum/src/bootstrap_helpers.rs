@@ -144,15 +144,7 @@ impl CachePort for StubCache {
         unreachable!("cache not called by bootstrap tests")
     }
     async fn stats(&self) -> CortexResult<rook_core::CacheStats> {
-        // The health route reads cache statistics in routed integration tests.
-        Ok(rook_core::CacheStats {
-            hits: 0,
-            misses: 0,
-            evictions: 0,
-            entries: 0,
-            max_entries: 0,
-            token_cache: rook_core::TokenCacheStats::default(),
-        })
+        unreachable!("cache not called by bootstrap tests")
     }
     async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
         unreachable!("cache not called by bootstrap tests")
