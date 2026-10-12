@@ -1,7 +1,7 @@
 /**
  * Health composable — fetches and caches health status from the backend.
  */
-import {computed, onMounted, ref} from "vue";
+import {computed, getCurrentInstance, onMounted, ref} from "vue";
 import {type HealthResponse, useApi} from "@/lib/api";
 
 export function useHealth() {
@@ -47,7 +47,19 @@ export function useHealth() {
     return Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
   });
 
-  onMounted(fetch);
+  const appName = computed(() => data.value?.app_name ?? "Rook");
+  const version = computed(() => {
+    if (!data.value?.version) return "";
+    return data.value.version.startsWith("v")
+      ? data.value.version
+      : `v${data.value.version}`;
+  });
+
+  if (getCurrentInstance()) {
+    onMounted(fetch);
+  } else {
+    void fetch();
+  }
 
   return {
     data,
@@ -60,5 +72,7 @@ export function useHealth() {
     healthyProviders,
     unhealthyProviders,
     averageLatency,
+    appName,
+    version,
   };
 }

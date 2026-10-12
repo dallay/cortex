@@ -5,10 +5,12 @@ import {useI18n} from "vue-i18n";
 import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
 import {useBaseUrl} from "@/composables/useBaseUrl";
+import {useHealth} from "@/composables/useHealth";
 
 const {t} = useI18n();
 const {baseUrl, fullBaseUrl, isOverridden, setOverride, clearOverride} =
   useBaseUrl();
+const {appName, version} = useHealth();
 
 // Settings state
 const settings = ref({
@@ -150,7 +152,7 @@ function saveGeneralSettings() {
       </div>
       <div class="p-4">
         <div class="text-sm space-y-1">
-          <p><span class="text-muted-foreground">Rook</span> v0.0.1</p>
+          <p><span class="text-muted-foreground">{{ appName }}</span><template v-if="version"> {{ version }}</template></p>
           <p><span class="text-muted-foreground">API Gateway</span> · AI Router</p>
         </div>
       </div>
