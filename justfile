@@ -585,4 +585,4 @@ clean:
 [group('release')]
 release-dry-run:
     @echo "{{ YELLOW }}Running release-please dry-run...{{ RESET }}"
-    npx release-please release-pr --token={{ env("GITHUB_TOKEN", "") }} --dry-run
+    @npx release-please release-pr --token={{ env("GITHUB_TOKEN", "") }} --dry-run

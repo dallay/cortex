@@ -402,4 +402,4 @@ clean: ## Clean build artifacts and coverage caches
 
 release-dry-run: ## Dry-run release-please (needs GITHUB_TOKEN)
 	@printf '%b\n' "$(YELLOW)Running release-please dry-run...$(RESET)"
-	npx release-please release-pr --token=$(GITHUB_TOKEN) --dry-run
+	@npx release-please release-pr --token="$$GITHUB_TOKEN" --dry-run
