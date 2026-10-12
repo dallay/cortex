@@ -58,7 +58,7 @@ export function useHealth() {
   if (getCurrentInstance()) {
     onMounted(fetch);
   } else {
-    fetch();
+    void fetch();
   }
 
   return {

@@ -275,7 +275,7 @@ function getBaseUrl(): string {
     return globalScope.__ROOK_API_BASE__;
   }
   const stored =
-    typeof globalThis.localStorage !== "undefined"
+    globalThis.localStorage !== undefined
       ? globalThis.localStorage.getItem(STORAGE_KEY)
       : null;
   if (stored) return stored;
