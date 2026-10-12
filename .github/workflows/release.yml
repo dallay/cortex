@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Perform a dry run (no actual release)"
+        description: Validate release configuration without creating or publishing anything
         type: boolean
         default: false
 
@@ -19,20 +19,35 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  APP_NAME: rook
-  DOCKER_IMAGE: dallay/rook
+  RUST_TOOLCHAIN: "1.89"
 
 jobs:
-  # ==========================================================================
-  # Release Please - Determine version
-  # ==========================================================================
+  validate-release-config:
+    name: Validate release configuration syntax (read-only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate YAML and JSON syntax
+        run: |
+          ruby -ryaml -e 'YAML.load_file(".github/workflows/release.yml")'
+          node -e 'for (const file of ["release-please-config.json", ".release-please-manifest.json"]) JSON.parse(require("fs").readFileSync(file))'
+
   release-please:
     name: Release Please
+    if: ${{ github.event_name == 'push' || inputs.dry_run != true }}
     runs-on: ubuntu-latest
     outputs:
-      new_release_created: ${{ steps.release.outputs.release_created }}
-      release_version: ${{ steps.release.outputs.version }}
-      release_git_tag: ${{ steps.release.outputs.tag_name }}
+      rook_release_created: ${{ steps.release.outputs['apps/rook--release_created'] }}
+      rook_release_version: ${{ steps.release.outputs['apps/rook--version'] }}
+      rook_release_tag: ${{ steps.release.outputs['apps/rook--tag_name'] }}
+      rook_release_sha: ${{ steps.release.outputs['apps/rook--sha'] }}
+      huginn_release_created: ${{ steps.release.outputs['apps/huginn--release_created'] }}
+      huginn_release_version: ${{ steps.release.outputs['apps/huginn--version'] }}
+      huginn_release_tag: ${{ steps.release.outputs['apps/huginn--tag_name'] }}
+      huginn_release_sha: ${{ steps.release.outputs['apps/huginn--sha'] }}
     steps:
       - name: Generate GitHub App Token
         id: app-token
@@ -42,7 +57,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
@@ -53,124 +68,121 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
           target-branch: main
           fork: false
 
-  # ==========================================================================
-  # Build Release Binaries - Cross-platform
-  # ==========================================================================
   build-binaries:
-    name: Build (${{ matrix.target }})
+    name: Build Rook (${{ matrix.target }})
     needs: release-please
-    if: needs.release-please.outputs.new_release_created == 'true'
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # This is deliberately narrower than rust-toolchain.toml. A target is
+        # added only after product-specific runtime and clean-machine evidence.
         include:
-          # Linux
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-
-          # macOS
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-
-          # Windows
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-          - target: aarch64-pc-windows-msvc
             os: windows-latest
             archive: zip
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout exact release SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.release-please.outputs.release_git_tag }}
+          ref: ${{ needs.release-please.outputs.rook_release_tag }}
+          fetch-depth: 0
 
-      - name: Install and configure gcc-12 (Linux)
-        if: runner.os == 'Linux'
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
         run: |
-          for i in {1..5}; do
-            sudo apt-get update && \
-            sudo apt-get install -y gcc-12 g++-12 && break || sleep 5
-            if [ $i -eq 5 ]; then exit 1; fi
-          done
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 60
-          gcc --version
-          g++ --version
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "${actual_sha}" = "${EXPECTED_SHA}"
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build Rook
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release --target "${TARGET}" -p rook
 
-      - name: Build binary (Linux native)
-        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo build --release --target x86_64-unknown-linux-gnu -p rook
-
-      - name: Build binary (Linux with cross)
-        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
-        run: cross build --release --target ${{ matrix.target }} -p rook
-
-      - name: Build binary (macOS/Windows)
-        if: runner.os != 'Linux'
-        run: cargo build --release --target ${{ matrix.target }} -p rook
-
-      - name: Prepare artifact (Unix)
+      - name: Prepare Unix artifact
         if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
         run: |
-          cd target/${{ matrix.target }}/release
-          BINARY_NAME="rook"
-          ARCHIVE_NAME="rook-${{ needs.release-please.outputs.release_version }}-${{ matrix.target }}"
+          set -euo pipefail
+          cd "target/${TARGET}/release"
+          archive="rook-${VERSION}-${TARGET}"
+          mkdir "${archive}"
+          cp rook "${archive}/"
+          cp ../../../README.md "${archive}/" || true
+          cp ../../../LICENSE "${archive}/" || true
+          tar -czf "${archive}.tar.gz" "${archive}"
+          shasum -a 256 "${archive}.tar.gz" > "${archive}.tar.gz.sha256"
+          mv "${archive}.tar.gz" "${archive}.tar.gz.sha256" ../../../
 
-          mkdir -p "$ARCHIVE_NAME"
-          cp "$BINARY_NAME" "$ARCHIVE_NAME/"
-          cp ../../../README.md "$ARCHIVE_NAME/" 2>/dev/null || true
-          cp ../../../LICENSE "$ARCHIVE_NAME/" 2>/dev/null || true
-
-          tar -czvf "$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
-          shasum -a 256 "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256"
-
-          mv "$ARCHIVE_NAME.tar.gz" ../../../
-          mv "$ARCHIVE_NAME.tar.gz.sha256" ../../../
-
-      - name: Prepare artifact (Windows)
+      - name: Prepare Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
         run: |
-          cd target/${{ matrix.target }}/release
-          $BINARY_NAME = "rook.exe"
-          $ARCHIVE_NAME = "rook-${{ needs.release-please.outputs.release_version }}-${{ matrix.target }}"
+          Set-StrictMode -Version Latest
+          Set-Location "target/$env:TARGET/release"
+          $archive = "rook-$env:VERSION-$env:TARGET"
+          New-Item -ItemType Directory -Force -Path $archive | Out-Null
+          Copy-Item rook.exe -Destination "$archive/"
+          Copy-Item ../../../README.md -Destination "$archive/" -ErrorAction SilentlyContinue
+          Copy-Item ../../../LICENSE -Destination "$archive/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path $archive -DestinationPath "$archive.zip"
+          (Get-FileHash "$archive.zip" -Algorithm SHA256).Hash.ToLower() + "  $archive.zip" | Out-File "$archive.zip.sha256" -Encoding ascii
+          Move-Item -Path "$archive.zip" -Destination ../../..
+          Move-Item -Path "$archive.zip.sha256" -Destination ../../..
 
-          New-Item -ItemType Directory -Force -Path $ARCHIVE_NAME
-          Copy-Item $BINARY_NAME -Destination "$ARCHIVE_NAME/"
-          Copy-Item ../../../README.md -Destination "$ARCHIVE_NAME/" -ErrorAction SilentlyContinue
-          Copy-Item ../../../LICENSE -Destination "$ARCHIVE_NAME/" -ErrorAction SilentlyContinue
+      - name: Verify binary version
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
+        run: |
+          set -euo pipefail
+          actual_version="$("target/${TARGET}/release/rook" --version | awk '{print $NF}')"
+          test "${actual_version}" = "${VERSION}"
 
-          Compress-Archive -Path $ARCHIVE_NAME -DestinationPath "$ARCHIVE_NAME.zip"
-          (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower() + "  $ARCHIVE_NAME.zip" | Out-File -FilePath "$ARCHIVE_NAME.zip.sha256" -Encoding ascii
+      - name: Verify Windows binary version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
+        run: |
+          $actualVersion = (& ".\target\$env:TARGET\release\rook.exe" --version).Trim().Split(' ')[-1]
+          if ($actualVersion -ne $env:VERSION) { throw "Expected version $env:VERSION, got $actualVersion" }
 
-          Move-Item "$ARCHIVE_NAME.zip" ../../../
-          Move-Item "$ARCHIVE_NAME.zip.sha256" ../../..
-
-      - name: Upload artifact
+      - name: Upload release artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rook-${{ matrix.target }}
@@ -179,12 +191,10 @@ jobs:
             rook-*.${{ matrix.archive }}.sha256
           if-no-files-found: error
 
-  # ==========================================================================
-  # Upload Release Assets to GitHub
-  # ==========================================================================
   upload-assets:
-    name: Upload Release Assets
+    name: Upload Rook release assets
     needs: [release-please, build-binaries]
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,31 +206,53 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Download all artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
           pattern: rook-*
           merge-multiple: true
 
-      - name: List artifacts
-        run: ls -la artifacts/
-
-      - name: Upload to GitHub Release
+      - name: Upload assets to the exact Rook release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ needs.release-please.outputs.release_git_tag }}
+          tag_name: ${{ needs.release-please.outputs.rook_release_tag }}
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # ==========================================================================
-  # Publish NPM Platform-Specific Packages
-  # ==========================================================================
-  publish-npm-binaries:
-    name: Publish NPM (${{ matrix.config.name }})
+  validate-npm:
+    name: Validate Rook npm packages
     needs: [release-please, build-binaries]
-    if: needs.release-please.outputs.new_release_created == 'true'
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-please.outputs.rook_release_tag }}
+          fetch-depth: 0
+
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.21"
+
+      - name: Validate base wrapper and package tarball
+        run: |
+          node --check apps/rook/npm/rook/lib/index.js
+          npm pack --dry-run ./apps/rook/npm/rook
+
+  publish-npm-platform:
+    name: Publish Rook npm platform package (${{ matrix.name }})
+    needs: [release-please, build-binaries, validate-npm]
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -228,256 +260,150 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config:
-          - name: linux-x64
-            target: x86_64-unknown-linux-gnu
-            os: linux
-            arch: x64
-          - name: linux-arm64
-            target: aarch64-unknown-linux-gnu
-            os: linux
-            arch: arm64
-          - name: darwin-x64
-            target: x86_64-apple-darwin
-            os: darwin
-            arch: x64
+        include:
           - name: darwin-arm64
             target: aarch64-apple-darwin
-            os: darwin
-            arch: arm64
+            package: rook-darwin-arm64
+            binary: rook
+            archive: tar.gz
+          - name: darwin-x64
+            target: x86_64-apple-darwin
+            package: rook-darwin-x64
+            binary: rook
+            archive: tar.gz
+          - name: linux-x64
+            target: x86_64-unknown-linux-gnu
+            package: rook-linux-x64
+            binary: rook
+            archive: tar.gz
           - name: windows-x64
             target: x86_64-pc-windows-msvc
-            os: win32
-            arch: x64
-          - name: windows-arm64
-            target: aarch64-pc-windows-msvc
-            os: win32
-            arch: arm64
+            package: rook-windows-x64
+            binary: rook.exe
+            archive: zip
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout exact release SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.release-please.outputs.release_git_tag }}
+          ref: ${{ needs.release-please.outputs.rook_release_tag }}
+          fetch-depth: 0
 
-      - name: Download artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: rook-${{ matrix.config.target }}
-          path: artifacts
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: https://registry.npmjs.org
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Download exact binary artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          version: 11.28.5
+          name: rook-${{ matrix.target }}
+          path: artifacts
 
-      - name: Verify npm authentication
-        run: |
-          echo "Checking npm authentication..."
-          npm whoami
-          npm config get registry
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish platform package to NPM
+      - name: Assemble and publish platform package
         shell: bash
-        run: |
-          cd apps/rook/npm
-
-          export node_version="${{ needs.release-please.outputs.release_version }}"
-          export node_os="${{ matrix.config.os }}"
-          export node_arch="${{ matrix.config.arch }}"
-          export node_pkg="rook-${{ matrix.config.name }}"
-
-          if [[ "${{ matrix.config.os }}" == "win32" ]]; then
-            export node_bin="rook.exe"
-          else
-            export node_bin="rook"
-          fi
-
-          mkdir -p "${node_pkg}/bin"
-
-          # Generate package.json from template
-          envsubst < rook/package.json.tmpl > "${node_pkg}/package.json"
-
-          # Extract binary from artifact
-          cd ../../artifacts
-
-          if [[ "${{ matrix.config.os }}" == "win32" ]]; then
-            matches=(rook-*.zip)
-            EXTRACT_CMD="unzip -o"
-          else
-            matches=(rook-*.tar.gz)
-            EXTRACT_CMD="tar -xzvf"
-          fi
-
-          if [ ! -e "${matches[0]}" ]; then
-            echo "Error: No matching archive found"
-            ls -la
-            exit 1
-          fi
-
-          ARCHIVE="${matches[0]}"
-          echo "Found archive: $ARCHIVE"
-
-          if ! $EXTRACT_CMD "$ARCHIVE"; then
-            echo "Error: Failed to extract $ARCHIVE"
-            exit 1
-          fi
-
-          BINARY_PATH=$(find . -name "$node_bin" -type f | head -1)
-
-          if [ -z "$BINARY_PATH" ] || [ ! -f "$BINARY_PATH" ]; then
-            echo "Error: Could not find binary $node_bin after extraction"
-            exit 1
-          fi
-
-          echo "Found binary at: $BINARY_PATH"
-
-          cp "$BINARY_PATH" "../apps/rook/npm/${node_pkg}/bin/"
-          chmod +x "../apps/rook/npm/${node_pkg}/bin/$node_bin"
-
-          # Verify executable bit in packed tarball
-          pushd ../apps/rook/npm/${node_pkg} > /dev/null
-          npm pack --pack-destination /tmp > /dev/null
-          PKG_TGZ=$(ls -1 /tmp/*.tgz | tail -n1)
-
-          PATTERN="^-..x.{6}[[:space:]]+.*bin/${node_bin}\$"
-
-          if command -v rg >/dev/null 2>&1; then
-            SEARCHER=(rg)
-          else
-            SEARCHER=(grep -E)
-          fi
-
-          if ! tar -tzvf "$PKG_TGZ" | "${SEARCHER[@]}" "$PATTERN" >/dev/null; then
-            echo "Error: packaged binary does not have executable bit set. Aborting publish."
-            tar -tzvf "$PKG_TGZ"
-            exit 1
-          fi
-          popd > /dev/null
-
-          # Publish the package
-          cd "../apps/rook/npm/${node_pkg}"
-          echo "Publishing ${node_pkg}@${node_version}..."
-          pnpm publish --provenance --access public --no-git-checks
         env:
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
+          PACKAGE_DIR: apps/rook/npm/${{ matrix.package }}
+          BINARY: ${{ matrix.binary }}
+          ARCHIVE: ${{ matrix.archive }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${PACKAGE_DIR}/bin"
+          if [[ "${ARCHIVE}" == "zip" ]]; then
+            unzip -q "artifacts/rook-"*.zip -d artifacts/extracted
+          else
+            mkdir -p artifacts/extracted
+            tar -xzf "artifacts/rook-"*.tar.gz -C artifacts/extracted
+          fi
+          binary_path="$(find artifacts/extracted -type f -name "${BINARY}" -print -quit)"
+          test -n "${binary_path}"
+          cp "${binary_path}" "${PACKAGE_DIR}/bin/${BINARY}"
+          chmod +x "${PACKAGE_DIR}/bin/${BINARY}"
+          node -e 'const fs=require("fs"); const p=process.env.PACKAGE_DIR+"/package.json"; const j=JSON.parse(fs.readFileSync(p)); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")'
+          npm pack --dry-run "./${PACKAGE_DIR}"
+          npm publish "./${PACKAGE_DIR}" --provenance --access public --ignore-scripts
 
-  # ==========================================================================
-  # Publish NPM Base Package
-  # ==========================================================================
   publish-npm-base:
-    name: Publish NPM Base Package
-    needs: [release-please, publish-npm-binaries]
-    if: needs.publish-npm-binaries.result == 'success'
+    name: Publish Rook npm base package
+    needs: [release-please, publish-npm-platform]
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && needs.publish-npm-platform.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout exact release SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.release-please.outputs.release_git_tag }}
+          ref: ${{ needs.release-please.outputs.rook_release_tag }}
+          fetch-depth: 0
+
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: https://registry.npmjs.org
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.28.5
-
-      - name: Verify npm authentication
-        run: |
-          echo "Checking npm authentication..."
-          npm whoami
-          npm config get registry
+      - name: Publish base wrapper after platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Update package.json version
         run: |
-          cd apps/rook/npm/rook
-          VERSION="${{ needs.release-please.outputs.release_version }}"
+          set -euo pipefail
+          node --check apps/rook/npm/rook/lib/index.js
+          npm publish ./apps/rook/npm/rook --provenance --access public --ignore-scripts
 
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${VERSION}';
-            for (const dep in pkg.optionalDependencies) {
-              pkg.optionalDependencies[dep] = '${VERSION}';
-            }
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-          cat package.json
-
-      - name: Install dependencies and build
-        run: |
-          cd apps/rook/npm/rook
-          pnpm install --no-frozen-lockfile
-          pnpm run build
-
-      - name: Publish base package to NPM
-        run: |
-          cd apps/rook/npm/rook
-          pnpm publish --provenance --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # ==========================================================================
-  # Publish to crates.io
-  # ==========================================================================
-  publish-crates:
-    name: Publish to crates.io
-    needs: [release-please, build-binaries]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ needs.release-please.outputs.release_git_tag }}
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
-        with:
-          toolchain: stable
-
-      - name: Publish to crates.io
-        run: cargo publish --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  # ==========================================================================
-  # Publish Docker Image - Uses pre-built Linux binaries from artifacts
-  # ==========================================================================
   publish-docker:
-    name: Publish Docker Image
+    name: Publish Rook container
     needs: [release-please, build-binaries]
+    if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout exact release SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.release-please.outputs.release_git_tag }}
+          ref: ${{ needs.release-please.outputs.rook_release_tag }}
+          fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Verify immutable release checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
 
-      - name: Set up Docker Buildx
+      - name: Download Linux x64 artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rook-x86_64-unknown-linux-gnu
+          path: artifacts
+
+      - name: Prepare Docker context
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docker-context
+          tar -xzf artifacts/rook-*.tar.gz -C docker-context --strip-components=1
+          mv docker-context/rook docker-context/rook-amd64
+          chmod +x docker-context/rook-amd64
+          cp apps/rook/Dockerfile docker-context/Dockerfile
+
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
@@ -486,113 +412,70 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          path: artifacts
-          pattern: rook-*-unknown-linux-gnu
-          merge-multiple: true
-
-      - name: List artifacts
-        run: ls -la artifacts/
-
-      - name: Extract Linux binaries to docker-context
-        run: |
-          mkdir -p docker-context/amd64 docker-context/arm64
-
-          tar -xzvf artifacts/rook-*-x86_64-unknown-linux-gnu.tar.gz -C docker-context/amd64 --strip-components=1
-          tar -xzvf artifacts/rook-*-aarch64-unknown-linux-gnu.tar.gz -C docker-context/arm64 --strip-components=1
-
-          mv docker-context/amd64/rook docker-context/amd64/rook-amd64
-          chmod +x docker-context/amd64/rook-amd64
-
-          mv docker-context/arm64/rook docker-context/arm64/rook-arm64
-          chmod +x docker-context/arm64/rook-arm64
-
-      - name: Copy Dockerfile to docker-context
-        run: cp apps/rook/Dockerfile docker-context/
-
-      - name: Extract metadata for Docker
+      - name: Extract product-scoped image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: |
             ${{ secrets.DOCKERHUB_USERNAME }}/rook
-            ghcr.io/${{ github.repository }}
+            ghcr.io/${{ github.repository_owner }}/rook
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.release_version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.release_version }}
-            type=semver,pattern={{major}},value=${{ needs.release-please.outputs.release_version }}
+            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.rook_release_version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.rook_release_version }}
             type=raw,value=latest
 
-      - name: Build and push multi-platform Docker image
+      - name: Build and push validated Rook image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: docker-context
+          file: docker-context/Dockerfile
           push: true
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-          file: docker-context/Dockerfile
 
-  # ==========================================================================
-  # Release Summary
-  # ==========================================================================
   release-summary:
-    name: Release Summary
-    needs: [release-please, build-binaries, upload-assets, publish-crates, publish-docker, publish-npm-base]
+    name: Rook release summary
+    needs: [release-please, build-binaries, upload-assets, validate-npm, publish-npm-platform, publish-npm-base, publish-docker]
+    if: ${{ always() && needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ubuntu-latest
-    if: always() && needs.release-please.outputs.new_release_created == 'true'
     steps:
-      - name: Generate Summary
+      - name: Generate summary
+        env:
+          VERSION: ${{ needs.release-please.outputs.rook_release_version }}
+          TAG: ${{ needs.release-please.outputs.rook_release_tag }}
+          SHA: ${{ needs.release-please.outputs.rook_release_sha }}
+          BUILD_RESULT: ${{ needs.build-binaries.result }}
+          ASSETS_RESULT: ${{ needs.upload-assets.result }}
+          NPM_VALIDATION_RESULT: ${{ needs.validate-npm.result }}
+          NPM_PLATFORM_RESULT: ${{ needs.publish-npm-platform.result }}
+          NPM_BASE_RESULT: ${{ needs.publish-npm-base.result }}
+          DOCKER_RESULT: ${{ needs.publish-docker.result }}
         run: |
           {
-            echo "# 🎉 Rook Release Summary"
+            echo "# Rook release summary"
             echo ""
-            echo "## Version: ${{ needs.release-please.outputs.release_version }}"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Tag: \`${TAG}\`"
+            echo "- SHA: \`${SHA}\`"
             echo ""
-            echo "### Build Status"
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Build | ${BUILD_RESULT} |"
+            echo "| GitHub assets | ${ASSETS_RESULT} |"
+            echo "| npm validation | ${NPM_VALIDATION_RESULT} |"
+            echo "| npm platform publication | ${NPM_PLATFORM_RESULT} |"
+            echo "| npm base publication | ${NPM_BASE_RESULT} |"
+            echo "| Docker publication | ${DOCKER_RESULT} |"
             echo ""
-            echo "| Component | Status |"
-            echo "|-----------|--------|"
-            echo "| Release Please | ✅ ${{ needs.release-please.result }} |"
-            echo "| Build Binaries | ${{ needs.build-binaries.result == 'success' && '✅' || '❌' }} ${{ needs.build-binaries.result }} |"
-            echo "| Upload Assets | ${{ needs.upload-assets.result == 'success' && '✅' || '❌' }} ${{ needs.upload-assets.result }} |"
-            echo "| Publish to crates.io | ${{ needs.publish-crates.result == 'success' && '✅' || '❌' }} ${{ needs.publish-crates.result }} |"
-            echo "| Publish to NPM | ${{ needs.publish-npm-base.result == 'success' && '✅' || '❌' }} ${{ needs.publish-npm-base.result }} |"
-            echo "| Docker Image | ${{ needs.publish-docker.result == 'success' && '✅' || '❌' }} ${{ needs.publish-docker.result }} |"
-            echo ""
-            echo "### Installation"
-            echo ""
-            echo '```bash'
-            echo "# NPM (easiest!)"
-            echo "npx @dallay/rook@${{ needs.release-please.outputs.release_version }} --help"
-            echo ""
-            echo "# Or install globally"
-            echo "npm install -g @dallay/rook@${{ needs.release-please.outputs.release_version }}"
-            echo ""
-            echo "# Cargo"
-            echo "cargo install rook"
-            echo ""
-            echo "# macOS (Apple Silicon)"
-            echo "curl -LO https://github.com/dallay/cortex/releases/download/${{ needs.release-please.outputs.release_git_tag }}/rook-${{ needs.release-please.outputs.release_version }}-aarch64-apple-darwin.tar.gz"
-            echo ""
-            echo "# Linux (x86_64)"
-            echo "curl -LO https://github.com/dallay/cortex/releases/download/${{ needs.release-please.outputs.release_git_tag }}/rook-${{ needs.release-please.outputs.release_version }}-x86_64-unknown-linux-gnu.tar.gz"
-            echo ""
-            echo "# Docker Hub"
-            echo "docker pull dallay/rook:${{ needs.release-please.outputs.release_version }}"
-            echo ""
-            echo "# GitHub Container Registry"
-            echo "docker pull ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.release_version }}"
-            echo '```'
+            echo "Huginn is not part of this release and has no active publication job."
           } >> "$GITHUB_STEP_SUMMARY"

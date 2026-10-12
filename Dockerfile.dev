@@ -21,16 +21,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files (node_modules excluded by .dockerignore)
 COPY Cargo.lock* ./
 COPY Cargo.toml ./
+COPY package.json ./
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
 COPY rust-toolchain.toml ./
 COPY crates crates
 COPY apps apps
 
-# Install dashboard deps FIRST (before any further COPY overwrites node_modules)
-WORKDIR /app/apps/rook/dashboard
+# Install workspace dashboard deps from root
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build the project
-WORKDIR /app
 RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime

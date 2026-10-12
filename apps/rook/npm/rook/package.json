@@ -1,5 +1,6 @@
 {
   "name": "@dallay/rook",
+  "version": "0.0.1",
   "description": "AI proxy/router that routes LLM requests to multiple providers (OpenAI, Anthropic, Ollama, Gemini, Groq) with fallback, caching, and audit logging.",
   "author": "Yuniel Acosta <info@yunielacosta.com>",
   "license": "MIT",
@@ -36,23 +37,14 @@
     "lib"
   ],
   "scripts": {
-    "test": "pnpm run typecheck",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc",
-    "clean": "node -e \"require('fs').rmSync('lib', {recursive: true, force: true})\"",
-    "prepublishOnly": "npm run build"
-  },
-  "devDependencies": {
-    "@types/node": "22.20.5",
-    "typescript": "6.0.3"
+    "test": "node --check lib/index.js",
+    "prepublishOnly": "node --check lib/index.js"
   },
   "optionalDependencies": {
-    "`@dallay/rook-darwin-arm64`": "0.0.1",
-    "`@dallay/rook-darwin-x64`": "0.0.1",
-    "`@dallay/rook-linux-arm64`": "0.0.1",
-    "`@dallay/rook-linux-x64`": "0.0.1",
-    "`@dallay/rook-windows-arm64`": "0.0.1",
-    "`@dallay/rook-windows-x64`": "0.0.1"
+    "@dallay/rook-darwin-arm64": "0.0.1",
+    "@dallay/rook-darwin-x64": "0.0.1",
+    "@dallay/rook-linux-x64": "0.0.1",
+    "@dallay/rook-windows-x64": "0.0.1"
   },
   "engines": {
     "node": ">=18"

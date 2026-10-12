@@ -34,7 +34,7 @@ pre-commit:
       stage_prepended: true
 
 pre-push:
-  parallel: true
+  parallel: false
   commands:
     clippy:
       run: cargo clippy --workspace --all-targets -- -D warnings
