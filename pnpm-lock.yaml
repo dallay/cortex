@@ -27,8 +27,8 @@ importers:
   .:
     devDependencies:
       lefthook:
-        specifier: 2.2.0
-        version: 2.2.0
+        specifier: 2.2.1
+        version: 2.2.1
       markdownlint-cli2:
         specifier: 0.23.3
         version: 0.23.3(supports-color@7.2.0)
@@ -91,7 +91,7 @@ importers:
         version: 0.4.0(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3))
       vue-router:
         specifier: ^5.1.0
-        version: 5.4.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(rolldown@1.2.13)(vite@8.3.3(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))
+        version: 5.4.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(rolldown@1.2.13)(vite@8.3.4(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))
       vue-sonner:
         specifier: ^2.0.9
         version: 2.0.9
@@ -101,16 +101,16 @@ importers:
     devDependencies:
       '@codecov/vite-plugin':
         specifier: 1.9.1
-        version: 1.9.1(vite@8.3.3(jiti@2.7.0))
+        version: 1.9.1(vite@8.3.4(jiti@2.7.0))
       '@playwright/test':
         specifier: 1.64.0
         version: 1.64.0
       '@tailwindcss/vite':
         specifier: 4.3.3
-        version: 4.3.3(vite@8.3.3(jiti@2.7.0))
+        version: 4.3.3(vite@8.3.4(jiti@2.7.0))
       '@vitejs/plugin-vue':
         specifier: 6.0.9
-        version: 6.0.9(vite@8.3.3(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))
+        version: 6.0.9(vite@8.3.4(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))
       '@vitest/coverage-v8':
         specifier: 4.1.11
         version: 4.1.11(vitest@4.1.11)
@@ -130,11 +130,11 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
       vite:
-        specifier: 8.3.3
-        version: 8.3.3(jiti@2.7.0)
+        specifier: 8.3.4
+        version: 8.3.4(jiti@2.7.0)
       vitest:
         specifier: 4.1.11
-        version: 4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.3(jiti@2.7.0))
+        version: 4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.4(jiti@2.7.0))
       vue-tsc:
         specifier: 3.3.12
         version: 3.3.12(typescript@6.0.3)
@@ -1189,58 +1189,58 @@ packages:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
     hasBin: true
 
-  lefthook-darwin-arm64@2.2.0:
-    resolution: {integrity: sha512-7Y5Kq7jxi69lQz0w8EMbB3acxPYSIlCZx1ZykurlmkPYm7pYF4hvFzou+e9QXpuvuBpHJF+lgzwdiPxeEoVOaA==}
+  lefthook-darwin-arm64@2.2.1:
+    resolution: {integrity: sha512-SyuDBT5HqNQfi607vMHrYJu45bRN7JoIFdyxLjEPVe34UnZJCesmeYBODEYTyCfRZjPOaTbton4Padu+qvqfCQ==}
     cpu: [arm64]
     os: [darwin]
 
-  lefthook-darwin-x64@2.2.0:
-    resolution: {integrity: sha512-2yJenDYDCOHJqywQpDRxwfgUP3UwhikOaoa07k5J5F3Gov3+im8HnDvcHV81Of1V3sT/gxD4T+mZ6a3GFb3zvQ==}
+  lefthook-darwin-x64@2.2.1:
+    resolution: {integrity: sha512-qkIdM89T3OxpLp9rssPSdRQ7QKkX0l07xWxxOaZfECn5iB2xVXSD9FQSjYUMNGXtJJWOGqdKqBngGTB/ShDZtQ==}
     cpu: [x64]
     os: [darwin]
 
-  lefthook-freebsd-arm64@2.2.0:
-    resolution: {integrity: sha512-bRtEN4c1Z4yUxb8nDo2y6dbEhPfKmsEBO8xi7e/SjA3tITR0sgD2MBDsUmRoTIxvZPssGWKfURlFVmrH0cRQnA==}
+  lefthook-freebsd-arm64@2.2.1:
+    resolution: {integrity: sha512-0jdr/9Q5cGuazrEVquv29AOD77aPc2jAmFU4EtqVVg3PhMJjAyt7bQeA9qdwHhaHhLnaeUZwMwo3IleVm+D4wg==}
     cpu: [arm64]
     os: [freebsd]
 
-  lefthook-freebsd-x64@2.2.0:
-    resolution: {integrity: sha512-jYLatxOW4bjCRCc8KCO7gRuSm38IzmU32nVbJrgZgLnbxUjKv3seLMK0nODYx2UobFLVqptul+hWJG/6zX5SWQ==}
+  lefthook-freebsd-x64@2.2.1:
+    resolution: {integrity: sha512-JFKyNZ9qQp9NsuFyAg/CJIBurIHX3AUayFXxuoDMATWAIhhlyK0YMtpWgEFIl1M2iGLBLQ3TiLoCCRnbwndNDg==}
     cpu: [x64]
     os: [freebsd]
 
-  lefthook-linux-arm64@2.2.0:
-    resolution: {integrity: sha512-ynLPEhiuB8qyECBWKF9VbAekWpyPSXfurujPvJdtkyXN+kkiByiU62pdQ5KdSTxNyfYDiMCN81T9SoQZUdxxoQ==}
+  lefthook-linux-arm64@2.2.1:
+    resolution: {integrity: sha512-na8Ezm7pK44+WsQqj9tES7v8VseM1MrNeNJhUnM8eINV22KYptWam8evfjZxY3NYxOTwn6f/Zpe/BBvcLKMaTQ==}
     cpu: [arm64]
     os: [linux]
 
-  lefthook-linux-x64@2.2.0:
-    resolution: {integrity: sha512-s+JLh+mkZLyHqMFmURT10VbGWjU5M3rlvj+8bGJKqLbza49ULivWZAOQue6Y0kF2as7k5uC6k9w07KcJvYdYsw==}
+  lefthook-linux-x64@2.2.1:
+    resolution: {integrity: sha512-wl7CR5uNkOiZ38SkW4l9O6wf/Nllbkw90ZZonXRFkbgrnPjLMhZGUt9ucewsPwBQ/ckU1t08JuBHeOywB/CFow==}
     cpu: [x64]
     os: [linux]
 
-  lefthook-openbsd-arm64@2.2.0:
-    resolution: {integrity: sha512-SkZ2q8J4mTW1L53nLiAmFcx2fuv5nO+8AdgS8eUnL7v7RPLT9+8LjyK89EMgdRKgiHGIZG1wi3dnOY1eaLiXlw==}
+  lefthook-openbsd-arm64@2.2.1:
+    resolution: {integrity: sha512-UFwL+AGSqkhQ15kuKl5FMRx/UqbcfcQbGFg5ggYzhT7qBOsTu3a9POXRxt3hsalBeMgkDWsv3IaPlj51YGpCAg==}
     cpu: [arm64]
     os: [openbsd]
 
-  lefthook-openbsd-x64@2.2.0:
-    resolution: {integrity: sha512-AEfa2aerI/r8lBBeGXKoW101SRAKOAT72mC6a7idHoEA96UgCBdRYCuULeZBJveRROKZMyoHrVB/I+SxrEV95w==}
+  lefthook-openbsd-x64@2.2.1:
+    resolution: {integrity: sha512-IMKEuxJLo91C1yjhJ42EadfXUb3ECMkvTKpSt17kwaiyZsvvZ8LGdrXwQZiLNJt2M5ECuTVCQUvDimM6mGraOw==}
     cpu: [x64]
     os: [openbsd]
 
-  lefthook-windows-arm64@2.2.0:
-    resolution: {integrity: sha512-JsEOkRiAL9lNH1vFhfarKpTDWamfzl31RmU/WD9enjRpiUW8+AMtDmO0VJAw5aX5wZclG2HIUT6vJdKXwrjYFg==}
+  lefthook-windows-arm64@2.2.1:
+    resolution: {integrity: sha512-Pi8vOvObjg8HJDl8d96s7jsI6TN33klpqv6tXSXpoKEeoAwEh5Y9NawO6bzoOpLfAxf2SfMBcuaBzFQ5zE2gjA==}
     cpu: [arm64]
     os: [win32]
 
-  lefthook-windows-x64@2.2.0:
-    resolution: {integrity: sha512-mPME3KcWxYL2J3r21F0yKcwwK2VbemizFSuDfwL7dSGgD59ejga2Gk041BEg5WUFkfCPqKpMJifQzhKskJMOPA==}
+  lefthook-windows-x64@2.2.1:
+    resolution: {integrity: sha512-7FtuPrc1XzxIFLAbzneOF1hr9r/vGi2lcMpX14QG9d/mnLhwu4EyNBh48JNEqsQqrOB9QKavsNqxVl1e8zcukA==}
     cpu: [x64]
     os: [win32]
 
-  lefthook@2.2.0:
-    resolution: {integrity: sha512-nEDic8eec9/+SPsSugzD55BThOrtPrY5vPAnlZq42afRxMssYYm+d4A8SFP9DB0bZCZyLqbTTYNof7zMgQOObQ==}
+  lefthook@2.2.1:
+    resolution: {integrity: sha512-aKEwhQzGbLMkZu5vrFYKJzLvLVblWATYITmN7Ak4qRCDPCoFJhmeJZFuYf3nTXuqG9xTBE+J8xaAEPL2tpuWyw==}
     hasBin: true
 
   lightningcss-android-arm64@1.32.0:
@@ -1871,8 +1871,8 @@ packages:
     peerDependencies:
       vue: 3.5.43
 
-  vite@8.3.3:
-    resolution: {integrity: sha512-cTAldKPImjg6c+gk48U19POPn3GCBzZwpdsN8ZMEEcbpes+6/wvfqUd0C2y3qYY4wsj8PwgFwrZ/1jBPVttMSg==}
+  vite@8.3.4:
+    resolution: {integrity: sha512-IftLE8phJhdNRIGNEV4JCCvfNScoZQVfcXaN8TQropWGJtOHcu+iAB9pHcuGvmEb/kddw0LBe/jS8ztdC6xdiQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -2158,11 +2158,11 @@ snapshots:
       unplugin: 1.16.1
       zod: 3.25.76
 
-  '@codecov/vite-plugin@1.9.1(vite@8.3.3(jiti@2.7.0))':
+  '@codecov/vite-plugin@1.9.1(vite@8.3.4(jiti@2.7.0))':
     dependencies:
       '@codecov/bundler-plugin-core': 1.9.1
       unplugin: 1.16.1
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
 
   '@csstools/color-helpers@6.1.2': {}
 
@@ -2463,12 +2463,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.3
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.3
 
-  '@tailwindcss/vite@4.3.3(vite@8.3.3(jiti@2.7.0))':
+  '@tailwindcss/vite@4.3.3(vite@8.3.4(jiti@2.7.0))':
     dependencies:
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
 
   '@tanstack/table-core@8.21.3': {}
 
@@ -2515,10 +2515,10 @@ snapshots:
     transitivePeerDependencies:
       - vue
 
-  '@vitejs/plugin-vue@6.0.9(vite@8.3.3(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))':
+  '@vitejs/plugin-vue@6.0.9(vite@8.3.4(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
       vue: 3.5.43(typescript@6.0.3)
 
   '@vitest/coverage-v8@4.1.11(vitest@4.1.11)':
@@ -2533,7 +2533,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.3(jiti@2.7.0))
+      vitest: 4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.4(jiti@2.7.0))
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -2544,13 +2544,13 @@ snapshots:
       chai: 6.3.0
       tinyrainbow: 3.2.0
 
-  '@vitest/mocker@4.1.11(vite@8.3.3(jiti@2.7.0))':
+  '@vitest/mocker@4.1.11(vite@8.3.4(jiti@2.7.0))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -3093,48 +3093,48 @@ snapshots:
     dependencies:
       commander: 8.3.0
 
-  lefthook-darwin-arm64@2.2.0:
+  lefthook-darwin-arm64@2.2.1:
     optional: true
 
-  lefthook-darwin-x64@2.2.0:
+  lefthook-darwin-x64@2.2.1:
     optional: true
 
-  lefthook-freebsd-arm64@2.2.0:
+  lefthook-freebsd-arm64@2.2.1:
     optional: true
 
-  lefthook-freebsd-x64@2.2.0:
+  lefthook-freebsd-x64@2.2.1:
     optional: true
 
-  lefthook-linux-arm64@2.2.0:
+  lefthook-linux-arm64@2.2.1:
     optional: true
 
-  lefthook-linux-x64@2.2.0:
+  lefthook-linux-x64@2.2.1:
     optional: true
 
-  lefthook-openbsd-arm64@2.2.0:
+  lefthook-openbsd-arm64@2.2.1:
     optional: true
 
-  lefthook-openbsd-x64@2.2.0:
+  lefthook-openbsd-x64@2.2.1:
     optional: true
 
-  lefthook-windows-arm64@2.2.0:
+  lefthook-windows-arm64@2.2.1:
     optional: true
 
-  lefthook-windows-x64@2.2.0:
+  lefthook-windows-x64@2.2.1:
     optional: true
 
-  lefthook@2.2.0:
+  lefthook@2.2.1:
     optionalDependencies:
-      lefthook-darwin-arm64: 2.2.0
-      lefthook-darwin-x64: 2.2.0
-      lefthook-freebsd-arm64: 2.2.0
-      lefthook-freebsd-x64: 2.2.0
-      lefthook-linux-arm64: 2.2.0
-      lefthook-linux-x64: 2.2.0
-      lefthook-openbsd-arm64: 2.2.0
-      lefthook-openbsd-x64: 2.2.0
-      lefthook-windows-arm64: 2.2.0
-      lefthook-windows-x64: 2.2.0
+      lefthook-darwin-arm64: 2.2.1
+      lefthook-darwin-x64: 2.2.1
+      lefthook-freebsd-arm64: 2.2.1
+      lefthook-freebsd-x64: 2.2.1
+      lefthook-linux-arm64: 2.2.1
+      lefthook-linux-x64: 2.2.1
+      lefthook-openbsd-arm64: 2.2.1
+      lefthook-openbsd-x64: 2.2.1
+      lefthook-windows-arm64: 2.2.1
+      lefthook-windows-x64: 2.2.1
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -3757,14 +3757,14 @@ snapshots:
       acorn: 8.19.0
       webpack-virtual-modules: 0.6.2
 
-  unplugin@3.4.0(rolldown@1.2.13)(vite@8.3.3(jiti@2.7.0)):
+  unplugin@3.4.0(rolldown@1.2.13)(vite@8.3.4(jiti@2.7.0)):
     dependencies:
       '@jridgewell/remapping': 2.3.5
       picomatch: 4.0.7
       webpack-virtual-modules: 0.6.2
     optionalDependencies:
       rolldown: 1.2.13
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
 
   vaul-vue@0.4.1(reka-ui@2.11.0(vue@3.5.43(typescript@6.0.3)))(vue@3.5.43(typescript@6.0.3)):
     dependencies:
@@ -3780,7 +3780,7 @@ snapshots:
       type-fest: 4.41.0
       vue: 3.5.43(typescript@6.0.3)
 
-  vite@8.3.3(jiti@2.7.0):
+  vite@8.3.4(jiti@2.7.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -3791,10 +3791,10 @@ snapshots:
       fsevents: 2.3.3
       jiti: 2.7.0
 
-  vitest@4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.3(jiti@2.7.0)):
+  vitest@4.1.11(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.3.4(jiti@2.7.0)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.3.3(jiti@2.7.0))
+      '@vitest/mocker': 4.1.11(vite@8.3.4(jiti@2.7.0))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -3811,7 +3811,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.2.0
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
@@ -3843,7 +3843,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  vue-router@5.4.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(rolldown@1.2.13)(vite@8.3.3(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3)):
+  vue-router@5.4.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(rolldown@1.2.13)(vite@8.3.4(jiti@2.7.0))(vue@3.5.43(typescript@6.0.3)):
     dependencies:
       '@vue-macros/common': 3.1.4(vue@3.5.43(typescript@6.0.3))
       '@vue/devtools-api': 8.2.1
@@ -3859,13 +3859,13 @@ snapshots:
       picomatch: 4.0.7
       scule: 1.3.0
       tinyglobby: 0.2.17
-      unplugin: 3.4.0(rolldown@1.2.13)(vite@8.3.3(jiti@2.7.0))
+      unplugin: 3.4.0(rolldown@1.2.13)(vite@8.3.4(jiti@2.7.0))
       unplugin-utils: 0.3.2
       vue: 3.5.43(typescript@6.0.3)
     optionalDependencies:
       '@vue/compiler-sfc': 3.5.43
       pinia: 3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3))
-      vite: 8.3.3(jiti@2.7.0)
+      vite: 8.3.4(jiti@2.7.0)
     transitivePeerDependencies:
       - '@farmfe/core'
       - '@rsbuild/core'
