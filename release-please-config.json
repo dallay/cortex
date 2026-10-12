@@ -1,7 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
-  "include-component-in-tag": false,
+  "separate-pull-requests": true,
+  "always-update": true,
+  "include-component-in-tag": true,
+  "tag-separator": "@",
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },
@@ -17,9 +20,12 @@
   ],
   "packages": {
     "apps/rook": {
+      "release-type": "rust",
       "component": "rook",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
+      "tag-separator": "@",
       "extra-files": [
-        { "type": "json", "path": "apps/rook/Cargo.toml", "jsonpath": "$.package.version" },
         {
           "type": "json",
           "path": "apps/rook/npm/rook/package.json",
@@ -43,17 +49,27 @@
         {
           "type": "json",
           "path": "apps/rook/npm/rook/package.json",
-          "jsonpath": "$.optionalDependencies['@dallay/rook-linux-arm64']"
-        },
-        {
-          "type": "json",
-          "path": "apps/rook/npm/rook/package.json",
           "jsonpath": "$.optionalDependencies['@dallay/rook-windows-x64']"
         },
         {
           "type": "json",
-          "path": "apps/rook/npm/rook/package.json",
-          "jsonpath": "$.optionalDependencies['@dallay/rook-windows-arm64']"
+          "path": "apps/rook/npm/rook-darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "apps/rook/npm/rook-darwin-x64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "apps/rook/npm/rook-linux-x64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "apps/rook/npm/rook-windows-x64/package.json",
+          "jsonpath": "$.version"
         },
         {
           "type": "json",
@@ -61,6 +77,13 @@
           "jsonpath": "$.version"
         }
       ]
+    },
+    "apps/huginn": {
+      "release-type": "rust",
+      "component": "huginn",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
+      "tag-separator": "@"
     }
   },
   "draft": false,
