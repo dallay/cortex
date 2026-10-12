@@ -64,6 +64,62 @@ fn json_read_only_turn_lists_and_resumes_a_session() {
 }
 
 #[test]
+fn run_without_model_fails_with_configuration_guidance() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["--workspace"])
+        .arg(workspace.path())
+        .args(["--db"])
+        .arg(data.path().join("sessions.db"))
+        .args(["run", "hello"])
+        .env("HOME", home.path())
+        .env_remove("HUGINN_BASE_URL")
+        .env_remove("HUGINN_MODEL")
+        .env_remove("HUGINN_API_KEY")
+        .env_remove("AGENT_BASE_URL")
+        .env_remove("AGENT_MODEL")
+        .env_remove("AGENT_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No model configured"), "got: {stderr}");
+    assert!(stderr.contains("HUGINN_BASE_URL"), "got: {stderr}");
+}
+
+#[test]
+fn doctor_reports_unconfigured_without_api_key_or_network() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["--workspace"])
+        .arg(workspace.path())
+        .args(["--db"])
+        .arg(data.path().join("sessions.db"))
+        .arg("doctor")
+        .env("HOME", home.path())
+        .env_remove("HUGINN_BASE_URL")
+        .env_remove("HUGINN_MODEL")
+        .env_remove("HUGINN_API_KEY")
+        .env_remove("AGENT_BASE_URL")
+        .env_remove("AGENT_MODEL")
+        .env_remove("AGENT_API_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["model_readiness"], "unconfigured");
+    assert_eq!(report["api_key_resolved"], false);
+}
+
+#[test]
 fn invalid_runtime_config_fails_before_database_creation() {
     let config_dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();

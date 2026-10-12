@@ -3,7 +3,7 @@ mod terminal;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use config::Config;
+use config::{Config, ModelReadiness};
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
 use huginn_runtime::{
@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let mut config = Config::load(cli.config.as_deref())?;
     if let Some(value) = cli.provider {
         config.provider = value;
+        config.provider_explicit = true;
     }
     if let Some(value) = cli.base_url {
         config.base_url = Some(value);
@@ -78,9 +79,26 @@ async fn main() -> anyhow::Result<()> {
         // and one-shot modes have the same precedence as chat/run.
         config.fill_from_env();
     }
-    // The sessions subcommand only reads the database and must work without model settings.
+    // Common runtime settings are always checked; model configuration is only
+    // required for commands that will actually request inference.
     if !matches!(cli.command, Some(Commands::Sessions)) {
-        config.validate()?;
+        config.validate_common()?;
+    }
+    if matches!(cli.command, Some(Commands::Run { .. }))
+        || matches!(
+            cli.command,
+            Some(Commands::Resume {
+                prompt: Some(_),
+                ..
+            })
+        )
+    {
+        config.require_model()?;
+    }
+    if !matches!(cli.command, Some(Commands::Sessions))
+        && config.model_readiness() == ModelReadiness::Invalid
+    {
+        config.require_model()?;
     }
     let sessions = Arc::new(SqliteSessions::open(&config.db)?);
     if matches!(cli.command, Some(Commands::Sessions)) {
@@ -155,7 +173,12 @@ async fn main() -> anyhow::Result<()> {
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
     let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
     let output = Output { json: cli.json };
-    let model = config.create_model()?;
+    let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
+        Arc::new(huginn_runtime::model::UnconfiguredModelProvider)
+            as Arc<dyn huginn_core::ModelProvider>
+    } else {
+        config.create_model()?
+    };
     let registry = Registry::default();
     let startup = CancellationToken::new();
     let mut supervisor = composition::build_native(
@@ -171,6 +194,27 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     if is_doctor {
+        if config.model_readiness() == ModelReadiness::Unconfigured {
+            supervisor.shutdown().await;
+            let resolved_key = config.resolve_api_key()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "workspace": session.workspace,
+                    "database": config.db,
+                    "provider": config.provider,
+                    "base_url": config.base_url,
+                    "model": config.model,
+                    "api_key_env": config.api_key_env,
+                    "api_key_resolved": resolved_key.is_some(),
+                    "mcp_servers": config.mcp.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                    "model_readiness": "unconfigured",
+                    "services": [],
+                    "rook_compatibility": "unsupported",
+                }))?
+            );
+            return Ok(());
+        }
         // Surface legacy env-var warnings even when the user only ran
         // `huginn doctor`. resolve_api_key is the single place that knows
         // the canonical->legacy fallback order.
@@ -187,6 +231,11 @@ async fn main() -> anyhow::Result<()> {
                 "api_key_resolved": resolved_key.is_some(),
                 "mcp_servers": config.mcp.iter().map(|c| &c.name).collect::<Vec<_>>(),
                 "services": supervisor.diagnostics(),
+                "model_readiness": match config.model_readiness() {
+                    ModelReadiness::Ready => "ready",
+                    ModelReadiness::Unconfigured => "unconfigured",
+                    ModelReadiness::Invalid => "invalid",
+                },
                 "rook_compatibility": "unsupported",
             }))?
         );
@@ -249,6 +298,10 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             if line.is_empty() {
+                continue;
+            }
+            if config.model_readiness() == ModelReadiness::Unconfigured {
+                eprintln!("\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.");
                 continue;
             }
             // `/compact` and `/summarize` (alias) run the same real-model
@@ -343,7 +396,9 @@ async fn tui_chat(
     use huginn_presentation::{
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
-    supervisor.register(Box::new(RatatuiPlugin::default()))?;
+    supervisor.register(Box::new(RatatuiPlugin::new(
+        config.model_readiness() == ModelReadiness::Ready,
+    )))?;
     supervisor.register(Box::new(ConversationPlugin))?;
     #[cfg(feature = "reference-extension")]
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
@@ -360,6 +415,10 @@ async fn tui_chat(
         ui.synchronize(session);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
+            if config.model_readiness() == ModelReadiness::Unconfigured {
+                ui.notice("No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.".into());
+                continue;
+            }
             let cancel = CancellationToken::new();
             ui.begin(cancel.clone());
             let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {

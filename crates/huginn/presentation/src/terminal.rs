@@ -1,7 +1,7 @@
 use crate::{
     contributions::Contributions,
     state::{approval_preview, safe, Editor, Ui},
-    Connection, Presentation,
+    Connection, Interaction, Presentation,
 };
 use async_trait::async_trait;
 use crossterm::{
@@ -119,6 +119,7 @@ pub struct Ratatui {
     pub contributions: Arc<Contributions>,
     pub lifecycle: CancellationToken,
     pub drivers: Arc<Mutex<Vec<(CancellationToken, CancellationToken)>>>,
+    pub model_configured: bool,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -158,6 +159,12 @@ impl Presentation for Ratatui {
         )?;
         let stop = CancellationToken::new();
         let (ui, prompts) = Ui::new(session, self.contributions.clone(), stop.clone());
+        if !self.model_configured {
+            ui.notice(
+                "No model configured. Configure a provider and restart Huginn to enable inference."
+                    .into(),
+            );
+        }
         let done = CancellationToken::new();
         drivers.push((stop.clone(), done.clone()));
         drop(drivers);
