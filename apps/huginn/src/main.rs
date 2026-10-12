@@ -417,6 +417,7 @@ async fn tui_chat(
         while let Some(prompt) = ui.prompt().await {
             if config.model_readiness() == ModelReadiness::Unconfigured {
                 ui.notice("No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.".into());
+                ui.synchronize(session);
                 continue;
             }
             let cancel = CancellationToken::new();

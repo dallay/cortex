@@ -29,6 +29,7 @@ fn first_run_opens_tui_without_configured_model() {
     command.args(["--db"]);
     command.arg(&db);
     command.env("HOME", home.path());
+    command.env("XDG_CONFIG_HOME", home.path());
     command.env_remove("HUGINN_BASE_URL");
     command.env_remove("HUGINN_MODEL");
     command.env_remove("HUGINN_API_KEY");
@@ -40,7 +41,8 @@ fn first_run_opens_tui_without_configured_model() {
     pty.wait_for("No model configured");
     pty.send("hello\r");
     pty.wait_for("Set HUGINN_BASE_URL and HUGINN_MODEL");
-    pty.send("\u{3}");
+    // Enter must work again after the unconfigured prompt is rejected.
+    pty.send("/quit\r");
     let output = pty.finish(true);
     assert!(!output.contains("Offline mock:"), "got: {output}");
 }
