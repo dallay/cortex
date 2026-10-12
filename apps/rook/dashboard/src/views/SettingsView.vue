@@ -150,7 +150,7 @@ function saveGeneralSettings() {
       </div>
       <div class="p-4">
         <div class="text-sm space-y-1">
-          <p><span class="text-muted-foreground">Rook</span> v0.1.0</p>
+          <p><span class="text-muted-foreground">Rook</span> v0.0.1</p>
           <p><span class="text-muted-foreground">API Gateway</span> · AI Router</p>
         </div>
       </div>
