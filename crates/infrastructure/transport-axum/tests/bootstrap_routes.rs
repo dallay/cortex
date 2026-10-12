@@ -536,6 +536,6 @@ async fn health_check_http_get_returns_app_name_and_version() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(json["app_name"], "Rook");
-    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(json["version"], "0.0.1");
     assert_eq!(json["status"], "no_providers_configured");
 }

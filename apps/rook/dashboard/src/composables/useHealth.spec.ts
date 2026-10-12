@@ -44,8 +44,8 @@ describe("useHealth", () => {
 
     const { useHealth } = await import("./useHealth");
     const health = useHealth();
-    await health.fetch();
     await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(health.appName.value).toBe("Rook Custom");
     expect(health.version.value).toBe("v0.2.0");

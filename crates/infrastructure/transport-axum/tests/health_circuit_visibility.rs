@@ -145,10 +145,10 @@ async fn test_health_response_includes_app_name_and_version() {
     let json = serde_json::json!({
         "status": "healthy",
         "app_name": "Rook",
-        "version": "0.1.0",
+        "version": "0.0.1",
         "providers": []
     });
 
     assert_eq!(json["app_name"], "Rook");
-    assert_eq!(json["version"], "0.1.0");
+    assert_eq!(json["version"], "0.0.1");
 }
