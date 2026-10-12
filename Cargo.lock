@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "alias-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -214,7 +214,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "audit-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "auth-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -476,7 +476,7 @@ checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
 name = "cache-memory"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -622,7 +622,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "combo-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -693,7 +693,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "cortex-test-support"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "db-migration"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "encryption-inmemory"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1491,7 +1491,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "huginn"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-application"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-plugin-api"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "huginn-core",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-presentation"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "crossterm",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-reference-extension"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "huginn-plugin-api",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "huginn-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "models-catalog"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "rook-core",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "dashmap",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "provider-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2670,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "providers-anthropic"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "providers-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rook-core",
  "serde",
@@ -2700,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "providers-gemini"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2719,7 +2719,7 @@ dependencies = [
 
 [[package]]
 name = "providers-groq"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "providers-ollama"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "providers-openai"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "rook-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "rook-usecases"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3672,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "shared-kernel"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "futures",
@@ -3804,7 +3804,7 @@ dependencies = [
 
 [[package]]
 name = "sse-stream"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "stable_deref_trait"
@@ -4272,7 +4272,7 @@ dependencies = [
 
 [[package]]
 name = "transport-axum"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",

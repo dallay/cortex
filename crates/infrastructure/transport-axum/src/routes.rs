@@ -809,6 +809,8 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
 
     Json(serde_json::json!({
         "status": status,
+        "app_name": "Rook",
+        "version": "0.0.1",
         "providers": statuses.iter().map(|s| {
             let provider_id = s.provider_id();
 

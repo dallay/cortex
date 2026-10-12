@@ -1,12 +1,12 @@
 [package]
 name = "huginn-presentation"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
 publish = false
 
 [features]
-test-driver = ["dep:huginn-application", "dep:huginn-reference-extension"]
+test-driver = ["dep:huginn-application"]
 
 [[bin]]
 name = "tui-fixture"
@@ -14,11 +14,11 @@ path = "tests/support/fixture.rs"
 required-features = ["test-driver"]
 
 [dependencies]
-# Used by the explicit PTY fixture host only (tests/support/fixture.rs).
+# Used by the explicit PTY fixture host only.
 huginn-application = { path = "../application", optional = true }
 huginn-core = { path = "../core" }
 huginn-plugin-api = { path = "../plugin-api" }
-huginn-reference-extension = { path = "../reference-extension", optional = true }
+huginn-reference-extension = { path = "../reference-extension" }
 async-trait.workspace = true
 futures.workspace = true
 tokio.workspace = true
