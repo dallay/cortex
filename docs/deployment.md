@@ -45,13 +45,21 @@ ROOK_CONFIG=/app/config/rook.toml
 
 ### Build the Image
 
-```bash
-# Using the provided Dockerfile
-docker build -f apps/rook/Dockerfile -t rook:latest .
+The release `Dockerfile` consumes a prepared binary context; it is not a
+source-build Dockerfile. Build a local Rook binary first and place it at the
+architecture-specific context path:
 
-# Or for multi-arch (requires buildx)
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f apps/rook/Dockerfile -t rook:latest .
+```bash
+# Build on a Linux/amd64 host, or cross-compile this target with the required
+# Linux linker/toolchain installed. This Dockerfile consumes an amd64 Linux binary.
+cargo build --locked --release --target x86_64-unknown-linux-gnu -p rook
+mkdir -p docker-context
+cp target/x86_64-unknown-linux-gnu/release/rook docker-context/rook-amd64
+cp apps/rook/Dockerfile docker-context/Dockerfile
+docker build --platform linux/amd64 -f docker-context/Dockerfile -t rook:local docker-context
+
+# Multi-architecture publishing is enabled only when the corresponding target
+# has product-specific build and smoke-test evidence. See docs/releasing.md.
 ```
 
 ### Run with Ollama Cloud
