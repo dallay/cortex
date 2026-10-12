@@ -496,6 +496,65 @@ async fn setup_succeeds_with_correct_token_and_returns_api_key() {
 }
 
 #[tokio::test]
+async fn get_login_reuses_valid_incoming_csrf_cookie() {
+    // Regression for WebKit delayed Set-Cookie race (issue #82): repeated
+    // GET /login must not rotate a well-formed token out from under the jar.
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+
+    let valid_token = "A".repeat(43);
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/login")
+        .header("cookie", format!("csrf_token={valid_token}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = response
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let json = body_json(response).await;
+    assert_eq!(json["csrf_token"], valid_token);
+    assert!(set_cookie.contains(&valid_token));
+
+    // Invalid cookie values must still rotate to a fresh well-formed token.
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/login")
+        .header("cookie", "csrf_token=not-a-valid-token")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let json = body_json(response).await;
+    let rotated = json["csrf_token"].as_str().unwrap();
+    assert_ne!(rotated, "not-a-valid-token");
+    assert_eq!(rotated.len(), 43);
+}
+
+#[tokio::test]
 async fn health_check_http_get_returns_app_name_and_version() {
     let user_repo = Arc::new(FakeUserRepo::fresh());
     let password_hasher = Arc::new(FakePasswordHasher);

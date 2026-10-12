@@ -3,7 +3,7 @@ mod terminal;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use config::Config;
+use config::{Config, ModelReadiness};
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
 use huginn_runtime::{
@@ -57,31 +57,65 @@ enum Commands {
     Doctor,
 }
 
+fn prepare_config(cli: &Cli) -> anyhow::Result<Config> {
+    let mut config = Config::load(cli.config.as_deref())?;
+    if let Some(provider) = &cli.provider {
+        config.provider = provider.clone();
+        config.provider_explicit = true;
+    }
+    if let Some(base_url) = &cli.base_url {
+        config.base_url = Some(base_url.clone());
+    }
+    if let Some(model) = &cli.model {
+        config.model = Some(model.clone());
+    }
+    if let Some(db) = &cli.db {
+        config.db = db.clone();
+    }
+    let sessions_only = matches!(cli.command, Some(Commands::Sessions));
+    if !sessions_only {
+        config.fill_from_env();
+        config.validate_common()?;
+    }
+    let infer_now = matches!(cli.command, Some(Commands::Run { .. }))
+        || matches!(
+            cli.command,
+            Some(Commands::Resume {
+                prompt: Some(_),
+                ..
+            })
+        );
+    if infer_now || (!sessions_only && config.model_readiness() == ModelReadiness::Invalid) {
+        config.require_model()?;
+    }
+    Ok(config)
+}
+
+fn doctor_report(
+    config: &Config,
+    session: &Session,
+    services: impl serde::Serialize,
+    model_readiness: &str,
+) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "workspace": session.workspace,
+        "database": config.db,
+        "provider": config.provider,
+        "base_url": config.base_url,
+        "model": config.model,
+        "api_key_env": config.api_key_env,
+        "api_key_resolved": config.resolve_api_key()?.is_some(),
+        "mcp_servers": config.mcp.iter().map(|server| &server.name).collect::<Vec<_>>(),
+        "services": services,
+        "model_readiness": model_readiness,
+        "rook_compatibility": "unsupported",
+    }))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let mut config = Config::load(cli.config.as_deref())?;
-    if let Some(value) = cli.provider {
-        config.provider = value;
-    }
-    if let Some(value) = cli.base_url {
-        config.base_url = Some(value);
-    }
-    if let Some(value) = cli.model {
-        config.model = Some(value);
-    }
-    if let Some(value) = cli.db {
-        config.db = value;
-    }
-    if !matches!(cli.command, Some(Commands::Sessions)) {
-        // Resolve HUGINN_* / AGENT_* env vars before validating so doctor
-        // and one-shot modes have the same precedence as chat/run.
-        config.fill_from_env();
-    }
-    // The sessions subcommand only reads the database and must work without model settings.
-    if !matches!(cli.command, Some(Commands::Sessions)) {
-        config.validate()?;
-    }
+    let config = prepare_config(&cli)?;
     let sessions = Arc::new(SqliteSessions::open(&config.db)?);
     if matches!(cli.command, Some(Commands::Sessions)) {
         for session in sessions.list().await? {
@@ -155,7 +189,12 @@ async fn main() -> anyhow::Result<()> {
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
     let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
     let output = Output { json: cli.json };
-    let model = config.create_model()?;
+    let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
+        Arc::new(huginn_runtime::model::UnconfiguredModelProvider)
+            as Arc<dyn huginn_core::ModelProvider>
+    } else {
+        config.create_model()?
+    };
     let registry = Registry::default();
     let startup = CancellationToken::new();
     let mut supervisor = composition::build_native(
@@ -171,25 +210,23 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     if is_doctor {
+        if config.model_readiness() == ModelReadiness::Unconfigured {
+            let report =
+                doctor_report(&config, &session, supervisor.diagnostics(), "unconfigured")?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            supervisor.shutdown().await;
+            return Ok(());
+        }
         // Surface legacy env-var warnings even when the user only ran
         // `huginn doctor`. resolve_api_key is the single place that knows
         // the canonical->legacy fallback order.
-        let resolved_key = config.resolve_api_key()?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "workspace": session.workspace,
-                "database": config.db,
-                "provider": config.provider,
-                "base_url": config.base_url,
-                "model": config.model,
-                "api_key_env": config.api_key_env,
-                "api_key_resolved": resolved_key.is_some(),
-                "mcp_servers": config.mcp.iter().map(|c| &c.name).collect::<Vec<_>>(),
-                "services": supervisor.diagnostics(),
-                "rook_compatibility": "unsupported",
-            }))?
-        );
+        let readiness = match config.model_readiness() {
+            ModelReadiness::Ready => "ready",
+            ModelReadiness::Unconfigured => "unconfigured",
+            ModelReadiness::Invalid => "invalid",
+        };
+        let report = doctor_report(&config, &session, supervisor.diagnostics(), readiness)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
         supervisor.shutdown().await;
         return Ok(());
     }
@@ -249,6 +286,10 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             if line.is_empty() {
+                continue;
+            }
+            if config.model_readiness() == ModelReadiness::Unconfigured {
+                eprintln!("\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.");
                 continue;
             }
             // `/compact` and `/summarize` (alias) run the same real-model
@@ -343,7 +384,9 @@ async fn tui_chat(
     use huginn_presentation::{
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
-    supervisor.register(Box::new(RatatuiPlugin::default()))?;
+    supervisor.register(Box::new(RatatuiPlugin::new(
+        config.model_readiness() == ModelReadiness::Ready,
+    )))?;
     supervisor.register(Box::new(ConversationPlugin))?;
     #[cfg(feature = "reference-extension")]
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
@@ -360,6 +403,11 @@ async fn tui_chat(
         ui.synchronize(session);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
+            if config.model_readiness() == ModelReadiness::Unconfigured {
+                ui.notice("No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.".into());
+                ui.synchronize(session);
+                continue;
+            }
             let cancel = CancellationToken::new();
             ui.begin(cancel.clone());
             let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
