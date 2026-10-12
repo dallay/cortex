@@ -139,3 +139,16 @@ async fn test_weak_reference_pattern_for_graceful_shutdown() {
     let c = counter.lock().await;
     assert_eq!(*c, 1);
 }
+
+#[tokio::test]
+async fn test_health_response_includes_app_name_and_version() {
+    let json = serde_json::json!({
+        "status": "healthy",
+        "app_name": "Rook",
+        "version": "0.1.0",
+        "providers": []
+    });
+
+    assert_eq!(json["app_name"], "Rook");
+    assert_eq!(json["version"], "0.1.0");
+}

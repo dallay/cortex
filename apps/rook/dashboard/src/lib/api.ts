@@ -130,6 +130,8 @@ export interface UpdateApiKeyRequest {
 
 export interface HealthResponse {
   status: "healthy" | "degraded" | "no_providers_configured";
+  app_name?: string;
+  version?: string;
   providers: ProviderHealth[];
 }
 
