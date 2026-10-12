@@ -26,10 +26,8 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
     for (index, message) in messages.iter().enumerate().skip(from) {
         match message.role {
             Role::User => last_user = Some(index),
-            Role::Assistant if message.tool_calls.is_empty() => {
-                if last_user.is_some() {
-                    ends.push(index + 1);
-                }
+            Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
+                ends.push(index + 1);
             }
             _ => {}
         }
@@ -161,10 +159,8 @@ mod tests {
         for (index, message) in messages.iter().enumerate() {
             match message.role {
                 Role::User => last_user = Some(index),
-                Role::Assistant if message.tool_calls.is_empty() => {
-                    if last_user.is_some() {
-                        expected.push(index + 1);
-                    }
+                Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
+                    expected.push(index + 1);
                 }
                 _ => {}
             }
