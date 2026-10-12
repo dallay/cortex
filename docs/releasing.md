@@ -74,10 +74,12 @@ inferred from one another.
 
 ### GitHub Releases — required
 
-A Rook release contains only its archives and checksums. Asset names include
-the product and target, for example `rook-v1.2.3-x86_64-unknown-linux-gnu.tar.gz`.
-Archives contain the binary and `SHA256SUMS`. A release summary records the
-version, tag, SHA, and distribution job results.
+A Rook release contains its archives and separate `.sha256` checksum sidecars.
+Asset names include the product and target, for example
+`rook-v1.2.3-x86_64-unknown-linux-gnu.tar.gz`. Each sidecar contains the SHA-256
+checksum for its corresponding `.tar.gz` or `.zip` archive; use that sidecar to
+verify the downloaded archive. The archives do not contain `SHA256SUMS`. A
+release summary records the version, tag, SHA, and distribution job results.
 
 ### Cargo — `cargo install --git`
 
@@ -102,9 +104,10 @@ version with different contents.
 ### Docker — required for Rook
 
 The Rook image uses a prepared Linux/amd64 binary at
-`docker-context/rook-amd64`. It runs as a non-root user and exposes port 3773.
-Multi-architecture publication remains disabled until every target has
-product-specific build and smoke-test evidence.
+`docker-context/rook-amd64`. It runs as a non-root user, exposes port 8080,
+and uses port 8080 for its health check. Multi-architecture publication
+remains disabled until every target has product-specific build and smoke-test
+evidence.
 
 ### Huginn — future distribution
 
