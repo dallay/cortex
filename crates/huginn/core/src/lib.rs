@@ -1,5 +1,6 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
 pub mod kernel;
+pub mod providers;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -20,6 +21,8 @@ pub enum AgentError {
     Session(String),
     #[error("composition: {0}")]
     Composition(String),
+    #[error(transparent)]
+    Provider(#[from] providers::ProviderError),
     #[error("operation cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -98,6 +101,17 @@ pub enum ModelDelta {
 }
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
+    /// Static adapters are configured by default; sentinels and routers report readiness.
+    fn is_configured(&self) -> bool {
+        true
+    }
+    /// Fix the inference identity for one entire turn, including compaction.
+    /// Static providers keep their existing implementation. Routers return a
+    /// revocable snapshot; callers must reuse it rather than pin each request.
+    async fn pin_turn(&self, _cancel: CancellationToken) -> Result<Option<Arc<dyn ModelProvider>>> {
+        Ok(None)
+    }
+
     async fn stream(
         &self,
         request: ModelRequest,

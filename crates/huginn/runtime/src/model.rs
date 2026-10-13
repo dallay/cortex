@@ -297,6 +297,9 @@ impl SseParser {
 pub struct UnconfiguredModelProvider;
 #[async_trait]
 impl ModelProvider for UnconfiguredModelProvider {
+    fn is_configured(&self) -> bool {
+        false
+    }
     async fn stream(
         &self,
         _request: ModelRequest,

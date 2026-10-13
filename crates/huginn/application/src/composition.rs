@@ -1,4 +1,7 @@
-use crate::loop_engine::{LoopConfig, StandardLoop};
+use crate::{
+    loop_engine::{LoopConfig, StandardLoop},
+    providers::ProvidersPlugin,
+};
 use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
@@ -24,14 +27,12 @@ pub struct ModelPlugin(pub Arc<dyn ModelProvider>);
 #[async_trait]
 impl Plugin for ModelPlugin {
     fn manifest(&self) -> Manifest {
-        Manifest {
-            id: "core.model".into(),
-            provides: vec![model_id()],
-            requires: vec![],
-        }
+        ProvidersPlugin::with_legacy(self.0.clone()).manifest()
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
-        ctx.provide(model_id(), ModelService(self.0.clone()))
+        ProvidersPlugin::with_legacy(self.0.clone())
+            .activate(ctx)
+            .await
     }
 }
 pub struct ToolsPlugin(pub Arc<dyn ToolRegistry>);
