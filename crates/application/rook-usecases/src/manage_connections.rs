@@ -1653,6 +1653,16 @@ fn validate_provider_config(
     provider_kind: ProviderKind,
     config: &ConnectionConfig,
 ) -> Result<(), ValidationError> {
+    if let Some(base_url) = config.base_url.as_deref() {
+        if reqwest::Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(is_cloud_metadata_host))
+            .unwrap_or(false)
+        {
+            return Err(ValidationError::CloudMetadataEndpointNotAllowed);
+        }
+    }
+
     if provider_kind != ProviderKind::AzureOpenAI {
         return Ok(());
     }
@@ -1687,6 +1697,33 @@ fn validate_provider_config(
         return Err(ValidationError::AzureOpenAIRequiresEndpoint);
     }
     Ok(())
+}
+
+/// Block cloud instance-metadata destinations without blocking private
+/// self-hosted providers (for example local Ollama or an internal gateway).
+fn is_cloud_metadata_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if matches!(
+        host.as_str(),
+        "metadata.google.internal"
+            | "metadata.google"
+            | "instance-data.ec2.internal"
+            | "metadata.azure.com"
+            | "metadata.tencentyun.com"
+            | "metadata.oraclecloud.com"
+    ) {
+        return true;
+    }
+
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            let octets = ip.octets();
+            (octets[0] == 169 && octets[1] == 254)
+                || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
+        }
+        Ok(std::net::IpAddr::V6(ip)) => ip.to_string().eq_ignore_ascii_case("fd00:ec2::254"),
+        Err(_) => false,
+    }
 }
 
 fn validate_provider_auth_type(
@@ -3720,5 +3757,50 @@ mod tests {
                     "refresh_registry should be called once after delete"
                 );
             });
+    }
+
+    fn connection_config(base_url: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: rook_core::QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: Some(base_url.to_string()),
+        }
+    }
+
+    #[test]
+    fn provider_config_rejects_cloud_metadata_ip() {
+        let result = validate_provider_config(
+            ProviderKind::OpenAI,
+            &connection_config("http://169.254.169.254/latest/meta-data/"),
+        );
+
+        assert!(result.is_err(), "cloud metadata addresses must be rejected");
+    }
+
+    #[test]
+    fn provider_config_rejects_cloud_metadata_hostname() {
+        let result = validate_provider_config(
+            ProviderKind::Gemini,
+            &connection_config("http://metadata.google.internal/"),
+        );
+
+        assert!(result.is_err(), "known metadata hostnames must be rejected");
+    }
+
+    #[test]
+    fn provider_config_allows_explicit_private_provider_endpoints() {
+        for (kind, url) in [
+            (ProviderKind::OpenAI, "http://10.0.0.12:8080/v1"),
+            (ProviderKind::Ollama, "http://127.0.0.1:11434"),
+        ] {
+            assert!(
+                validate_provider_config(kind, &connection_config(url)).is_ok(),
+                "explicit self-hosted endpoint should remain supported: {url}"
+            );
+        }
     }
 }

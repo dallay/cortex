@@ -148,6 +148,7 @@ pub enum ValidationError {
     OAuthFieldMissing(&'static str),
     OAuthEmailInvalid,
     OAuthExpiresAtPast,
+    CloudMetadataEndpointNotAllowed,
     AzureOpenAIRequiresEndpoint,
     AzureOpenAIRequiresDeployment,
     AzureOpenAIRequiresOAuth,
@@ -173,6 +174,12 @@ impl std::fmt::Display for ValidationError {
             Self::OAuthFieldMissing(field) => write!(f, "OAuth {field} must not be empty"),
             Self::OAuthEmailInvalid => write!(f, "OAuth email format is invalid"),
             Self::OAuthExpiresAtPast => write!(f, "OAuth expires_at must be in the future"),
+            Self::CloudMetadataEndpointNotAllowed => {
+                write!(
+                    f,
+                    "provider endpoint must not target cloud metadata services"
+                )
+            }
             Self::AzureOpenAIRequiresEndpoint => {
                 write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
             }
