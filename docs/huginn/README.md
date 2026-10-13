@@ -33,6 +33,29 @@ Interactive `chat` (or no subcommand) uses the Ratatui TUI when attached to a
 terminal. `--line-mode` selects the line-oriented recovery adapter; `--json`
 emits machine-readable events instead.
 
+### Chat suggestions
+
+- Type `/` to open the active command catalog with descriptions.
+  Search accepts prefixes and gapped characters, for example `/exinfo`.
+- Type `@` at a token start to search workspace filenames.
+  Paths with spaces are inserted as `@"docs/my guide.md"`.
+  The reference is **text only**: it never reads or attaches file contents.
+- Use ↑/↓ to select, Tab to complete without running, and Esc to close.
+  Enter runs the selected command; for files and arguments it only completes.
+  A later Enter sends the draft. Alt/Shift+Enter and Ctrl+J insert a newline.
+- Plugins can declare descriptions, argument values, and paths through
+  `CommandMetadata` and `Contributions::register_command`. Existing commands
+  without metadata keep working; undeclared arguments are never inferred.
+  Summary commands are suggested only with a configured model.
+- The filename index is built in the background once per chat connection,
+  with a 20,000-entry walk limit. Restart the chat to refresh it.
+  It excludes `.git`, `target`, `node_modules`, `.pnpm-store`, `.cache`, and
+  symbolic links; it does not interpret `.gitignore`. It reports a partial
+  index or failure. It is not a security boundary against concurrent
+  filesystem changes.
+- Approvals and dialogs take priority over suggestions. Completing text
+  never grants permissions; a revoked plugin selection never runs its replacement.
+
 `doctor` validates configuration and reports services without contacting the
 model or launching MCP. `huginn doctor` succeeds without model settings or
 credentials and reports `model_readiness: "unconfigured"`. Inference commands

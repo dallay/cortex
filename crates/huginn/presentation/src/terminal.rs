@@ -1,4 +1,5 @@
 use crate::{
+    completion::{Acceptance, Completion as Suggestions},
     contributions::Contributions,
     state::{approval_preview, safe, Editor, Ui},
     Connection, Interaction, Presentation,
@@ -17,8 +18,8 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Color, Style},
-    text::Line,
-    widgets::{Block, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, List, ListItem, ListState, Paragraph},
     Terminal, TerminalOptions, Viewport,
 };
 use std::{
@@ -88,6 +89,7 @@ impl Drop for TerminalGuard {
 }
 struct Driver {
     screen: Screen,
+    model_configured: bool,
     guard: Arc<TerminalGuard>,
     ui: Arc<Ui>,
     _done: Completion,
@@ -159,6 +161,7 @@ impl Presentation for Ratatui {
         )?;
         let stop = CancellationToken::new();
         let (ui, prompts) = Ui::new(session, self.contributions.clone(), stop.clone());
+        ui.start_file_index(session.workspace.clone());
         if !self.model_configured {
             ui.notice(
                 "No model configured. Configure a provider and restart Huginn to enable inference."
@@ -174,6 +177,7 @@ impl Presentation for Ratatui {
             screen,
             guard,
             ui: ui.clone(),
+            model_configured: self.model_configured,
             _done: Completion(done),
         };
         // The driver is the ONLY reader. Timed, nonblocking Crossterm polling
@@ -237,6 +241,7 @@ fn markdown(lines: Vec<String>) -> Vec<Line<'static>> {
 }
 struct View {
     editor: Editor,
+    completion: Suggestions,
     tail: String,
     status: String,
     status_error: bool,
@@ -277,6 +282,7 @@ impl Driver {
             let mut state = self.ui.lock();
             let view = View {
                 editor: state.editor.clone(),
+                completion: state.completion.clone(),
                 tail: state.tail.clone(),
                 status: state.status.clone(),
                 status_error: state.status_error,
@@ -394,16 +400,31 @@ impl Driver {
             }
             let [tail, composer, status] = Layout::vertical([
                 Constraint::Min(1),
-                Constraint::Length(4),
+                Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 { 3 } else { 4 }),
                 Constraint::Length(1),
             ])
             .areas(area);
+            let popup_height = if view.completion.items.is_empty() { 0 } else { (view.completion.items.len() as u16 + 2).min(7).min(tail.height) };
+            let [tail, popup] = Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
             let lines = wrapped(&view.tail, tail.width);
             let offset = lines.len().saturating_sub(usize::from(tail.height));
             frame.render_widget(
                 Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
                 tail,
             );
+            if popup_height > 0 {
+                let name_width = view.completion.items.iter().map(|item| unicode_width::UnicodeWidthStr::width(item.label.as_str())).max().unwrap_or(0).min(usize::from(popup.width / 2));
+                let items: Vec<_> = view.completion.items.iter().map(|item| {
+                    let label = safe(&item.label);
+                    let padding = name_width.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
+                    ListItem::new(Line::from(vec![Span::raw(label), Span::raw(" ".repeat(padding + 2)), Span::styled(safe(&item.description).replace(['\n', '\t'], " "), Style::default().fg(Color::DarkGray))]))
+                }).collect();
+                let list = List::new(items).block(Block::bordered().title(format!("{} — ↑↓ · Tab · Enter · Esc", view.completion.title())))
+                    .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black))
+                    .highlight_symbol("› ");
+                let mut selection = ListState::default().with_selected(Some(view.completion.selected));
+                frame.render_stateful_widget(list, popup, &mut selection);
+            }
             let editor_width = composer.width.saturating_sub(2).max(1);
             let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
             let row = before.len().saturating_sub(1);
@@ -493,6 +514,7 @@ impl Driver {
                         self.input(event, &prompts);
                         dirty = true;
                     }
+                    dirty |= self.ui.refresh_completion(self.model_configured);
                     if dirty { self.draw()?; dirty = false; }
                 }
                 _ = self.ui.dirty.notified() => dirty = true,
@@ -500,10 +522,15 @@ impl Driver {
         }
     }
     fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>) {
+        self.ui.refresh_completion(self.model_configured);
         let mut state = self.ui.lock();
         if let Event::Paste(text) = &event {
             if state.modal.is_none() && state.plugin_dialog.is_none() {
                 state.editor.insert(text);
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                completion.dismiss(editor);
             }
             return;
         }
@@ -572,6 +599,53 @@ impl Driver {
                 }
                 _ => {}
             }
+            return;
+        }
+        if !state.completion.items.is_empty() {
+            match key.code {
+                KeyCode::Esc => {
+                    let crate::state::UiState {
+                        editor, completion, ..
+                    } = &mut *state;
+                    completion.dismiss(editor);
+                    return;
+                }
+                KeyCode::Up if key.modifiers.is_empty() => {
+                    state.completion.navigate(false);
+                    return;
+                }
+                KeyCode::Down if key.modifiers.is_empty() => {
+                    state.completion.navigate(true);
+                    return;
+                }
+                KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
+                    let execute = key.code == KeyCode::Enter && !state.busy;
+                    let crate::state::UiState {
+                        editor, completion, ..
+                    } = &mut *state;
+                    match completion.accept(editor, execute) {
+                        Some(Acceptance::Inserted) => return,
+                        Some(Acceptance::Command(Some(command))) => {
+                            let line = state.editor.text.trim().to_string();
+                            let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
+                            drop(state);
+                            self.ui.dispatch_handle(&command, line[boundary..].trim());
+                            self.ui.lock().editor = Editor::default();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        if key.code == KeyCode::Enter
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+            && state.completion.blocks_submission(&state.editor)
+        {
+            state.status = "The command changed; edit the draft before running it".into();
             return;
         }
         match key.code {
