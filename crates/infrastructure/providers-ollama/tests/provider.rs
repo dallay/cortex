@@ -41,6 +41,39 @@ async fn health_check_returns_warning_on_local_ollama_no_key() {
 }
 
 #[tokio::test]
+async fn health_check_does_not_follow_redirects() {
+    let target = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::any())
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&target)
+        .await;
+    let source = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/tags"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(302)
+                .insert_header("Location", format!("{}/target", target.uri())),
+        )
+        .mount(&source)
+        .await;
+
+    let provider = OllamaProvider::new(OllamaProviderConfig {
+        id: ProviderId::new("ollama-redirect-test"),
+        base_url: source.uri(),
+        models: vec![ModelId::new("llama3")],
+        timeout_secs: 10,
+        api_key: None,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+
+    assert!(matches!(status, HealthStatus::Unhealthy { .. }));
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn health_check_returns_warning_on_no_key_with_empty_string() {
     // Defensive: empty-string api_key is also treated as "no key".
     let server = wiremock::MockServer::start().await;

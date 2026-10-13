@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use axum::routing::get;
+use axum::Router;
 
 use tokio::net::TcpListener;
 use tracing::info;
@@ -65,13 +66,23 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
     info!(addr = %addr, "starting rook server");
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, router)
+    axum::serve(listener, make_service(router))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server error")?;
 
     Ok(())
 }
+
+fn make_service(
+    router: Router,
+) -> axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+    router.into_make_service_with_connect_info::<SocketAddr>()
+}
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;
 
 async fn shutdown_signal() {
     use tokio::signal;

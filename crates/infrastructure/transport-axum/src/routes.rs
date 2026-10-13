@@ -186,29 +186,14 @@ pub async fn login_rate_limiter_middleware(
     }
 }
 
-/// Extract client IP from request — checks X-Forwarded-For, X-Real-IP headers
-/// (for reverse-proxy setups), then falls back to axum's ConnectInfo extension.
+/// Extract client IP from the TCP connection only.
+///
+/// `X-Forwarded-For` and `X-Real-IP` are intentionally ignored: they are
+/// client-controlled and must not feed rate limiting or audit decisions
+/// unless an explicitly configured trusted proxy strips them first.
+/// Proxy support is a follow-up (TRUSTED_PROXIES CIDR); until then the
+/// socket address from `ConnectInfo` is the only trusted source.
 fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
-    // Prefer X-Forwarded-For header (first comma-separated IP)
-    if let Some(fwd) = request.headers().get("x-forwarded-for") {
-        if let Ok(s) = fwd.to_str() {
-            let ip = s.split(',').next().map(|s| s.trim()).unwrap_or(s);
-            if let Ok(addr) = ip.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Fall back to X-Real-IP header
-    if let Some(real) = request.headers().get("x-real-ip") {
-        if let Ok(s) = real.to_str() {
-            if let Ok(addr) = s.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Last resort: connect info from the socket
     request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()

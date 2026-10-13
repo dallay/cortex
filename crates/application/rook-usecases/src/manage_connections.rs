@@ -1096,6 +1096,16 @@ impl ManageConnections {
         let mut errors = Vec::new();
 
         for conn in connections.iter().filter(|c| c.is_active) {
+            if let Err(error) = validate_provider_config(conn.provider_kind, &conn.config) {
+                tracing::warn!(
+                    connection_id = %conn.id,
+                    error = %error,
+                    "invalid stored provider configuration, skipping provider"
+                );
+                errors.push(format!("{}: invalid config - {}", conn.id, error));
+                continue;
+            }
+
             let decrypted = match self.decrypt_credentials(&conn.credentials) {
                 Ok(d) => d,
                 Err(e) => {
@@ -1653,6 +1663,16 @@ fn validate_provider_config(
     provider_kind: ProviderKind,
     config: &ConnectionConfig,
 ) -> Result<(), ValidationError> {
+    if let Some(base_url) = config.base_url.as_deref() {
+        if reqwest::Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(is_cloud_metadata_host))
+            .unwrap_or(false)
+        {
+            return Err(ValidationError::CloudMetadataEndpointNotAllowed);
+        }
+    }
+
     if provider_kind != ProviderKind::AzureOpenAI {
         return Ok(());
     }
@@ -1687,6 +1707,41 @@ fn validate_provider_config(
         return Err(ValidationError::AzureOpenAIRequiresEndpoint);
     }
     Ok(())
+}
+
+/// Block cloud instance-metadata destinations without blocking private
+/// self-hosted providers (for example local Ollama or an internal gateway).
+fn is_cloud_metadata_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(&host);
+    if matches!(
+        host,
+        "metadata.google.internal"
+            | "metadata.google"
+            | "instance-data.ec2.internal"
+            | "metadata.azure.com"
+            | "metadata.tencentyun.com"
+            | "metadata.oraclecloud.com"
+    ) {
+        return true;
+    }
+
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => is_cloud_metadata_ipv4(ip),
+        Ok(std::net::IpAddr::V6(ip)) => ip
+            .to_ipv4()
+            .map(is_cloud_metadata_ipv4)
+            .unwrap_or_else(|| ip.to_string().eq_ignore_ascii_case("fd00:ec2::254")),
+        Err(_) => false,
+    }
+}
+
+fn is_cloud_metadata_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    (octets[0] == 169 && octets[1] == 254) || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
 }
 
 fn validate_provider_auth_type(
@@ -3719,6 +3774,112 @@ mod tests {
                     1,
                     "refresh_registry should be called once after delete"
                 );
+            });
+    }
+
+    fn connection_config(base_url: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: rook_core::QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: Some(base_url.to_string()),
+        }
+    }
+
+    #[test]
+    fn provider_config_rejects_normalized_cloud_metadata_hosts() {
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://100.100.100.200/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[::ffff:100.100.100.200]/",
+            "http://metadata.google.internal./",
+            "http://METADATA.GOOGLE.INTERNAL/",
+            "http://[fd00:ec2::254]/",
+        ] {
+            assert!(
+                matches!(
+                    validate_provider_config(ProviderKind::OpenAI, &connection_config(url)),
+                    Err(ValidationError::CloudMetadataEndpointNotAllowed)
+                ),
+                "expected cloud metadata validation error for {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_config_allows_explicit_private_provider_endpoints() {
+        for (kind, url) in [
+            (ProviderKind::OpenAI, "http://10.0.0.12:8080/v1"),
+            (ProviderKind::Ollama, "http://127.0.0.1:11434"),
+        ] {
+            assert!(
+                validate_provider_config(kind, &connection_config(url)).is_ok(),
+                "explicit self-hosted endpoint should remain supported: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_registry_skips_stored_metadata_endpoint_before_decrypting() {
+        struct PanicOnDecrypt;
+
+        impl KeyManager for PanicOnDecrypt {
+            fn encrypt(
+                &self,
+                plaintext: &str,
+            ) -> Result<String, rook_core::CredentialEncryptionError> {
+                Ok(plaintext.to_string())
+            }
+
+            fn decrypt(
+                &self,
+                _ciphertext: &str,
+            ) -> Result<String, rook_core::CredentialEncryptionError> {
+                panic!("invalid provider config must be checked before decrypting")
+            }
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let conn = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("legacy-metadata-provider"),
+                    name: "legacy metadata endpoint".to_string(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("encrypted-key".to_string()),
+                    },
+                    config: connection_config("http://169.254.169.254/latest/meta-data/"),
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let repo = Arc::new(RepoWithConnections {
+                    connections: vec![conn],
+                });
+                let registry = Arc::new(MockRegistry::new());
+                let usecases = ManageConnections::new(
+                    repo,
+                    registry.clone(),
+                    Arc::new(PanicOnDecrypt),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                usecases
+                    .refresh_registry()
+                    .await
+                    .expect("invalid stored config is skipped, not fatal");
+
+                assert!(registry.providers().is_empty());
             });
     }
 }

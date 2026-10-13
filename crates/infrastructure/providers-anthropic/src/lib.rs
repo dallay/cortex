@@ -220,6 +220,7 @@ impl AnthropicProvider {
     pub fn new(config: AnthropicProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Arc::new(Self { config, client }))
     }

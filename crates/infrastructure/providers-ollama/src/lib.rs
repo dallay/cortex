@@ -90,6 +90,7 @@ impl OllamaProvider {
     pub fn new(config: OllamaProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Arc::new(Self { config, client }))
     }

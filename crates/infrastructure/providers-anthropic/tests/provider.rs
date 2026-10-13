@@ -32,6 +32,61 @@ async fn health_check_returns_unknown_when_not_supported() {
 }
 
 #[tokio::test]
+async fn complete_does_not_follow_redirects() {
+    let target = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&target)
+        .await;
+    let source = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("Location", format!("{}/target", target.uri())),
+        )
+        .mount(&source)
+        .await;
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-redirect-test"),
+        api_key: "sk-test".to_string(),
+        base_url: source.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let request = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("claude-3-5-sonnet"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: MessageContent::Text("hello".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(10),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: ApiKeyRestrictions::default(),
+    };
+
+    let result = provider.complete(&request).await;
+
+    assert!(result.is_err(), "a redirect response must fail the request");
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn complete_returns_valid_response_from_mock_server() {
     // T-05 AC: complete() returns Ok(CompletionResponse) with matching content and token counts.
     let mock_server = MockServer::start().await;
