@@ -681,11 +681,7 @@ onUnmounted(stopOAuthPolling);
             <Label id="oauthFlowTypeLabel" for="oauthFlowType">
               {{ t('providers.oauth.flowType') }}
             </Label>
-            <!-- id mirrors the trigger below for static analysers (Sonar);
-                 SelectRoot renders no element itself (inheritAttrs: false),
-                 so the only runtime id stays on the focusable trigger. -->
             <Select
-              id="oauthFlowType"
               v-model="form.oauthFlowType"
               :disabled="oauthBusy"
             >
