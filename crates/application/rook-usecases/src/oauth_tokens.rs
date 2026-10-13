@@ -32,7 +32,7 @@ pub struct OAuthTokenManager {
 /// servers. The values are never sourced from user input, so the SSRF
 /// invariant (no arbitrary user-supplied URLs) is preserved.
 /// Additionally, every override must use HTTPS or loopback HTTP (see
-/// [`test_endpoint_override_allowed`]), so OAuth secrets can never be
+/// `test_endpoint_override_allowed`), so OAuth secrets can never be
 /// redirected to a remote cleartext endpoint.
 #[derive(Debug, Default, Clone)]
 pub struct TokenEndpointOverrides {
