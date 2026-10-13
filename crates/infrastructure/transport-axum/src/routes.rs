@@ -186,29 +186,14 @@ pub async fn login_rate_limiter_middleware(
     }
 }
 
-/// Extract client IP from request — checks X-Forwarded-For, X-Real-IP headers
-/// (for reverse-proxy setups), then falls back to axum's ConnectInfo extension.
+/// Extract client IP from the TCP connection only.
+///
+/// `X-Forwarded-For` and `X-Real-IP` are intentionally ignored: they are
+/// client-controlled and must not feed rate limiting or audit decisions
+/// unless an explicitly configured trusted proxy strips them first.
+/// Proxy support is a follow-up (TRUSTED_PROXIES CIDR); until then the
+/// socket address from `ConnectInfo` is the only trusted source.
 fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
-    // Prefer X-Forwarded-For header (first comma-separated IP)
-    if let Some(fwd) = request.headers().get("x-forwarded-for") {
-        if let Ok(s) = fwd.to_str() {
-            let ip = s.split(',').next().map(|s| s.trim()).unwrap_or(s);
-            if let Ok(addr) = ip.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Fall back to X-Real-IP header
-    if let Some(real) = request.headers().get("x-real-ip") {
-        if let Ok(s) = real.to_str() {
-            if let Ok(addr) = s.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Last resort: connect info from the socket
     request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
@@ -1000,4 +985,56 @@ fn cache_routes(usecases: Usecases) -> Router {
         )
         .layer(middleware::from_fn(authz::require_admin))
         .layer(axum::extract::Extension(cache))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, SocketAddr};
+
+    use axum::extract::ConnectInfo;
+
+    use super::extract_client_ip;
+
+    fn request_with_ips(connect_ip: IpAddr, xff: Option<&str>, x_real_ip: Option<&str>) -> axum::extract::Request {
+        let mut request = axum::extract::Request::builder()
+            .uri("/login")
+            .body(axum::body::Body::empty())
+            .expect("request");
+        if let Some(value) = xff {
+            request.headers_mut().insert(
+                "x-forwarded-for",
+                value.parse().expect("xff header"),
+            );
+        }
+        if let Some(value) = x_real_ip {
+            request.headers_mut().insert(
+                "x-real-ip",
+                value.parse().expect("x-real-ip header"),
+            );
+        }
+        let socket = SocketAddr::new(connect_ip, 54211);
+        request.extensions_mut().insert(ConnectInfo(socket));
+        request
+    }
+
+    #[test]
+    fn extract_client_ip_ignores_spoofed_proxy_headers() {
+        let request = request_with_ips(
+            IpAddr::from([127, 0, 0, 1]),
+            Some("9.9.9.9, 10.0.0.1"),
+            Some("8.8.8.8"),
+        );
+
+        assert_eq!(extract_client_ip(&request), IpAddr::from([127, 0, 0, 1]));
+    }
+
+    #[test]
+    fn extract_client_ip_uses_connect_info_without_headers() {
+        let request = request_with_ips(IpAddr::from([192, 168, 1, 20]), None, None);
+
+        assert_eq!(
+            extract_client_ip(&request),
+            IpAddr::from([192, 168, 1, 20])
+        );
+    }
 }
