@@ -41,6 +41,19 @@ pub struct ManageConnections {
     oauth_flows: DashMap<String, Arc<tokio::sync::Mutex<PendingOAuthFlow>>>,
     oauth_states: DashMap<String, String>,
     oauth_http_client: Option<reqwest::Client>,
+    oauth_endpoint_overrides: OAuthEndpointOverrides,
+}
+
+/// Code-level test hook for OAuth HTTP endpoints.
+///
+/// Production uses `OAuthEndpointOverrides::default()` (all `None`), which
+/// keeps the fixed provider endpoints. Integration tests point these at
+/// local mock servers. Values are never sourced from user input or DTOs.
+#[derive(Debug, Default, Clone)]
+pub struct OAuthEndpointOverrides {
+    pub azure_token_url: Option<String>,
+    pub gemini_token_url: Option<String>,
+    pub azure_devicecode_url: Option<String>,
 }
 
 impl ManageConnections {
@@ -50,10 +63,32 @@ impl ManageConnections {
         key_manager: Arc<dyn KeyManager>,
         builder: Arc<dyn ProviderBuilderPort>,
     ) -> Self {
-        let oauth_token_manager = Arc::new(crate::oauth_tokens::OAuthTokenManager::new(
-            repo.clone(),
-            key_manager.clone(),
-        ));
+        Self::with_oauth_endpoint_overrides(
+            repo,
+            registry,
+            key_manager,
+            builder,
+            OAuthEndpointOverrides::default(),
+        )
+    }
+
+    pub fn with_oauth_endpoint_overrides(
+        repo: Arc<dyn ProviderRepositoryPort>,
+        registry: Arc<dyn ProviderRegistryPort>,
+        key_manager: Arc<dyn KeyManager>,
+        builder: Arc<dyn ProviderBuilderPort>,
+        oauth_endpoint_overrides: OAuthEndpointOverrides,
+    ) -> Self {
+        let oauth_token_manager = Arc::new(
+            crate::oauth_tokens::OAuthTokenManager::with_endpoint_overrides(
+                repo.clone(),
+                key_manager.clone(),
+                crate::oauth_tokens::TokenEndpointOverrides {
+                    azure_token_url: oauth_endpoint_overrides.azure_token_url.clone(),
+                    gemini_token_url: oauth_endpoint_overrides.gemini_token_url.clone(),
+                },
+            ),
+        );
         let oauth_http_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(20))
@@ -68,6 +103,7 @@ impl ManageConnections {
             oauth_flows: DashMap::new(),
             oauth_states: DashMap::new(),
             oauth_http_client,
+            oauth_endpoint_overrides,
         }
     }
 
@@ -441,7 +477,8 @@ impl ManageConnections {
         &self,
         connection: &PendingOAuthConnection,
     ) -> ManageConnectionsResult<DeviceCodeResponse> {
-        let endpoint = device_code_endpoint(connection)?;
+        let endpoint =
+            device_code_endpoint_with_overrides(connection, &self.oauth_endpoint_overrides)?;
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Err(ManageConnectionsError::OAuth(
                 "OAuth HTTP client unavailable".to_string(),
@@ -478,7 +515,8 @@ impl ManageConnections {
                 "authorization code missing".into(),
             ));
         }
-        let endpoint = token_endpoint(&flow.connection)?;
+        let endpoint =
+            token_endpoint_with_overrides(&flow.connection, &self.oauth_endpoint_overrides)?;
         let mut form = vec![
             ("grant_type", "authorization_code".to_string()),
             ("client_id", flow.connection.client_id.clone()),
@@ -517,15 +555,17 @@ impl ManageConnections {
             return;
         };
         flow.next_poll_at = Utc::now().timestamp() + flow.poll_interval_secs as i64;
-        let endpoint = match token_endpoint(&flow.connection) {
-            Ok(endpoint) => endpoint,
-            Err(_) => {
-                flow.status = "failed".to_string();
-                flow.message = Some("Device authorization configuration is invalid".to_string());
-                clear_flow_secrets(flow);
-                return;
-            }
-        };
+        let endpoint =
+            match token_endpoint_with_overrides(&flow.connection, &self.oauth_endpoint_overrides) {
+                Ok(endpoint) => endpoint,
+                Err(_) => {
+                    flow.status = "failed".to_string();
+                    flow.message =
+                        Some("Device authorization configuration is invalid".to_string());
+                    clear_flow_secrets(flow);
+                    return;
+                }
+            };
         let form = vec![
             (
                 "grant_type",
@@ -1431,24 +1471,41 @@ fn authorization_endpoint(
     }
 }
 
-fn token_endpoint(connection: &PendingOAuthConnection) -> ManageConnectionsResult<String> {
+fn token_endpoint_with_overrides(
+    connection: &PendingOAuthConnection,
+    overrides: &OAuthEndpointOverrides,
+) -> ManageConnectionsResult<String> {
     match connection.provider_kind {
-        ProviderKind::AzureOpenAI => Ok(format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-            tenant_segment(connection)?
-        )),
-        ProviderKind::Gemini => Ok("https://oauth2.googleapis.com/token".to_string()),
+        ProviderKind::AzureOpenAI => {
+            if let Some(override_url) = overrides.azure_token_url.clone() {
+                return Ok(override_url);
+            }
+            Ok(format!(
+                "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+                tenant_segment(connection)?
+            ))
+        }
+        ProviderKind::Gemini => Ok(overrides
+            .gemini_token_url
+            .clone()
+            .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string())),
         _ => Err(ManageConnectionsError::OAuth(
             "OAuth refresh is not supported for this provider".to_string(),
         )),
     }
 }
 
-fn device_code_endpoint(connection: &PendingOAuthConnection) -> ManageConnectionsResult<String> {
+fn device_code_endpoint_with_overrides(
+    connection: &PendingOAuthConnection,
+    overrides: &OAuthEndpointOverrides,
+) -> ManageConnectionsResult<String> {
     if connection.provider_kind != ProviderKind::AzureOpenAI {
         return Err(ManageConnectionsError::OAuth(
             "Device Code is only supported for Azure OpenAI".to_string(),
         ));
+    }
+    if let Some(override_url) = overrides.azure_devicecode_url.clone() {
+        return Ok(override_url);
     }
     Ok(format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",

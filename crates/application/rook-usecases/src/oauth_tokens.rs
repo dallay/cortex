@@ -21,6 +21,20 @@ pub struct OAuthTokenManager {
     key_manager: Arc<dyn KeyManager>,
     client: Option<Client>,
     refresh_locks: DashMap<ConnectionId, Arc<tokio::sync::Mutex<()>>>,
+    endpoint_overrides: TokenEndpointOverrides,
+}
+
+/// Code-level test hook for OAuth token endpoints.
+///
+/// Production leaves every field as `None`, which keeps the fixed
+/// provider endpoints (`login.microsoftonline.com`,
+/// `oauth2.googleapis.com`). Integration tests set these to local mock
+/// servers. The values are never sourced from user input, so the SSRF
+/// invariant (no arbitrary user-supplied URLs) is preserved.
+#[derive(Debug, Default, Clone)]
+pub struct TokenEndpointOverrides {
+    pub azure_token_url: Option<String>,
+    pub gemini_token_url: Option<String>,
 }
 
 impl OAuthTokenManager {
@@ -37,6 +51,25 @@ impl OAuthTokenManager {
                 .build()
                 .ok(),
             refresh_locks: DashMap::new(),
+            endpoint_overrides: TokenEndpointOverrides::default(),
+        }
+    }
+
+    pub fn with_endpoint_overrides(
+        repository: Arc<dyn ProviderRepositoryPort>,
+        key_manager: Arc<dyn KeyManager>,
+        endpoint_overrides: TokenEndpointOverrides,
+    ) -> Self {
+        Self {
+            repository,
+            key_manager,
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(20))
+                .build()
+                .ok(),
+            refresh_locks: DashMap::new(),
+            endpoint_overrides,
         }
     }
 
@@ -122,20 +155,28 @@ impl OAuthTokenManager {
             .map_err(|_| CortexError::auth_failed("OAuth credentials unavailable"))?;
         let endpoint = match connection.provider_kind {
             ProviderKind::AzureOpenAI => {
-                let tenant = oauth_tenant_id.as_deref().unwrap_or("common");
-                if tenant.is_empty()
-                    || !tenant
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
-                {
-                    self.mark_refresh_failed(&mut connection).await;
-                    return Err(CortexError::auth_failed(
-                        "OAuth tenant configuration invalid",
-                    ));
+                if let Some(override_url) = self.endpoint_overrides.azure_token_url.clone() {
+                    override_url
+                } else {
+                    let tenant = oauth_tenant_id.as_deref().unwrap_or("common");
+                    if tenant.is_empty()
+                        || !tenant.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'
+                        })
+                    {
+                        self.mark_refresh_failed(&mut connection).await;
+                        return Err(CortexError::auth_failed(
+                            "OAuth tenant configuration invalid",
+                        ));
+                    }
+                    format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token")
                 }
-                format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token")
             }
-            ProviderKind::Gemini => "https://oauth2.googleapis.com/token".to_string(),
+            ProviderKind::Gemini => self
+                .endpoint_overrides
+                .gemini_token_url
+                .clone()
+                .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string()),
             _ => {
                 self.mark_refresh_failed(&mut connection).await;
                 return Err(CortexError::auth_failed(

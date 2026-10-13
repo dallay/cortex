@@ -537,3 +537,96 @@ describe("Rook auth API client", () => {
     ).toBe("csrf-from-login-body");
   });
 });
+
+describe("Rook OAuth API client", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    document.cookie = "csrf_token=; Max-Age=0; path=/";
+  });
+
+  async function apiWithFetch(fetchMock: ReturnType<typeof vi.fn>) {
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    return (await import("./api")).useApi();
+  }
+
+  function okJson(payload: unknown) {
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: {"Content-Type": "application/json"},
+    });
+  }
+
+  it("starts an OAuth flow against the provider authorize endpoint", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(okJson({csrf_token: "csrf-1"}))
+      .mockResolvedValueOnce(okJson({flowId: "flow-1"}));
+    const api = await apiWithFetch(fetchMock);
+    const payload = {
+      flowType: "authorizationCode",
+      providerRuntimeId: "azure-prod",
+      name: "Azure prod",
+      priority: 10,
+      isActive: true,
+      config: {maxConcurrent: 10},
+      clientId: "client-id",
+      redirectUri: "https://rook.example.com/api/oauth/callback",
+    } as never;
+
+    await api.startOAuthFlow("azure-openai", payload);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/oauth/azure-openai/authorize",
+      expect.objectContaining({method: "POST"}),
+    );
+  });
+
+  it("queries OAuth status by flow id only", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson({status: "pending"}));
+    const api = await apiWithFetch(fetchMock);
+
+    await api.getOAuthStatus("gemini", {flowId: "flow-1"});
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/oauth/gemini/status?flowId=flow-1",
+      expect.anything(),
+    );
+  });
+
+  it("queries OAuth status by connection id only", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson({status: "connected"}));
+    const api = await apiWithFetch(fetchMock);
+
+    await api.getOAuthStatus("gemini", {connectionId: "conn-1"});
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/oauth/gemini/status?connectionId=conn-1",
+      expect.anything(),
+    );
+  });
+
+  it("refreshes and disconnects OAuth connections", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(okJson({csrf_token: "csrf-1"}))
+      .mockResolvedValueOnce(new Response(null, {status: 204}))
+      .mockResolvedValueOnce(new Response(null, {status: 204}));
+    const api = await apiWithFetch(fetchMock);
+
+    await api.refreshOAuth("azure-openai", "conn-1");
+    await api.disconnectOAuth("azure-openai", "conn-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/oauth/azure-openai/refresh",
+      expect.objectContaining({method: "POST"}),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/oauth/azure-openai",
+      expect.objectContaining({method: "DELETE"}),
+    );
+  });
+});

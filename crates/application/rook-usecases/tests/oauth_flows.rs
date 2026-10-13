@@ -205,3 +205,245 @@ async fn azure_requires_a_deployment_and_azure_resource_endpoint() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn unsupported_provider_is_rejected() {
+    let manager = manager();
+    let err = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::OpenAI,
+            request(OAuthFlowType::AuthorizationCode),
+        )
+        .await
+        .expect_err("OpenAI has no OAuth");
+    assert!(err.to_string().contains("not supported"));
+}
+
+#[tokio::test]
+async fn missing_client_id_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.client_id = "   ".to_string();
+    let err = manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .expect_err("clientId required");
+    assert!(err.to_string().contains("clientId"));
+}
+
+#[tokio::test]
+async fn empty_name_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.name = "  ".to_string();
+    assert!(manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn zero_priority_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.priority = 0;
+    assert!(manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn invalid_threshold_order_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.config.quota_window_thresholds.warning = 0.9;
+    req.config.quota_window_thresholds.error = 0.8;
+    assert!(manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn gemini_requires_project_id() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.project_id = None;
+    let err = manager
+        .start_oauth_flow(rook_core::ProviderKind::Gemini, req)
+        .await
+        .expect_err("project required");
+    assert!(err.to_string().contains("projectId"));
+}
+
+#[tokio::test]
+async fn tenant_with_invalid_characters_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.tenant_id = Some("bad tenant!".to_string());
+    assert!(manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn unknown_connection_id_is_rejected() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.connection_id = Some(ConnectionId::new());
+    assert!(manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn flow_status_unknown_id_is_rejected() {
+    let manager = manager();
+    assert!(manager.oauth_flow_status("nope").await.is_err());
+}
+
+#[tokio::test]
+async fn complete_with_invalid_state_is_rejected() {
+    let manager = manager();
+    assert!(manager
+        .complete_oauth_authorization("bad-state", "code")
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn cancel_with_unknown_state_is_a_noop() {
+    let manager = manager();
+    manager.cancel_oauth_authorization("unknown-state").await;
+    assert!(manager.oauth_flow_status("unknown-flow").await.is_err());
+}
+
+#[tokio::test]
+async fn refresh_unknown_connection_is_rejected() {
+    let manager = manager();
+    assert!(manager
+        .refresh_oauth_connection(&ConnectionId::new())
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn disconnect_unknown_connection_is_rejected() {
+    let manager = manager();
+    assert!(manager
+        .disconnect_oauth_connection(&ConnectionId::new())
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn authorization_flow_status_is_pending_then_cancellable() {
+    let manager = manager();
+    let started = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::AuthorizationCode),
+        )
+        .await
+        .expect("flow starts");
+    let status = manager
+        .oauth_flow_status(&started.flow_id)
+        .await
+        .expect("status");
+    assert_eq!(status.status, "pending");
+    assert!(status.connection_id.is_none());
+}
+
+#[tokio::test]
+async fn device_code_start_uses_mock_endpoint() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "device_code": "device-123",
+                "user_code": "USER-CODE",
+                "verification_uri": "https://verify.example",
+                "expires_in": 600,
+                "interval": 1,
+                "message": "enter code",
+            })),
+        )
+        .mount(&server)
+        .await;
+    let manager = ManageConnections::with_oauth_endpoint_overrides(
+        Arc::new(EmptyRepository),
+        Arc::new(EmptyRegistry),
+        Arc::new(PassThroughKeyManager),
+        Arc::new(UnusedBuilder),
+        rook_usecases::manage_connections::OAuthEndpointOverrides {
+            azure_token_url: None,
+            gemini_token_url: None,
+            azure_devicecode_url: Some(server.uri()),
+        },
+    );
+    let started = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::DeviceCode),
+        )
+        .await
+        .expect("device flow starts");
+    assert_eq!(started.user_code.as_deref(), Some("USER-CODE"));
+    let status = manager
+        .oauth_flow_status(&started.flow_id)
+        .await
+        .expect("status");
+    assert_eq!(status.status, "pending");
+}
+
+#[tokio::test]
+async fn authorization_code_exchange_completes_connection() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "exchanged-access",
+                "expires_in": 3600,
+                "refresh_token": "exchanged-refresh",
+                "scope": "scope-x",
+                "id_token": "id-x",
+            })),
+        )
+        .mount(&server)
+        .await;
+    let manager = ManageConnections::with_oauth_endpoint_overrides(
+        Arc::new(EmptyRepository),
+        Arc::new(EmptyRegistry),
+        Arc::new(PassThroughKeyManager),
+        Arc::new(UnusedBuilder),
+        rook_usecases::manage_connections::OAuthEndpointOverrides {
+            azure_token_url: Some(server.uri()),
+            gemini_token_url: Some(server.uri()),
+            azure_devicecode_url: Some(server.uri()),
+        },
+    );
+    let started = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::AuthorizationCode),
+        )
+        .await
+        .expect("flow starts");
+    let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
+    let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let state = query.get("state").cloned().unwrap();
+    let status = manager
+        .complete_oauth_authorization(&state, "auth-code")
+        .await
+        .expect("exchange completes");
+    assert_eq!(status.status, "connected");
+    assert!(status.connection_id.is_some());
+    // State is single-use.
+    assert!(manager
+        .complete_oauth_authorization(&state, "auth-code")
+        .await
+        .is_err());
+}
