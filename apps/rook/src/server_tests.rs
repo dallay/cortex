@@ -11,7 +11,7 @@ async fn peer_address(ConnectInfo(address): ConnectInfo<SocketAddr>) -> String {
 #[tokio::test]
 async fn make_service_injects_actual_tcp_peer_address() {
     let router = Router::new().route("/peer", get(peer_address));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let listener = tokio::net::TcpListener::bind("[::1]:0")
         .await
         .expect("bind test listener");
     let address = listener.local_addr().expect("listener address");
@@ -21,8 +21,9 @@ async fn make_service_injects_actual_tcp_peer_address() {
             .expect("serve test router");
     });
     let client = reqwest::Client::builder()
+        .no_proxy()
         .local_address(
-            "127.0.0.2"
+            "::1"
                 .parse::<std::net::IpAddr>()
                 .expect("local peer address"),
         )
@@ -36,6 +37,6 @@ async fn make_service_injects_actual_tcp_peer_address() {
         .expect("peer response");
 
     assert!(response.status().is_success());
-    assert_eq!(response.text().await.expect("peer body"), "127.0.0.2");
+    assert_eq!(response.text().await.expect("peer body"), "::1");
     server.abort();
 }

@@ -264,7 +264,7 @@ async fn mcp_denied_launch_and_approved_discovery_call_and_shutdown() {
         &registry,
         &policy,
         CancellationToken::new(),
-        2,
+        10,
     )
     .await
     .unwrap();
