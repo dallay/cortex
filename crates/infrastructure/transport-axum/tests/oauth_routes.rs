@@ -322,3 +322,557 @@ async fn callback_unknown_state_returns_not_found_without_connections() {
     let response = router().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------------------
+// v2: happy paths with a wired ManageConnections (mocked IdP endpoints)
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+
+use async_trait::async_trait as _async_trait_v2;
+use chrono::Utc as _UtcV2;
+use rook_core::{
+    AuthType as _AuthTypeV2, ConnectionConfig as _ConnectionConfigV2,
+    CredentialEncryptionError as _CredEncErrV2, Credentials as _CredsV2, EncryptedBlob as _BlobV2,
+    KeyManager as _KmV2, ProviderConnection as _ConnV2, ProviderKind as _KindV2,
+    ProviderRegistryPort as _RegistryV2, ProviderRepositoryPort as _RepoV2,
+    QuotaWindowThresholds as _QuotaV2, RegistryError as _RegErrV2, RepositoryError as _RepoErrV2,
+    TestStatus as _StatusV2,
+};
+use rook_usecases::manage_connections::{
+    ManageConnections as _ManageV2, OAuthEndpointOverrides as _OverridesV2,
+    ProviderBuildInput as _BuildInputV2, ProviderBuilderPort as _BuilderV2,
+};
+
+struct PassThroughKm;
+
+impl _KmV2 for PassThroughKm {
+    fn encrypt(&self, plaintext: &str) -> Result<String, _CredEncErrV2> {
+        Ok(plaintext.to_string())
+    }
+    fn decrypt(&self, ciphertext: &str) -> Result<String, _CredEncErrV2> {
+        Ok(ciphertext.to_string())
+    }
+}
+
+struct MemoryRepoV2 {
+    inner: tokio::sync::RwLock<HashMap<shared_kernel::ConnectionId, _ConnV2>>,
+}
+
+impl MemoryRepoV2 {
+    fn new(connections: Vec<_ConnV2>) -> Self {
+        Self {
+            inner: tokio::sync::RwLock::new(connections.into_iter().map(|c| (c.id, c)).collect()),
+        }
+    }
+}
+
+#[_async_trait_v2]
+impl _RepoV2 for MemoryRepoV2 {
+    async fn list(&self) -> Result<Vec<_ConnV2>, _RepoErrV2> {
+        Ok(self.inner.read().await.values().cloned().collect())
+    }
+    async fn find(&self, id: &shared_kernel::ConnectionId) -> Result<Option<_ConnV2>, _RepoErrV2> {
+        Ok(self.inner.read().await.get(id).cloned())
+    }
+    async fn create(&self, conn: &_ConnV2) -> Result<(), _RepoErrV2> {
+        self.inner.write().await.insert(conn.id, conn.clone());
+        Ok(())
+    }
+    async fn update(&self, conn: &_ConnV2, _: chrono::DateTime<_UtcV2>) -> Result<(), _RepoErrV2> {
+        self.inner.write().await.insert(conn.id, conn.clone());
+        Ok(())
+    }
+    async fn delete(&self, id: &shared_kernel::ConnectionId) -> Result<(), _RepoErrV2> {
+        self.inner.write().await.remove(id);
+        Ok(())
+    }
+}
+
+struct EmptyRegistryV2;
+
+impl _RegistryV2 for EmptyRegistryV2 {
+    fn providers(&self) -> Vec<shared_kernel::ProviderId> {
+        Vec::new()
+    }
+    fn get(&self, _: &shared_kernel::ProviderId) -> Option<Arc<dyn rook_core::ProviderPort>> {
+        None
+    }
+    fn replace_all(&self, _: Vec<Arc<dyn rook_core::ProviderPort>>) -> Result<(), _RegErrV2> {
+        Ok(())
+    }
+    fn upsert(&self, _: Arc<dyn rook_core::ProviderPort>) -> Result<(), _RegErrV2> {
+        Ok(())
+    }
+    fn remove(&self, _: &shared_kernel::ProviderId) -> Result<(), _RegErrV2> {
+        Ok(())
+    }
+}
+
+struct FailingBuilderV2;
+
+#[_async_trait_v2]
+impl _BuilderV2 for FailingBuilderV2 {
+    async fn build(
+        &self,
+        _: _BuildInputV2,
+    ) -> Result<
+        Arc<dyn rook_core::ProviderPort>,
+        rook_usecases::manage_connections::ManageConnectionsError,
+    > {
+        Err(
+            rook_usecases::manage_connections::ManageConnectionsError::OAuth(
+                "builder unused".to_string(),
+            ),
+        )
+    }
+}
+
+fn oauth_conn_v2(kind: _KindV2, expires_at: i64, status: _StatusV2) -> _ConnV2 {
+    let now = _UtcV2::now();
+    _ConnV2 {
+        id: shared_kernel::ConnectionId::new(),
+        provider_kind: kind,
+        provider_runtime_id: shared_kernel::ProviderId::new("runtime-1"),
+        name: "oauth-conn".to_string(),
+        priority: 10,
+        is_active: true,
+        auth_type: _AuthTypeV2::OAuth,
+        credentials: _CredsV2::OAuth {
+            email: _BlobV2("user@example.com".to_string()),
+            access_token: _BlobV2("old-access".to_string()),
+            refresh_token: _BlobV2("old-refresh".to_string()),
+            expires_at,
+            scope: _BlobV2("scope-a".to_string()),
+            id_token: _BlobV2("old-id".to_string()),
+            project_id: _BlobV2("project-1".to_string()),
+            oauth_client_id: "client-id".to_string(),
+            oauth_client_secret: Some(_BlobV2("secret".to_string())),
+            oauth_tenant_id: Some("tenant-1".to_string()),
+        },
+        config: _ConnectionConfigV2 {
+            max_concurrent: 10,
+            quota_window_thresholds: _QuotaV2 {
+                warning: 0.8,
+                error: 0.95,
+            },
+            default_model: None,
+            base_url: None,
+        },
+        test_status: status,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn api_key_conn_v2() -> _ConnV2 {
+    let now = _UtcV2::now();
+    _ConnV2 {
+        id: shared_kernel::ConnectionId::new(),
+        provider_kind: _KindV2::OpenAI,
+        provider_runtime_id: shared_kernel::ProviderId::new("runtime-1"),
+        name: "api-key".to_string(),
+        priority: 10,
+        is_active: true,
+        auth_type: _AuthTypeV2::ApiKey,
+        credentials: _CredsV2::ApiKey {
+            api_key: _BlobV2("key".to_string()),
+        },
+        config: _ConnectionConfigV2 {
+            max_concurrent: 10,
+            quota_window_thresholds: _QuotaV2 {
+                warning: 0.8,
+                error: 0.95,
+            },
+            default_model: None,
+            base_url: None,
+        },
+        test_status: _StatusV2::NeverTested,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+async fn wired_router(
+    connections: Vec<_ConnV2>,
+    token_url: Option<String>,
+    devicecode_url: Option<String>,
+) -> (axum::Router, Arc<MemoryRepoV2>) {
+    let repo = Arc::new(MemoryRepoV2::new(connections));
+    let manager = _ManageV2::with_oauth_endpoint_overrides(
+        repo.clone() as Arc<dyn _RepoV2>,
+        Arc::new(EmptyRegistryV2) as Arc<dyn _RegistryV2>,
+        Arc::new(PassThroughKm) as Arc<dyn _KmV2>,
+        Arc::new(FailingBuilderV2) as Arc<dyn _BuilderV2>,
+        _OverridesV2 {
+            azure_token_url: token_url.clone(),
+            gemini_token_url: token_url,
+            azure_devicecode_url: devicecode_url,
+        },
+    );
+    let mut usecases = usecases_without_connections();
+    Arc::get_mut(&mut usecases)
+        .expect("single owner")
+        .manage_connections = Some(manager);
+    (transport_axum::oauth_routes::router(usecases), repo)
+}
+
+async fn response_json(response: axum::response::Response) -> serde_json::Value {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+fn token_mock_server() -> wiremock::Mock {
+    wiremock::Mock::given(wiremock::matchers::method("POST")).respond_with(
+        wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "fresh-access",
+            "expires_in": 3600,
+            "refresh_token": "fresh-refresh",
+            "scope": "fresh-scope",
+            "id_token": "fresh-id",
+        })),
+    )
+}
+
+#[tokio::test]
+async fn authorize_starts_azure_auth_code_flow() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            authorize_body(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert!(json.get("flowId").is_some());
+    let url = json["authorizationUrl"].as_str().unwrap();
+    assert!(url.contains("login.microsoftonline.com"));
+}
+
+#[tokio::test]
+async fn authorize_rejects_malformed_connection_id_with_manager() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let mut body = authorize_body();
+    body["connectionId"] = serde_json::json!("nope");
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn status_reports_pending_flow() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let started = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            authorize_body(),
+        ))
+        .await
+        .unwrap();
+    let flow_id = response_json(started).await["flowId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?flowId={flow_id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert_eq!(json["status"], serde_json::json!("pending"));
+    assert_eq!(json["flowId"], serde_json::json!(flow_id));
+}
+
+#[tokio::test]
+async fn status_flow_provider_mismatch_returns_not_found() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let started = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            authorize_body(),
+        ))
+        .await
+        .unwrap();
+    let flow_id = response_json(started).await["flowId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/gemini/status?flowId={flow_id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn status_reports_connected_connection() {
+    let conn = oauth_conn_v2(
+        _KindV2::AzureOpenAI,
+        _UtcV2::now().timestamp() + 3600,
+        _StatusV2::NeverTested,
+    );
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert_eq!(json["status"], serde_json::json!("connected"));
+}
+
+#[tokio::test]
+async fn status_reports_expired_connection() {
+    let conn = oauth_conn_v2(_KindV2::AzureOpenAI, 0, _StatusV2::NeverTested);
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await["status"],
+        serde_json::json!("expired")
+    );
+}
+
+#[tokio::test]
+async fn status_reports_reauthentication_required() {
+    let conn = oauth_conn_v2(
+        _KindV2::AzureOpenAI,
+        _UtcV2::now().timestamp() + 3600,
+        _StatusV2::Unhealthy {
+            last_test_at: _UtcV2::now(),
+            error: "OAuth token refresh failed; reauthorize".to_string(),
+        },
+    );
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await["status"],
+        serde_json::json!("reauthentication_required")
+    );
+}
+
+#[tokio::test]
+async fn status_non_oauth_connection_returns_not_found() {
+    let conn = api_key_conn_v2();
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn status_malformed_connection_id_returns_bad_request_with_manager() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/oauth/azure-openai/status?connectionId=nope")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn status_missing_ids_returns_bad_request_with_manager() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/oauth/azure-openai/status")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn refresh_expired_connection_returns_no_content() {
+    let server = wiremock::MockServer::start().await;
+    token_mock_server().mount(&server).await;
+    let conn = oauth_conn_v2(_KindV2::AzureOpenAI, 0, _StatusV2::NeverTested);
+    let id = conn.id.to_string();
+    let (router, repo) = wired_router(vec![conn], Some(server.uri()), None).await;
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/refresh",
+            serde_json::json!({"connectionId": id}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let stored = repo
+        .inner
+        .read()
+        .await
+        .values()
+        .next()
+        .cloned()
+        .expect("stored");
+    assert!(matches!(stored.test_status, _StatusV2::Active { .. }));
+}
+
+#[tokio::test]
+async fn refresh_malformed_id_returns_bad_request_with_manager() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/refresh",
+            serde_json::json!({"connectionId": "nope"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn refresh_provider_mismatch_returns_not_found() {
+    let conn = oauth_conn_v2(
+        _KindV2::AzureOpenAI,
+        _UtcV2::now().timestamp() + 3600,
+        _StatusV2::NeverTested,
+    );
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/gemini/refresh",
+            serde_json::json!({"connectionId": id}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn disconnect_azure_connection_returns_no_content() {
+    let conn = oauth_conn_v2(
+        _KindV2::AzureOpenAI,
+        _UtcV2::now().timestamp() + 3600,
+        _StatusV2::NeverTested,
+    );
+    let id = conn.id.to_string();
+    let (router, repo) = wired_router(vec![conn], None, None).await;
+    let response = router
+        .clone()
+        .oneshot(json_request(
+            Method::DELETE,
+            "/api/oauth/azure-openai",
+            serde_json::json!({"connectionId": id}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(repo.inner.read().await.is_empty());
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let gone = router.oneshot(req).await.unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn disconnect_non_oauth_returns_not_found() {
+    // NOTE: the route rejects non-OAuth connections with 404 before reaching
+    // the use case (which would return an OAuth error mapped to 400).
+    let conn = api_key_conn_v2();
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let response = router
+        .oneshot(json_request(
+            Method::DELETE,
+            "/api/oauth/openai",
+            serde_json::json!({"connectionId": id}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn callback_completes_pending_flow() {
+    let server = wiremock::MockServer::start().await;
+    token_mock_server().mount(&server).await;
+    let (router, _) = wired_router(vec![], Some(server.uri()), None).await;
+    let started = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            authorize_body(),
+        ))
+        .await
+        .unwrap();
+    let auth_url = response_json(started).await["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let url = reqwest::Url::parse(&auth_url).unwrap();
+    let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let state = query.get("state").cloned().unwrap();
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/callback?state={state}&code=auth-code"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(body_text(response).await.contains("Provider connected"));
+}
+
+#[tokio::test]
+async fn callback_unknown_state_returns_bad_request_with_manager() {
+    let (router, _) = wired_router(vec![], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/oauth/callback?state=unknown&code=code")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
