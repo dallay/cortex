@@ -311,4 +311,12 @@ mod tests {
             assert_eq!(ProviderKind::try_from(kind.as_str()), Ok(kind));
         }
     }
+
+    #[test]
+    fn cloud_metadata_validation_error_has_specific_display_message() {
+        assert_eq!(
+            ValidationError::CloudMetadataEndpointNotAllowed.to_string(),
+            "provider endpoint must not target cloud metadata services"
+        );
+    }
 }

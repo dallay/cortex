@@ -79,8 +79,10 @@ async fn complete_does_not_follow_redirects() {
         restrictions: ApiKeyRestrictions::default(),
     };
 
-    let _ = provider.complete(&request).await;
+    let result = provider.complete(&request).await;
 
+    assert!(result.is_err(), "a redirect response must fail the request");
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
     assert!(target.received_requests().await.unwrap().is_empty());
 }
 

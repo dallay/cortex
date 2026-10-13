@@ -65,8 +65,10 @@ async fn health_check_does_not_follow_redirects() {
     })
     .unwrap();
 
-    let _ = provider.health_check().await;
+    let status = provider.health_check().await;
 
+    assert!(matches!(status, HealthStatus::Unhealthy { .. }));
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
     assert!(target.received_requests().await.unwrap().is_empty());
 }
 
