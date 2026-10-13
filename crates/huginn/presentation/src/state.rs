@@ -1,5 +1,6 @@
 //! Deterministic state projection and UTF-8 composer, independent of terminal I/O.
 use crate::approval::{approval_header, effect_line};
+use crate::completion::{CatalogCommand, Completion};
 use crate::{contributions::Contributions, Interaction};
 use async_trait::async_trait;
 use huginn_core::{
@@ -131,6 +132,11 @@ impl Modal {
 #[derive(Default)]
 pub struct UiState {
     pub editor: Editor,
+    pub completion: Completion,
+    pub files: Vec<String>,
+    pub files_ready: bool,
+    completion_editor: Option<(String, usize, bool)>,
+    completion_catalog: Vec<(String, u64)>,
     pub tail: String,
     pub status: String,
     /// Set while the status describes a failed tool result; the host renders
@@ -361,7 +367,13 @@ impl Ui {
         let Some(command) = self.contributions.command(&line[..boundary]) else {
             return false;
         };
-        match command.run(line[boundary..].trim()) {
+        self.dispatch_handle(&command, line[boundary..].trim());
+        true
+    }
+    /// Execute the generation-bound handle selected by the palette, never a
+    /// fresh lookup that could invoke a replacement plugin with the same name.
+    pub fn dispatch_handle(&self, command: &huginn_plugin_api::v1::Command, arguments: &str) {
+        match command.run(arguments) {
             Ok(CommandResult::Notice(view)) => self.notice(view.plain_text()),
             Ok(CommandResult::Dialog(id)) => {
                 if let Some(handle) = self.contributions.dialog(&id) {
@@ -380,7 +392,107 @@ impl Ui {
             Err(error) => self.notice(error.to_string()),
         }
         self.dirty.notify_one();
+    }
+    pub fn refresh_completion(&self, model_configured: bool) -> bool {
+        let mut commands: Vec<CatalogCommand> = self
+            .contributions
+            .commands()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        commands.extend([
+            CatalogCommand::host("/quit", "Exit the chat"),
+            CatalogCommand::host("/exit", "Exit the chat"),
+        ]);
+        if model_configured {
+            commands.extend([
+                CatalogCommand::host("/compact", "Summarize history with confirmation"),
+                CatalogCommand::host("/summarize", "Summarize history with confirmation"),
+            ]);
+        }
+        let catalog: Vec<_> = commands
+            .iter()
+            .map(|command| {
+                (
+                    command.name.clone(),
+                    command
+                        .command
+                        .as_ref()
+                        .map_or(0, |command| command.generation()),
+                )
+            })
+            .collect();
+        let mut state = self.lock();
+        if state.modal.is_some() || state.plugin_dialog.is_some() {
+            // Rendering/input already give modals priority. Preserve the
+            // palette's generation and invalidation until the editor changes.
+            return false;
+        }
+        let fingerprint = (
+            state.editor.text.clone(),
+            state.editor.cursor,
+            state.files_ready,
+        );
+        if state.completion_editor.as_ref() == Some(&fingerprint)
+            && state.completion_catalog == catalog
+        {
+            return false;
+        }
+        state.completion_editor = Some(fingerprint);
+        state.completion_catalog = catalog;
+        let UiState {
+            editor,
+            completion,
+            files,
+            ..
+        } = &mut *state;
+        completion.refresh(editor, &commands, files);
+        drop(state);
         true
+    }
+    /// A session-local filename snapshot, cancellable and bounded. The worker
+    /// holds no UI/registry locks while walking and never reads file contents.
+    pub fn start_file_index(self: &Arc<Self>, workspace: std::path::PathBuf) {
+        let weak = Arc::downgrade(self);
+        let stop = self.stop.clone();
+        tokio::spawn(async move {
+            let worker_stop = stop.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::files::scan(&workspace, &worker_stop, 20_000)
+            })
+            .await;
+            if stop.is_cancelled() {
+                return;
+            }
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(Ok(index)) => {
+                    let mut state = ui.lock();
+                    state.files = index.paths;
+                    state.files_ready = true;
+                    if index.truncated || index.skipped_directories > 0 {
+                        state.status = format!(
+                            "Partial file index: limit {}, skipped directories {}",
+                            index.truncated, index.skipped_directories
+                        );
+                    }
+                }
+                other => {
+                    let message = match other {
+                        Ok(Err(error)) => error.to_string(),
+                        Err(error) => error.to_string(),
+                        Ok(Ok(_)) => return,
+                    };
+                    let mut state = ui.lock();
+                    state.files_ready = true;
+                    state.status = format!("Could not index the workspace: {}", safe(&message));
+                    state.status_error = true;
+                }
+            }
+            ui.dirty.notify_one();
+        });
     }
     /// Tick-time refresh makes revocation remove transient views even when idle.
     pub fn refresh_contributions(&self) -> bool {

@@ -6,7 +6,7 @@ use huginn_core::{
     Role, Session,
 };
 use huginn_plugin_api::v1::{
-    contributions_id, CommandResult, Contribution, Dialog, UiService, View,
+    contributions_id, CommandMetadata, CommandResult, Contribution, Dialog, UiService, View,
 };
 use huginn_presentation::{
     contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
@@ -61,6 +61,30 @@ impl AgentLoop for Engine {
     }
 }
 struct EnginePlugin;
+struct Replaceable(&'static str);
+#[async_trait]
+impl Plugin for Replaceable {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.replaceable".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+        let notice = self.0;
+        ui.register(
+            ctx,
+            "fixture.describe".into(),
+            Contribution::Command {
+                name: "/describe".into(),
+                handler: Arc::new(move |_| Ok(CommandResult::Notice(View::text(notice)))),
+            },
+        )?;
+        Ok(())
+    }
+}
 /// Test-only 40-choice dialog: overflows the PTY viewport so tests can prove
 /// the selected choice stays visible while navigating past the first page.
 struct LongDialogPlugin;
@@ -76,6 +100,18 @@ impl Plugin for LongDialogPlugin {
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
         let choices: Vec<String> = (0..40).map(|index| format!("choice-{index:02}")).collect();
+        ui.register_command(
+            ctx,
+            "fixture.format".into(),
+            "/format".into(),
+            CommandMetadata {
+                description: "Example format".into(),
+                argument_hint: "<formato>".into(),
+                arguments: vec!["json".into(), "text".into()],
+                ..Default::default()
+            },
+            Arc::new(|args| Ok(CommandResult::Notice(View::text(format!("FORMAT:{args}"))))),
+        )?;
         let options = choices.clone();
         ui.register(
             ctx,
@@ -171,6 +207,12 @@ async fn main() -> Result<()> {
     supervisor.register(Box::new(EnginePlugin))?;
     supervisor.register(Box::new(RatatuiPlugin::default()))?;
     supervisor.register(Box::new(ConversationPlugin))?;
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("replace" | "replace-approval")
+    ) {
+        supervisor.register(Box::new(Replaceable("OLD_COMMAND_EXECUTED")))?;
+    }
     if std::env::args().nth(1).as_deref() == Some("extension") {
         supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
         supervisor.register(Box::new(LongDialogPlugin))?;
@@ -182,6 +224,37 @@ async fn main() -> Result<()> {
     let mut session = Session::new(".".into());
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
     let connection = presentation.0.open(&session).await?;
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("replace" | "replace-approval")
+    ) {
+        while !std::path::Path::new("replace-plugin").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        supervisor.remove("fixture.replaceable").await?;
+        supervisor.register(Box::new(Replaceable("NEW_COMMAND_EXECUTED")))?;
+        supervisor.start().await?;
+        connection.ui.notice("REPLACEMENT_READY".into());
+        if std::env::args().nth(1).as_deref() == Some("replace-approval") {
+            while !std::path::Path::new("show-approval").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            connection.ui.begin(CancellationToken::new());
+            connection
+                .ui
+                .request_decision(
+                    &huginn_core::ApprovalRequest {
+                        id: "modal-probe".into(),
+                        action: "native.edit".into(),
+                        preview: "MODAL_PROBE".into(),
+                    },
+                    CancellationToken::new(),
+                )
+                .await?;
+            connection.ui.synchronize(&session);
+            connection.ui.notice("APPROVAL_CLOSED".into());
+        }
+    }
     if std::env::args().nth(1).as_deref() == Some("drop-reopen") {
         let ui = connection.ui.clone();
         assert_eq!(ui.prompt().await.as_deref(), Some("reopen"));

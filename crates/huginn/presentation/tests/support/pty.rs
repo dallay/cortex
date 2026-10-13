@@ -15,11 +15,19 @@ pub struct Pty {
     reader: Option<std::thread::JoinHandle<()>>,
 }
 impl Pty {
-    pub fn start(mut command: CommandBuilder, answer_cursor: bool) -> Self {
+    pub fn start(command: CommandBuilder, answer_cursor: bool) -> Self {
+        Self::start_sized(command, answer_cursor, 30, 100)
+    }
+    pub fn start_sized(
+        mut command: CommandBuilder,
+        answer_cursor: bool,
+        rows: u16,
+        cols: u16,
+    ) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
-                rows: 30,
-                cols: 100,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -31,7 +39,10 @@ impl Pty {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let output = Arc::new(Mutex::new(String::new()));
         let captured = output.clone();
-        let screen = Arc::new(Mutex::new(Screen::new(30, 100)));
+        let screen = Arc::new(Mutex::new(Screen::new(
+            usize::from(rows),
+            usize::from(cols),
+        )));
         let painted = screen.clone();
         let reply = writer.clone();
         let thread = std::thread::spawn(move || {

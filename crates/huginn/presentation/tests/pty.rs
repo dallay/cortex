@@ -119,6 +119,141 @@ fn external_reference_command_and_selection_are_host_rendered() {
 }
 
 #[test]
+fn command_palette_tab_completes_and_enter_dispatches_fuzzy_selection() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/exinfo");
+    pty.wait_for("Commands");
+    pty.send("\t");
+    pty.wait_for("/extension-info");
+    assert!(
+        !pty.output().contains("Reference extension v1"),
+        "Tab executed a command"
+    );
+    pty.send(" sample\r");
+    pty.wait_for("arguments: sample");
+    pty.send("/exchoose\r");
+    pty.wait_for("Reference selection");
+    pty.send("\r");
+    pty.wait_for("Selected concise display");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn file_enter_completes_without_sending_and_preserves_textual_reference() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("guide file.md"), "NEVER_ATTACH_CONTENT").unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.send("mira @gfm");
+    pty.wait_for("guide file.md");
+    pty.send("\r");
+    pty.wait_for("@\"guide file.md\"");
+    assert!(!pty.output().contains("chunk0"), "completion sent a prompt");
+    pty.send("\r");
+    pty.wait_for("STREAM_COMPLETE");
+    pty.wait_for("User: mira @\"guide file.md\"");
+    assert!(!pty.output().contains("NEVER_ATTACH_CONTENT"));
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn file_enter_completes_during_an_active_turn() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("guide.md"), "").unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.send("stream\r");
+    pty.wait_for("chunk0");
+    pty.send("@gmd\r");
+    pty.wait_for("@guide.md");
+    pty.send("\x1b");
+    pty.wait_for("operation cancelled");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn revoked_palette_selection_cannot_fall_back_to_replacement_dispatch() {
+    assert_revoked_selection("replace", "\r", false);
+}
+
+#[test]
+fn ctrl_enter_cannot_execute_a_revoked_selection() {
+    assert_revoked_selection("replace", "\x1b[13;5u", false);
+}
+
+#[test]
+fn approval_does_not_erase_a_revoked_selection() {
+    assert_revoked_selection("replace-approval", "\r", true);
+}
+
+fn assert_revoked_selection(mode: &str, enter: &str, approval: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg(mode);
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.send("/describe");
+    pty.wait_for("Commands");
+    std::fs::write(root.path().join("replace-plugin"), "").unwrap();
+    pty.wait_for("REPLACEMENT_READY");
+    if approval {
+        std::fs::write(root.path().join("show-approval"), "").unwrap();
+        pty.wait_for("MODAL_PROBE");
+        pty.send("\x1b");
+        pty.wait_for("APPROVAL_CLOSED");
+    }
+    pty.send(enter);
+    // A subsequent different command proves the event queue was processed.
+    pty.send("\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f/help\r");
+    pty.wait_for("Enter sends;");
+    pty.send("\x03");
+    let output = pty.finish(true);
+    assert!(
+        !output.contains("NEW_COMMAND_EXECUTED"),
+        "revoked selection executed replacement"
+    );
+}
+
+#[test]
+fn palette_keeps_selected_command_visible_in_minimum_terminal() {
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    let mut pty = Pty::start_sized(command, true, 8, 20);
+    pty.wait_for("Huginn");
+    pty.send("/h");
+    pty.wait_for("Commands");
+    pty.wait_for("› /help");
+    pty.send("\t");
+    pty.wait_for("│/help");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn argument_enter_only_completes_then_next_enter_dispatches() {
+    let mut pty = start("extension", true);
+    pty.wait_for("Reference extension active");
+    pty.send("/format js\r");
+    pty.wait_for("/format json");
+    assert!(!pty.output().contains("FORMAT:json"));
+    pty.send("\r");
+    pty.wait_for("FORMAT:json");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn long_plugin_dialog_window_keeps_selection_visible() {
     let mut pty = start("extension", true);
     pty.wait_for("Reference extension active");
