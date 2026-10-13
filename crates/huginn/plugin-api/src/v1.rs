@@ -57,6 +57,39 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 pub type CommandHandler = Arc<dyn Fn(&str) -> Result<CommandResult> + Send + Sync>;
+/// Declarative suggestions only; selecting one never grants permissions.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommandMetadata {
+    pub description: String,
+    pub argument_hint: String,
+    pub arguments: Vec<String>,
+    pub workspace_paths: bool,
+}
+impl CommandMetadata {
+    fn checked(mut self) -> Result<Self> {
+        self.description = text(&self.description)?;
+        self.argument_hint = text(&self.argument_hint)?;
+        if self.arguments.len() > 256 {
+            return Err(error("command needs at most 256 argument suggestions"));
+        }
+        for argument in &self.arguments {
+            if argument.is_empty()
+                || argument.len() > 1024
+                || text(argument)? != *argument
+                || argument.contains(['\n', '\t'])
+            {
+                return Err(error("invalid argument suggestion"));
+            }
+        }
+        Ok(self)
+    }
+}
+#[derive(Clone)]
+pub struct CommandInfo {
+    pub name: String,
+    pub metadata: CommandMetadata,
+    pub command: Command,
+}
 pub type ResultRenderer = Arc<dyn Fn(&ToolResult) -> Result<View> + Send + Sync>;
 pub type SelectionHandler = Arc<dyn Fn(usize) -> Result<View> + Send + Sync>;
 #[derive(Clone)]
@@ -267,6 +300,7 @@ struct Entry {
     registration: Registration,
     key: String,
     value: Contribution,
+    metadata: CommandMetadata,
 }
 #[derive(Default)]
 pub struct Contributions {
@@ -306,6 +340,32 @@ impl Contributions {
         id: String,
         value: Contribution,
     ) -> Result<Registration> {
+        self.register_with_metadata(ctx, id, value, CommandMetadata::default())
+    }
+    /// Additive command registration; existing `Contribution::Command` authors
+    /// continue to work with empty metadata.
+    pub fn register_command(
+        self: &Arc<Self>,
+        ctx: &mut PluginContext,
+        id: String,
+        name: String,
+        metadata: CommandMetadata,
+        handler: CommandHandler,
+    ) -> Result<Registration> {
+        self.register_with_metadata(
+            ctx,
+            id,
+            Contribution::Command { name, handler },
+            metadata.checked()?,
+        )
+    }
+    fn register_with_metadata(
+        self: &Arc<Self>,
+        ctx: &mut PluginContext,
+        id: String,
+        value: Contribution,
+        metadata: CommandMetadata,
+    ) -> Result<Registration> {
         if !Arc::ptr_eq(self, &ctx.resolve::<UiService>(&contributions_id())?.0) {
             return Err(error("UI service does not match declared dependency"));
         }
@@ -328,6 +388,7 @@ impl Contributions {
                 registration: registration.clone(),
                 key,
                 value,
+                metadata,
             },
         );
         drop(entries);
@@ -356,6 +417,28 @@ impl Contributions {
             }),
             _ => None,
         })
+    }
+    /// A snapshot with generation-bound handles; revoked entries are invisible.
+    pub fn commands(&self) -> Vec<CommandInfo> {
+        let mut commands: Vec<_> = self
+            .lock()
+            .values()
+            .filter_map(|entry| match &entry.value {
+                Contribution::Command { name, handler } if entry.registration.is_active() => {
+                    Some(CommandInfo {
+                        name: name.clone(),
+                        metadata: entry.metadata.clone(),
+                        command: Command {
+                            registration: entry.registration.clone(),
+                            handler: handler.clone(),
+                        },
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        commands.sort_by(|a, b| a.name.cmp(&b.name));
+        commands
     }
     /// Exact tool name wins; at most one explicitly registered `*` fallback.
     pub fn renderer(&self, tool: &str) -> Option<Renderer> {
@@ -404,6 +487,12 @@ pub struct Command {
     handler: CommandHandler,
 }
 impl Command {
+    pub const fn generation(&self) -> u64 {
+        self.registration.owner.generation()
+    }
+    pub fn is_active(&self) -> bool {
+        self.registration.is_active()
+    }
     pub fn run(&self, arguments: &str) -> Result<CommandResult> {
         self.registration
             .invoke(|| match (self.handler)(&text(arguments)?)? {

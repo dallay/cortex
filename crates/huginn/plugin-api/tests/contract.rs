@@ -48,6 +48,10 @@ impl Plugin for Author {
             ui.command(&format!("/{}", self.id)).is_none(),
             "staged command is invisible"
         );
+        assert!(ui
+            .commands()
+            .iter()
+            .all(|command| command.name != format!("/{}", self.id)));
         self.held.lock().unwrap().push(command);
         ui.register(
             ctx,
@@ -280,6 +284,59 @@ async fn failed_activation_rolls_back_registrations_even_when_author_retains_han
     assert!(!held.lock().unwrap()[0].is_active());
     assert!(ui.command("/alpha").is_none());
     drop(supervisor);
+}
+
+#[tokio::test]
+async fn command_catalog_keeps_metadata_and_revokes_old_generations() {
+    struct Described;
+    #[async_trait]
+    impl Plugin for Described {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "described".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+            ui.register_command(
+                ctx,
+                "described.command".into(),
+                "/describe".into(),
+                CommandMetadata {
+                    description: "Describe\u{202e}".into(),
+                    argument_hint: "<format>".into(),
+                    arguments: vec!["short".into(), "long".into()],
+                    workspace_paths: true,
+                },
+                Arc::new(|args| Ok(CommandResult::Notice(View::text(args)))),
+            )?;
+            assert!(!ui
+                .commands()
+                .iter()
+                .any(|command| command.name == "/describe"));
+            Ok(())
+        }
+    }
+    let (mut supervisor, ui, _) = setup(false).await;
+    assert_eq!(ui.commands()[0].metadata.description, "");
+    supervisor.register(Box::new(Described)).unwrap();
+    supervisor.start().await.unwrap();
+    let old = ui
+        .commands()
+        .into_iter()
+        .find(|command| command.name == "/describe")
+        .unwrap();
+    assert_eq!(old.metadata.description, "Describe");
+    assert_eq!(old.metadata.arguments, ["short", "long"]);
+    assert!(old.command.is_active());
+    supervisor.remove("described").await.unwrap();
+    supervisor.register(Box::new(Described)).unwrap();
+    supervisor.start().await.unwrap();
+    assert!(!old.command.is_active());
+    assert!(old.command.run("short").is_err());
+    assert!(ui.command("/describe").unwrap().is_active());
 }
 #[tokio::test]
 async fn missing_and_wrong_major_dependencies_block_without_ui() {
