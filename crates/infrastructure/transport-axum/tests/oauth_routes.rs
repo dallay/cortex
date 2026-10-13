@@ -687,6 +687,31 @@ async fn status_reports_reauthentication_required() {
 }
 
 #[tokio::test]
+async fn status_prefers_reauthentication_over_expired_after_failed_refresh() {
+    let conn = oauth_conn_v2(
+        _KindV2::AzureOpenAI,
+        0,
+        _StatusV2::Unhealthy {
+            last_test_at: _UtcV2::now(),
+            error: "OAuth token refresh failed; reauthorize".to_string(),
+        },
+    );
+    let id = conn.id.to_string();
+    let (router, _) = wired_router(vec![conn], None, None).await;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/oauth/azure-openai/status?connectionId={id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await["status"],
+        serde_json::json!("reauthentication_required")
+    );
+}
+
+#[tokio::test]
 async fn status_non_oauth_connection_returns_not_found() {
     let conn = api_key_conn_v2();
     let id = conn.id.to_string();

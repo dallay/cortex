@@ -328,13 +328,16 @@ pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
     let Credentials::OAuth { expires_at, .. } = &conn.credentials else {
         return None;
     };
-    let status = if *expires_at <= Utc::now().timestamp() {
-        "expired"
-    } else if matches!(
+    // A failed refresh is checked first: once Rook knows the refresh token
+    // no longer works, reauthorization is required even if (and when) the
+    // access token is also past its expiry.
+    let status = if matches!(
         &conn.test_status,
         TestStatus::Unhealthy { error, .. } if error.contains("OAuth token refresh failed")
     ) {
         "reauthentication_required"
+    } else if *expires_at <= Utc::now().timestamp() {
+        "expired"
     } else {
         "connected"
     };
