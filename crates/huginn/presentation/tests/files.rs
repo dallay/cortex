@@ -25,7 +25,9 @@ fn scan_is_workspace_relative_bounded_and_does_not_follow_symlinks() {
     );
     let stop = CancellationToken::new();
     stop.cancel();
-    assert!(scan(root.path(), &stop, 20_000).unwrap().paths.is_empty());
+    let cancelled = scan(root.path(), &stop, 20_000).unwrap();
+    assert!(cancelled.paths.is_empty());
+    assert!(cancelled.truncated);
 }
 #[test]
 fn unsafe_and_non_utf8_names_are_not_inserted() {

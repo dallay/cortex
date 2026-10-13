@@ -14,6 +14,7 @@ path = "tests/support/fixture.rs"
 required-features = ["test-driver"]
 
 [dependencies]
+cap-std = "4.0.3"
 # Used by the explicit PTY fixture host only.
 huginn-application = { path = "../application", optional = true }
 huginn-core = { path = "../core" }
