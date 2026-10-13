@@ -31,10 +31,31 @@ pub struct OAuthTokenManager {
 /// `oauth2.googleapis.com`). Integration tests set these to local mock
 /// servers. The values are never sourced from user input, so the SSRF
 /// invariant (no arbitrary user-supplied URLs) is preserved.
+/// Additionally, every override must use HTTPS or loopback HTTP (see
+/// [`test_endpoint_override_allowed`]), so OAuth secrets can never be
+/// redirected to a remote cleartext endpoint.
 #[derive(Debug, Default, Clone)]
 pub struct TokenEndpointOverrides {
     pub azure_token_url: Option<String>,
     pub gemini_token_url: Option<String>,
+}
+
+/// Whether a test endpoint override is acceptable.
+///
+/// Plain HTTP is only allowed against loopback test doubles (wiremock);
+/// anything else must use HTTPS. This keeps the `rust/cleartext-transmission`
+/// posture: production always uses fixed HTTPS endpoints, and even an
+/// explicitly configured override cannot point secrets at a remote
+/// cleartext URL.
+pub(crate) fn test_endpoint_override_allowed(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split(['/', ':', '?']).next().unwrap_or("");
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 impl OAuthTokenManager {
@@ -156,6 +177,12 @@ impl OAuthTokenManager {
         let endpoint = match connection.provider_kind {
             ProviderKind::AzureOpenAI => {
                 if let Some(override_url) = self.endpoint_overrides.azure_token_url.clone() {
+                    if !test_endpoint_override_allowed(&override_url) {
+                        self.mark_refresh_failed(&mut connection).await;
+                        return Err(CortexError::auth_failed(
+                            "OAuth endpoint override must use HTTPS or loopback HTTP",
+                        ));
+                    }
                     override_url
                 } else {
                     let tenant = oauth_tenant_id.as_deref().unwrap_or("common");
@@ -172,11 +199,18 @@ impl OAuthTokenManager {
                     format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token")
                 }
             }
-            ProviderKind::Gemini => self
-                .endpoint_overrides
-                .gemini_token_url
-                .clone()
-                .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string()),
+            ProviderKind::Gemini => match self.endpoint_overrides.gemini_token_url.clone() {
+                Some(override_url) => {
+                    if !test_endpoint_override_allowed(&override_url) {
+                        self.mark_refresh_failed(&mut connection).await;
+                        return Err(CortexError::auth_failed(
+                            "OAuth endpoint override must use HTTPS or loopback HTTP",
+                        ));
+                    }
+                    override_url
+                }
+                None => "https://oauth2.googleapis.com/token".to_string(),
+            },
             _ => {
                 self.mark_refresh_failed(&mut connection).await;
                 return Err(CortexError::auth_failed(

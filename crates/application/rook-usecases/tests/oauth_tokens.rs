@@ -467,3 +467,45 @@ async fn refresh_expiring_returns_zero_on_list_error() {
     let manager = OAuthTokenManager::new(repo, Arc::new(PassThroughKeyManager));
     assert_eq!(manager.refresh_expiring().await, 0);
 }
+
+#[tokio::test]
+async fn remote_cleartext_token_override_is_rejected() {
+    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo.clone(),
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            azure_token_url: Some("http://evil.example/token".to_string()),
+            gemini_token_url: None,
+        },
+    );
+    let err = manager
+        .access_token(&id, true)
+        .await
+        .expect_err("cleartext override must be rejected");
+    assert!(err.to_string().contains("HTTPS or loopback"));
+    let stored = repo.stored(&id).await.expect("stored");
+    assert!(matches!(stored.test_status, TestStatus::Unhealthy { .. }));
+}
+
+#[tokio::test]
+async fn remote_cleartext_gemini_override_is_rejected() {
+    let conn = oauth_connection(ProviderKind::Gemini, 0, "client", None);
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo.clone(),
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            azure_token_url: None,
+            gemini_token_url: Some("http://evil.example/token".to_string()),
+        },
+    );
+    let err = manager
+        .access_token(&id, true)
+        .await
+        .expect_err("cleartext override must be rejected");
+    assert!(err.to_string().contains("HTTPS or loopback"));
+}

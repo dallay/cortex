@@ -447,3 +447,56 @@ async fn authorization_code_exchange_completes_connection() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn remote_cleartext_devicecode_override_is_rejected() {
+    let manager = ManageConnections::with_oauth_endpoint_overrides(
+        Arc::new(EmptyRepository),
+        Arc::new(EmptyRegistry),
+        Arc::new(PassThroughKeyManager),
+        Arc::new(UnusedBuilder),
+        rook_usecases::manage_connections::OAuthEndpointOverrides {
+            azure_token_url: None,
+            gemini_token_url: None,
+            azure_devicecode_url: Some("http://evil.example/devicecode".to_string()),
+        },
+    );
+    let err = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::DeviceCode),
+        )
+        .await
+        .expect_err("cleartext override must be rejected");
+    assert!(err.to_string().contains("HTTPS or loopback"));
+}
+
+#[tokio::test]
+async fn remote_cleartext_token_override_rejects_exchange() {
+    let manager = ManageConnections::with_oauth_endpoint_overrides(
+        Arc::new(EmptyRepository),
+        Arc::new(EmptyRegistry),
+        Arc::new(PassThroughKeyManager),
+        Arc::new(UnusedBuilder),
+        rook_usecases::manage_connections::OAuthEndpointOverrides {
+            azure_token_url: Some("http://evil.example/token".to_string()),
+            gemini_token_url: None,
+            azure_devicecode_url: None,
+        },
+    );
+    let started = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::AuthorizationCode),
+        )
+        .await
+        .expect("flow starts");
+    let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
+    let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let state = query.get("state").cloned().unwrap();
+    let err = manager
+        .complete_oauth_authorization(&state, "auth-code")
+        .await
+        .expect_err("cleartext override must be rejected");
+    assert!(err.to_string().contains("HTTPS or loopback"));
+}

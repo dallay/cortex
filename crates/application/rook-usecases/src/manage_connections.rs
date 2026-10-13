@@ -1478,17 +1478,17 @@ fn token_endpoint_with_overrides(
     match connection.provider_kind {
         ProviderKind::AzureOpenAI => {
             if let Some(override_url) = overrides.azure_token_url.clone() {
-                return Ok(override_url);
+                return checked_test_endpoint(override_url);
             }
             Ok(format!(
                 "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
                 tenant_segment(connection)?
             ))
         }
-        ProviderKind::Gemini => Ok(overrides
-            .gemini_token_url
-            .clone()
-            .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string())),
+        ProviderKind::Gemini => match overrides.gemini_token_url.clone() {
+            Some(override_url) => checked_test_endpoint(override_url),
+            None => Ok("https://oauth2.googleapis.com/token".to_string()),
+        },
         _ => Err(ManageConnectionsError::OAuth(
             "OAuth refresh is not supported for this provider".to_string(),
         )),
@@ -1505,12 +1505,27 @@ fn device_code_endpoint_with_overrides(
         ));
     }
     if let Some(override_url) = overrides.azure_devicecode_url.clone() {
-        return Ok(override_url);
+        return checked_test_endpoint(override_url);
     }
     Ok(format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
         tenant_segment(connection)?
     ))
+}
+
+/// Accept a test endpoint override only over HTTPS or loopback HTTP.
+///
+/// Shares the policy with [`crate::oauth_tokens::test_endpoint_override_allowed`]:
+/// OAuth secrets must never be posted to a remote cleartext URL, even when a
+/// test explicitly configures endpoints.
+fn checked_test_endpoint(url: String) -> ManageConnectionsResult<String> {
+    if crate::oauth_tokens::test_endpoint_override_allowed(&url) {
+        Ok(url)
+    } else {
+        Err(ManageConnectionsError::OAuth(
+            "OAuth endpoint override must use HTTPS or loopback HTTP".to_string(),
+        ))
+    }
 }
 
 fn build_authorization_url(
