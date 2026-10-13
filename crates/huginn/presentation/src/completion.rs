@@ -103,6 +103,7 @@ fn context(editor: &Editor) -> Option<Context> {
         }
     }
     let mut end = text.len();
+    let mut first_whitespace = None;
     for (i, ch) in text[cursor..].char_indices() {
         if escaped {
             escaped = false;
@@ -114,10 +115,16 @@ fn context(editor: &Editor) -> Option<Context> {
         }
         if ch == '"' {
             quoted = !quoted;
-        } else if ch.is_whitespace() && !quoted {
-            end = cursor + i;
-            break;
+        } else if ch.is_whitespace() {
+            first_whitespace.get_or_insert(cursor + i);
+            if !quoted {
+                end = cursor + i;
+                break;
+            }
         }
+    }
+    if quoted && end == text.len() {
+        end = first_whitespace.unwrap_or(text.len());
     }
     let token = &text[token_start..cursor];
     if let Some(query) = token.strip_prefix('@') {
@@ -165,13 +172,12 @@ fn quote(text: &str) -> String {
 }
 /// Every whitespace-separated query token must match in order within the label.
 /// Exact and prefix matches outrank subsequences; short gaps win within a class.
-fn score(label: &str, query: &str) -> Option<(u8, usize)> {
+fn score_lowercase(label: &str, query: &str) -> Option<(u8, usize)> {
     let label = label.to_lowercase();
-    let query = query.to_lowercase();
     if label == query {
         return Some((0, 0));
     }
-    if label.starts_with(&query) {
+    if label.starts_with(query) {
         return Some((1, label.len() - query.len()));
     }
     let mut cost = 0;
@@ -184,6 +190,26 @@ fn score(label: &str, query: &str) -> Option<(u8, usize)> {
         }
     }
     Some((2, cost))
+}
+fn push_ranked(
+    ranked: &mut Vec<((u8, usize), Candidate)>,
+    label: &str,
+    query: &str,
+    insertion: impl FnOnce() -> String,
+    description: &str,
+    command: Option<Command>,
+) {
+    if let Some(rank) = score_lowercase(label, query) {
+        ranked.push((
+            rank,
+            Candidate {
+                label: label.into(),
+                insertion: insertion(),
+                description: description.into(),
+                command,
+            },
+        ));
+    }
 }
 impl Completion {
     pub fn blocks_submission(&self, editor: &Editor) -> bool {
@@ -245,7 +271,8 @@ impl Completion {
         let Some(ctx) = &self.context else {
             return;
         };
-        let mut items = vec![];
+        let query = ctx.query.to_lowercase();
+        let mut ranked = vec![];
         match &ctx.kind {
             Kind::Command => {
                 for command in commands.iter().filter(|command| command.active()) {
@@ -257,22 +284,26 @@ impl Completion {
                             command.metadata.argument_hint, command.metadata.description
                         )
                     };
-                    items.push(Candidate {
-                        label: command.name.clone(),
-                        insertion: command.name.clone(),
-                        description,
-                        command: command.command.clone(),
-                    });
+                    push_ranked(
+                        &mut ranked,
+                        &command.name,
+                        &query,
+                        || command.name.clone(),
+                        &description,
+                        command.command.clone(),
+                    );
                 }
             }
             Kind::File => {
                 for path in files {
-                    items.push(Candidate {
-                        label: path.clone(),
-                        insertion: format!("@{}", quote(path)),
-                        description: "Workspace file".into(),
-                        command: None,
-                    });
+                    push_ranked(
+                        &mut ranked,
+                        path,
+                        &query,
+                        || format!("@{}", quote(path)),
+                        "Workspace file",
+                        None,
+                    );
                 }
             }
             Kind::Argument(name) => {
@@ -281,30 +312,30 @@ impl Completion {
                     .find(|command| &command.name == name && command.active())
                 {
                     for value in &command.metadata.arguments {
-                        items.push(Candidate {
-                            label: value.clone(),
-                            insertion: quote(value),
-                            description: command.metadata.argument_hint.clone(),
-                            command: command.command.clone(),
-                        });
+                        push_ranked(
+                            &mut ranked,
+                            value,
+                            &query,
+                            || quote(value),
+                            &command.metadata.argument_hint,
+                            command.command.clone(),
+                        );
                     }
                     if command.metadata.workspace_paths {
                         for path in files {
-                            items.push(Candidate {
-                                label: path.clone(),
-                                insertion: quote(path),
-                                description: "Workspace path".into(),
-                                command: command.command.clone(),
-                            });
+                            push_ranked(
+                                &mut ranked,
+                                path,
+                                &query,
+                                || quote(path),
+                                "Workspace path",
+                                command.command.clone(),
+                            );
                         }
                     }
                 }
             }
         }
-        let mut ranked: Vec<_> = items
-            .into_iter()
-            .filter_map(|item| score(&item.label, &ctx.query).map(|score| (score, item)))
-            .collect();
         ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label)));
         self.items = ranked.into_iter().take(100).map(|(_, item)| item).collect();
         self.selected = previous
