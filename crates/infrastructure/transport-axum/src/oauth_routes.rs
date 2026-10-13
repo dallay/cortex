@@ -15,7 +15,7 @@ use rook_usecases::manage_connections::{
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ConnectionId, ProviderId};
 
-use super::{provider_dto::ConnectionConfigDto, HttpError};
+use super::{provider_dto::oauth_status, provider_dto::ConnectionConfigDto, HttpError};
 
 type Usecases = Arc<rook_usecases::RookUsecases>;
 
@@ -218,23 +218,22 @@ async fn callback(
 }
 
 fn connection_status(connection: &ProviderConnection) -> serde_json::Value {
+    // Classification lives in provider_dto::oauth_status so both endpoints
+    // report the same status; here we only attach expires_at and the message.
     let (status, expires_at, message) = match &connection.credentials {
-        Credentials::OAuth { expires_at, .. } if *expires_at <= Utc::now().timestamp() => (
-            "expired",
-            *expires_at,
-            Some("OAuth token expired".to_string()),
-        ),
-        Credentials::OAuth { expires_at, .. } => match &connection.test_status {
-            TestStatus::Unhealthy { error, .. } if error.contains("OAuth token refresh failed") => {
-                (
-                    "reauthentication_required",
-                    *expires_at,
-                    Some(error.clone()),
-                )
-            }
-            _ => ("connected", *expires_at, None),
-        },
-        _ => ("not_connected", 0, None),
+        Credentials::OAuth { expires_at, .. } => {
+            let status = oauth_status(connection).unwrap_or_else(|| "connected".to_string());
+            let message = match status.as_str() {
+                "expired" => Some("OAuth token expired".to_string()),
+                "reauthentication_required" => match &connection.test_status {
+                    TestStatus::Unhealthy { error, .. } => Some(error.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            (status, *expires_at, message)
+        }
+        _ => ("not_connected".to_string(), 0, None),
     };
     serde_json::to_value(OAuthConnectionStatusResponse {
         connection_id: connection.id,

@@ -324,7 +324,7 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
     }
 }
 
-fn oauth_status(conn: &ProviderConnection) -> Option<String> {
+pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
     let Credentials::OAuth { expires_at, .. } = &conn.credentials else {
         return None;
     };

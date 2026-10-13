@@ -267,6 +267,7 @@
 			"openAuthorizationPage": "Abrir la página de autorización",
 			"openAuthorizationLink": "Permite las ventanas emergentes o usa el enlace para continuar.",
 			"refresh": "Renovar token OAuth",
+			"connectionNotFound": "Conexión no encontrada. Actualiza la lista e inténtalo de nuevo.",
 			"expiresAt": "El token vence {date}",
 			"status": {
 				"connected": "OAuth conectado",

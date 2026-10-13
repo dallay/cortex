@@ -475,6 +475,8 @@ async function pollOAuthStatus() {
     if (connection) {
       emit("saved", connection);
       emit("update:open", false);
+    } else {
+      oauthMessage.value = t("providers.oauth.connectionNotFound");
     }
     oauthBusy.value = false;
   } else if (status.status === "failed" || status.status === "expired") {

@@ -137,8 +137,8 @@ async function handleOAuthRefresh(id: string) {
   if (!providerKindParam.value) return;
   busyIds.value = new Set([...busyIds.value, id]);
   try {
+    // refreshOAuth already refetches the provider list on success.
     await refreshOAuth(providerKindParam.value, id);
-    await fetch();
   } finally {
     const next = new Set(busyIds.value);
     next.delete(id);

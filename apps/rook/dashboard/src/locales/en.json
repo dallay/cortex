@@ -267,6 +267,7 @@
 			"openAuthorizationPage": "Open the authorization page",
 			"openAuthorizationLink": "Allow pop-ups or use the link below to continue.",
 			"refresh": "Refresh OAuth token",
+			"connectionNotFound": "Connection not found. Refresh the list and try again.",
 			"expiresAt": "Token expires {date}",
 			"status": {
 				"connected": "OAuth connected",

@@ -745,8 +745,44 @@ afterEach(() => {
 		}
 	});
 
-	it("stops polling when the OAuth flow fails", async () => {
+	it("guides the user when the connected connection is missing locally", async () => {
 		vi.useFakeTimers();
+		try {
+			vi.spyOn(globalThis, "open").mockReturnValue(null);
+			mockState.getOAuthStatus.mockResolvedValueOnce({
+				flowId: "flow-1",
+				status: "connected",
+				message: "Connected",
+				connectionId: "ghost-conn",
+			});
+
+			const wrapper = mountDialog({providerKind: "azure-openai"});
+			await flushPromises();
+			await setInputValue(wrapper, "input-displayName", "Azure prod");
+			await setInputValue(wrapper, "oauth-client-id", "client-id");
+			await setInputValue(
+				wrapper,
+				"input-baseUrl",
+				"https://resource.openai.azure.com",
+			);
+			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
+			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await flushPromises();
+
+			expect(wrapper.find("output[aria-live='polite']").text()).toContain(
+				"Connection not found",
+			);
+			expect(wrapper.emitted("saved")).toBeUndefined();
+			expect(
+				wrapper.find('[data-testid="oauth-connect-button"]').attributes("disabled"),
+			).toBeUndefined();
+			wrapper.unmount();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops polling when the OAuth flow fails", async () => {		vi.useFakeTimers();
 		try {
 			vi.spyOn(globalThis, "open").mockReturnValue(null);
 			mockState.getOAuthStatus.mockResolvedValueOnce({
