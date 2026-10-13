@@ -20,5 +20,8 @@ pub enum DecryptedCredentials {
         scope: String,
         id_token: String,
         project_id: String,
+        oauth_client_id: String,
+        oauth_client_secret: Option<String>,
+        oauth_tenant_id: Option<String>,
     },
 }

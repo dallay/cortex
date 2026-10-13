@@ -267,6 +267,9 @@ impl RookContainer {
         if let Err(e) = refresh_result {
             tracing::warn!(error = %e, "initial registry refresh failed, starting with empty registry");
         }
+        if let Some(ref manage_connections) = manage_connections {
+            manage_connections.start_oauth_refresh_task();
+        }
 
         let admin =
             admin_result.map_err(|e| anyhow::anyhow!("failed to ensure admin user: {}", e))?;
@@ -761,6 +764,8 @@ impl CachePort for NoOpCache {
 pub enum ProviderBuildError {
     /// Ollama requires a base_url but none was provided.
     OllamaRequiresBaseUrl,
+    AzureOpenAIRequiresValidEndpoint,
+    AzureOpenAIRequiresOAuth,
     /// Provider construction failed (e.g., invalid credentials, network error).
     ConstructionFailed(String),
 }
@@ -774,9 +779,36 @@ impl std::fmt::Display for ProviderBuildError {
                     "ollama provider requires a base_url but none was provided"
                 )
             }
+            Self::AzureOpenAIRequiresValidEndpoint => {
+                write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
+            }
+            Self::AzureOpenAIRequiresOAuth => {
+                write!(
+                    f,
+                    "Azure OpenAI provider connections require OAuth credentials"
+                )
+            }
             Self::ConstructionFailed(msg) => write!(f, "provider construction failed: {msg}"),
         }
     }
+}
+
+fn validate_azure_openai_endpoint(value: &str) -> Option<String> {
+    let endpoint = reqwest::Url::parse(value).ok()?;
+    let host = endpoint.host_str()?;
+    let azure_host =
+        host.ends_with(".openai.azure.com") || host.ends_with(".services.ai.azure.com");
+    if endpoint.scheme() != "https"
+        || !azure_host
+        || endpoint.username() != ""
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !matches!(endpoint.path(), "" | "/")
+    {
+        return None;
+    }
+    Some(endpoint.as_str().trim_end_matches('/').to_string())
 }
 
 impl std::error::Error for ProviderBuildError {}
@@ -789,6 +821,7 @@ impl std::error::Error for ProviderBuildError {}
 ///
 /// This is the single function that handles all 5 providers (openai, anthropic,
 /// ollama, gemini, groq) for both ApiKey and OAuth credentials.
+#[allow(dead_code)]
 pub fn build_provider_from_connection(
     connection_id: &ConnectionId,
     kind: ProviderKind,
@@ -796,14 +829,33 @@ pub fn build_provider_from_connection(
     base_url_override: Option<String>,
     models: Vec<ModelId>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    build_provider_from_connection_with_oauth(
+        connection_id,
+        kind,
+        credentials,
+        base_url_override,
+        models,
+        None,
+    )
+}
+
+pub fn build_provider_from_connection_with_oauth(
+    connection_id: &ConnectionId,
+    kind: ProviderKind,
+    credentials: &DecryptedCredentials,
+    base_url_override: Option<String>,
+    models: Vec<ModelId>,
+    oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
+) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
-        DecryptedCredentials::OAuth { access_token, .. } => {
+        DecryptedCredentials::OAuth { access_token, .. } if oauth_token_port.is_none() => {
             // OAuth access tokens can be used as API keys for providers that accept them.
             // For providers that don't support OAuth natively, this returns an error below.
             access_token.clone()
         }
+        DecryptedCredentials::OAuth { .. } => String::new(),
     };
 
     let provider = match kind {
@@ -815,10 +867,18 @@ pub fn build_provider_from_connection(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            Arc::new(
-                providers_openai::OpenAIProvider::new(config)
-                    .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
-            ) as Arc<dyn ProviderPort>
+            let provider = match (&oauth_token_port, credentials) {
+                (Some(token_port), DecryptedCredentials::OAuth { .. }) => {
+                    providers_openai::OpenAIProvider::new_with_oauth(
+                        config,
+                        *connection_id,
+                        token_port.clone(),
+                    )
+                }
+                _ => providers_openai::OpenAIProvider::new(config),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
+            Arc::new(provider) as Arc<dyn ProviderPort>
         }
         ProviderKind::Anthropic => {
             let config = providers_anthropic::AnthropicProviderConfig {
@@ -872,8 +932,18 @@ pub fn build_provider_from_connection(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            providers_gemini::GeminiProvider::new(config)
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+            match (oauth_token_port, credentials) {
+                (Some(token_port), DecryptedCredentials::OAuth { project_id, .. }) => {
+                    providers_gemini::GeminiProvider::new_with_oauth(
+                        config,
+                        *connection_id,
+                        project_id.clone(),
+                        token_port,
+                    )
+                }
+                _ => providers_gemini::GeminiProvider::new(config),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
         ProviderKind::Groq => {
             let config = providers_groq::GroqProviderConfig {
@@ -885,6 +955,34 @@ pub fn build_provider_from_connection(
             };
             providers_groq::GroqProvider::new(config)
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::AzureOpenAI => {
+            if !matches!(credentials, DecryptedCredentials::OAuth { .. }) {
+                return Err(ProviderBuildError::AzureOpenAIRequiresOAuth);
+            }
+            let endpoint = base_url_override
+                .as_deref()
+                .and_then(validate_azure_openai_endpoint)
+                .ok_or(ProviderBuildError::AzureOpenAIRequiresValidEndpoint)?;
+            let config = providers_openai::OpenAIProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                base_url: format!("{endpoint}/openai/v1"),
+                models: models.clone(),
+                timeout_secs: 60,
+            };
+            let provider = match oauth_token_port {
+                Some(token_port) if matches!(credentials, DecryptedCredentials::OAuth { .. }) => {
+                    providers_openai::OpenAIProvider::new_with_oauth(
+                        config,
+                        *connection_id,
+                        token_port,
+                    )
+                }
+                _ => providers_openai::OpenAIProvider::new(config),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
+            Arc::new(provider) as Arc<dyn ProviderPort>
         }
     };
 
@@ -910,18 +1008,24 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
         // Query model catalog for models matching this provider kind
         let catalog_entries = self.catalog.list().await;
-        let models: Vec<ModelId> = catalog_entries
+        let catalog_models: Vec<ModelId> = catalog_entries
             .into_iter()
             .filter(|e| e.provider_kind == input.provider_kind)
             .map(|e| ModelId::new(e.model_id))
             .collect();
+        let models = if input.provider_kind == ProviderKind::AzureOpenAI {
+            input.default_model.clone().into_iter().collect()
+        } else {
+            catalog_models
+        };
 
-        build_provider_from_connection(
+        build_provider_from_connection_with_oauth(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
             input.base_url,
             models,
+            Some(input.oauth_token_port),
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
     }

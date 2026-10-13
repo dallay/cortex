@@ -38,6 +38,7 @@ pub mod health_check;
 pub mod manage_api_keys;
 pub mod manage_connections;
 pub mod manage_providers;
+pub mod oauth_tokens;
 
 /// All use cases assembled into one struct for easy passing to transports.
 pub struct RookUsecases {

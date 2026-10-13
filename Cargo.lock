@@ -2664,6 +2664,7 @@ dependencies = [
  "rook-core",
  "rusqlite",
  "shared-kernel",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3268,6 +3269,7 @@ dependencies = [
  "providers-ollama",
  "providers-openai",
  "rand 0.10.3",
+ "reqwest 0.12.28",
  "rook-core",
  "rook-usecases",
  "rust-embed",
@@ -3319,9 +3321,11 @@ dependencies = [
  "observability",
  "parking_lot",
  "rand 0.10.3",
+ "reqwest 0.12.28",
  "ring",
  "rook-core",
  "serde",
+ "serde_json",
  "sha2",
  "shared-kernel",
  "subtle",
@@ -3330,6 +3334,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

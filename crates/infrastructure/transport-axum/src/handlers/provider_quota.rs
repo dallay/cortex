@@ -284,6 +284,10 @@ fn support_note(kind: ProviderKind, connection_count: u32) -> (&'static str, &'s
             "usage_only",
             "Usage comes from recorded requests and rate-limited responses. Remaining request/token quotas are not persisted yet, so this view highlights observed saturation instead.",
         ),
+        ProviderKind::AzureOpenAI => (
+            "usage_only",
+            "Usage comes from recorded requests. Azure resource quotas are not queried by this integration.",
+        ),
         ProviderKind::Ollama | ProviderKind::OllamaCloud => (
             "local_or_header_based",
             "Self-hosted Ollama does not expose a quota. For Ollama Cloud, this view shows observed usage and rate-limited responses when present.",
@@ -299,7 +303,7 @@ fn internal_error(_error: shared_kernel::CortexError) -> HttpError {
     }
 }
 
-fn all_provider_kinds() -> [ProviderKind; 6] {
+fn all_provider_kinds() -> [ProviderKind; 7] {
     [
         ProviderKind::OpenAI,
         ProviderKind::Anthropic,
@@ -307,5 +311,6 @@ fn all_provider_kinds() -> [ProviderKind; 6] {
         ProviderKind::Groq,
         ProviderKind::Ollama,
         ProviderKind::OllamaCloud,
+        ProviderKind::AzureOpenAI,
     ]
 }

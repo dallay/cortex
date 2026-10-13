@@ -11,15 +11,22 @@ import ProviderDetailsView from "./ProviderDetailsView.vue";
 // Composable mocks — prevent real HTTP calls
 // ---------------------------------------------------------------------------
 
+const mockFetchProviders = vi.fn().mockResolvedValue(undefined);
+const mockRefreshOAuth = vi.fn().mockResolvedValue(true);
+const mockProvidersState: {
+  value: Array<{id: string; providerKind: string}>;
+} = {value: []};
+
 vi.mock("@/composables/useProviders", () => ({
   useProviders: () => ({
-    providers: {value: []},
+    providers: mockProvidersState,
     loading: {value: false},
     error: {value: null},
-    fetch: vi.fn().mockResolvedValue(undefined),
+    fetch: mockFetchProviders,
     test: vi.fn().mockResolvedValue({ok: true, valid: true}),
     update: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
+    refreshOAuth: mockRefreshOAuth,
   }),
 }));
 
@@ -46,7 +53,9 @@ vi.mock("@/components/AddProviderDialog.vue", () => ({
 vi.mock("@/components/ConnectionListItem.vue", () => ({
   default: defineComponent({
     props: ["connection", "models", "testing", "busy"],
-    template: '<div data-testid="connection-item" />',
+    emits: ["refresh"],
+    template:
+      '<div data-testid="connection-item"><button data-testid="refresh-button" @click="$emit(\'refresh\', connection?.id ?? \'conn-1\')" /></div>',
   }),
 }));
 vi.mock("@/components/LoadingState.vue", () => ({
@@ -117,6 +126,8 @@ async function mountView(path: string) {
 describe("ProviderDetailsView", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    vi.clearAllMocks();
+    mockProvidersState.value = [];
   });
 
   it("renders the provider display name in the header", async () => {
@@ -157,5 +168,16 @@ describe("ProviderDetailsView", () => {
     const {router} = await mountView("/providers/not-a-real-kind");
     await flushPromises();
     expect(router.currentRoute.value.name).toBe("Providers");
+  });
+
+  it("refreshes the OAuth connection when the list item emits refresh", async () => {
+    mockProvidersState.value = [{id: "conn-1", providerKind: "openai"}];
+    const {wrapper} = await mountView("/providers/openai");
+
+    await wrapper.find('[data-testid="refresh-button"]').trigger("click");
+    await flushPromises();
+
+    expect(mockRefreshOAuth).toHaveBeenCalledWith("openai", "conn-1");
+    expect(mockFetchProviders).toHaveBeenCalled();
   });
 });

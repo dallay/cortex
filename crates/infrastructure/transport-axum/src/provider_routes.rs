@@ -138,6 +138,11 @@ fn map_error(error: ManageConnectionsError) -> HttpError {
             code: "VALIDATION_ERROR",
             message: error.to_string(),
         },
+        ManageConnectionsError::OAuth(_) => HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "OAUTH_ERROR",
+            message: "OAuth operation failed".to_string(),
+        },
         ManageConnectionsError::Repository(RepositoryError::NotFound(_))
         | ManageConnectionsError::ProviderRuntimeNotFound(_) => not_found("connection not found"),
         ManageConnectionsError::Repository(RepositoryError::DuplicateConnection(_))

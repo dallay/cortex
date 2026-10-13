@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use rook_core::{AuthType, ConnectionConfig, ProviderConnection, ProviderKind, TestStatus};
+use rook_core::{
+    AuthType, ConnectionConfig, Credentials, ProviderConnection, ProviderKind, TestStatus,
+};
 use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput as UsecaseCredentialsInput, TestConnectionResult,
     UpdateConnectionRequest as UsecaseUpdateConnectionRequest,
@@ -92,6 +94,12 @@ pub struct OAuthCredentialsInput {
     pub scope: String,
     pub id_token: String,
     pub project_id: String,
+    #[serde(default)]
+    pub oauth_client_id: Option<String>,
+    #[serde(default)]
+    pub oauth_client_secret: Option<String>,
+    #[serde(default)]
+    pub oauth_tenant_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +134,14 @@ pub struct ProviderConnectionResponse {
     pub test_status: TestStatusResponse,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_tenant_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -287,8 +303,45 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
             test_status: TestStatusResponse::from(&conn.test_status),
             created_at: conn.created_at,
             updated_at: conn.updated_at,
+            oauth_status: oauth_status(conn),
+            oauth_expires_at: match &conn.credentials {
+                Credentials::OAuth { expires_at, .. } => Some(*expires_at),
+                Credentials::ApiKey { .. } => None,
+            },
+            oauth_client_id: match &conn.credentials {
+                Credentials::OAuth {
+                    oauth_client_id, ..
+                } if !oauth_client_id.is_empty() => Some(oauth_client_id.clone()),
+                _ => None,
+            },
+            oauth_tenant_id: match &conn.credentials {
+                Credentials::OAuth {
+                    oauth_tenant_id, ..
+                } => oauth_tenant_id.clone(),
+                Credentials::ApiKey { .. } => None,
+            },
         }
     }
+}
+
+pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
+    let Credentials::OAuth { expires_at, .. } = &conn.credentials else {
+        return None;
+    };
+    // A failed refresh is checked first: once Rook knows the refresh token
+    // no longer works, reauthorization is required even if (and when) the
+    // access token is also past its expiry.
+    let status = if matches!(
+        &conn.test_status,
+        TestStatus::Unhealthy { error, .. } if error.contains("OAuth token refresh failed")
+    ) {
+        "reauthentication_required"
+    } else if *expires_at <= Utc::now().timestamp() {
+        "expired"
+    } else {
+        "connected"
+    };
+    Some(status.to_string())
 }
 
 impl From<&ConnectionConfig> for ConnectionConfigResponse {
@@ -380,6 +433,9 @@ fn credentials_to_usecase(credentials: &CredentialsInput) -> UsecaseCredentialsI
             scope: credentials.scope.clone(),
             id_token: credentials.id_token.clone(),
             project_id: credentials.project_id.clone(),
+            oauth_client_id: credentials.oauth_client_id.clone().unwrap_or_default(),
+            oauth_client_secret: credentials.oauth_client_secret.clone(),
+            oauth_tenant_id: credentials.oauth_tenant_id.clone(),
         },
     }
 }
