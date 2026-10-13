@@ -91,10 +91,19 @@ impl ProviderRepositoryPort for MemoryRepo {
     async fn update(
         &self,
         conn: &ProviderConnection,
-        _: DateTime<Utc>,
+        expected_updated_at: DateTime<Utc>,
     ) -> Result<(), RepositoryError> {
-        self.inner.write().await.insert(conn.id, conn.clone());
-        Ok(())
+        let mut guard = self.inner.write().await;
+        let stored = guard.get(&conn.id).cloned();
+        match stored {
+            Some(current) if current.updated_at != expected_updated_at => {
+                Err(RepositoryError::StaleUpdate)
+            }
+            _ => {
+                guard.insert(conn.id, conn.clone());
+                Ok(())
+            }
+        }
     }
     async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError> {
         self.inner.write().await.remove(id);
@@ -466,6 +475,67 @@ async fn refresh_expiring_returns_zero_on_list_error() {
     let repo = Arc::new(MemoryRepo::with_list_error());
     let manager = OAuthTokenManager::new(repo, Arc::new(PassThroughKeyManager));
     assert_eq!(manager.refresh_expiring().await, 0);
+}
+
+#[tokio::test]
+async fn stale_health_check_write_cannot_overwrite_rotated_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "rotated-access",
+            "expires_in": 3600,
+            "refresh_token": "rotated-refresh",
+        })))
+        .mount(&server)
+        .await;
+
+    let conn = oauth_connection(ProviderKind::Gemini, 0, "client", None);
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    // Health check reads the row before the refresh lands (stale snapshot).
+    let stale = repo.stored(&id).await.expect("seeded");
+    let stale_expected = stale.updated_at;
+
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo.clone(),
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            azure_token_url: None,
+            gemini_token_url: Some(server.uri()),
+        },
+    );
+    manager.access_token(&id, true).await.expect("refresh");
+
+    // The refresh must have advanced the row version…
+    let stored = repo.stored(&id).await.expect("stored");
+    assert!(stored.updated_at > stale_expected);
+    match &stored.credentials {
+        Credentials::OAuth { refresh_token, .. } => {
+            assert_eq!(refresh_token.as_str(), "rotated-refresh");
+        }
+        Credentials::ApiKey { .. } => panic!("must stay OAuth"),
+    }
+
+    // …so the stale health-check write is rejected instead of clobbering.
+    let mut clobber = stale;
+    clobber.test_status = TestStatus::Active {
+        last_test_at: Utc::now(),
+        latency_ms: 5,
+    };
+    clobber.updated_at = Utc::now();
+    let err = repo
+        .update(&clobber, stale_expected)
+        .await
+        .expect_err("stale write must fail");
+    assert_eq!(err, RepositoryError::StaleUpdate);
+
+    let stored = repo.stored(&id).await.expect("stored");
+    match &stored.credentials {
+        Credentials::OAuth { refresh_token, .. } => {
+            assert_eq!(refresh_token.as_str(), "rotated-refresh");
+        }
+        Credentials::ApiKey { .. } => panic!("must stay OAuth"),
+    }
 }
 
 #[tokio::test]

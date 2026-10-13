@@ -304,9 +304,15 @@ impl OAuthTokenManager {
             last_test_at: updated,
             latency_ms: 0,
         };
+        // Advance the row version so a concurrent writer holding a stale
+        // snapshot (e.g. ManageConnections::test across its health check)
+        // fails with StaleUpdate instead of silently overwriting the
+        // rotated credentials.
+        let expected_updated_at = connection.updated_at;
+        connection.updated_at = updated;
         let raw_token = token.access_token;
         self.repository
-            .update(&connection, connection.updated_at)
+            .update(&connection, expected_updated_at)
             .await
             .map_err(repository_error)?;
         Ok(raw_token)
