@@ -804,11 +804,13 @@ pub fn extract_api_key_id(req: &Request) -> Option<ApiKeyId> {
 pub fn extract_api_key_id_from_headers(headers: &HeaderMap) -> Option<ApiKeyId> {
     // Only extract API key ID when the auth kind explicitly indicates an API key.
     // This prevents incorrectly interpreting other auth types (e.g., JWT) as API keys.
+    // The middleware stamps "api_key" (AuthKind::ApiKey::as_header); "apikey"
+    // is kept as a legacy alias.
     let is_api_key = headers
         .get("x-authz-auth-kind")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .filter(|k| *k == "apikey")
+        .filter(|k| *k == "api_key" || *k == "apikey")
         .is_some();
 
     if !is_api_key {
@@ -1316,6 +1318,48 @@ mod tests {
 
         // JWT auth should NOT be interpreted as an API key
         assert!(extract_api_key_id_from_headers(&headers).is_none());
+    }
+
+    #[test]
+    fn extract_api_key_id_accepts_stamped_api_key_kind() {
+        // stamp_trusted_headers writes "api_key" (AuthKind::ApiKey::as_header),
+        // so the extractor must accept it — not only the legacy "apikey".
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-auth-kind", HeaderValue::from_static("api_key"));
+        headers.insert("x-authz-auth-id", HeaderValue::from_static(" key_abc123 "));
+
+        let api_key_id = extract_api_key_id_from_headers(&headers);
+
+        assert_eq!(
+            api_key_id.map(|id| id.to_string()),
+            Some("key_abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_id_roundtrips_through_stamp_trusted_headers() {
+        let subject = Subject {
+            kind: AuthKind::ApiKey,
+            id: "key_roundtrip".to_string(),
+            label: "Roundtrip".to_string(),
+            scopes: vec!["chat:read".to_string()],
+            allowed_models: Vec::new(),
+            allowed_providers: Vec::new(),
+        };
+        let mut headers = HeaderMap::new();
+        stamp_trusted_headers(
+            &mut headers,
+            "550e8400-e29b-41d4-a716-446655440000",
+            AuthTier::ClientApi,
+            &subject,
+        );
+
+        let api_key_id = extract_api_key_id_from_headers(&headers);
+
+        assert_eq!(
+            api_key_id.map(|id| id.to_string()),
+            Some("key_roundtrip".to_string())
+        );
     }
 
     #[test]
