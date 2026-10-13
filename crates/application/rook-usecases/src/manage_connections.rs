@@ -1730,14 +1730,18 @@ fn is_cloud_metadata_host(host: &str) -> bool {
     }
 
     match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => {
-            let octets = ip.octets();
-            (octets[0] == 169 && octets[1] == 254)
-                || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
-        }
-        Ok(std::net::IpAddr::V6(ip)) => ip.to_string().eq_ignore_ascii_case("fd00:ec2::254"),
+        Ok(std::net::IpAddr::V4(ip)) => is_cloud_metadata_ipv4(ip),
+        Ok(std::net::IpAddr::V6(ip)) => ip
+            .to_ipv4()
+            .map(is_cloud_metadata_ipv4)
+            .unwrap_or_else(|| ip.to_string().eq_ignore_ascii_case("fd00:ec2::254")),
         Err(_) => false,
     }
+}
+
+fn is_cloud_metadata_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    (octets[0] == 169 && octets[1] == 254) || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
 }
 
 fn validate_provider_auth_type(
@@ -3790,6 +3794,8 @@ mod tests {
         for url in [
             "http://169.254.169.254/latest/meta-data/",
             "http://100.100.100.200/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[::ffff:100.100.100.200]/",
             "http://metadata.google.internal./",
             "http://METADATA.GOOGLE.INTERNAL/",
             "http://[fd00:ec2::254]/",
