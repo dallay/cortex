@@ -2,6 +2,7 @@
 pub mod approval;
 pub mod completion;
 pub mod contributions;
+pub mod files;
 pub mod state;
 mod terminal;
 
