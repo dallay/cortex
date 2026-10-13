@@ -156,3 +156,46 @@ fn killed_owner_releases_lease_for_next_process() {
         .expect("OS releases advisory lock when owner dies");
     drop(lease);
 }
+
+#[cfg(unix)]
+#[test]
+#[allow(unsafe_code)] // Only async-signal-safe libc calls in the fork regression.
+fn dropped_lease_releases_lock_while_forked_child_is_alive() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (_directory, store) = sessions();
+    let id = Uuid::new_v4().to_string();
+    let lease = store.lease(&id).expect("acquire parent lease");
+    let (mut parent, child) = UnixStream::pair().expect("fork synchronization");
+    let child_fd = child.as_raw_fd();
+    // The child executes only async-signal-safe syscalls: the test harness
+    // can have other threads at fork. Keep its inherited lock descriptor
+    // alive to reproduce the fork-to-exec window of concurrent tool launches.
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        let mut release = 0u8;
+        unsafe {
+            let received = libc::read(child_fd, std::ptr::addr_of_mut!(release).cast(), 1);
+            libc::_exit(if received == 1 && release == b'x' {
+                0
+            } else {
+                1
+            });
+        }
+    }
+    drop(child);
+    let parent_is_exclusive = store.lease(&id).is_err();
+    drop(lease);
+    let reacquired = store.lease(&id);
+    // Reap the child before asserting so a regression cannot orphan it.
+    parent.write_all(b"x").expect("release forked child");
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert_eq!(status, 0);
+    assert!(parent_is_exclusive, "live parent still owns lease");
+    let lease = reacquired.expect("drop must release lease before child exits");
+    assert!(store.lease(&id).is_err(), "new lease must remain exclusive");
+    drop(lease);
+}

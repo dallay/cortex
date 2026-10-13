@@ -3,14 +3,17 @@ use std::{net::IpAddr, sync::Arc};
 use axum::{http::StatusCode, middleware, routing::post, Router};
 use transport_axum::{routes::login_rate_limiter_middleware, LoginRateLimiter};
 
-async fn start_login_server() -> (String, tokio::task::JoinHandle<()>) {
+async fn start_login_server(
+    bind: &str,
+    limiter: Arc<LoginRateLimiter>,
+) -> (String, tokio::task::JoinHandle<()>) {
     let router = Router::new()
         .route("/login", post(|| async { StatusCode::OK }))
         .layer(middleware::from_fn_with_state(
-            Arc::new(LoginRateLimiter::new()),
+            limiter,
             login_rate_limiter_middleware,
         ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let listener = tokio::net::TcpListener::bind(bind)
         .await
         .expect("bind test listener");
     let address = listener.local_addr().expect("listener address");
@@ -25,9 +28,10 @@ async fn start_login_server() -> (String, tokio::task::JoinHandle<()>) {
     (format!("http://{address}/login"), server)
 }
 
-fn client_from(local_ip: [u8; 4]) -> reqwest::Client {
+fn client_from(local_ip: IpAddr) -> reqwest::Client {
     reqwest::Client::builder()
-        .local_address(IpAddr::from(local_ip))
+        .no_proxy()
+        .local_address(local_ip)
         .build()
         .expect("test HTTP client")
 }
@@ -50,9 +54,13 @@ async fn post_login(
 
 #[tokio::test]
 async fn real_peer_ip_drives_login_limit_despite_spoofed_proxy_headers() {
-    let (url, server) = start_login_server().await;
-    let first_peer = client_from([127, 0, 0, 1]);
-    let second_peer = client_from([127, 0, 0, 2]);
+    // Standard loopbacks need no IPv4 alias on macOS. Both listeners must
+    // share the limiter: separate limiters would hide a collapsed IP bucket.
+    let limiter = Arc::new(LoginRateLimiter::new());
+    let (url, server) = start_login_server("127.0.0.1:0", limiter.clone()).await;
+    let (second_url, second_server) = start_login_server("[::1]:0", limiter).await;
+    let first_peer = client_from("127.0.0.1".parse().unwrap());
+    let second_peer = client_from("::1".parse().unwrap());
 
     for attempt in 0..5 {
         let status = post_login(
@@ -75,10 +83,22 @@ async fn real_peer_ip_drives_login_limit_despite_spoofed_proxy_headers() {
     );
 
     assert_eq!(
-        post_login(&second_peer, &url, "198.51.100.99", "203.0.113.99").await,
+        post_login(&second_peer, &second_url, "198.51.100.99", "203.0.113.99").await,
         StatusCode::OK,
         "a distinct TCP peer must get its own bucket even when proxy headers match"
     );
 
+    for _ in 1..5 {
+        assert_eq!(
+            post_login(&second_peer, &second_url, "198.51.100.99", "203.0.113.99").await,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        post_login(&second_peer, &second_url, "198.51.100.100", "203.0.113.100").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
     server.abort();
+    second_server.abort();
 }
