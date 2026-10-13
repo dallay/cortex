@@ -995,22 +995,24 @@ mod tests {
 
     use super::extract_client_ip;
 
-    fn request_with_ips(connect_ip: IpAddr, xff: Option<&str>, x_real_ip: Option<&str>) -> axum::extract::Request {
+    fn request_with_ips(
+        connect_ip: IpAddr,
+        xff: Option<&str>,
+        x_real_ip: Option<&str>,
+    ) -> axum::extract::Request {
         let mut request = axum::extract::Request::builder()
             .uri("/login")
             .body(axum::body::Body::empty())
             .expect("request");
         if let Some(value) = xff {
-            request.headers_mut().insert(
-                "x-forwarded-for",
-                value.parse().expect("xff header"),
-            );
+            request
+                .headers_mut()
+                .insert("x-forwarded-for", value.parse().expect("xff header"));
         }
         if let Some(value) = x_real_ip {
-            request.headers_mut().insert(
-                "x-real-ip",
-                value.parse().expect("x-real-ip header"),
-            );
+            request
+                .headers_mut()
+                .insert("x-real-ip", value.parse().expect("x-real-ip header"));
         }
         let socket = SocketAddr::new(connect_ip, 54211);
         request.extensions_mut().insert(ConnectInfo(socket));
@@ -1032,9 +1034,6 @@ mod tests {
     fn extract_client_ip_uses_connect_info_without_headers() {
         let request = request_with_ips(IpAddr::from([192, 168, 1, 20]), None, None);
 
-        assert_eq!(
-            extract_client_ip(&request),
-            IpAddr::from([192, 168, 1, 20])
-        );
+        assert_eq!(extract_client_ip(&request), IpAddr::from([192, 168, 1, 20]));
     }
 }
