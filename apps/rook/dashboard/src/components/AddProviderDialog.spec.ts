@@ -696,6 +696,101 @@ afterEach(() => {
 		expect(open).toHaveBeenCalled();
 		wrapper.unmount();
 	});
+
+	it("polls OAuth status until the connection completes", async () => {
+		vi.useFakeTimers();
+		try {
+			vi.spyOn(globalThis, "open").mockReturnValue(null);
+			const conn = makeConnection({id: "conn-1", name: "Azure prod"});
+			mockState.providerById.value = new Map([[conn.id, conn]]);
+			mockState.getOAuthStatus
+				.mockResolvedValueOnce({
+					flowId: "flow-1",
+					status: "pending",
+					message: "Waiting",
+				})
+				.mockResolvedValueOnce({
+					flowId: "flow-1",
+					status: "connected",
+					message: "Connected",
+					connectionId: "conn-1",
+				});
+
+			const wrapper = mountDialog({providerKind: "azure-openai"});
+			await flushPromises();
+			await setInputValue(wrapper, "input-displayName", "Azure prod");
+			await setInputValue(wrapper, "oauth-client-id", "client-id");
+			await setInputValue(
+				wrapper,
+				"input-baseUrl",
+				"https://resource.openai.azure.com",
+			);
+			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
+			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await flushPromises();
+
+			expect(wrapper.find("output[aria-live='polite']").text()).toContain(
+				"Waiting",
+			);
+
+			await vi.advanceTimersByTimeAsync(5000);
+			await flushPromises();
+
+			expect(mockState.fetch).toHaveBeenCalled();
+			expect(wrapper.emitted("saved")?.[0]).toEqual([conn]);
+			expect(wrapper.emitted("update:open")?.[0]).toEqual([false]);
+			wrapper.unmount();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops polling when the OAuth flow fails", async () => {
+		vi.useFakeTimers();
+		try {
+			vi.spyOn(globalThis, "open").mockReturnValue(null);
+			mockState.getOAuthStatus.mockResolvedValueOnce({
+				flowId: "flow-1",
+				status: "failed",
+				message: "Denied",
+			});
+
+			const wrapper = mountDialog({providerKind: "azure-openai"});
+			await flushPromises();
+			await setInputValue(wrapper, "input-displayName", "Azure prod");
+			await setInputValue(wrapper, "oauth-client-id", "client-id");
+			await setInputValue(
+				wrapper,
+				"input-baseUrl",
+				"https://resource.openai.azure.com",
+			);
+			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
+			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await flushPromises();
+
+			expect(mockState.getOAuthStatus).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(15000);
+			await flushPromises();
+			expect(mockState.getOAuthStatus).toHaveBeenCalledTimes(1);
+			expect(wrapper.emitted("saved")).toBeUndefined();
+			wrapper.unmount();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("renders the Google project field for Gemini", async () => {
+		const wrapper = mountDialog({providerKind: "gemini"});
+		await flushPromises();
+		await wrapper
+			.find('[data-testid="mock-togglegroup-set-oauth"]')
+			.trigger("click");
+		await flushPromises();
+		expect(wrapper.find('[data-testid="oauth-project-id"]').exists()).toBe(
+			true,
+		);
+		wrapper.unmount();
+	});
 });
 
 describe("AddProviderDialog — edit mode", () => {
