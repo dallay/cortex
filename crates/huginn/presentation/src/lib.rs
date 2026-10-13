@@ -1,5 +1,6 @@
 //! Replaceable presentation capability. Terminal APIs stay inside this crate.
 pub mod approval;
+pub mod completion;
 pub mod contributions;
 pub mod state;
 mod terminal;
