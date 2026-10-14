@@ -351,11 +351,8 @@ async fn ephemeral_restart_and_locked_or_missing_credentials_are_not_ready() {
 
 #[tokio::test]
 async fn precedence_never_fills_an_invalid_explicit_connection() {
-    let mut h = open(
-        Arc::new(Metadata::default()),
-        Secrets::new(SecretMode::Secure),
-    )
-    .await;
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
     let a = h
         .manager
         .create(settings(), secret("a-secret"))
@@ -396,6 +393,39 @@ async fn precedence_never_fills_an_invalid_explicit_connection() {
         assert_eq!(resolved.provenance, expected);
         assert_eq!(resolved.selection.unwrap().connection.id, b.id.to_string());
     }
+    let before_explicit = h.manager.list().await.unwrap();
+    let explicit = h
+        .manager
+        .resolve(ConnectionInputs {
+            cli: Some(ConnectionChoice::Explicit {
+                settings: settings(),
+                secret: Some(Secret::new(SENTINEL.into()).unwrap()),
+            }),
+            toml: None,
+            environment: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(explicit.provenance, ConnectionProvenance::Cli);
+    let selection = explicit.selection.as_ref().unwrap();
+    assert!(!h
+        .manager
+        .list()
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.id.to_string() == selection.connection.id));
+    assert_eq!(h.manager.list().await.unwrap(), before_explicit);
+    assert_eq!(
+        h.access
+            .resolve(&selection.connection, CancellationToken::new())
+            .await
+            .unwrap()
+            .secret
+            .unwrap()
+            .expose(),
+        SENTINEL
+    );
     // clear_selection through a failed explicit choice clears only new admission;
     // the turn pinned before clearing retains its original authorization.
     assert!(matches!(

@@ -19,6 +19,7 @@ struct Binding {
 pub struct ConnectionAccess {
     secrets: Arc<dyn SecretStore>,
     bindings: Mutex<BTreeMap<String, Binding>>,
+    runtime_secrets: Mutex<BTreeMap<String, Secret>>,
     serial: AsyncMutex<()>,
     epoch: AtomicU64,
 }
@@ -27,6 +28,7 @@ impl ConnectionAccess {
         Arc::new(Self {
             secrets,
             bindings: Mutex::new(BTreeMap::new()),
+            runtime_secrets: Mutex::new(BTreeMap::new()),
             serial: AsyncMutex::new(()),
             epoch: AtomicU64::new(0),
         })
@@ -38,7 +40,36 @@ impl ConnectionAccess {
             .insert(identity.id.clone(), Binding { identity, record });
         Ok(())
     }
+    fn bind_runtime(
+        &self,
+        identity: ConnectionIdentity,
+        settings: ConnectionSettings,
+        secret: Option<Secret>,
+    ) -> ConnectionResult<()> {
+        let record = ConnectionRecord {
+            id: Uuid::parse_str(&identity.id).map_err(|_| ConnectionError::InvalidSelection)?,
+            revision: Uuid::new_v4(),
+            settings,
+            secret: None,
+            mode: self.secrets.mode(),
+        };
+        if let Some(secret) = secret {
+            self.runtime_secrets
+                .lock()
+                .map_err(|_| ConnectionError::SecretStore)?
+                .insert(identity.id.clone(), secret);
+        }
+        self.bindings
+            .lock()
+            .map_err(|_| ConnectionError::Revoked)?
+            .insert(identity.id.clone(), Binding { identity, record });
+        Ok(())
+    }
     fn unbind(&self, id: Uuid) {
+        self.runtime_secrets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id.to_string());
         self.bindings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -62,6 +93,10 @@ impl ConnectionAccess {
             .bindings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.runtime_secrets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         for binding in std::mem::take(&mut *bindings).into_values() {
             // Exact identities cannot revoke a replacement generation on recovery.
             let _ = providers.invalidate(&binding.identity);
@@ -96,7 +131,15 @@ impl ConnectionCredentials for ConnectionAccess {
                 _ = cancel.cancelled() => return Err(ConnectionError::Cancelled),
                 result = self.secrets.read(reference) => result?,
             }),
-            None if record.settings.requires_secret => return Err(ConnectionError::MissingSecret),
+            None if record.settings.requires_secret => Some(Secret::new(
+                self.runtime_secrets
+                    .lock()
+                    .map_err(|_| ConnectionError::SecretStore)?
+                    .get(&identity.id)
+                    .ok_or(ConnectionError::MissingSecret)?
+                    .expose()
+                    .to_owned(),
+            )?),
             None => None,
         };
         // Secret I/O may race rotation: recheck the exact runtime identity afterwards.
@@ -582,7 +625,36 @@ impl ConnectionManager {
                         .clear_selection()
                         .map_err(|_| ConnectionError::InvalidSelection)?;
                     drop(state);
-                    self.write_connection(None, settings, secret).await?.id
+                    let id = Uuid::new_v4();
+                    let record = ConnectionRecord {
+                        id,
+                        revision: Uuid::new_v4(),
+                        mode: self.access.secrets.mode(),
+                        secret: None,
+                        settings: settings.clone(),
+                    };
+                    settings.validate()?;
+                    if settings.requires_secret != secret.is_some() {
+                        return Err(ConnectionError::MissingSecret);
+                    }
+                    let identity = self.install(&record).await?;
+                    self.access
+                        .bind_runtime(identity.clone(), settings.clone(), secret)?;
+                    let selection = ModelSelection {
+                        connection: identity,
+                        model: settings.model,
+                    };
+                    self.providers
+                        .execute(
+                            ProviderAction::Select(selection.clone()),
+                            CancellationToken::new(),
+                        )
+                        .await
+                        .map_err(|_| ConnectionError::InvalidSelection)?;
+                    return Ok(ResolvedConnection {
+                        selection: Some(selection),
+                        provenance,
+                    });
                 }
             };
             return Ok(ResolvedConnection {
