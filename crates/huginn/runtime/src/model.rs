@@ -18,31 +18,36 @@ pub struct OpenAiProvider {
     timeout_secs: u64,
 }
 impl OpenAiProvider {
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn trust_test_certificate(&mut self, certificate_der: &[u8]) -> Result<()> {
+        self.client = transport_builder(&self.url, self.timeout_secs, false)?
+            .add_root_certificate(
+                reqwest::Certificate::from_der(certificate_der)
+                    .map_err(|_| AgentError::Configuration("invalid test certificate".into()))?,
+            )
+            .build()
+            .map_err(|_| AgentError::Configuration("cannot construct test HTTP client".into()))?;
+        Ok(())
+    }
+
     pub fn new(
         base_url: &str,
         model: String,
         key: Option<String>,
         timeout_secs: u64,
     ) -> Result<Self> {
-        let parsed = reqwest::Url::parse(base_url)
-            .map_err(|_| AgentError::Configuration("invalid model base_url".into()))?;
-        if !matches!(parsed.scheme(), "http" | "https")
-            || parsed.host_str().is_none()
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err(AgentError::Configuration(
-                "base_url must be HTTP(S) without credentials or query parameters".into(),
-            ));
-        }
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(timeout_secs))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| AgentError::Configuration("cannot construct HTTP client".into()))?;
+        Self::with_transport(base_url, model, key, timeout_secs, false)
+    }
+    /// HTTP requires an explicit connection-local opt-in and a literal loopback IP.
+    pub fn with_transport(
+        base_url: &str,
+        model: String,
+        key: Option<String>,
+        timeout_secs: u64,
+        allow_loopback_http: bool,
+    ) -> Result<Self> {
+        let client = transport_client(base_url, timeout_secs, allow_loopback_http)?;
         Ok(Self {
             client,
             url: format!("{}/chat/completions", base_url.trim_end_matches('/')),
@@ -51,6 +56,47 @@ impl OpenAiProvider {
             timeout_secs,
         })
     }
+}
+pub(crate) fn transport_client(
+    base_url: &str,
+    timeout_secs: u64,
+    allow_loopback_http: bool,
+) -> Result<reqwest::Client> {
+    transport_builder(base_url, timeout_secs, allow_loopback_http)?
+        .build()
+        .map_err(|_| AgentError::Configuration("cannot construct HTTP client".into()))
+}
+fn transport_builder(
+    base_url: &str,
+    timeout_secs: u64,
+    allow_loopback_http: bool,
+) -> Result<reqwest::ClientBuilder> {
+    let parsed = reqwest::Url::parse(base_url)
+        .map_err(|_| AgentError::Configuration("invalid model base_url".into()))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || timeout_secs == 0
+        || (parsed.scheme() == "http"
+            && (!allow_loopback_http || !huginn_core::connections::is_loopback_endpoint(&parsed)))
+    {
+        return Err(AgentError::Configuration(
+                "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
+            ));
+    }
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(timeout_secs))
+        .redirect(reqwest::redirect::Policy::none());
+    // A loopback exception must never forward content or authorization through
+    // an environment-configured HTTP proxy.
+    if huginn_core::connections::is_loopback_endpoint(&parsed) {
+        builder = builder.no_proxy();
+    }
+    Ok(builder)
 }
 fn wire_message(message: &Message) -> Value {
     let mut result = json!({"role": message.role, "content": message.content});
@@ -83,6 +129,7 @@ impl ModelProvider for OpenAiProvider {
             builder = builder.bearer_auth(key);
         }
         let response = tokio::select! {
+            biased;
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
             response = tokio::time::timeout(Duration::from_secs(self.timeout_secs), builder.send()) => response
                 .map_err(|_| AgentError::Model("HTTP response headers timed out".into()))?
@@ -104,9 +151,16 @@ impl ModelProvider for OpenAiProvider {
         };
         Ok(futures::stream::unfold(state, |mut state| async move {
             loop {
+                if state.ended && state.queued.is_empty() { return None; }
+                if state.cancellation.is_cancelled() {
+                    state.queued.clear();
+                    state.ended = true;
+                    return Some((Err(AgentError::Cancelled), state));
+                }
                 if let Some(item) = state.queued.pop_front() { return Some((item, state)); }
                 if state.ended { return None; }
                 let chunk = tokio::select! {
+                    biased;
                     _ = state.cancellation.cancelled() => { state.ended=true; state.queued.push_back(Err(AgentError::Cancelled)); continue; }
                     item = state.bytes.next() => item,
                 };
@@ -239,9 +293,9 @@ impl SseParser {
                 }
                 if let Some(reason) = choice["finish_reason"].as_str() {
                     if !matches!(reason, "stop" | "tool_calls") {
-                        return Err(AgentError::Model(format!(
-                            "incomplete model response: {reason}"
-                        )));
+                        return Err(AgentError::Model(
+                            "incomplete model response (unsupported finish reason)".into(),
+                        ));
                     }
                     self.finished = true;
                 }
@@ -295,6 +349,7 @@ impl SseParser {
 /// Sentinel used only when no inference provider has been configured.
 /// It never fabricates a response and fails before any model request is sent.
 pub struct UnconfiguredModelProvider;
+
 #[async_trait]
 impl ModelProvider for UnconfiguredModelProvider {
     fn is_configured(&self) -> bool {
@@ -357,6 +412,7 @@ pub struct ProviderConfig {
     pub model: Option<String>,
     pub key: Option<String>,
     pub timeout_secs: u64,
+    pub allow_loopback_http: bool,
 }
 pub type ProviderFactory = fn(&ProviderConfig) -> Result<std::sync::Arc<dyn ModelProvider>>;
 #[derive(Default)]
@@ -383,7 +439,7 @@ impl ProviderFactories {
             .expect("unique builtin");
         factories
             .register("openai", true, |config| {
-                Ok(std::sync::Arc::new(OpenAiProvider::new(
+                Ok(std::sync::Arc::new(OpenAiProvider::with_transport(
                     config
                         .base_url
                         .as_deref()
@@ -395,6 +451,7 @@ impl ProviderFactories {
                         .ok_or_else(|| AgentError::Configuration("model is required".into()))?,
                     config.key.clone(),
                     config.timeout_secs,
+                    config.allow_loopback_http,
                 )?))
             })
             .expect("unique builtin");

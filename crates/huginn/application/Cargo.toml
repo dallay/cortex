@@ -5,6 +5,14 @@ edition = "2021"
 rust-version = "1.89"
 publish = false
 
+[features]
+test-hooks = []
+
+[[test]]
+name = "runtime_binding_replacement"
+path = "tests/runtime_binding_replacement.rs"
+required-features = ["test-hooks"]
+
 [dependencies]
 huginn-core = { path = "../core" }
 async-trait.workspace = true

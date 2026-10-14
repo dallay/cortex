@@ -243,7 +243,11 @@ fn credential_fallback_respects_the_configured_environment_name() {
         ),
         ("", None, Some("legacy-test-key"), None, true, false),
     ] {
-        std::fs::write(&config, format!("api_key_env = {name:?}\n")).expect("write config");
+        std::fs::write(
+            &config,
+            format!("api_key_env = {name:?}\nallow_loopback_http = true\n"),
+        )
+        .expect("write config");
         let mut command = huginn();
         command
             .arg("--config")

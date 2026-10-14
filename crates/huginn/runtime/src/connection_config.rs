@@ -10,6 +10,8 @@ pub struct ExplicitConnectionConfig {
     pub endpoint: Option<String>,
     pub model: String,
     pub credential_env: Option<String>,
+    #[serde(default)]
+    pub allow_loopback_http: bool,
 }
 impl ExplicitConnectionConfig {
     pub fn parse_toml(text: &str) -> ConnectionResult<Self> {
@@ -41,6 +43,7 @@ impl ExplicitConnectionConfig {
             endpoint: self.endpoint,
             model: self.model,
             requires_secret,
+            allow_loopback_http: self.allow_loopback_http,
         };
         settings.validate()?;
         Ok(ConnectionChoice::Explicit { settings, secret })

@@ -157,7 +157,7 @@ pub struct SqliteConnections {
     db: Arc<Mutex<rusqlite::Connection>>,
     operation: Arc<tokio::sync::Mutex<()>>,
     lease: Arc<std::fs::File>,
-    #[cfg(feature = "test-hooks")]
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
     probe: Arc<test_hooks::WorkerProbe>,
 }
 impl SqliteConnections {
@@ -196,12 +196,12 @@ impl SqliteConnections {
             db: Arc::new(Mutex::new(db)),
             operation: Arc::new(tokio::sync::Mutex::new(())),
             lease: Arc::new(lease),
-            #[cfg(feature = "test-hooks")]
+            #[cfg(all(feature = "test-hooks", debug_assertions))]
             probe: Arc::new(test_hooks::WorkerProbe::default()),
         })
     }
 }
-#[cfg(feature = "test-hooks")]
+#[cfg(all(feature = "test-hooks", debug_assertions))]
 impl SqliteConnections {
     pub fn test_probe(&self) -> Arc<test_hooks::WorkerProbe> {
         self.probe.clone()
@@ -223,7 +223,7 @@ impl ConnectionStore for SqliteConnections {
         let operation = self.operation.clone().lock_owned().await;
         let lease = self.lease.clone();
         let db = self.db.clone();
-        #[cfg(feature = "test-hooks")]
+        #[cfg(all(feature = "test-hooks", debug_assertions))]
         self.probe
             .admitted
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -254,19 +254,19 @@ impl ConnectionStore for SqliteConnections {
         let operation = self.operation.clone().lock_owned().await;
         let lease = self.lease.clone();
         let db = self.db.clone();
-        #[cfg(feature = "test-hooks")]
+        #[cfg(all(feature = "test-hooks", debug_assertions))]
         let probe = self.probe.clone();
-        #[cfg(feature = "test-hooks")]
+        #[cfg(all(feature = "test-hooks", debug_assertions))]
         probe
             .admitted
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         tokio::task::spawn_blocking(move || {
-            #[cfg(feature = "test-hooks")]
+            #[cfg(all(feature = "test-hooks", debug_assertions))]
             let _completion = test_hooks::WorkerCompletion(probe.clone());
             let _operation = operation;
             let _lease = lease;
             let db = db;
-            #[cfg(feature = "test-hooks")]
+            #[cfg(all(feature = "test-hooks", debug_assertions))]
             probe.pause();
             let db = db.lock().map_err(|_| ConnectionError::Metadata)?;
             let rows = db.execute("UPDATE connection_metadata SET version=?1, document=?2 WHERE id=1 AND version=?3", rusqlite::params![version, document, previous]).map_err(|_| ConnectionError::Metadata)?;
@@ -276,7 +276,7 @@ impl ConnectionStore for SqliteConnections {
     }
 }
 
-#[cfg(feature = "test-hooks")]
+#[cfg(all(feature = "test-hooks", debug_assertions))]
 pub mod test_hooks {
     use std::sync::{atomic::AtomicUsize, Arc, Condvar, Mutex};
 

@@ -77,6 +77,15 @@ defaults for the endpoint and model. API keys are loaded from a named
 environment variable. Set `api_key_env = ""` for a local endpoint
 without authentication.
 
+HTTPS endpoints use validated certificates. Plain HTTP requires
+`allow_loopback_http = true` and a literal loopback IP (`127.0.0.1` or `[::1]`);
+private/LAN addresses and DNS names are not a local exception. Existing local
+HTTP configurations must explicitly enable this setting. Redirects are rejected.
+For the headless built-in adapters and the actually tested Ollama models, see
+[inference adapters and local verification](inference-adapters.md). Their
+connection catalog is not yet wired into the legacy CLI factory or Providers UI;
+that composition is a separate integration delivery.
+
 Reads are limited to resolved paths within the workspace. Edits show their
 complete diff and require approval; changed files require a new diff.
 Shell and every MCP call require approval too. Ctrl+C interrupts a turn;

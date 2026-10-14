@@ -228,6 +228,7 @@ fn settings() -> ConnectionSettings {
         endpoint: Some("https://example.invalid/v1".into()),
         model: "alpha".into(),
         requires_secret: true,
+        allow_loopback_http: false,
     }
 }
 fn secret(value: &str) -> Option<Secret> {
@@ -239,6 +240,48 @@ const fn empty() -> ConnectionInputs {
         toml: None,
         environment: None,
     }
+}
+
+#[tokio::test]
+async fn legacy_loopback_http_stays_visible_and_revocable_without_becoming_usable() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Ephemeral);
+    let mut legacy = settings();
+    legacy.endpoint = Some("http://127.0.0.1:11434".into());
+    legacy.requires_secret = false;
+    legacy.allow_loopback_http = false; // serde(default) representation of old metadata
+    let id = uuid::Uuid::new_v4();
+    store.value.lock().unwrap().connections.insert(
+        id,
+        ConnectionRecord {
+            id,
+            revision: uuid::Uuid::new_v4(),
+            settings: legacy,
+            secret: None,
+            mode: SecretMode::Ephemeral,
+        },
+    );
+    let mut h = open(store.clone(), secrets).await;
+    let records = h.manager.list().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, id);
+    assert_eq!(
+        h.manager.status(id).await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+    assert_eq!(
+        h.manager.select(id).await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+    assert!(h.model.0.pin_turn(CancellationToken::new()).await.is_err());
+
+    let mut repaired = records[0].settings.clone();
+    repaired.allow_loopback_http = true;
+    h.manager.update(id, repaired, None).await.unwrap();
+    assert_eq!(h.manager.status(id).await, Ok(()));
+    h.manager.revoke(id).await.unwrap();
+    assert!(h.manager.list().await.unwrap().is_empty());
+    h.supervisor.shutdown().await;
 }
 
 #[tokio::test]
@@ -699,6 +742,7 @@ fn no_auth(endpoint: &str) -> ConnectionSettings {
     ConnectionSettings {
         endpoint: Some(endpoint.into()),
         requires_secret: false,
+        allow_loopback_http: true,
         ..settings()
     }
 }

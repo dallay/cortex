@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub provider: String,
     pub base_url: Option<String>,
+    pub allow_loopback_http: bool,
     pub model: Option<String>,
     pub api_key_env: Option<String>,
     pub db: PathBuf,
@@ -45,6 +46,7 @@ impl Default for Config {
         Self {
             provider: "openai".into(),
             base_url: None,
+            allow_loopback_http: false,
             model: None,
             api_key_env: Some("HUGINN_API_KEY".into()),
             db: root.join("sessions.db"),
@@ -216,6 +218,7 @@ impl Config {
                 model: self.model.clone(),
                 key,
                 timeout_secs: self.timeout_secs,
+                allow_loopback_http: self.allow_loopback_http,
             },
         )?)
     }
@@ -245,6 +248,7 @@ impl Config {
                 model: self.model.clone(),
                 key: None,
                 timeout_secs: self.timeout_secs,
+                allow_loopback_http: self.allow_loopback_http,
             },
         )?;
         Ok(())

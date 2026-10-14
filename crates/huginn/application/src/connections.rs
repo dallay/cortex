@@ -34,6 +34,10 @@ impl ConnectionAccess {
         })
     }
     fn bind(&self, identity: ConnectionIdentity, record: ConnectionRecord) -> ConnectionResult<()> {
+        self.runtime_secrets
+            .lock()
+            .map_err(|_| ConnectionError::SecretStore)?
+            .remove(&identity.id);
         self.bindings
             .lock()
             .map_err(|_| ConnectionError::Revoked)?
@@ -53,12 +57,19 @@ impl ConnectionAccess {
             secret: None,
             mode: self.secrets.mode(),
         };
-        if let Some(secret) = secret {
-            self.runtime_secrets
-                .lock()
-                .map_err(|_| ConnectionError::SecretStore)?
-                .insert(identity.id.clone(), secret);
+        let mut runtime_secrets = self
+            .runtime_secrets
+            .lock()
+            .map_err(|_| ConnectionError::SecretStore)?;
+        match secret {
+            Some(secret) => {
+                runtime_secrets.insert(identity.id.clone(), secret);
+            }
+            None => {
+                runtime_secrets.remove(&identity.id);
+            }
         }
+        drop(runtime_secrets);
         self.bindings
             .lock()
             .map_err(|_| ConnectionError::Revoked)?
@@ -190,6 +201,27 @@ pub struct ResolvedConnection {
     pub provenance: ConnectionProvenance,
 }
 impl ConnectionManager {
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn bind_runtime_for_test(
+        access: &ConnectionAccess,
+        identity: ConnectionIdentity,
+        settings: ConnectionSettings,
+        secret: Option<Secret>,
+    ) -> ConnectionResult<()> {
+        access.bind_runtime(identity, settings, secret)
+    }
+
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn bind_record_for_test(
+        access: &ConnectionAccess,
+        identity: ConnectionIdentity,
+        record: ConnectionRecord,
+    ) -> ConnectionResult<()> {
+        access.bind(identity, record)
+    }
+
     /// Open only after the adapter catalog has activated. Missing credentials remain
     /// visible in metadata but never become router-ready.
     pub async fn open(
@@ -213,7 +245,9 @@ impl ConnectionManager {
             if *id != record.id || record.settings.requires_secret != record.secret.is_some() {
                 return Err(ConnectionError::Metadata);
             }
-            record.settings.validate()?;
+            if !record.settings.is_legacy_loopback_http() {
+                record.settings.validate()?;
+            }
             if let Some(reference) = &record.secret {
                 if !references.insert(reference.clone()) || metadata.cleanup.contains_key(reference)
                 {
@@ -242,6 +276,11 @@ impl ConnectionManager {
             }
         }
         for record in state.metadata.connections.values() {
+            // Keep structurally valid legacy local HTTP records visible and revocable,
+            // but never install or select them without a deliberate repair/update.
+            if record.settings.is_legacy_loopback_http() {
+                continue;
+            }
             record.settings.validate()?;
             // A locked/missing backend is not silently downgraded. Diagnosis can still list records.
             if manager.check_ready(record).await.is_ok() {
@@ -394,14 +433,18 @@ impl ConnectionManager {
         let _operation = self.operation().await?;
         let state = self.state.lock().await;
         Self::check_state(&state)?;
-        self.check_ready(
-            state
-                .metadata
-                .connections
-                .get(&id)
-                .ok_or(ConnectionError::InvalidSelection)?,
-        )
-        .await
+        let record = state
+            .metadata
+            .connections
+            .get(&id)
+            .cloned()
+            .ok_or(ConnectionError::InvalidSelection)?;
+        drop(state);
+        if record.settings.is_legacy_loopback_http() {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        record.settings.validate()?;
+        self.check_ready(&record).await
     }
     pub async fn create(
         &self,
@@ -439,7 +482,12 @@ impl ConnectionManager {
             .find(|(r, _)| r.provider == settings.provider)
             .ok_or(ConnectionError::AdapterUnavailable)?
             .1;
-        if !descriptor.models.iter().any(|m| m.id == settings.model) {
+        // An empty catalog is reserved by registration for connection-scoped
+        // adapters. This stores a candidate, not proof of remote availability;
+        // their factory must validate it before the router can pin inference.
+        if !descriptor.models.is_empty()
+            && !descriptor.models.iter().any(|m| m.id == settings.model)
+        {
             return Err(ConnectionError::InvalidConfiguration);
         }
         let authentication = if settings.requires_secret {
@@ -527,6 +575,10 @@ impl ConnectionManager {
             .get(&id)
             .cloned()
             .ok_or(ConnectionError::InvalidSelection)?;
+        if record.settings.is_legacy_loopback_http() {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        record.settings.validate()?;
         self.check_secret(&record).await?;
         if self.access.identity(id).is_err() {
             self.install(&record).await?;

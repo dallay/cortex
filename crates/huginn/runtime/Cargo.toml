@@ -11,7 +11,7 @@ path = "tests/support/session_lock_holder.rs"
 test = false
 
 [features]
-test-hooks = []
+test-hooks = ["huginn-application/test-hooks"]
 
 [package.metadata.cargo-all-features]
 skip_feature_sets = [["test-hooks"]]
@@ -43,6 +43,11 @@ keyring = { version = "=3.6.3", default-features = false, features = ["apple-nat
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [[test]]
+name = "tls_transport"
+path = "tests/tls_transport.rs"
+required-features = ["test-hooks"]
+
+[[test]]
 name = "connection_workers"
 path = "tests/connection_workers.rs"
 required-features = ["test-hooks"]
@@ -50,6 +55,8 @@ required-features = ["test-hooks"]
 [dev-dependencies]
 tempfile = "3"
 axum.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = "0.13"
 
 [lints]
 workspace = true
