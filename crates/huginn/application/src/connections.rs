@@ -405,12 +405,14 @@ impl ConnectionManager {
             .metadata
             .connections
             .get(&id)
+            .cloned()
             .ok_or(ConnectionError::InvalidSelection)?;
+        drop(state);
         if record.settings.is_legacy_loopback_http() {
             return Err(ConnectionError::InvalidConfiguration);
         }
         record.settings.validate()?;
-        self.check_ready(record).await
+        self.check_ready(&record).await
     }
     pub async fn create(
         &self,
