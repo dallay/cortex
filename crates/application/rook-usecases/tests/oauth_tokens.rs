@@ -304,7 +304,7 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: Some(server.uri()),
+            azure_token_url: Some(format!("http://localhost:{}", server.address().port())),
             gemini_token_url: None,
         },
     );
@@ -327,6 +327,37 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         Credentials::ApiKey { .. } => panic!("must stay OAuth"),
     }
     assert!(matches!(stored.test_status, TestStatus::Active { .. }));
+}
+
+#[tokio::test]
+async fn ipv6_loopback_token_override_is_accepted() {
+    let listener = std::net::TcpListener::bind("[::1]:0").expect("bind IPv6 loopback");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = MockServer::builder().listener(listener).start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "ipv6-access",
+            "expires_in": 3600,
+        })))
+        .mount(&server)
+        .await;
+
+    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo,
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            azure_token_url: Some(format!("http://[::1]:{port}/token")),
+            gemini_token_url: None,
+        },
+    );
+
+    assert_eq!(
+        manager.access_token(&id, true).await.expect("refresh"),
+        "ipv6-access"
+    );
 }
 
 #[tokio::test]
@@ -558,6 +589,52 @@ async fn remote_cleartext_token_override_is_rejected() {
     assert!(err.to_string().contains("HTTPS or loopback"));
     let stored = repo.stored(&id).await.expect("stored");
     assert!(matches!(stored.test_status, TestStatus::Unhealthy { .. }));
+}
+
+#[tokio::test]
+async fn userinfo_remote_cleartext_override_is_rejected_before_request() {
+    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo,
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            // The invalid port prevents any request if a broken validator lets
+            // this authority-confusion URL through to reqwest.
+            azure_token_url: Some("http://localhost:80@evil.example:65536/token".to_string()),
+            gemini_token_url: None,
+        },
+    );
+
+    let error = manager
+        .access_token(&id, true)
+        .await
+        .expect_err("remote cleartext authority must be rejected");
+    assert!(error.to_string().contains("HTTPS or loopback"));
+}
+
+#[tokio::test]
+async fn https_endpoint_override_reaches_the_http_client() {
+    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let id = conn.id;
+    let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let manager = OAuthTokenManager::with_endpoint_overrides(
+        repo,
+        Arc::new(PassThroughKeyManager),
+        TokenEndpointOverrides {
+            // Port zero cannot host a server, but a rejection here must come
+            // from the connection attempt, not URL policy validation.
+            azure_token_url: Some("https://localhost:0/token".to_string()),
+            gemini_token_url: None,
+        },
+    );
+
+    let error = manager
+        .access_token(&id, true)
+        .await
+        .expect_err("the local port-zero endpoint has no listener");
+    assert!(!error.to_string().contains("HTTPS or loopback"));
 }
 
 #[tokio::test]

@@ -73,32 +73,6 @@ pub(crate) fn test_endpoint_override_allowed(url: &str) -> bool {
     })
 }
 
-#[cfg(test)]
-mod endpoint_override_tests {
-    use super::test_endpoint_override_allowed;
-
-    #[test]
-    fn allows_only_https_or_http_loopback_overrides() {
-        assert!(test_endpoint_override_allowed(
-            "https://oauth.example/token"
-        ));
-        assert!(test_endpoint_override_allowed(
-            "http://127.0.0.1:8080/token"
-        ));
-        assert!(test_endpoint_override_allowed("http://[::1]:8080/token"));
-        assert!(test_endpoint_override_allowed(
-            "http://localhost:8080/token"
-        ));
-        assert!(!test_endpoint_override_allowed("http://evil.example/token"));
-        assert!(!test_endpoint_override_allowed(
-            "http://localhost.evil.example/token"
-        ));
-        assert!(!test_endpoint_override_allowed(
-            "http://localhost:80@evil.example/token"
-        ));
-    }
-}
-
 impl OAuthTokenManager {
     pub fn new(
         repository: Arc<dyn ProviderRepositoryPort>,
