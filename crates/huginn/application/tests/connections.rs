@@ -228,6 +228,7 @@ fn settings() -> ConnectionSettings {
         endpoint: Some("https://example.invalid/v1".into()),
         model: "alpha".into(),
         requires_secret: true,
+        allow_loopback_http: false,
     }
 }
 fn secret(value: &str) -> Option<Secret> {
@@ -699,6 +700,7 @@ fn no_auth(endpoint: &str) -> ConnectionSettings {
     ConnectionSettings {
         endpoint: Some(endpoint.into()),
         requires_secret: false,
+        allow_loopback_http: true,
         ..settings()
     }
 }

@@ -58,6 +58,9 @@ pub struct ConnectionSettings {
     pub endpoint: Option<String>,
     pub model: String,
     pub requires_secret: bool,
+    /// Explicit per-connection exception; never permits LAN/private HTTP.
+    #[serde(default)]
+    pub allow_loopback_http: bool,
 }
 impl ConnectionSettings {
     pub fn validate(&self) -> Result<(), ConnectionError> {
@@ -80,11 +83,23 @@ impl ConnectionSettings {
                 || url.password().is_some()
                 || url.query().is_some()
                 || url.fragment().is_some()
+                || (url.scheme() == "http"
+                    && (!self.allow_loopback_http || !is_loopback_endpoint(&url)))
             {
                 return Err(ConnectionError::InvalidConfiguration);
             }
         }
         Ok(())
+    }
+}
+
+/// Literal loopback addresses only: no DNS name can change a local exception
+/// into a request to a remote host. Use 127.0.0.1 or [::1], not a LAN address.
+pub fn is_loopback_endpoint(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
     }
 }
 

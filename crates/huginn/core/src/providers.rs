@@ -21,6 +21,8 @@ pub enum AuthenticationMethod {
 pub struct ProviderDescriptor {
     pub id: String,
     pub display_name: String,
+    /// Empty only for connection-scoped discovery; selection remains a candidate
+    /// until the adapter validates it during turn pinning. Never means "any model".
     pub models: Vec<ModelDescriptor>,
     pub authentication: Vec<AuthenticationMethod>,
 }
@@ -77,6 +79,11 @@ pub enum ProviderError {
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
+    /// An empty static model list is permitted only for adapters that validate
+    /// the selected model against a connection-scoped catalog during pinning.
+    fn has_connection_catalog(&self) -> bool {
+        false
+    }
     /// Cancellation is scoped to factory work and ends on success too. The
     /// returned model must use the fresh token supplied to each stream call,
     /// not retain this token as the authorization/lifetime of the whole model.

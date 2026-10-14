@@ -107,6 +107,7 @@ fn provider_factories_accept_extensions_and_reject_ambiguous_names() {
         .register("custom", false, |_| Ok(Arc::new(MockProvider)))
         .unwrap();
     let config = ProviderConfig {
+        allow_loopback_http: false,
         base_url: None,
         model: None,
         key: None,

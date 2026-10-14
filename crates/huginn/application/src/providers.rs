@@ -261,7 +261,7 @@ impl Providers {
         let descriptor = adapter.descriptor();
         if !identifier(&descriptor.id)
             || !identifier(&descriptor.display_name)
-            || descriptor.models.is_empty()
+            || (descriptor.models.is_empty() && !adapter.has_connection_catalog())
             || descriptor.models.len() > 1024
             || descriptor.models.iter().any(|model| !identifier(&model.id))
             || descriptor
@@ -386,12 +386,14 @@ impl ProviderManagement for Providers {
                 if !connection.active() {
                     return Err(ProviderError::Revoked.into());
                 }
-                if !connection
-                    .adapter
-                    .descriptor
-                    .models
-                    .iter()
-                    .any(|model| model.id == selection.model)
+                if !identifier(&selection.model)
+                    || (!connection.adapter.implementation.has_connection_catalog()
+                        && !connection
+                            .adapter
+                            .descriptor
+                            .models
+                            .iter()
+                            .any(|model| model.id == selection.model))
                 {
                     return Err(ProviderError::InvalidModel.into());
                 }

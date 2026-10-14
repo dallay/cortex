@@ -439,7 +439,12 @@ impl ConnectionManager {
             .find(|(r, _)| r.provider == settings.provider)
             .ok_or(ConnectionError::AdapterUnavailable)?
             .1;
-        if !descriptor.models.iter().any(|m| m.id == settings.model) {
+        // An empty catalog is reserved by registration for connection-scoped
+        // adapters. This stores a candidate, not proof of remote availability;
+        // their factory must validate it before the router can pin inference.
+        if !descriptor.models.is_empty()
+            && !descriptor.models.iter().any(|m| m.id == settings.model)
+        {
             return Err(ConnectionError::InvalidConfiguration);
         }
         let authentication = if settings.requires_secret {

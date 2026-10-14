@@ -24,25 +24,17 @@ impl OpenAiProvider {
         key: Option<String>,
         timeout_secs: u64,
     ) -> Result<Self> {
-        let parsed = reqwest::Url::parse(base_url)
-            .map_err(|_| AgentError::Configuration("invalid model base_url".into()))?;
-        if !matches!(parsed.scheme(), "http" | "https")
-            || parsed.host_str().is_none()
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err(AgentError::Configuration(
-                "base_url must be HTTP(S) without credentials or query parameters".into(),
-            ));
-        }
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(timeout_secs))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| AgentError::Configuration("cannot construct HTTP client".into()))?;
+        Self::with_transport(base_url, model, key, timeout_secs, false)
+    }
+    /// HTTP requires an explicit connection-local opt-in and a literal loopback IP.
+    pub fn with_transport(
+        base_url: &str,
+        model: String,
+        key: Option<String>,
+        timeout_secs: u64,
+        allow_loopback_http: bool,
+    ) -> Result<Self> {
+        let client = transport_client(base_url, timeout_secs, allow_loopback_http)?;
         Ok(Self {
             client,
             url: format!("{}/chat/completions", base_url.trim_end_matches('/')),
@@ -51,6 +43,47 @@ impl OpenAiProvider {
             timeout_secs,
         })
     }
+}
+pub(crate) fn transport_client(
+    base_url: &str,
+    timeout_secs: u64,
+    allow_loopback_http: bool,
+) -> Result<reqwest::Client> {
+    transport_builder(base_url, timeout_secs, allow_loopback_http)?
+        .build()
+        .map_err(|_| AgentError::Configuration("cannot construct HTTP client".into()))
+}
+fn transport_builder(
+    base_url: &str,
+    timeout_secs: u64,
+    allow_loopback_http: bool,
+) -> Result<reqwest::ClientBuilder> {
+    let parsed = reqwest::Url::parse(base_url)
+        .map_err(|_| AgentError::Configuration("invalid model base_url".into()))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || timeout_secs == 0
+        || (parsed.scheme() == "http"
+            && (!allow_loopback_http || !huginn_core::connections::is_loopback_endpoint(&parsed)))
+    {
+        return Err(AgentError::Configuration(
+                "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
+            ));
+    }
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(timeout_secs))
+        .redirect(reqwest::redirect::Policy::none());
+    // A loopback exception must never forward content or authorization through
+    // an environment-configured HTTP proxy.
+    if huginn_core::connections::is_loopback_endpoint(&parsed) {
+        builder = builder.no_proxy();
+    }
+    Ok(builder)
 }
 fn wire_message(message: &Message) -> Value {
     let mut result = json!({"role": message.role, "content": message.content});
@@ -83,6 +116,7 @@ impl ModelProvider for OpenAiProvider {
             builder = builder.bearer_auth(key);
         }
         let response = tokio::select! {
+            biased;
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
             response = tokio::time::timeout(Duration::from_secs(self.timeout_secs), builder.send()) => response
                 .map_err(|_| AgentError::Model("HTTP response headers timed out".into()))?
@@ -104,9 +138,16 @@ impl ModelProvider for OpenAiProvider {
         };
         Ok(futures::stream::unfold(state, |mut state| async move {
             loop {
+                if state.ended && state.queued.is_empty() { return None; }
+                if state.cancellation.is_cancelled() {
+                    state.queued.clear();
+                    state.ended = true;
+                    return Some((Err(AgentError::Cancelled), state));
+                }
                 if let Some(item) = state.queued.pop_front() { return Some((item, state)); }
                 if state.ended { return None; }
                 let chunk = tokio::select! {
+                    biased;
                     _ = state.cancellation.cancelled() => { state.ended=true; state.queued.push_back(Err(AgentError::Cancelled)); continue; }
                     item = state.bytes.next() => item,
                 };
@@ -239,9 +280,9 @@ impl SseParser {
                 }
                 if let Some(reason) = choice["finish_reason"].as_str() {
                     if !matches!(reason, "stop" | "tool_calls") {
-                        return Err(AgentError::Model(format!(
-                            "incomplete model response: {reason}"
-                        )));
+                        return Err(AgentError::Model(
+                            "incomplete model response (unsupported finish reason)".into(),
+                        ));
                     }
                     self.finished = true;
                 }
@@ -295,6 +336,104 @@ impl SseParser {
 /// Sentinel used only when no inference provider has been configured.
 /// It never fabricates a response and fails before any model request is sent.
 pub struct UnconfiguredModelProvider;
+
+#[cfg(test)]
+mod transport_security {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::{
+        rustls::{
+            self,
+            pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
+        },
+        TlsAcceptor,
+    };
+
+    const CERT: &[u8] = include_bytes!("../tests/fixtures/tls/cert.pem");
+    const KEY: &[u8] = include_bytes!("../tests/fixtures/tls/key.pem");
+    fn request() -> ModelRequest {
+        ModelRequest {
+            messages: vec![],
+            tools: vec![],
+            max_tokens: 16,
+        }
+    }
+    async fn tls_server(
+        location: String,
+    ) -> (String, Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from_pem_slice(CERT).unwrap()],
+                PrivateKeyDer::from_pem_slice(KEY).unwrap(),
+            )
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("https://{}", listener.local_addr().unwrap());
+        let received = Arc::new(AtomicBool::new(false));
+        let capture = received.clone();
+        let task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let Ok(mut socket) = TlsAcceptor::from(Arc::new(config)).accept(socket).await else {
+                return;
+            };
+            let mut bytes = vec![0; 8192];
+            let size = socket.read(&mut bytes).await.unwrap_or(0);
+            capture.store(size > 0, Ordering::SeqCst);
+            let response = format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 15\r\nConnection: close\r\n\r\nsentinel-secret");
+            let _ = socket.write_all(response.as_bytes()).await;
+        });
+        (endpoint, received, task)
+    }
+
+    #[tokio::test]
+    async fn untrusted_tls_is_rejected_before_authorization() {
+        let (endpoint, received, task) = tls_server("http://127.0.0.1:1".into()).await;
+        let provider =
+            OpenAiProvider::new(&endpoint, "m".into(), Some("sentinel-secret".into()), 2).unwrap();
+        let error = provider
+            .stream(request(), CancellationToken::new())
+            .await
+            .err()
+            .unwrap();
+        assert!(!error.to_string().contains("sentinel-secret"));
+        task.await.unwrap();
+        assert!(!received.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn validated_tls_rejects_downgrade_and_destination_receives_nothing() {
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (endpoint, received, task) =
+            tls_server(format!("http://{}", target.local_addr().unwrap())).await;
+        let mut provider =
+            OpenAiProvider::new(&endpoint, "m".into(), Some("sentinel-secret".into()), 2).unwrap();
+        // Trust only the fixture for this test; retain the production transport policy.
+        provider.client = transport_builder(&endpoint, 2, false)
+            .unwrap()
+            .add_root_certificate(reqwest::Certificate::from_pem(CERT).unwrap())
+            .build()
+            .unwrap();
+        let error = provider
+            .stream(request(), CancellationToken::new())
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("307"));
+        assert!(!error.to_string().contains("sentinel-secret"));
+        task.await.unwrap();
+        assert!(received.load(Ordering::SeqCst));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), target.accept())
+                .await
+                .is_err()
+        );
+    }
+}
 #[async_trait]
 impl ModelProvider for UnconfiguredModelProvider {
     fn is_configured(&self) -> bool {
@@ -357,6 +496,7 @@ pub struct ProviderConfig {
     pub model: Option<String>,
     pub key: Option<String>,
     pub timeout_secs: u64,
+    pub allow_loopback_http: bool,
 }
 pub type ProviderFactory = fn(&ProviderConfig) -> Result<std::sync::Arc<dyn ModelProvider>>;
 #[derive(Default)]
@@ -383,7 +523,7 @@ impl ProviderFactories {
             .expect("unique builtin");
         factories
             .register("openai", true, |config| {
-                Ok(std::sync::Arc::new(OpenAiProvider::new(
+                Ok(std::sync::Arc::new(OpenAiProvider::with_transport(
                     config
                         .base_url
                         .as_deref()
@@ -395,6 +535,7 @@ impl ProviderFactories {
                         .ok_or_else(|| AgentError::Configuration("model is required".into()))?,
                     config.key.clone(),
                     config.timeout_secs,
+                    config.allow_loopback_http,
                 )?))
             })
             .expect("unique builtin");

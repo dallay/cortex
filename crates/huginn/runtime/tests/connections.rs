@@ -79,6 +79,7 @@ async fn metadata_restart_cas_lock_and_sentinel_absence() {
             endpoint: Some("https://example.invalid/v1".into()),
             model: "alpha".into(),
             requires_secret: true,
+            allow_loopback_http: false,
         },
         secret: Some(SecretReference::new()),
         mode: SecretMode::Secure,
@@ -110,6 +111,7 @@ fn explicit(model: &str, env: &str) -> ConfiguredChoice {
         endpoint: Some("https://example.invalid/v1".into()),
         model: model.into(),
         credential_env: Some(env.into()),
+        allow_loopback_http: false,
     })
 }
 #[test]
@@ -204,7 +206,8 @@ fn cli_toml_environment_atomic_precedence_matrix() {
             provider: "secure".into(),
             endpoint: Some(endpoint),
             model: "alpha".into(),
-            credential_env: None
+            credential_env: None,
+            allow_loopback_http: false,
         }
         .into_choice(&environment)
         .is_err());

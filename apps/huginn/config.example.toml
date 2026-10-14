@@ -1,6 +1,9 @@
 # Copy to the OS config directory at cortex/huginn/config.toml, or use --config.
 provider = "openai" # "mock" for an offline diagnostic
 base_url = "http://127.0.0.1:8000/v1"
+# Required for this local HTTP example; defaults to false. Never permits LAN HTTP.
+# HTTPS uses normal certificate validation. Use literal 127.0.0.1 or [::1], not DNS.
+allow_loopback_http = true
 model = "your-tool-capable-model"
 api_key_env = "HUGINN_API_KEY" # empty string disables authentication
 # Only HUGINN_API_KEY falls back to legacy AGENT_API_KEY when unavailable.
