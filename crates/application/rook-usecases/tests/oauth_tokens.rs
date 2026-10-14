@@ -596,13 +596,16 @@ async fn userinfo_remote_cleartext_override_is_rejected_before_request() {
     let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
+    let endpoint = "http://localhost:80@evil.invalid/token";
+    let parsed_endpoint = reqwest::Url::parse(endpoint).expect("syntactically valid URL");
+    assert_eq!(parsed_endpoint.host_str(), Some("evil.invalid"));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo,
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            // The invalid port prevents any request if a broken validator lets
-            // this authority-confusion URL through to reqwest.
-            azure_token_url: Some("http://localhost:80@evil.example:65536/token".to_string()),
+            // The reserved .invalid domain ensures an accidentally accepted
+            // override cannot deliver the fixture's refresh token remotely.
+            azure_token_url: Some(endpoint.to_string()),
             gemini_token_url: None,
         },
     );
