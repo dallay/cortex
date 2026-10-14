@@ -1,11 +1,13 @@
 //! Opt-in real-server probe; never part of deterministic tests and never pulls models.
 use futures::StreamExt;
 use huginn_core::{
-    connections::*, providers::*, CancellationToken, Message, ModelDelta, ModelProvider,
-    ModelRequest, Role, ToolDefinition,
+    connections::{ConnectionMaterial, ConnectionSettings},
+    providers::{ConnectionIdentity, ModelSelection, ProviderAdapter, ProviderRegistration},
+    CancellationToken, Message, ModelDelta, ModelProvider, ModelRequest, Role, ToolDefinition,
 };
 use huginn_runtime::providers::InferenceAdapter;
 use serde_json::json;
+use tokio::fs;
 
 async fn collect(
     model: &dyn ModelProvider,
@@ -121,13 +123,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("PASS streamed tool call and JSON arguments");
     let workspace = tempfile::tempdir()?;
-    std::fs::write(
+    fs::write(
         workspace.path().join("verified_fixture.rs"),
         "// local verification fixture\n",
-    )?;
-    let files = std::fs::read_dir(workspace.path())?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect::<Result<Vec<_>, _>>()?;
+    )
+    .await?;
+    let mut entries = fs::read_dir(workspace.path()).await?;
+    let mut files = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        files.push(entry.file_name().to_string_lossy().into_owned());
+    }
     let mut assistant = Message::text(Role::Assistant, "");
     assistant.tool_calls = calls.clone();
     messages.push(assistant);

@@ -34,6 +34,10 @@ impl ConnectionAccess {
         })
     }
     fn bind(&self, identity: ConnectionIdentity, record: ConnectionRecord) -> ConnectionResult<()> {
+        self.runtime_secrets
+            .lock()
+            .map_err(|_| ConnectionError::SecretStore)?
+            .remove(&identity.id);
         self.bindings
             .lock()
             .map_err(|_| ConnectionError::Revoked)?
@@ -53,12 +57,19 @@ impl ConnectionAccess {
             secret: None,
             mode: self.secrets.mode(),
         };
-        if let Some(secret) = secret {
-            self.runtime_secrets
-                .lock()
-                .map_err(|_| ConnectionError::SecretStore)?
-                .insert(identity.id.clone(), secret);
+        let mut runtime_secrets = self
+            .runtime_secrets
+            .lock()
+            .map_err(|_| ConnectionError::SecretStore)?;
+        match secret {
+            Some(secret) => {
+                runtime_secrets.insert(identity.id.clone(), secret);
+            }
+            None => {
+                runtime_secrets.remove(&identity.id);
+            }
         }
+        drop(runtime_secrets);
         self.bindings
             .lock()
             .map_err(|_| ConnectionError::Revoked)?
@@ -696,6 +707,69 @@ impl ConnectionManager {
                 selection: None,
                 provenance: ConnectionProvenance::Unconfigured,
             }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn replacing_runtime_binding_removes_previous_runtime_secret() {
+        let access = ConnectionAccess::new(Arc::new(TestSecretStore));
+        let id = Uuid::new_v4();
+        let identity = ConnectionIdentity {
+            id: id.to_string(),
+            adapter: ProviderRegistration::new("test.provider".into(), 1),
+            revision: 1,
+        };
+        let settings = ConnectionSettings {
+            provider: "test.provider".into(),
+            endpoint: Some("https://example.test".into()),
+            model: "test-model".into(),
+            requires_secret: true,
+            allow_loopback_http: false,
+        };
+        access
+            .bind_runtime(
+                identity.clone(),
+                settings.clone(),
+                Some(Secret::new("old-secret".into()).unwrap()),
+            )
+            .unwrap();
+        access
+            .bind(
+                identity.clone(),
+                ConnectionRecord {
+                    id,
+                    revision: Uuid::new_v4(),
+                    settings,
+                    secret: None,
+                    mode: SecretMode::Ephemeral,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            access.resolve(&identity, CancellationToken::new()).await,
+            Err(ConnectionError::MissingSecret)
+        ));
+    }
+
+    struct TestSecretStore;
+    #[async_trait]
+    impl SecretStore for TestSecretStore {
+        fn mode(&self) -> SecretMode {
+            SecretMode::Ephemeral
+        }
+        async fn read(&self, _: &SecretReference) -> ConnectionResult<Secret> {
+            Err(ConnectionError::MissingSecret)
+        }
+        async fn write(&self, _: &SecretReference, _: &Secret) -> ConnectionResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _: &SecretReference) -> ConnectionResult<()> {
+            Ok(())
         }
     }
 }
