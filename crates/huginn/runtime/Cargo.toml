@@ -10,6 +10,12 @@ name = "session_lock_holder"
 path = "tests/support/session_lock_holder.rs"
 test = false
 
+[features]
+test-hooks = []
+
+[package.metadata.cargo-all-features]
+skip_feature_sets = [["test-hooks"]]
+
 [dependencies]
 huginn-application = { path = "../application" }
 huginn-core = { path = "../core" }
@@ -35,6 +41,11 @@ keyring = { version = "=3.6.3", default-features = false, features = ["apple-nat
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[[test]]
+name = "connection_workers"
+path = "tests/connection_workers.rs"
+required-features = ["test-hooks"]
 
 [dev-dependencies]
 tempfile = "3"

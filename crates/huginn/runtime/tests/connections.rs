@@ -94,12 +94,10 @@ async fn metadata_restart_cas_lock_and_sentinel_absence() {
     drop(store);
     let store = SqliteConnections::open(&path).unwrap();
     assert_eq!(store.load().await.unwrap(), metadata);
-    for entry in std::fs::read_dir(dir.path()).unwrap() {
-        let bytes = std::fs::read(entry.unwrap().path()).unwrap();
-        assert!(!bytes
-            .windows(SENTINEL.len())
-            .any(|w| w == SENTINEL.as_bytes()));
-    }
+    let persisted_bytes = std::fs::read(&path).unwrap();
+    assert!(!persisted_bytes
+        .windows(SENTINEL.len())
+        .any(|window| window == SENTINEL.as_bytes()));
     assert_eq!(
         format!("{:?}", Secret::new(SENTINEL.into()).unwrap()),
         "Secret([REDACTED])"

@@ -157,8 +157,8 @@ pub struct SqliteConnections {
     db: Arc<Mutex<rusqlite::Connection>>,
     operation: Arc<tokio::sync::Mutex<()>>,
     lease: Arc<std::fs::File>,
-    #[cfg(test)]
-    probe: Arc<tests::WorkerProbe>,
+    #[cfg(feature = "test-hooks")]
+    probe: Arc<test_hooks::WorkerProbe>,
 }
 impl SqliteConnections {
     pub fn open(path: &Path) -> ConnectionResult<Self> {
@@ -196,11 +196,25 @@ impl SqliteConnections {
             db: Arc::new(Mutex::new(db)),
             operation: Arc::new(tokio::sync::Mutex::new(())),
             lease: Arc::new(lease),
-            #[cfg(test)]
-            probe: Arc::new(tests::WorkerProbe::default()),
+            #[cfg(feature = "test-hooks")]
+            probe: Arc::new(test_hooks::WorkerProbe::default()),
         })
     }
 }
+#[cfg(feature = "test-hooks")]
+impl SqliteConnections {
+    pub fn test_probe(&self) -> Arc<test_hooks::WorkerProbe> {
+        self.probe.clone()
+    }
+    pub fn break_metadata_table_for_test(&self) {
+        self.db
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TABLE connection_metadata")
+            .unwrap();
+    }
+}
+
 #[async_trait]
 impl ConnectionStore for SqliteConnections {
     async fn load(&self) -> ConnectionResult<ConnectionMetadata> {
@@ -209,7 +223,7 @@ impl ConnectionStore for SqliteConnections {
         let operation = self.operation.clone().lock_owned().await;
         let lease = self.lease.clone();
         let db = self.db.clone();
-        #[cfg(test)]
+        #[cfg(feature = "test-hooks")]
         self.probe
             .admitted
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -240,19 +254,19 @@ impl ConnectionStore for SqliteConnections {
         let operation = self.operation.clone().lock_owned().await;
         let lease = self.lease.clone();
         let db = self.db.clone();
-        #[cfg(test)]
+        #[cfg(feature = "test-hooks")]
         let probe = self.probe.clone();
-        #[cfg(test)]
+        #[cfg(feature = "test-hooks")]
         probe
             .admitted
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         tokio::task::spawn_blocking(move || {
-            #[cfg(test)]
-            let _completion = tests::WorkerCompletion(probe.clone());
+            #[cfg(feature = "test-hooks")]
+            let _completion = test_hooks::WorkerCompletion(probe.clone());
             let _operation = operation;
             let _lease = lease;
             let db = db;
-            #[cfg(test)]
+            #[cfg(feature = "test-hooks")]
             probe.pause();
             let db = db.lock().map_err(|_| ConnectionError::Metadata)?;
             let rows = db.execute("UPDATE connection_metadata SET version=?1, document=?2 WHERE id=1 AND version=?3", rusqlite::params![version, document, previous]).map_err(|_| ConnectionError::Metadata)?;
@@ -262,158 +276,41 @@ impl ConnectionStore for SqliteConnections {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Condvar,
-    };
+#[cfg(feature = "test-hooks")]
+pub mod test_hooks {
+    use std::sync::{atomic::AtomicUsize, Arc, Condvar, Mutex};
 
     #[derive(Default)]
-    pub(super) struct WorkerProbe {
-        pub(super) admitted: AtomicUsize,
+    pub struct WorkerProbe {
+        pub admitted: AtomicUsize,
         paused: Mutex<bool>,
         released: Condvar,
-        entered: tokio::sync::Notify,
-        completed: tokio::sync::Notify,
+        pub entered: tokio::sync::Notify,
+        pub completed: tokio::sync::Notify,
     }
     impl WorkerProbe {
-        pub(super) fn pause(&self) {
+        pub fn pause_worker(&self) {
+            *self.paused.lock().unwrap() = true;
+        }
+        pub fn pause(&self) {
             let mut paused = self.paused.lock().unwrap();
             if *paused {
                 self.entered.notify_one();
                 while *paused {
                     paused = self.released.wait(paused).unwrap();
                 }
+                drop(paused);
             }
-            drop(paused);
         }
-        fn release(&self) {
+        pub fn release_worker(&self) {
             *self.paused.lock().unwrap() = false;
             self.released.notify_all();
         }
     }
-    pub(super) struct WorkerCompletion(pub(super) Arc<WorkerProbe>);
+    pub struct WorkerCompletion(pub Arc<WorkerProbe>);
     impl Drop for WorkerCompletion {
         fn drop(&mut self) {
             self.0.completed.notify_one();
         }
-    }
-    struct ReleaseOnDrop(Arc<WorkerProbe>);
-    impl Drop for ReleaseOnDrop {
-        fn drop(&mut self) {
-            self.0.release();
-        }
-    }
-
-    async fn paused_save(
-        store: &Arc<SqliteConnections>,
-    ) -> (ReleaseOnDrop, tokio::task::JoinHandle<ConnectionResult<()>>) {
-        *store.probe.paused.lock().unwrap() = true;
-        let release = ReleaseOnDrop(store.probe.clone());
-        let writer = store.clone();
-        let task = tokio::spawn(async move {
-            writer
-                .save(
-                    0,
-                    &ConnectionMetadata {
-                        version: 1,
-                        ..Default::default()
-                    },
-                )
-                .await
-        });
-        store.probe.entered.notified().await;
-        (release, task)
-    }
-
-    #[tokio::test]
-    async fn recovery_load_cannot_overtake_cancelled_save() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(SqliteConnections::open(&dir.path().join("metadata.db")).unwrap());
-        let (release, task) = paused_save(&store).await;
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-
-        let mut recovery = Box::pin(store.load());
-        assert!(futures::poll!(&mut recovery).is_pending());
-        // If recovery was admitted before the paused save, force its real SQLite
-        // read to finish before releasing the writer: deterministic stale read.
-        if store.probe.admitted.load(Ordering::SeqCst) == 1 {
-            release.0.release();
-        }
-        let observed = recovery.await.unwrap();
-        release.0.release();
-        store.probe.completed.notified().await;
-        assert_eq!(observed.version, 1);
-    }
-
-    #[tokio::test]
-    async fn pending_worker_retains_lease_after_store_drop() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("metadata.db");
-        let store = Arc::new(SqliteConnections::open(&path).unwrap());
-        let (release, task) = paused_save(&store).await;
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        drop(store);
-        let reopened = SqliteConnections::open(&path);
-        let retained = matches!(reopened, Err(ConnectionError::Conflict));
-        drop(reopened);
-        release.0.release();
-        release.0.completed.notified().await;
-        let reopened = SqliteConnections::open(&path).unwrap();
-        assert_eq!(reopened.load().await.unwrap().version, 1);
-        assert!(retained, "pending worker released the ownership lease");
-    }
-
-    #[tokio::test]
-    async fn cancellation_while_waiting_does_not_admit_a_worker() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(SqliteConnections::open(&dir.path().join("metadata.db")).unwrap());
-        let (release, task) = paused_save(&store).await;
-        let next = ConnectionMetadata {
-            version: 2,
-            ..Default::default()
-        };
-        let mut waiting_save = Box::pin(store.save(1, &next));
-        assert!(futures::poll!(&mut waiting_save).is_pending());
-        drop(waiting_save);
-        let mut waiting_load = Box::pin(store.load());
-        assert!(futures::poll!(&mut waiting_load).is_pending());
-        drop(waiting_load);
-        assert_eq!(store.probe.admitted.load(Ordering::SeqCst), 1);
-        release.0.release();
-        task.await.unwrap().unwrap();
-        assert_eq!(store.load().await.unwrap().version, 1);
-        store.save(1, &next).await.unwrap();
-        assert_eq!(store.load().await.unwrap().version, 2);
-    }
-
-    #[tokio::test]
-    async fn failed_worker_releases_admission_and_lease() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("metadata.db");
-        let store = SqliteConnections::open(&path).unwrap();
-        store
-            .db
-            .lock()
-            .unwrap()
-            .execute_batch("DROP TABLE connection_metadata")
-            .unwrap();
-        let next = ConnectionMetadata {
-            version: 1,
-            ..Default::default()
-        };
-        assert!(matches!(
-            store.save(0, &next).await,
-            Err(ConnectionError::Metadata)
-        ));
-        assert!(matches!(store.load().await, Err(ConnectionError::Metadata)));
-        drop(store);
-        let reopened = SqliteConnections::open(&path).unwrap();
-        reopened.save(0, &next).await.unwrap();
-        assert_eq!(reopened.load().await.unwrap().version, 1);
     }
 }
