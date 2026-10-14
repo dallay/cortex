@@ -9,6 +9,18 @@ fn start(mode: &str, cursor: bool) -> Pty {
     command.arg(mode);
     Pty::start(command, cursor)
 }
+
+fn approval_code(pty: &Pty) -> String {
+    pty.wait_for("Type ");
+    let output = pty.output();
+    let start = output.rfind("Type ").expect("approval challenge is shown") + 5;
+    let code = output
+        .get(start..start + 8)
+        .expect("approval challenge contains eight characters");
+    assert!(code.chars().all(|ch| ch.is_ascii_hexdigit()), "{output}");
+    code.to_string()
+}
+
 #[test]
 fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
     let mut pty = start("normal", true);
@@ -35,34 +47,60 @@ fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
 }
 #[test]
 fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
+    // Capture a challenge and cancel it so the next approval must not accept
+    // that stale code. Wait for each visible state before sending input: a
+    // batched prompt + confirmation can race the modal's first render under
+    // coverage instrumentation.
+    let mut stale = start("normal", true);
+    stale.wait_for("Huginn");
+    stale.send("approve\r");
+    stale.wait_for("END_OF_DIFF");
+    let stale_code = approval_code(&stale);
+    stale.send("\x1b");
+    stale.wait_for("DENIED");
+    stale.send("\x03");
+    stale.finish(true);
+
+    // A previously valid code typed as ordinary keys still cannot approve a
+    // later request. Confirm the text reached the modal before pressing Enter.
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
-    pty.send("approve\ry\r");
+    pty.send("approve\r");
     pty.wait_for("END_OF_DIFF");
-    let output = pty.output();
-    let marker = output.rfind("Type ").unwrap() + 5;
-    let code = &output[marker..marker + 8];
-    assert!(code.chars().all(|ch| ch.is_ascii_hexdigit()), "{output}");
-    pty.send(&format!("\x1b[200~{code}\x1b[201~"));
+    let ordinary_current_code = approval_code(&pty);
+    assert_ne!(
+        stale_code, ordinary_current_code,
+        "each approval needs a fresh code"
+    );
+    pty.send(&stale_code);
+    pty.wait_for(&format!("Confirmation: {stale_code}"));
     pty.send("\r");
     pty.wait_for("DENIED");
     pty.send("\x03");
     pty.finish(true);
+
+    // Pasting that same stale code is an independent rejection path.
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let fresh = loop {
-        let output = pty.output();
-        if let Some(marker) = output.rfind("Type ") {
-            let value = output.get(marker + 5..marker + 13).unwrap_or("");
-            if value.len() == 8 && value.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                break value.to_string();
-            }
-        }
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
+    pty.wait_for("END_OF_DIFF");
+    let paste_current_code = approval_code(&pty);
+    assert_ne!(
+        stale_code, paste_current_code,
+        "each approval needs a fresh code"
+    );
+    pty.send(&format!("\x1b[200~{stale_code}\x1b[201~"));
+    pty.send("\r");
+    pty.wait_for("DENIED");
+    pty.send("\x03");
+    pty.finish(true);
+
+    // Only the current challenge, typed as ordinary key events, approves.
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("approve\r");
+    pty.wait_for("END_OF_DIFF");
+    let fresh = approval_code(&pty);
     pty.send(&format!("{fresh}\r"));
     pty.wait_for("APPROVED");
     pty.send("\x03");

@@ -491,7 +491,7 @@ async fn setup_succeeds_with_correct_token_and_returns_api_key() {
     let api_key = json["api_key"].as_str().expect("api_key must be present");
     assert!(
         api_key.starts_with("rk-"),
-        "api_key should start with 'rk-', got: {api_key}"
+        "api_key should start with 'rk-'"
     );
 }
 
