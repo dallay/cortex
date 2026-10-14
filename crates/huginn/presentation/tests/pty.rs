@@ -61,13 +61,34 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     stale.send("\x03");
     stale.finish(true);
 
-    // Even a previously valid code cannot approve a later request when pasted.
+    // A previously valid code typed as ordinary keys still cannot approve a
+    // later request. Confirm the text reached the modal before pressing Enter.
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
     pty.wait_for("END_OF_DIFF");
-    let current_code = approval_code(&pty);
-    assert_ne!(stale_code, current_code, "each approval needs a fresh code");
+    let ordinary_current_code = approval_code(&pty);
+    assert_ne!(
+        stale_code, ordinary_current_code,
+        "each approval needs a fresh code"
+    );
+    pty.send(&stale_code);
+    pty.wait_for(&format!("Confirmation: {stale_code}"));
+    pty.send("\r");
+    pty.wait_for("DENIED");
+    pty.send("\x03");
+    pty.finish(true);
+
+    // Pasting that same stale code is an independent rejection path.
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("approve\r");
+    pty.wait_for("END_OF_DIFF");
+    let paste_current_code = approval_code(&pty);
+    assert_ne!(
+        stale_code, paste_current_code,
+        "each approval needs a fresh code"
+    );
     pty.send(&format!("\x1b[200~{stale_code}\x1b[201~"));
     pty.send("\r");
     pty.wait_for("DENIED");
