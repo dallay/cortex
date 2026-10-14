@@ -63,6 +63,26 @@ pub struct ConnectionSettings {
     pub allow_loopback_http: bool,
 }
 impl ConnectionSettings {
+    /// True when persisted settings violate only the explicit local-HTTP opt-in.
+    /// Such records remain diagnosable and revocable, but never usable.
+    pub fn is_legacy_loopback_http(&self) -> bool {
+        if self.allow_loopback_http {
+            return false;
+        }
+        let Some(endpoint) = self.endpoint.as_deref() else {
+            return false;
+        };
+        let Ok(url) = url::Url::parse(endpoint) else {
+            return false;
+        };
+        if url.scheme() != "http" || !is_loopback_endpoint(&url) {
+            return false;
+        }
+        let mut opted_in = self.clone();
+        opted_in.allow_loopback_http = true;
+        opted_in.validate().is_ok()
+    }
+
     pub fn validate(&self) -> Result<(), ConnectionError> {
         let id = |s: &str| {
             !s.is_empty()
@@ -94,7 +114,7 @@ impl ConnectionSettings {
 }
 
 /// Literal loopback addresses only: no DNS name can change a local exception
-/// into a request to a remote host. Use 127.0.0.1 or [::1], not a LAN address.
+/// into a request to a remote host. Use `127.0.0.1` or `[::1]`, not a LAN address.
 pub fn is_loopback_endpoint(url: &url::Url) -> bool {
     match url.host() {
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),

@@ -213,7 +213,9 @@ impl ConnectionManager {
             if *id != record.id || record.settings.requires_secret != record.secret.is_some() {
                 return Err(ConnectionError::Metadata);
             }
-            record.settings.validate()?;
+            if !record.settings.is_legacy_loopback_http() {
+                record.settings.validate()?;
+            }
             if let Some(reference) = &record.secret {
                 if !references.insert(reference.clone()) || metadata.cleanup.contains_key(reference)
                 {
@@ -242,6 +244,11 @@ impl ConnectionManager {
             }
         }
         for record in state.metadata.connections.values() {
+            // Keep structurally valid legacy local HTTP records visible and revocable,
+            // but never install or select them without a deliberate repair/update.
+            if record.settings.is_legacy_loopback_http() {
+                continue;
+            }
             record.settings.validate()?;
             // A locked/missing backend is not silently downgraded. Diagnosis can still list records.
             if manager.check_ready(record).await.is_ok() {
@@ -394,14 +401,16 @@ impl ConnectionManager {
         let _operation = self.operation().await?;
         let state = self.state.lock().await;
         Self::check_state(&state)?;
-        self.check_ready(
-            state
-                .metadata
-                .connections
-                .get(&id)
-                .ok_or(ConnectionError::InvalidSelection)?,
-        )
-        .await
+        let record = state
+            .metadata
+            .connections
+            .get(&id)
+            .ok_or(ConnectionError::InvalidSelection)?;
+        if record.settings.is_legacy_loopback_http() {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        record.settings.validate()?;
+        self.check_ready(record).await
     }
     pub async fn create(
         &self,
@@ -532,6 +541,10 @@ impl ConnectionManager {
             .get(&id)
             .cloned()
             .ok_or(ConnectionError::InvalidSelection)?;
+        if record.settings.is_legacy_loopback_http() {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        record.settings.validate()?;
         self.check_secret(&record).await?;
         if self.access.identity(id).is_err() {
             self.install(&record).await?;
