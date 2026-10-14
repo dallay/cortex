@@ -48,14 +48,55 @@ pub struct TokenEndpointOverrides {
 /// explicitly configured override cannot point secrets at a remote
 /// cleartext URL.
 pub(crate) fn test_endpoint_override_allowed(url: &str) -> bool {
-    if url.starts_with("https://") {
-        return true;
-    }
-    let Some(rest) = url.strip_prefix("http://") else {
+    let Ok(url) = reqwest::Url::parse(url) else {
         return false;
     };
-    let host = rest.split(['/', ':', '?']).next().unwrap_or("");
-    matches!(host, "127.0.0.1" | "localhost" | "::1")
+
+    if url.scheme() == "https" {
+        return true;
+    }
+    if url.scheme() != "http" {
+        return false;
+    }
+
+    url.host_str().is_some_and(|host| {
+        if host == "localhost" {
+            return true;
+        }
+        let ip_host = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        ip_host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    })
+}
+
+#[cfg(test)]
+mod endpoint_override_tests {
+    use super::test_endpoint_override_allowed;
+
+    #[test]
+    fn allows_only_https_or_http_loopback_overrides() {
+        assert!(test_endpoint_override_allowed(
+            "https://oauth.example/token"
+        ));
+        assert!(test_endpoint_override_allowed(
+            "http://127.0.0.1:8080/token"
+        ));
+        assert!(test_endpoint_override_allowed("http://[::1]:8080/token"));
+        assert!(test_endpoint_override_allowed(
+            "http://localhost:8080/token"
+        ));
+        assert!(!test_endpoint_override_allowed("http://evil.example/token"));
+        assert!(!test_endpoint_override_allowed(
+            "http://localhost.evil.example/token"
+        ));
+        assert!(!test_endpoint_override_allowed(
+            "http://localhost:80@evil.example/token"
+        ));
+    }
 }
 
 impl OAuthTokenManager {
