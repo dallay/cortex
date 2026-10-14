@@ -201,6 +201,27 @@ pub struct ResolvedConnection {
     pub provenance: ConnectionProvenance,
 }
 impl ConnectionManager {
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn bind_runtime_for_test(
+        access: &ConnectionAccess,
+        identity: ConnectionIdentity,
+        settings: ConnectionSettings,
+        secret: Option<Secret>,
+    ) -> ConnectionResult<()> {
+        access.bind_runtime(identity, settings, secret)
+    }
+
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn bind_record_for_test(
+        access: &ConnectionAccess,
+        identity: ConnectionIdentity,
+        record: ConnectionRecord,
+    ) -> ConnectionResult<()> {
+        access.bind(identity, record)
+    }
+
     /// Open only after the adapter catalog has activated. Missing credentials remain
     /// visible in metadata but never become router-ready.
     pub async fn open(
@@ -707,69 +728,6 @@ impl ConnectionManager {
                 selection: None,
                 provenance: ConnectionProvenance::Unconfigured,
             }),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn replacing_runtime_binding_removes_previous_runtime_secret() {
-        let access = ConnectionAccess::new(Arc::new(TestSecretStore));
-        let id = Uuid::new_v4();
-        let identity = ConnectionIdentity {
-            id: id.to_string(),
-            adapter: ProviderRegistration::new("test.provider".into(), 1),
-            revision: 1,
-        };
-        let settings = ConnectionSettings {
-            provider: "test.provider".into(),
-            endpoint: Some("https://example.test".into()),
-            model: "test-model".into(),
-            requires_secret: true,
-            allow_loopback_http: false,
-        };
-        access
-            .bind_runtime(
-                identity.clone(),
-                settings.clone(),
-                Some(Secret::new("old-secret".into()).unwrap()),
-            )
-            .unwrap();
-        access
-            .bind(
-                identity.clone(),
-                ConnectionRecord {
-                    id,
-                    revision: Uuid::new_v4(),
-                    settings,
-                    secret: None,
-                    mode: SecretMode::Ephemeral,
-                },
-            )
-            .unwrap();
-        assert!(matches!(
-            access.resolve(&identity, CancellationToken::new()).await,
-            Err(ConnectionError::MissingSecret)
-        ));
-    }
-
-    struct TestSecretStore;
-    #[async_trait]
-    impl SecretStore for TestSecretStore {
-        fn mode(&self) -> SecretMode {
-            SecretMode::Ephemeral
-        }
-        async fn read(&self, _: &SecretReference) -> ConnectionResult<Secret> {
-            Err(ConnectionError::MissingSecret)
-        }
-        async fn write(&self, _: &SecretReference, _: &Secret) -> ConnectionResult<()> {
-            Ok(())
-        }
-        async fn delete(&self, _: &SecretReference) -> ConnectionResult<()> {
-            Ok(())
         }
     }
 }
