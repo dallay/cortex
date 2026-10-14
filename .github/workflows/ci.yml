@@ -160,6 +160,8 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: clippy
@@ -182,6 +184,8 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
@@ -206,6 +210,8 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
@@ -281,6 +287,8 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           components: rustfmt, clippy
@@ -443,6 +451,8 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
@@ -544,6 +554,8 @@ jobs:
           node-version: 24
           cache: 'pnpm'
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+      - name: Install D-Bus development libraries
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install dependencies

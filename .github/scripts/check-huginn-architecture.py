@@ -7,8 +7,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWED = {
-    "huginn-core": {"async-trait", "futures", "serde", "serde_json", "thiserror", "tokio", "tokio-util", "uuid"},
-    "huginn-application": {"huginn-core", "async-trait", "futures", "serde_json", "tokio"},
+    "huginn-core": {"async-trait", "futures", "serde", "serde_json", "thiserror", "tokio", "tokio-util", "uuid", "zeroize", "url"},
+    "huginn-application": {"huginn-core", "async-trait", "futures", "serde_json", "tokio", "uuid"},
 }
 
 
