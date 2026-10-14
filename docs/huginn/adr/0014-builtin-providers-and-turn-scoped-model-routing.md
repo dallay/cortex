@@ -183,8 +183,7 @@ Seguimiento de ingeniería creado en GitHub:
 [P0.4 / #353](https://github.com/dallay/cortex/issues/353),
 [P0.5 / #354](https://github.com/dallay/cortex/issues/354) y
 [P1 / #355](https://github.com/dallay/cortex/issues/355).
-Este archivo está pendiente de commit y publicación remota; abrir las issues
-no publica el ADR ni acredita la implementación.
+Abrir las issues no acredita la implementación.
 
 Los tipos concretos, formato de metadatos, backend Linux, política de
 reconciliación y matriz Ollama se concretarán con evidencia en esas entregas.
