@@ -365,13 +365,20 @@ mod transport_security {
     async fn tls_server(
         location: String,
     ) -> (String, Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
-        let config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![CertificateDer::from_pem_slice(CERT).unwrap()],
-                PrivateKeyDer::from_pem_slice(KEY).unwrap(),
-            )
-            .unwrap();
+        // The Linux keyring dependency can enable aws-lc-rs alongside the
+        // ring backend used by tokio-rustls. Select ring explicitly so tests do
+        // not depend on Rustls being able to infer a process-wide provider.
+        let config = rustls::ServerConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from_pem_slice(CERT).unwrap()],
+            PrivateKeyDer::from_pem_slice(KEY).unwrap(),
+        )
+        .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("https://{}", listener.local_addr().unwrap());
         let received = Arc::new(AtomicBool::new(false));
