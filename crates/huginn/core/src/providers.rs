@@ -85,6 +85,16 @@ pub trait ProviderAdapter: Send + Sync {
         selection: &ModelSelection,
         cancel: CancellationToken,
     ) -> Result<Arc<dyn ModelProvider>>;
+    /// P0.2 trusted boundary; raw credentials never enter presentation actions.
+    async fn create_connection_model(
+        &self,
+        _selection: &ModelSelection,
+        _material: crate::connections::ConnectionMaterial,
+        _cancel: CancellationToken,
+    ) -> Result<Arc<dyn ModelProvider>> {
+        // Even no-auth material carries routing settings that legacy factories cannot honor.
+        Err(ProviderError::Unavailable.into())
+    }
 }
 
 pub trait ProviderCatalog: Send + Sync {
@@ -142,6 +152,10 @@ pub enum ProviderActionState {
 #[async_trait]
 pub trait ProviderManagement: Send + Sync {
     fn diagnostic(&self) -> Result<ProvidersDiagnostic>;
+    /// Stop new selected admission without revoking already pinned turns.
+    fn clear_selection(&self) -> Result<()>;
+    /// Synchronous, exact-identity revocation for cancellation/drop recovery.
+    fn invalidate(&self, identity: &ConnectionIdentity) -> Result<()>;
     async fn execute(
         &self,
         action: ProviderAction,

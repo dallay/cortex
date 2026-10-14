@@ -1,4 +1,5 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
+pub mod connections;
 pub mod kernel;
 pub mod providers;
 
@@ -23,6 +24,8 @@ pub enum AgentError {
     Composition(String),
     #[error(transparent)]
     Provider(#[from] providers::ProviderError),
+    #[error(transparent)]
+    Connection(#[from] connections::ConnectionError),
     #[error("operation cancelled")]
     Cancelled,
     #[error(transparent)]

@@ -85,6 +85,7 @@ pub struct Providers {
     state: Arc<Mutex<State>>,
     activation: Activation,
     cancellation: CancellationToken,
+    credentials: Option<Arc<dyn huginn_core::connections::ConnectionCredentials>>,
 }
 struct RegistrationLease {
     state: Weak<Mutex<State>>,
@@ -311,6 +312,22 @@ impl Providers {
 }
 #[async_trait]
 impl ProviderManagement for Providers {
+    fn clear_selection(&self) -> Result<()> {
+        let mut state = self.lock()?;
+        self.check()?;
+        state.selected = None;
+        drop(state);
+        Ok(())
+    }
+    fn invalidate(&self, identity: &ConnectionIdentity) -> Result<()> {
+        let mut state = self.lock()?;
+        self.check()?;
+        let connection = Self::connection(&state, identity)?;
+        state.revoke_connection(&connection);
+        state.connections.remove(&identity.id);
+        drop(state);
+        Ok(())
+    }
     fn diagnostic(&self) -> Result<ProvidersDiagnostic> {
         self.check()?;
         let state = self.lock()?;
@@ -458,7 +475,14 @@ impl ModelProvider for ModelRouter {
             _ = self.0.cancellation.cancelled() => return Err(ProviderError::Revoked.into()),
             _ = connection.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
             _ = connection.adapter.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
-            result = connection.adapter.implementation.create_model(&selection, lifetime.token.clone()) => result?,
+            result = async {
+                if let Some(credentials) = &self.0.credentials {
+                    let material = credentials.resolve(&selection.connection, lifetime.token.clone()).await?;
+                    connection.adapter.implementation.create_connection_model(&selection, material, lifetime.token.clone()).await
+                } else {
+                    connection.adapter.implementation.create_model(&selection, lifetime.token.clone()).await
+                }
+            } => result?,
         };
         let pinned = PinnedModel {
             providers: self.0.clone(),
@@ -525,11 +549,21 @@ impl ModelProvider for PinnedModel {
 #[derive(Default)]
 pub struct ProvidersPlugin {
     legacy: Option<Arc<dyn ModelProvider>>,
+    credentials: Option<Arc<dyn huginn_core::connections::ConnectionCredentials>>,
 }
 impl ProvidersPlugin {
     pub fn with_legacy(model: Arc<dyn ModelProvider>) -> Self {
         Self {
             legacy: Some(model),
+            credentials: None,
+        }
+    }
+    pub fn with_credentials(
+        credentials: Arc<dyn huginn_core::connections::ConnectionCredentials>,
+    ) -> Self {
+        Self {
+            legacy: None,
+            credentials: Some(credentials),
         }
     }
 }
@@ -573,6 +607,7 @@ impl Plugin for ProvidersPlugin {
             state: Arc::new(Mutex::new(State::default())),
             activation: ctx.activation(),
             cancellation: ctx.cancellation.clone(),
+            credentials: self.credentials.clone(),
         });
         ctx.own_resource(CoreLease(providers.state.clone()));
         if let Some(model) = self.legacy.as_ref().filter(|model| model.is_configured()) {
