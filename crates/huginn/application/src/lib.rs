@@ -3,3 +3,4 @@ pub mod authorization;
 pub mod composition;
 pub mod loop_engine;
 pub mod output;
+pub mod providers;
