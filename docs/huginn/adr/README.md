@@ -30,6 +30,7 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) | Hexagonal application and lifecycle-owned capabilities | Accepted |
 | [ADR-0013](0013-authorable-plugin-contract-and-loading.md) | Authorable plugin contract and future loading strategy | Accepted |
 | [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Providers integrados y enrutamiento del modelo por turno | Accepted |
+| [ADR-0015](../0015-separate-product-releases-from-cargo-publishing.md) | Separar releases de producto de publicación Cargo | Accepted |
 
 ## Record format
 
