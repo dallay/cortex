@@ -115,9 +115,21 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
             let mut bytes = Vec::new();
             let mut buffer = [0; 4096];
             while !bytes.windows(4).any(|w| w == b"\r\n\r\n") {
-                let count = stream.read(&mut buffer).unwrap();
-                assert_ne!(count, 0);
-                bytes.extend_from_slice(&buffer[..count]);
+                match stream.read(&mut buffer) {
+                    Ok(count) => {
+                        assert_ne!(count, 0);
+                        bytes.extend_from_slice(&buffer[..count]);
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(error) => panic!("failed to read request headers: {error}"),
+                }
             }
             let header_end = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
             let content_length = String::from_utf8_lossy(&bytes[..header_end])
