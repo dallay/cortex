@@ -1,5 +1,5 @@
 use huginn_core::connections::*;
-use std::process::Command;
+use tokio::process::Command;
 
 fn command(root: &std::path::Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_huginn"));
@@ -61,7 +61,7 @@ async fn doctor_recovers_durable_selection_without_ui_or_network_calls() {
         format!("http://{}", listener.local_addr().unwrap()),
     )
     .await;
-    let output = command(root.path()).arg("doctor").output().unwrap();
+    let output = command(root.path()).arg("doctor").output().await.unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -86,6 +86,7 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
         process::Stdio,
         time::{Duration, Instant},
     };
+    use tokio::io::AsyncWriteExt;
 
     let root = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -148,6 +149,7 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
     let run = command(root.path())
         .args(["--json", "run", "hello"])
         .output()
+        .await
         .unwrap();
     assert!(
         run.status.success(),
@@ -158,6 +160,7 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
     let listed = command(root.path())
         .args(["--json", "sessions"])
         .output()
+        .await
         .unwrap();
     let session: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let resumed = command(root.path())
@@ -169,6 +172,7 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
             "continue",
         ])
         .output()
+        .await
         .unwrap();
     assert!(
         resumed.status.success(),
@@ -189,8 +193,9 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
             .take()
             .unwrap()
             .write_all(b"hello\n/quit\n")
+            .await
             .unwrap();
-        let output = child.wait_with_output().unwrap();
+        let output = child.wait_with_output().await.unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -208,7 +213,7 @@ async fn doctor_continues_when_provider_store_writer_lease_is_held() {
     let lease_path = root.path().join("sessions.providers.db");
     let _store = huginn_runtime::connections::SqliteConnections::open(&lease_path).unwrap();
 
-    let output = command(root.path()).arg("doctor").output().unwrap();
+    let output = command(root.path()).arg("doctor").output().await.unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -228,6 +233,7 @@ async fn explicit_headless_model_does_not_open_or_merge_durable_metadata() {
     let output = command(root.path())
         .args(["--provider", "mock", "--json", "run", "hello"])
         .output()
+        .await
         .unwrap();
     assert!(
         output.status.success(),

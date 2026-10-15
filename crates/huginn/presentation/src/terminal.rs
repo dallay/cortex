@@ -363,6 +363,46 @@ struct View {
     workflow: Option<(String, String, Vec<String>, usize, bool)>,
     widgets: String,
 }
+impl View {
+    fn snapshot(state: &crate::state::UiState) -> Self {
+        Self {
+            editor: state.editor.clone(),
+            completion: state.completion.clone(),
+            tail: state.tail.clone(),
+            status: state.status.clone(),
+            status_error: state.status_error,
+            busy: state.busy,
+            workflow: state
+                .workflow
+                .as_ref()
+                .map(crate::workflow::HostWorkflow::snapshot),
+            plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
+                (
+                    dialog.handle.title().into(),
+                    dialog.handle.body().into(),
+                    dialog.handle.choices().to_vec(),
+                    dialog.selected,
+                    dialog.body_scroll,
+                )
+            }),
+            widgets: state
+                .widgets
+                .iter()
+                .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            modal: state.modal.as_ref().map(|m| {
+                (
+                    approval_preview(&m.request.action, m.number, &m.request.preview),
+                    m.number,
+                    m.code.clone(),
+                    m.typed.clone(),
+                    m.scroll,
+                )
+            }),
+        }
+    }
+}
 impl Driver {
     fn model_configured(&self) -> bool {
         self.readiness
@@ -406,44 +446,25 @@ impl Driver {
         // 33 ms tick only bounds how often this runs, not the work per run.
         let (committed, view) = {
             let mut state = self.ui.lock();
-            let view = View {
-                editor: state.editor.clone(),
-                completion: state.completion.clone(),
-                tail: state.tail.clone(),
-                status: state.status.clone(),
-                status_error: state.status_error,
-                busy: state.busy,
-                workflow: state
-                    .workflow
-                    .as_ref()
-                    .map(crate::workflow::HostWorkflow::snapshot),
-                plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
-                    (
-                        dialog.handle.title().into(),
-                        dialog.handle.body().into(),
-                        dialog.handle.choices().to_vec(),
-                        dialog.selected,
-                        dialog.body_scroll,
-                    )
-                }),
-                widgets: state
-                    .widgets
-                    .iter()
-                    .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
-                    .collect::<Vec<_>>()
-                    .join(" | "),
-                modal: state.modal.as_ref().map(|m| {
-                    (
-                        approval_preview(&m.request.action, m.number, &m.request.preview),
-                        m.number,
-                        m.code.clone(),
-                        m.typed.clone(),
-                        m.scroll,
-                    )
-                }),
-            };
-            (std::mem::take(&mut state.committed), view)
+            (std::mem::take(&mut state.committed), View::snapshot(&state))
         };
+        self.commit_messages(committed)?;
+        let last_scroll = self.draw_frame(&view)?;
+        self.update_modal_scroll(&view, last_scroll);
+        Ok(())
+    }
+
+    fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
+        if let Some((_, _, code, _, _)) = &view.modal {
+            if let Some(modal) = self.ui.lock().modal.as_mut() {
+                if &modal.code == code {
+                    modal.last_scroll = last_scroll;
+                }
+            }
+        }
+    }
+
+    fn commit_messages(&mut self, committed: Vec<String>) -> Result<()> {
         let width = self.screen.size()?.width;
         for block in committed {
             let lines = markdown(wrapped(&block, width));
@@ -455,6 +476,10 @@ impl Driver {
                 })?;
             }
         }
+        Ok(())
+    }
+
+    fn draw_frame(&mut self, view: &View) -> Result<usize> {
         let mut last_scroll = 0;
         self.screen.draw(|frame| {
             let area = frame.area();
@@ -612,15 +637,24 @@ impl Driver {
                 status,
             );
         })?;
-        if let Some((_, _, code, _, _)) = &view.modal {
-            if let Some(modal) = self.ui.lock().modal.as_mut() {
-                if &modal.code == code {
-                    modal.last_scroll = last_scroll;
-                }
+        Ok(last_scroll)
+    }
+    fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
+        let focus = self.ui.lock().workflow_focus;
+        // Discard queued keys/pastes before showing a new challenge. The
+        // unpredictable challenge additionally defeats late buffered input.
+        while let Some(event) = self.next_input(shown_focus)? {
+            discard_input(event);
+        }
+        self.draw()?;
+        if let Some(modal) = self.ui.lock().modal.as_mut() {
+            if modal.epoch == epoch {
+                modal.armed = true;
             }
         }
-        Ok(())
+        Ok(focus)
     }
+
     async fn run(
         &mut self,
         prompts: tokio::sync::mpsc::Sender<String>,
@@ -635,19 +669,7 @@ impl Driver {
         loop {
             let epoch = self.ui.lock().modal.as_ref().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
-                let focus = self.ui.lock().workflow_focus;
-                // Discard queued keys/pastes before showing a new challenge. The
-                // unpredictable challenge additionally defeats late buffered input.
-                while let Some(event) = self.next_input(shown_focus)? {
-                    discard_input(event);
-                }
-                shown_focus = focus;
-                self.draw()?;
-                if let Some(modal) = self.ui.lock().modal.as_mut() {
-                    if modal.epoch == epoch {
-                        modal.armed = true;
-                    }
-                }
+                shown_focus = self.arm_modal(epoch, shown_focus)?;
                 shown_epoch = epoch;
                 dirty = false;
             }

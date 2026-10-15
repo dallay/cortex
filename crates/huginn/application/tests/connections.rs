@@ -1110,109 +1110,117 @@ async fn selection_second_secret_read_failure_closes_new_admission_only() {
 #[tokio::test]
 async fn cancelled_mutation_recovers_authoritative_state_on_same_manager() {
     for suspend in [1, 2] {
-        for updating in [false, true] {
-            for step in 1..=if updating { 2 } else { 1 } {
-                for abort in [false, true] {
-                    let store = Arc::new(Metadata::default());
-                    let secrets = Secrets::new(SecretMode::Secure);
-                    let mut h = open(store.clone(), secrets.clone()).await;
-                    let a = h.manager.create(settings(), secret("a")).await.unwrap();
-                    let b = h.manager.create(settings(), secret("b")).await.unwrap();
-                    let initial = h.manager.select(a.id).await.unwrap();
-                    let pinned = h
-                        .model
-                        .0
-                        .pin_turn(CancellationToken::new())
-                        .await
-                        .unwrap()
-                        .unwrap();
-                    store.suspend.store(suspend, Ordering::SeqCst);
-                    store.suspend_at.store(step, Ordering::SeqCst);
-                    let manager = h.manager.clone();
-                    let mutation = async move {
-                        if updating {
-                            manager
-                                .update(a.id, settings(), secret("replacement"))
-                                .await
-                                .map(|_| ())
-                        } else {
-                            manager.select_model(b.id, "beta".into()).await.map(|_| ())
-                        }
-                    };
-                    if abort {
-                        let task = tokio::spawn(mutation);
-                        store.entered.notified().await;
-                        task.abort();
-                        assert!(task.await.unwrap_err().is_cancelled());
-                    } else {
-                        let mut mutation = Box::pin(mutation);
-                        assert!(futures::poll!(mutation.as_mut()).is_pending());
-                    }
-                    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
-                    if !updating {
-                        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
-                    } else {
-                        assert!(text(pinned.as_ref()).await.is_err());
-                    }
-                    assert!(text(h.model.0.as_ref()).await.is_err());
-                    let durable = store.load().await.unwrap();
-                    h.manager.recover().await.unwrap();
-                    assert_eq!(
-                        h.manager.list().await.unwrap(),
-                        durable.connections.values().cloned().collect::<Vec<_>>()
-                    );
-                    assert_eq!(store.load().await.unwrap().selected, durable.selected);
-                    let selected = h.providers.0.diagnostic().unwrap().selection;
-                    assert_eq!(
-                        selected.as_ref().map(|s| s.connection.id.clone()),
-                        durable.selected.map(|id| id.to_string())
-                    );
-                    if let Some(selected) = selected {
-                        if updating {
-                            assert_ne!(selected.connection, initial.connection);
-                        }
-                        text(h.model.0.as_ref()).await.unwrap();
-                    } else {
-                        assert!(text(h.model.0.as_ref()).await.is_err());
-                    }
-                    if updating {
-                        assert!(h
-                            .access
-                            .resolve(&initial.connection, CancellationToken::new())
-                            .await
-                            .is_err());
-                        assert!(text(pinned.as_ref()).await.is_err());
-                    } else {
-                        assert!(h
-                            .access
-                            .resolve(&initial.connection, CancellationToken::new())
-                            .await
-                            .is_ok());
-                        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
-                    }
-                    assert!(store.load().await.unwrap().cleanup.is_empty());
-                    assert_eq!(
-                        secrets.value.lock().unwrap().len(),
-                        durable.connections.len()
-                    );
-                    h.manager.select(b.id).await.unwrap();
-                    let current = h.providers.0.diagnostic().unwrap().selection.unwrap();
-                    // Healthy recovery is idempotent, including runtime authorization.
-                    h.manager.recover().await.unwrap();
-                    assert_eq!(
-                        h.providers.0.diagnostic().unwrap().selection.unwrap(),
-                        current
-                    );
-                    h.manager.create(settings(), secret("new")).await.unwrap();
-                    assert_eq!(
-                        h.manager.list().await.unwrap().len(),
-                        durable.connections.len() + 1
-                    );
-                    h.supervisor.shutdown().await;
-                }
+        cancelled_mutation_scenarios_for_suspend(suspend).await;
+    }
+}
+
+async fn cancelled_mutation_scenarios_for_suspend(suspend: usize) {
+    for updating in [false, true] {
+        for step in 1..=if updating { 2 } else { 1 } {
+            for abort in [false, true] {
+                cancelled_mutation_scenario(suspend, updating, step, abort).await;
             }
         }
     }
+}
+
+async fn cancelled_mutation_scenario(suspend: usize, updating: bool, step: usize, abort: bool) {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let a = h.manager.create(settings(), secret("a")).await.unwrap();
+    let b = h.manager.create(settings(), secret("b")).await.unwrap();
+    let initial = h.manager.select(a.id).await.unwrap();
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    store.suspend.store(suspend, Ordering::SeqCst);
+    store.suspend_at.store(step, Ordering::SeqCst);
+    let manager = h.manager.clone();
+    let mutation = async move {
+        if updating {
+            manager
+                .update(a.id, settings(), secret("replacement"))
+                .await
+                .map(|_| ())
+        } else {
+            manager.select_model(b.id, "beta".into()).await.map(|_| ())
+        }
+    };
+    if abort {
+        let task = tokio::spawn(mutation);
+        store.entered.notified().await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    } else {
+        let mut mutation = Box::pin(mutation);
+        assert!(futures::poll!(mutation.as_mut()).is_pending());
+    }
+    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+    if !updating {
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    } else {
+        assert!(text(pinned.as_ref()).await.is_err());
+    }
+    assert!(text(h.model.0.as_ref()).await.is_err());
+    let durable = store.load().await.unwrap();
+    h.manager.recover().await.unwrap();
+    assert_eq!(
+        h.manager.list().await.unwrap(),
+        durable.connections.values().cloned().collect::<Vec<_>>()
+    );
+    assert_eq!(store.load().await.unwrap().selected, durable.selected);
+    let selected = h.providers.0.diagnostic().unwrap().selection;
+    assert_eq!(
+        selected.as_ref().map(|s| s.connection.id.clone()),
+        durable.selected.map(|id| id.to_string())
+    );
+    if let Some(selected) = selected {
+        if updating {
+            assert_ne!(selected.connection, initial.connection);
+        }
+        text(h.model.0.as_ref()).await.unwrap();
+    } else {
+        assert!(text(h.model.0.as_ref()).await.is_err());
+    }
+    if updating {
+        assert!(h
+            .access
+            .resolve(&initial.connection, CancellationToken::new())
+            .await
+            .is_err());
+        assert!(text(pinned.as_ref()).await.is_err());
+    } else {
+        assert!(h
+            .access
+            .resolve(&initial.connection, CancellationToken::new())
+            .await
+            .is_ok());
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    }
+    assert!(store.load().await.unwrap().cleanup.is_empty());
+    assert_eq!(
+        secrets.value.lock().unwrap().len(),
+        durable.connections.len()
+    );
+    h.manager.select(b.id).await.unwrap();
+    let current = h.providers.0.diagnostic().unwrap().selection.unwrap();
+    // Healthy recovery is idempotent, including runtime authorization.
+    h.manager.recover().await.unwrap();
+    assert_eq!(
+        h.providers.0.diagnostic().unwrap().selection.unwrap(),
+        current
+    );
+    h.manager.create(settings(), secret("new")).await.unwrap();
+    assert_eq!(
+        h.manager.list().await.unwrap().len(),
+        durable.connections.len() + 1
+    );
+    h.supervisor.shutdown().await;
 }
 
 #[tokio::test]

@@ -1,7 +1,10 @@
 //! Optional Providers author. The host renders forms and runs asynchronous work.
 use async_trait::async_trait;
 use huginn_core::{
-    connections::*,
+    connections::{
+        connections_id, ConnectionError, ConnectionManagement, ConnectionRecord,
+        ConnectionSettings, ConnectionsService, SecretMode,
+    },
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     providers::{
         AuthenticationMethod, ProviderCatalog, ProviderCatalogService, ProviderDescriptor,

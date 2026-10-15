@@ -201,54 +201,65 @@ impl Parser {
     }
 
     fn feed(&mut self, byte: u8, owner: Lease, current: Lease) -> Option<(Event, Lease)> {
-        if let Some(paste) = self.paste.as_mut() {
-            // Ctrl-C is an unambiguous host interrupt even when the sender never
-            // completes a paste. Escape starts the bracketed-paste terminator,
-            // so interpreting it as cancellation would corrupt valid payloads.
-            if byte == 3 {
-                paste.text.zeroize();
-                paste.discarded = true;
-                paste.matched = 0;
-                return (paste.owner == current).then(|| {
-                    (
-                        Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-                        paste.owner,
-                    )
-                });
-            }
-            if !paste.discarded {
-                if paste.text.len() == PASTE_LIMIT {
-                    paste.text.zeroize();
-                    paste.discarded = true;
-                    self.overflow = true;
-                } else {
-                    paste.text.push(byte);
-                }
-            }
-            paste.matched = if byte == END[paste.matched] {
-                paste.matched + 1
-            } else {
-                usize::from(byte == END[0])
-            };
-            if paste.matched == END.len() {
-                let mut paste = self.paste.take()?;
-                if paste.discarded {
-                    return None;
-                }
-                let length = paste.text.len().saturating_sub(END.len());
-                paste.text.truncate(length);
-                let text = String::from_utf8_lossy(&paste.text).into_owned();
-                return Some((Event::Paste(text), paste.owner));
-            }
+        if self.paste.is_some() {
+            return self.feed_paste(byte, current);
+        }
+        self.feed_sequence(byte, owner, current)
+    }
+
+    fn feed_paste(&mut self, byte: u8, current: Lease) -> Option<(Event, Lease)> {
+        let paste = self.paste.as_mut()?;
+        if byte == 3 {
+            paste.text.zeroize();
+            paste.discarded = true;
+            paste.matched = 0;
+            return (paste.owner == current).then(|| {
+                (
+                    Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+                    paste.owner,
+                )
+            });
+        }
+        Self::append_paste_byte(paste, byte, &mut self.overflow);
+        paste.matched = if byte == END[paste.matched] {
+            paste.matched + 1
+        } else {
+            usize::from(byte == END[0])
+        };
+        if paste.matched != END.len() {
             return None;
         }
+        let mut paste = self.paste.take()?;
+        if paste.discarded {
+            return None;
+        }
+        let length = paste.text.len().saturating_sub(END.len());
+        paste.text.truncate(length);
+        Some((
+            Event::Paste(String::from_utf8_lossy(&paste.text).into_owned()),
+            paste.owner,
+        ))
+    }
 
+    fn append_paste_byte(paste: &mut Paste, byte: u8, overflow: &mut bool) {
+        if paste.discarded {
+            return;
+        }
+        if paste.text.len() == PASTE_LIMIT {
+            paste.text.zeroize();
+            paste.discarded = true;
+            *overflow = true;
+        } else {
+            paste.text.push(byte);
+        }
+    }
+
+    fn feed_sequence(&mut self, byte: u8, owner: Lease, current: Lease) -> Option<(Event, Lease)> {
         if self.pending.as_slice() == b"\x1b" {
             if byte == 0x1b {
                 let old = self.owner;
                 let deliver = !self.escape_emitted && !self.revoked;
-                // ESC ESC means one key followed by another sequence start,
-                // not permission to consume and forget the second ESC.
+                // ESC ESC emits the first key while preserving the second as a sequence start.
                 self.owner = owner;
                 self.revoked = owner != current;
                 self.escape_emitted = false;
@@ -268,61 +279,75 @@ impl Parser {
         }
         self.pending.push(byte);
         if self.pending.as_slice() == b"\x1b[200~" {
-            self.paste = Some(Paste {
-                owner: self.owner,
-                text: Zeroizing::new(Vec::with_capacity(PASTE_LIMIT)),
-                matched: 0,
-                discarded: self.revoked,
-            });
-            self.clear();
+            self.start_paste();
             return None;
         }
+        let event = self.parse_pending(byte)?;
+        self.deliver_pending(event)
+    }
+
+    fn start_paste(&mut self) {
+        self.paste = Some(Paste {
+            owner: self.owner,
+            text: Zeroizing::new(Vec::with_capacity(PASTE_LIMIT)),
+            matched: 0,
+            discarded: self.revoked,
+        });
+        self.clear();
+    }
+
+    fn parse_pending(&mut self, byte: u8) -> Option<Option<Event>> {
         let bytes = self.pending.as_slice();
-        let event = if bytes[0] == 0x1b {
-            if bytes.len() == 1 {
+        if bytes[0] != 0x1b {
+            let event = character(bytes);
+            if event.is_none()
+                && bytes.len() < 4
+                && std::str::from_utf8(bytes).is_err_and(|error| error.error_len().is_none())
+            {
                 return None;
             }
-            match bytes[1] {
-                b'[' | b'O' => {
-                    if bytes.len() < 3 {
-                        return None;
-                    }
-                    if !(0x40..=0x7e).contains(&byte) {
-                        if bytes.len() >= 64 {
-                            self.clear();
-                        }
-                        return None;
-                    }
-                    sequence(bytes)
-                }
-                _ => {
-                    let event = character(&bytes[1..]);
-                    if event.is_none()
-                        && bytes.len() < 5
-                        && std::str::from_utf8(&bytes[1..])
-                            .is_err_and(|error| error.error_len().is_none())
-                    {
-                        return None;
-                    }
-                    event.map(|mut event| {
-                        if let Event::Key(key) = &mut event {
-                            key.modifiers |= KeyModifiers::ALT;
-                        }
-                        event
-                    })
-                }
+            return Some(event);
+        }
+        if bytes.len() == 1 {
+            return None;
+        }
+        match bytes[1] {
+            b'[' | b'O' => self.parse_control_sequence(byte),
+            _ => self.parse_alt_character(bytes),
+        }
+    }
+
+    fn parse_control_sequence(&mut self, byte: u8) -> Option<Option<Event>> {
+        let bytes = self.pending.as_slice();
+        if bytes.len() < 3 {
+            return None;
+        }
+        if !(0x40..=0x7e).contains(&byte) {
+            if bytes.len() >= 64 {
+                self.clear();
             }
-        } else {
-            character(bytes)
-        };
-        // Incomplete UTF-8 needs at most four bytes; malformed input is dropped.
+            return None;
+        }
+        Some(sequence(bytes))
+    }
+
+    fn parse_alt_character(&self, bytes: &[u8]) -> Option<Option<Event>> {
+        let event = character(&bytes[1..]);
         if event.is_none()
-            && bytes[0] != 0x1b
-            && bytes.len() < 4
-            && std::str::from_utf8(bytes).is_err_and(|error| error.error_len().is_none())
+            && bytes.len() < 5
+            && std::str::from_utf8(&bytes[1..]).is_err_and(|error| error.error_len().is_none())
         {
             return None;
         }
+        Some(event.map(|mut event| {
+            if let Event::Key(key) = &mut event {
+                key.modifiers |= KeyModifiers::ALT;
+            }
+            event
+        }))
+    }
+
+    fn deliver_pending(&mut self, event: Option<Event>) -> Option<(Event, Lease)> {
         let owner = self.owner;
         let revoked = self.revoked;
         self.clear();
