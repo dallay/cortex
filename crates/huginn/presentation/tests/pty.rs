@@ -173,6 +173,7 @@ fn paste_start_fragment_cannot_cross_secret_form_focus_boundary() {
     pty.send("\x1b");
     pty.wait_for("Form discarded.");
     std::thread::sleep(std::time::Duration::from_millis(200));
+    // Complete the paste-start marker only after focus has returned.
     pty.send(&format!("[200~{STALE}\x1b[201~"));
     pty.send("fresh-after-marker-fragment");
     pty.wait_for("fresh-after-marker-fragment");
