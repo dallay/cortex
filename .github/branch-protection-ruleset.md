@@ -110,7 +110,7 @@ gh api repos/dallay/cortex/rulesets/17001295 | jq .
 gh api \
   --method PUT \
   repos/dallay/cortex/rulesets/17001295 \
-  --input docs/main-ruleset.json
+  --input .github/main-ruleset.json
 ```
 
 ## Notas Importantes
