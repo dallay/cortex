@@ -221,6 +221,9 @@ clean:
     cargo clean
     cargo llvm-cov clean --workspace
 
+push *args:
+    git push {{args}} && just clean
+
 # === Build artifact diagnostics ===
 
 # Show the largest top-level Cargo artifact directories before cleaning.
@@ -426,6 +429,7 @@ help:
     @echo "  just run             - Run rook backend"
     @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
     @echo "  just dashboard-install - Install dashboard npm dependencies"
+    @echo "  just push [args...]   - Push and clean Cargo artifacts on success"
     @echo ""
     @echo "DB:"
     @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"
