@@ -13,6 +13,11 @@ name = "tui-fixture"
 path = "tests/support/fixture.rs"
 required-features = ["test-driver"]
 
+[[test]]
+name = "input_parser"
+path = "tests/input_parser.rs"
+required-features = ["test-driver"]
+
 [dependencies]
 cap-std = "4.0.3"
 # Used by the explicit PTY fixture host only.

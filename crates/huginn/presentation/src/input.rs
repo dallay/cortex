@@ -447,6 +447,5 @@ fn sequence(bytes: &[u8]) -> Option<Event> {
     Some(Event::Key(KeyEvent::new_with_kind(code, modifiers, kind)))
 }
 
-#[cfg(test)]
-#[path = "../tests/support/input_parser.rs"]
-mod tests;
+#[cfg(feature = "test-driver")]
+pub mod test_support;

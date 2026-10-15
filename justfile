@@ -222,7 +222,7 @@ clean:
     cargo llvm-cov clean --workspace
 
 push *args:
-    git push {{args}} && just clean
+    git push "$@" && just clean
 
 # === Build artifact diagnostics ===
 

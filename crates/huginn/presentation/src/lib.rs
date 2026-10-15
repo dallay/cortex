@@ -5,6 +5,9 @@ pub mod contributions;
 pub mod files;
 #[cfg(unix)]
 mod input;
+#[cfg(all(unix, feature = "test-driver"))]
+#[doc(hidden)]
+pub use input::test_support as input_test_support;
 pub mod providers;
 pub mod state;
 mod terminal;
