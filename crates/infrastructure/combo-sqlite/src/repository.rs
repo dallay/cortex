@@ -449,18 +449,27 @@ impl ComboAliasRepositoryPort for ComboSqliteRepository {
         );
         match result {
             Ok(_) => Ok(()),
-            Err(e) => {
-                if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
-                    let msg = e.to_string();
-                    if msg.contains("FOREIGN KEY") || msg.contains("foreign key") {
-                        return Err(ComboAliasRepositoryError::ComboNotFound(alias.combo_id));
-                    }
-                    return Err(ComboAliasRepositoryError::AlreadyExists(
-                        alias.alias.clone(),
-                    ));
-                }
-                Err(combo_alias_db_error(e))
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY =>
+            {
+                Err(ComboAliasRepositoryError::ComboNotFound(alias.combo_id))
             }
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
+            {
+                Err(ComboAliasRepositoryError::AlreadyExists(
+                    alias.alias.clone(),
+                ))
+            }
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK =>
+            {
+                Err(ComboAliasRepositoryError::InvalidAlias(format!(
+                    "alias '{}' violates storage constraints",
+                    alias.alias
+                )))
+            }
+            Err(e) => Err(combo_alias_db_error(e)),
         }
     }
 

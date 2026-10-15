@@ -697,7 +697,7 @@ impl ProviderPort for OpenAIProvider {
         let choice = openai_resp
             .choices
             .first()
-            .ok_or_else(|| CortexError::not_found("no choices in response"))?;
+            .ok_or_else(|| CortexError::provider("no choices in response"))?;
 
         Ok(CompletionResponse {
             id: req.id.clone(),

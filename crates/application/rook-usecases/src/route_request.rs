@@ -18,7 +18,7 @@ use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort, ComboRepositoryPort,
     CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
     ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk,
-    TokenUsage, UsageEntry, UsageRecorderPort,
+    TokenUsage, ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
@@ -702,7 +702,7 @@ impl RouteRequest {
         let combo_id = self.resolve_virtual_alias(&requested).await?;
         let combo = self.load_combo(&combo_id).await?;
         self.check_combo_authorization(&req, &combo, Some(&requested))?;
-        let mut resp = self.execute_combo(&combo_id, req, client_format).await?;
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
         // External contract uses the requested virtual model; audit keeps
         // provider/step details via record_combo_success.
         resp.model = requested;
@@ -722,7 +722,7 @@ impl RouteRequest {
         let combo = self.load_combo(combo_id).await?;
         self.check_combo_authorization(&req, &combo, None)?;
         let requested = req.model.clone();
-        let mut resp = self.execute_combo(combo_id, req, client_format).await?;
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
         resp.model = requested;
         Ok(resp)
     }
@@ -831,24 +831,77 @@ impl RouteRequest {
             self.check_model_restriction(&req)?;
         }
         self.check_combo_authorization(&req, &combo, virtual_alias.as_ref())?;
-        let mut resp = self.execute_combo(&combo_id, req, client_format).await?;
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
         resp.model = requested.clone();
-        let chunk = StreamChunk {
+        // Two chunks: content (text + tool-call fragments, no finish) then a
+        // terminal chunk (stop summaries + finish + usage). A single chunk
+        // would drop tool calls for streaming clients.
+        let content_chunk = StreamChunk {
+            id: resp.id.clone(),
+            model: requested.clone(),
+            delta: resp.content.clone(),
+            thinking: resp.thinking.clone(),
+            tool_calls: resp
+                .tool_calls
+                .iter()
+                .enumerate()
+                .flat_map(|(index, call)| {
+                    let index = index as u32;
+                    let args = call.arguments.to_string();
+                    vec![
+                        ToolCallDelta {
+                            index,
+                            id: call.id.clone(),
+                            function: ToolCallFunctionDelta {
+                                name: Some(call.name.clone()),
+                                arguments: None,
+                            },
+                        },
+                        ToolCallDelta {
+                            index,
+                            id: None,
+                            function: ToolCallFunctionDelta {
+                                name: None,
+                                arguments: Some(args),
+                            },
+                        },
+                    ]
+                })
+                .collect(),
+            finish_reason: None,
+            usage: None,
+        };
+        let final_chunk = StreamChunk {
             id: resp.id,
             model: requested,
-            delta: resp.content,
-            thinking: resp.thinking,
-            tool_calls: vec![],
+            delta: String::new(),
+            thinking: None,
+            tool_calls: resp
+                .tool_calls
+                .iter()
+                .enumerate()
+                .map(|(index, call)| ToolCallDelta {
+                    index: index as u32,
+                    id: call.id.clone(),
+                    function: ToolCallFunctionDelta {
+                        name: Some(call.name.clone()),
+                        arguments: None,
+                    },
+                })
+                .collect(),
             finish_reason: resp.finish_reason,
             usage: Some(resp.usage),
         };
-        Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(content_chunk),
+            Ok(final_chunk),
+        ])))
     }
 
-    /// Execute a request using a multi-step fallback combo.
+    /// Execute a request using an already-loaded, already-authorized combo.
     ///
-    /// Loads the combo from the repository, then iterates through steps in priority order,
-    /// attempting each provider until one succeeds or all fail.
+    /// Takes the `Combo` snapshot so authorization and execution observe the
+    /// same combo state (no reload race between the check and the run).
     ///
     /// ## Streaming Limitation
     ///
@@ -871,26 +924,11 @@ impl RouteRequest {
     /// If all steps fail, returns `AllProvidersExhausted`.
     pub async fn execute_combo(
         &self,
-        combo_id: &ComboId,
+        combo: &rook_core::Combo,
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        let combo_repo = self
-            .combo_repository
-            .as_ref()
-            .ok_or_else(|| CortexError::provider("combo repository not configured"))?;
-
-        // 1. Load combo from repository
-        let combo = match combo_repo.find(combo_id).await {
-            Ok(Some(combo)) => combo,
-            Ok(None) => return Err(CortexError::combo_not_found(*combo_id)),
-            Err(e) => {
-                return Err(CortexError::provider(format!(
-                    "combo repository error: {}",
-                    e
-                )))
-            }
-        };
+        let combo_id = &combo.id;
 
         tracing::info!(
             combo_id = %combo.id,
@@ -947,9 +985,12 @@ impl RouteRequest {
             // NOTE: select with the STEP's physical model, not req.model: for
             // virtual combos req.model is `rook/*`, which no provider supports.
             // Selecting with the virtual id would exhaust every step.
-            let mut select_req = req.clone();
-            select_req.model = model.clone();
-            let provider = match self.router.select(&select_req).await {
+            // The per-step request below carries the physical model for
+            // selection, translation, and audit/usage records alike; only the
+            // client response keeps the caller's requested model.
+            let mut step_req = req.clone();
+            step_req.model = model.clone();
+            let provider = match self.router.select(&step_req).await {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!(
@@ -981,7 +1022,7 @@ impl RouteRequest {
             let mut provider_req = self.format_translator.translate_request(
                 client_format,
                 provider_format,
-                req.clone(),
+                step_req.clone(),
             )?;
             // The provider must receive the STEP's physical model, never a
             // virtual `rook/*` alias or another step's model.
@@ -1016,7 +1057,7 @@ impl RouteRequest {
                         step_index,
                         provider_id,
                         latency_ms,
-                        &req,
+                        &step_req,
                         &resp,
                     )
                     .await;
@@ -1043,7 +1084,7 @@ impl RouteRequest {
                         step_index,
                         provider_id,
                         latency_ms,
-                        &req,
+                        &step_req,
                         &e,
                     )
                     .await;
@@ -1078,7 +1119,7 @@ impl RouteRequest {
                         step_index,
                         provider_id,
                         latency_ms,
-                        &req,
+                        &step_req,
                         &err,
                     )
                     .await;
@@ -2912,7 +2953,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn combo_stream_emits_single_chunk_with_requested_model() {
+    async fn combo_stream_emits_content_then_final_chunk() {
         let combo = harness_combo();
         let combo_id = combo.id;
         let mut combos = HashMap::new();
@@ -2928,11 +2969,136 @@ mod tests {
             .await
             .expect("combo stream starts");
         let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
-        assert_eq!(chunks.len(), 1, "one chunk: no mid-stream provider switch");
-        let chunk = chunks.into_iter().next().unwrap().expect("chunk ok");
-        assert_eq!(chunk.model.as_str(), "rook/coding");
-        assert_eq!(chunk.delta, "cached path");
-        assert!(chunk.usage.is_some(), "usage rides the final chunk");
+        assert_eq!(chunks.len(), 2, "content chunk, then final chunk");
+        let mut chunks = chunks.into_iter().map(|c| c.expect("chunk ok"));
+        let content = chunks.next().unwrap();
+        assert_eq!(content.model.as_str(), "rook/coding");
+        assert_eq!(content.delta, "cached path");
+        assert!(content.finish_reason.is_none());
+        assert!(content.usage.is_none());
+        let final_chunk = chunks.next().unwrap();
+        assert_eq!(final_chunk.model.as_str(), "rook/coding");
+        assert!(final_chunk.delta.is_empty());
+        assert!(final_chunk.usage.is_some(), "usage rides the final chunk");
+    }
+
+    /// Test provider returning a tool_call response for combo-stream coverage.
+    struct ToolProvider {
+        id: ProviderId,
+    }
+
+    #[async_trait]
+    impl ProviderPort for ToolProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+        fn supported_models(&self) -> &[ModelId] {
+            std::slice::from_ref(&TEST_MODEL)
+        }
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.id.clone(),
+                model: req.model.clone(),
+                content: String::new(),
+                content_blocks: vec![],
+                thinking: None,
+                tool_calls: vec![rook_core::MessageToolCall {
+                    id: Some("call_1".to_string()),
+                    name: "lookup".to_string(),
+                    arguments: serde_json::json!({"key": "value"}),
+                }],
+                finish_reason: Some(rook_core::FinishReason::ToolCalls),
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+                cache_hit: None,
+            })
+        }
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            unreachable!("tool combo stream test uses complete()")
+        }
+    }
+
+    #[tokio::test]
+    async fn combo_stream_carries_tool_calls_then_tool_use_finish() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, combo);
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "rook/tools".to_string(),
+            ComboAlias::new(ModelId::new("rook/tools"), combo_id),
+        );
+        // stream_harness wires TestProvider; rebuild with ToolProvider here.
+        let tool: Arc<dyn ProviderPort> = Arc::new(ToolProvider {
+            id: ProviderId::new("openai"),
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(RecordingRouter { provider: tool }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(MapComboRepository { combos })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+        let stream = usecase
+            .execute_stream_with_format(stream_req("rook/tools"), ApiFormat::OpenAI)
+            .await
+            .expect("tool combo stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+        assert_eq!(chunks.len(), 2);
+        let mut chunks = chunks.into_iter().map(|c| c.expect("chunk ok"));
+        let content = chunks.next().unwrap();
+        assert_eq!(content.tool_calls.len(), 2, "start + args fragments");
+        assert_eq!(content.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(
+            content.tool_calls[0].function.name.as_deref(),
+            Some("lookup")
+        );
+        assert!(content.tool_calls[1].function.arguments.is_some());
+        assert!(content.finish_reason.is_none());
+        let final_chunk = chunks.next().unwrap();
+        assert_eq!(
+            final_chunk.finish_reason,
+            Some(rook_core::FinishReason::ToolCalls)
+        );
+        assert_eq!(final_chunk.tool_calls.len(), 1, "stop summary");
+        assert!(final_chunk.usage.is_some());
     }
 
     #[tokio::test]
@@ -2965,8 +3131,12 @@ mod tests {
             .await
             .expect("fallback combo stream starts");
         let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks.into_iter().next().unwrap().is_ok());
+        assert_eq!(
+            chunks.len(),
+            2,
+            "content + final after pre-emission fallback"
+        );
+        assert!(chunks.into_iter().all(|c| c.is_ok()));
     }
 
     #[tokio::test]

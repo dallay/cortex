@@ -55,12 +55,23 @@ pub enum AnthropicWireContentBlock {
 }
 
 impl AnthropicMessage {
-    fn into_domain_message(self) -> Message {
+    /// Split one wire message into domain messages, preserving EVERY block in
+    /// order. The first message carries `tool_calls`; each additional content
+    /// block becomes its own message so no `tool_result` is ever dropped.
+    fn into_domain_messages(self) -> Vec<Message> {
+        let role = match self.role.as_str() {
+            "system" => Role::System,
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            _ => Role::User,
+        };
         let mut tool_calls = Vec::new();
-        let content = match self.content {
-            AnthropicMessageContent::Text(text) => MessageContent::Text(text),
+        let mut contents: Vec<MessageContent> = Vec::new();
+        match self.content {
+            AnthropicMessageContent::Text(text) => {
+                contents.push(MessageContent::Text(text));
+            }
             AnthropicMessageContent::Blocks(blocks) => {
-                let mut non_tool_content = None;
                 for block in blocks {
                     match block {
                         AnthropicWireContentBlock::ToolUse { id, name, input } => {
@@ -71,26 +82,32 @@ impl AnthropicMessage {
                             });
                         }
                         other => {
-                            if non_tool_content.is_none() {
-                                non_tool_content = anthropic_block_to_domain(other);
+                            if let Some(content) = anthropic_block_to_domain(other) {
+                                contents.push(content);
                             }
                         }
                     }
                 }
-                non_tool_content.unwrap_or_else(|| MessageContent::Text(String::new()))
             }
-        };
-
-        Message {
-            role: match self.role.as_str() {
-                "system" => Role::System,
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                _ => Role::User,
-            },
-            content,
-            tool_calls,
         }
+
+        let mut messages = Vec::new();
+        let mut contents = contents.into_iter();
+        messages.push(Message {
+            role,
+            content: contents
+                .next()
+                .unwrap_or_else(|| MessageContent::Text(String::new())),
+            tool_calls,
+        });
+        for content in contents {
+            messages.push(Message {
+                role,
+                content,
+                tool_calls: Vec::new(),
+            });
+        }
+        messages
     }
 }
 
@@ -130,7 +147,7 @@ impl From<AnthropicMessagesRequest> for CompletionRequest {
         messages.extend(
             req.messages
                 .into_iter()
-                .map(AnthropicMessage::into_domain_message),
+                .flat_map(AnthropicMessage::into_domain_messages),
         );
 
         Self {
@@ -379,8 +396,17 @@ impl AnthropicSseEvent {
             return events;
         }
 
-        // Final chunk: arguments still flow (a combined chunk is legal), but
-        // starts are summaries — only stops + message_delta are emitted.
+        // Final chunk: a combined text fragment still reaches clients as a
+        // text delta first; arguments still flow; stops are emitted for the
+        // tool indices present (never re-emitted as starts — see above).
+        if !chunk.delta.is_empty() {
+            events.push(AnthropicSseEvent::ContentBlockDelta {
+                index: 0,
+                delta: AnthropicDelta::TextDelta {
+                    text: chunk.delta.clone(),
+                },
+            });
+        }
         for tc in &chunk.tool_calls {
             if let Some(args) = &tc.function.arguments {
                 events.push(AnthropicSseEvent::ContentBlockDelta {
@@ -842,5 +868,67 @@ mod tests {
     fn sse_empty_chunk_emits_nothing() {
         let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(vec![], None, None));
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn sse_final_chunk_forwards_combined_text_first() {
+        let mut chunk = tool_chunk(
+            vec![tool_delta(2, Some("toolu_9"), Some("lookup"), None)],
+            Some(FinishReason::ToolCalls),
+            Some(make_token_usage(1, 1)),
+        );
+        chunk.delta = "done reading".to_string();
+        let events = AnthropicSseEvent::events_from_chunk(&chunk);
+        assert_eq!(events.len(), 3, "text delta, stop, message_delta");
+        let first = serde_json::to_string(&events[0]).unwrap();
+        assert!(first.contains(r#""type":"content_block_delta""#));
+        assert!(first.contains(r#""type":"text_delta""#));
+        assert!(first.contains("done reading"));
+        let kinds: Vec<String> = events
+            .iter()
+            .map(|e| {
+                serde_json::to_value(e).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(kinds[1], "content_block_stop");
+        assert_eq!(kinds[2], "message_delta");
+    }
+
+    #[test]
+    fn multiple_tool_results_split_into_ordered_messages() {
+        let json = r#"{
+            "model": "claude-3-5-sonnet",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_1", "name": "a", "input": {}},
+                    {"type": "tool_result", "tool_use_id": "toolu_1",
+                     "content": [{"type": "text", "text": "first"}]},
+                    {"type": "tool_result", "tool_use_id": "toolu_2",
+                     "content": [{"type": "text", "text": "second"}]}
+                ]
+            }]
+        }"#;
+        let req: AnthropicMessagesRequest = serde_json::from_str(json).expect("should deserialize");
+        let domain: rook_core::CompletionRequest = req.into();
+        assert_eq!(domain.messages.len(), 2, "no tool_result may be dropped");
+        assert_eq!(domain.messages[0].tool_calls.len(), 1);
+        assert_eq!(
+            domain.messages[0].content,
+            MessageContent::ToolResult {
+                tool_use_id: "toolu_1".to_string(),
+                content: vec![MessageContent::Text("first".to_string())],
+            }
+        );
+        assert_eq!(
+            domain.messages[1].content,
+            MessageContent::ToolResult {
+                tool_use_id: "toolu_2".to_string(),
+                content: vec![MessageContent::Text("second".to_string())],
+            }
+        );
     }
 }

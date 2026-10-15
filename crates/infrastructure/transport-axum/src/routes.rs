@@ -428,19 +428,27 @@ fn parse_csv_header(headers: &HeaderMap, name: &'static str) -> Result<Vec<Strin
 
 /// Shared combo/header policy for both protocols (R2).
 ///
-/// Single classification lives in `rook_uscapes::classify_route`; this helper
+/// Single classification lives in `rook_usecases::classify_route`; this helper
 /// only extracts raw header values (ALL of them, via `get_all`, so duplicates
 /// are detected) and maps `RouteError` to `HttpError`. Resolution + auth stay
-/// in `RouteRequest`.
+/// in `RouteRequest`. Non-UTF8 header values are a 400, never silently dropped.
 ///
 /// Returns the legacy `combo_id` when present; virtual (`rook/*`) and normal
 /// models need no header action here.
 fn combo_id_from_headers(headers: &HeaderMap, model: &str) -> Result<Option<ComboId>, HttpError> {
-    let values: Vec<String> = headers
-        .get_all("x-rook-combo")
-        .iter()
-        .filter_map(|v| v.to_str().ok().map(str::to_string))
-        .collect();
+    let mut values: Vec<String> = Vec::new();
+    for v in headers.get_all("x-rook-combo").iter() {
+        match v.to_str() {
+            Ok(s) => values.push(s.to_string()),
+            Err(_) => {
+                return Err(HttpError {
+                    status: StatusCode::BAD_REQUEST,
+                    code: "INVALID_COMBO_ID",
+                    message: "Invalid X-Rook-Combo header: value is not valid UTF-8".to_string(),
+                });
+            }
+        }
+    }
     match classify_route(model, &values) {
         Ok(RouteSelection::LegacyCombo { combo_id }) => Ok(Some(combo_id)),
         Ok(_) => Ok(None),
@@ -1211,6 +1219,18 @@ mod tests {
         let headers = headers_with(&[""]);
         let err = combo_id_from_headers(&headers, "gpt-4.1").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn non_utf8_header_is_400_not_silently_dropped() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "x-rook-combo",
+            axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        let err = combo_id_from_headers(&headers, "gpt-4o").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "INVALID_COMBO_ID");
     }
 
     // R5: dynamic model catalog entries ---------------------------------
