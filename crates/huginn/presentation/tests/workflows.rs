@@ -158,7 +158,16 @@ async fn cancelling_unsubmitted_form_discards_secrets_without_executing_or_recov
     let h = setup(false).await;
     fill(&h.ui);
     h.ui.cancel_workflow();
-    assert!(h.ui.lock().workflow.is_none());
+    let state = h.ui.lock();
+    assert!(state.workflow.is_none());
+    assert!(state
+        .committed
+        .last()
+        .is_some_and(|notice| notice.contains("discarded")));
+    let notice_count = state.committed.len();
+    drop(state);
+    h.ui.cancel_workflow();
+    assert_eq!(h.ui.lock().committed.len(), notice_count);
     assert_eq!(h.calls.load(Ordering::SeqCst), 0);
     h.ui.dispatch_command("/form");
     let state = h.ui.lock();
@@ -175,6 +184,9 @@ async fn late_result_after_cancel_does_not_replace_a_new_form() {
     h.entered.notified().await;
     assert!(h.ui.lock().workflow.as_ref().unwrap().is_pending());
     h.ui.cancel_workflow();
+    assert!(h.ui.lock().committed.last().is_some_and(|notice| {
+        notice.contains("completion may be unknown") && notice.contains("reopen the command")
+    }));
     h.ui.dispatch_command("/form");
     h.release.notify_one();
     tokio::task::yield_now().await;

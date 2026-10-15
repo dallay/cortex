@@ -21,46 +21,6 @@ pub struct Field {
     pub initial: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn public_choice_defaults_are_validated_without_allowing_secret_defaults() {
-        let make = |kind, initial: &str| {
-            Workflow::new(
-                "Form",
-                "",
-                vec![Field {
-                    id: "value".into(),
-                    label: "Value".into(),
-                    kind,
-                    initial: initial.into(),
-                }],
-                Arc::new(|_, _| {
-                    Box::pin(async { Ok(CommandResult::Notice(super::super::View::text("done"))) })
-                }),
-            )
-        };
-        for initial in ["", "0", "1"] {
-            assert!(make(
-                FieldKind::Choice(vec!["first".into(), "second".into()]),
-                initial
-            )
-            .is_ok());
-        }
-        for initial in ["2", "-1", "second"] {
-            assert!(make(
-                FieldKind::Choice(vec!["first".into(), "second".into()]),
-                initial
-            )
-            .is_err());
-        }
-        assert!(make(FieldKind::Secret, "1").is_err());
-        assert!(make(FieldKind::Secret, "").is_ok());
-    }
-}
-
 /// Move-only submission. Secrets are never part of the public field map.
 #[derive(Default, Debug)]
 pub struct FormInput {

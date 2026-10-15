@@ -772,9 +772,25 @@ impl ConnectionManager {
             manager: self,
             armed: true,
         };
-        self.access
-            .bind(self.access.identity(record.id)?, record.clone())?;
-        self.select_runtime(record).await?;
+        match self.access.identity(record.id) {
+            Ok(identity) => {
+                self.access.bind(identity.clone(), record.clone())?;
+                match self.select_runtime(record).await {
+                    Ok(_) => {}
+                    Err(ConnectionError::Revoked) => {
+                        self.access.unbind(record.id);
+                        self.install(record).await?;
+                        self.select_runtime(record).await?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(ConnectionError::Revoked) => {
+                self.install(record).await?;
+                self.select_runtime(record).await?;
+            }
+            Err(error) => return Err(error),
+        }
         state.pending_model = None;
         state.failed = false;
         publication.armed = false;

@@ -56,7 +56,7 @@ fn secret_form_masks_keys_and_pastes_and_async_error_does_not_echo_credentials()
     pty.send(SENTINEL);
     pty.wait_for("********");
     pty.send("\x1b");
-    pty.wait_for("Action cancelled locally");
+    pty.wait_for("Form discarded.");
     assert!(!pty.output().contains(SENTINEL));
     pty.send("/secret-form\r");
     pty.wait_for("Host-owned input");
@@ -102,7 +102,7 @@ fn closing_secret_form_discards_queued_paste_before_returning_focus_to_composer(
     // One input batch: the next paste belongs to the focus lease being closed,
     // not to a conversation editor that has not even been redrawn yet.
     pty.send(&format!("key\x1b\x1b[200~{SENTINEL}\x1b[201~"));
-    pty.wait_for("Action cancelled locally");
+    pty.wait_for("Form discarded.");
     pty.send("\x03");
     let output = pty.finish(true);
     assert!(
@@ -122,7 +122,7 @@ fn ctrl_c_cancels_incomplete_secret_paste_and_discards_its_remaining_bytes() {
     pty.send(&format!("key\x1b\x1b[200~{PREFIX}"));
     std::thread::sleep(std::time::Duration::from_millis(200));
     pty.send("\x03");
-    pty.wait_for("Action cancelled locally");
+    pty.wait_for("Form discarded.");
     // Complete the stale paste so the host can accept a fresh Ctrl+C to exit.
     pty.send("stale-suffix-never-public\x03\x1b[201~\x03");
     let output = pty.finish(true);
@@ -141,7 +141,7 @@ fn closing_secret_form_discards_fragmented_paste_and_accepts_fresh_input() {
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
     pty.send(&format!("key\x1b\x1b[200~{PREFIX}"));
-    pty.wait_for("Action cancelled locally");
+    pty.wait_for("Form discarded.");
     // Deliberately split the old paste across the focus boundary, not merely
     // across two writes that the terminal might coalesce into one read.
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -161,16 +161,41 @@ fn closing_secret_form_discards_fragmented_paste_and_accepts_fresh_input() {
 }
 
 #[test]
+fn paste_start_fragment_cannot_cross_secret_form_focus_boundary() {
+    const STALE: &str = "STALE_MARKER_FRAGMENT_MUST_NOT_ESCAPE";
+    let mut pty = start("secret-form", true);
+    pty.wait_for("Huginn");
+    pty.send("/secret-form\r");
+    pty.wait_for("Secret form fixture");
+
+    // ESC cancels this form; the later bytes complete a bracketed-paste
+    // start marker that belonged to the old focus lease.
+    pty.send("\x1b");
+    pty.wait_for("Form discarded.");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    pty.send(&format!("[200~{STALE}\x1b[201~"));
+    pty.send("fresh-after-marker-fragment");
+    pty.wait_for("fresh-after-marker-fragment");
+    pty.send("\x03");
+
+    let output = pty.finish(true);
+    assert!(
+        !output.contains(STALE),
+        "stale paste reached public terminal"
+    );
+}
+
+#[test]
 fn incomplete_secret_paste_does_not_block_cancellation_or_terminal_close() {
     let mut pty = start("secret-form", true);
     pty.wait_for("Huginn");
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
     pty.send("\x1b[200~INCOMPLETE_SECRET_PREFIX");
-    // No end marker: interruption still cancels the form, and a subsequent
+    // No end marker: interruption still cancels the pending workflow; a subsequent
     // interrupt closes the host while payload remains quarantined.
     pty.send("\x03");
-    pty.wait_for("Action cancelled locally");
+    pty.wait_for("Form discarded.");
     // The first interrupt after cancellation still belongs to the stale paste;
     // close its frame, then send a fresh interrupt to exit the host.
     pty.send("INCOMPLETE_SECRET_SUFFIX\x1b[201~\x03");
@@ -203,7 +228,7 @@ fn resizing_during_incomplete_secret_paste_does_not_start_another_reader() {
     // Ratatui's resize clears the old inline viewport after the cancellation
     // notice was committed. Observe that transition in the protocol capture.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !pty.output().contains("Action cancelled locally") {
+    while !pty.output().contains("Form discarded.") {
         assert!(
             std::time::Instant::now() < deadline,
             "cancellation was not processed during resize"

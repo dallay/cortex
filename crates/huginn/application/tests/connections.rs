@@ -228,7 +228,11 @@ impl ProviderManagement for PublicationFault {
         action: ProviderAction,
         cancel: CancellationToken,
     ) -> huginn_core::Result<ProviderActionOutput> {
-        let selecting = matches!(action, ProviderAction::Select(_));
+        let selected_identity = match &action {
+            ProviderAction::Select(selection) => Some(selection.connection.clone()),
+            _ => None,
+        };
+        let selecting = selected_identity.is_some();
         let output = self.inner.execute(action, cancel).await?;
         if selecting {
             match self.mode.swap(0, Ordering::SeqCst) {

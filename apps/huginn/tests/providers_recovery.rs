@@ -202,6 +202,21 @@ async fn run_resume_line_and_json_recover_the_same_durable_router() {
 }
 
 #[tokio::test]
+async fn doctor_continues_when_provider_store_writer_lease_is_held() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("config.toml"), "").unwrap();
+    let lease_path = root.path().join("sessions.providers.db");
+    let _store = huginn_runtime::connections::SqliteConnections::open(&lease_path).unwrap();
+
+    let output = command(root.path()).arg("doctor").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
 async fn explicit_headless_model_does_not_open_or_merge_durable_metadata() {
     let root = tempfile::tempdir().unwrap();
     seed(root.path(), "http://127.0.0.1:1".into()).await;

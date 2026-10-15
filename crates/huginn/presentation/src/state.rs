@@ -566,16 +566,24 @@ impl Ui {
             .is_some_and(crate::workflow::HostWorkflow::submit)
     }
     pub fn cancel_workflow(&self) {
-        let had_workflow = {
+        let cancelled = {
             let mut state = self.lock();
-            let had = state.workflow.take().is_some();
-            if had {
+            let pending = state
+                .workflow
+                .as_ref()
+                .map(|workflow| workflow.is_pending());
+            if pending.is_some() {
+                state.workflow.take();
                 state.workflow_focus = state.workflow_focus.wrapping_add(1);
             }
-            had
+            pending
         };
-        if had_workflow {
-            self.notice("Action cancelled locally. Remote or durable completion may be unknown; reopen /providers to check.".into());
+        match cancelled {
+            Some(true) => self.notice(
+                "Action cancelled locally. Remote or durable completion may be unknown; reopen the command to check.".into(),
+            ),
+            Some(false) => self.notice("Form discarded.".into()),
+            None => {}
         }
         self.dirty.notify_one();
     }

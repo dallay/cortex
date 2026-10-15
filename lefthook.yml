@@ -11,8 +11,6 @@
 #   curl -fsSL https://raw.githubusercontent.com/evilmartians/lefthook/master/bin/lefthook_darwin_amd64 -o /usr/local/bin/lefthook && chmod +x /usr/local/bin/lefthook
 # =============================================================================
 
-max-parallel: 4
-
 # =============================================================================
 # Hooks
 # =============================================================================
@@ -22,27 +20,28 @@ pre-commit:
   commands:
     fmt:
       run: rustup run stable cargo fmt --all
-      stage_prepended: true
+      stage_fixed: true
 
     check:
       run: cargo check --workspace
-      fail-fast: true
 
     markdown:
       run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
       glob: "*.md"
-      stage_prepended: true
 
 pre-push:
   parallel: false
   commands:
     clippy:
       run: cargo clippy --workspace --all-targets -- -D warnings
-      fail-fast: true
 
     test:
       run: cargo test --workspace
-      fail-fast: true
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
 
 # ---------- POST-CHECKOUT / POST-MERGE / POST-REWRITE ----------
 # AgentSync: sync agent config (skills, commands) after any

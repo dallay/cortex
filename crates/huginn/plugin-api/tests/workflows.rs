@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use huginn_core::CancellationToken;
+use huginn_plugin_api::v1::View;
 use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
     v1::*,
@@ -9,6 +10,39 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+
+#[test]
+fn public_choice_defaults_are_validated_without_allowing_secret_defaults() {
+    let make = |kind, initial: &str| {
+        Workflow::new(
+            "Form",
+            "",
+            vec![Field {
+                id: "value".into(),
+                label: "Value".into(),
+                kind,
+                initial: initial.into(),
+            }],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Notice(View::text("done"))) })),
+        )
+    };
+    for initial in ["", "0", "1"] {
+        assert!(make(
+            FieldKind::Choice(vec!["first".into(), "second".into()]),
+            initial
+        )
+        .is_ok());
+    }
+    for initial in ["2", "-1", "second"] {
+        assert!(make(
+            FieldKind::Choice(vec!["first".into(), "second".into()]),
+            initial
+        )
+        .is_err());
+    }
+    assert!(make(FieldKind::Secret, "1").is_err());
+    assert!(make(FieldKind::Secret, "").is_ok());
+}
 
 struct Host(Arc<Contributions>);
 #[async_trait]

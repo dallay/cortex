@@ -210,8 +210,9 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     // Explicit headless configurations need neither durable metadata nor its
     // global writer lease. TUI always needs management for deliberate UI changes.
+    let mut connection_management = false;
     if tui || config.model_readiness() == ModelReadiness::Unconfigured {
-        let result: anyhow::Result<()> = async {
+        let result: anyhow::Result<bool> = async {
             use huginn_application::{
                 connections::{ConnectionManager, ConnectionsPlugin},
                 providers::{catalog_id, providers_id},
@@ -233,10 +234,17 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            let store: Arc<dyn ConnectionStore> =
-                Arc::new(huginn_runtime::connections::SqliteConnections::open(
-                    &config.db.with_extension("providers.db"),
-                )?);
+            let store = match huginn_runtime::connections::SqliteConnections::open(
+                &config.db.with_extension("providers.db"),
+            ) {
+                Ok(store) => Arc::new(store) as Arc<dyn ConnectionStore>,
+                Err(huginn_core::connections::ConnectionError::Conflict) if tui || is_doctor => {
+                    // Another process owns durable connection management. Keep
+                    // the TUI/doctor available; management is optional here.
+                    return Ok(false);
+                }
+                Err(error) => return Err(error.into()),
+            };
             let manager = Arc::new(
                 ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
                     .await?,
@@ -251,12 +259,15 @@ async fn main() -> anyhow::Result<()> {
             }
             supervisor.register(Box::new(ConnectionsPlugin(manager)))?;
             supervisor.start().await?;
-            Ok(())
+            Ok(true)
         }
         .await;
-        if let Err(error) = result {
-            supervisor.shutdown().await;
-            return Err(error);
+        match result {
+            Ok(enabled) => connection_management = enabled,
+            Err(error) => {
+                supervisor.shutdown().await;
+                return Err(error);
+            }
         }
     }
     let router = supervisor
@@ -275,7 +286,15 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if tui {
-        let result = tui_chat(&config, &mut session, &mut supervisor, allowed, router).await;
+        let result = tui_chat(
+            &config,
+            &mut session,
+            &mut supervisor,
+            allowed,
+            router,
+            connection_management,
+        )
+        .await;
         supervisor.shutdown().await;
         return result;
     }
@@ -429,6 +448,7 @@ async fn tui_chat(
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
     router: Arc<dyn huginn_core::ModelProvider>,
+    connection_management: bool,
 ) -> anyhow::Result<()> {
     use huginn_presentation::{
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
@@ -438,7 +458,9 @@ async fn tui_chat(
         move || readiness.is_configured(),
     ))))?;
     supervisor.register(Box::new(ConversationPlugin))?;
-    supervisor.register(Box::new(huginn_presentation::providers::ProvidersUiPlugin))?;
+    if connection_management {
+        supervisor.register(Box::new(huginn_presentation::providers::ProvidersUiPlugin))?;
+    }
     #[cfg(feature = "reference-extension")]
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
