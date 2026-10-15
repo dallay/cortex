@@ -7,7 +7,7 @@ Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default:
 | Method   | Path                   | Description                       | Auth    |
 |----------|------------------------|-----------------------------------|---------|
 | `POST`   | `/v1/chat/completions` | OpenAI-compatible completions     | None    |
-| `GET`    | `/v1/models`           | List available models (static)    | None    |
+| `GET`    | `/v1/models`           | List available models (dynamic)   | None    |
 | `POST`   | `/v1/messages`         | Anthropic-compatible messages     | None    |
 | `GET`    | `/health`              | Health check with circuit state  | None    |
 | `GET`    | `/api/resilience`             | Detailed circuit breaker state   | Session |
@@ -128,19 +128,19 @@ Returns `Retry-After` header with retry delay in seconds.
 
 ## GET /v1/models
 
-Returns a static list of available models. Does not reflect live provider state.
+Returns the models available to the caller: registered provider models as
+`{provider}/{model}` plus accessible virtual `rook/*` combo aliases
+(`owned_by: "combo"`). Filtered by the caller's key restrictions when present.
 
 ```json
 {
   "object": "list",
   "data": [
     {"id": "openai-primary/gpt-4o", "object": "model", "created": 0, "owned_by": "openai-primary"},
-    {"id": "anthropic-primary/claude-opus-4-5", "object": "model", "created": 0, "owned_by": "anthropic-primary"}
+    {"id": "rook/coding", "object": "model", "created": 0, "owned_by": "combo"}
   ]
 }
 ```
-
-**Note:** This is a static list until `ManageProviders` exposes a way to enumerate live provider models.
 
 ---
 

@@ -4865,6 +4865,7 @@ dependencies = [
  "futures",
  "hex",
  "models-catalog",
+ "providers-anthropic",
  "providers-ollama",
  "providers-openai",
  "reqwest 0.12.28",

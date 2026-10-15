@@ -3,8 +3,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use rook_core::ports::{ComboRepositoryError, ComboRepositoryPort};
-use rook_core::{Combo, ComboStep, ComboStrategy};
+use rook_core::ports::{
+    ComboAliasRepositoryError, ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort,
+};
+use rook_core::{Combo, ComboAlias, ComboStep, ComboStrategy};
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId};
 
@@ -32,6 +34,12 @@ impl ComboSqliteRepository {
         self.conn
             .lock()
             .map_err(|_| ComboRepositoryError::Database("sqlite mutex poisoned".to_string()))
+    }
+
+    fn lock_alias(&self) -> Result<MutexGuard<'_, Connection>, ComboAliasRepositoryError> {
+        self.conn
+            .lock()
+            .map_err(|_| ComboAliasRepositoryError::Database("sqlite mutex poisoned".to_string()))
     }
 }
 
@@ -341,6 +349,133 @@ impl ComboRepositoryPort for ComboSqliteRepository {
     }
 }
 
+#[async_trait]
+impl ComboAliasRepositoryPort for ComboSqliteRepository {
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+    ) -> Result<Option<ComboAlias>, ComboAliasRepositoryError> {
+        let conn = self.lock_alias()?;
+        let row = conn
+            .query_row(
+                "SELECT alias, combo_id, created_at FROM combo_aliases WHERE alias = ?1",
+                params![alias.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(combo_alias_db_error)?;
+
+        match row {
+            Some((alias_str, combo_id_str, created_at_str)) => {
+                let combo_id = ComboId::parse_str(&combo_id_str).map_err(|e| {
+                    ComboAliasRepositoryError::Database(format!("invalid combo id: {e}"))
+                })?;
+                let created_at = parse_datetime(&created_at_str).map_err(|e| match e {
+                    ComboRepositoryError::Database(msg) => ComboAliasRepositoryError::Database(msg),
+                    _ => ComboAliasRepositoryError::Database("invalid datetime".to_string()),
+                })?;
+                Ok(Some(ComboAlias {
+                    alias: ModelId::new(alias_str),
+                    combo_id,
+                    created_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list(&self) -> Result<Vec<ComboAlias>, ComboAliasRepositoryError> {
+        let conn = self.lock_alias()?;
+        let mut stmt = conn
+            .prepare("SELECT alias, combo_id, created_at FROM combo_aliases ORDER BY alias ASC")
+            .map_err(combo_alias_db_error)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(combo_alias_db_error)?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            let (alias_str, combo_id_str, created_at_str) = r.map_err(combo_alias_db_error)?;
+            let combo_id = ComboId::parse_str(&combo_id_str).map_err(|e| {
+                ComboAliasRepositoryError::Database(format!("invalid combo id: {e}"))
+            })?;
+            let created_at = parse_datetime(&created_at_str).map_err(|e| match e {
+                ComboRepositoryError::Database(msg) => ComboAliasRepositoryError::Database(msg),
+                _ => ComboAliasRepositoryError::Database("invalid datetime".to_string()),
+            })?;
+            out.push(ComboAlias {
+                alias: ModelId::new(alias_str),
+                combo_id,
+                created_at,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn create(&self, alias: ComboAlias) -> Result<(), ComboAliasRepositoryError> {
+        ComboAlias::validate_alias_format(alias.alias.as_str())
+            .map_err(ComboAliasRepositoryError::InvalidAlias)?;
+
+        let conn = self.lock_alias()?;
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM combos WHERE id = ?1",
+                params![alias.combo_id.to_string()],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(combo_alias_db_error)?
+            .is_some();
+        if !exists {
+            return Err(ComboAliasRepositoryError::ComboNotFound(alias.combo_id));
+        }
+
+        let created = alias.created_at.to_rfc3339();
+        let result = conn.execute(
+            "INSERT INTO combo_aliases (alias, combo_id, created_at) VALUES (?1, ?2, ?3)",
+            params![alias.alias.as_str(), alias.combo_id.to_string(), created],
+        );
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+                    let msg = e.to_string();
+                    if msg.contains("FOREIGN KEY") || msg.contains("foreign key") {
+                        return Err(ComboAliasRepositoryError::ComboNotFound(alias.combo_id));
+                    }
+                    return Err(ComboAliasRepositoryError::AlreadyExists(
+                        alias.alias.clone(),
+                    ));
+                }
+                Err(combo_alias_db_error(e))
+            }
+        }
+    }
+
+    async fn delete(&self, alias: &ModelId) -> Result<bool, ComboAliasRepositoryError> {
+        let conn = self.lock_alias()?;
+        let rows = conn
+            .execute(
+                "DELETE FROM combo_aliases WHERE alias = ?1",
+                params![alias.as_str()],
+            )
+            .map_err(combo_alias_db_error)?;
+        Ok(rows > 0)
+    }
+}
+
 // Helper functions
 
 fn load_steps(
@@ -415,6 +550,10 @@ fn db_error(e: rusqlite::Error) -> ComboRepositoryError {
     ComboRepositoryError::Database(e.to_string())
 }
 
+fn combo_alias_db_error(e: rusqlite::Error) -> ComboAliasRepositoryError {
+    ComboAliasRepositoryError::Database(e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,9 +616,13 @@ mod tests {
             }],
         );
 
-        repo.create(&combo).await.expect("create combo");
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
 
-        let found = repo.find(&combo.id).await.expect("find combo");
+        let found = ComboRepositoryPort::find(&repo, &combo.id)
+            .await
+            .expect("find combo");
         assert!(found.is_some());
         let found = found.unwrap();
         assert_eq!(found.name, "test-combo");
@@ -501,9 +644,13 @@ mod tests {
             }],
         );
 
-        repo.create(&combo).await.expect("create combo");
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
 
-        let found = repo.find_by_name("test-combo").await.expect("find by name");
+        let found = ComboRepositoryPort::find_by_name(&repo, "test-combo")
+            .await
+            .expect("find by name");
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Test-Combo");
     }
@@ -532,8 +679,10 @@ mod tests {
             }],
         );
 
-        repo.create(&combo1).await.expect("create first combo");
-        let result = repo.create(&combo2).await;
+        ComboRepositoryPort::create(&repo, &combo1)
+            .await
+            .expect("create first combo");
+        let result = ComboRepositoryPort::create(&repo, &combo2).await;
         assert!(matches!(
             result,
             Err(ComboRepositoryError::DuplicateName(_))
@@ -554,7 +703,9 @@ mod tests {
             }],
         );
 
-        repo.create(&combo).await.expect("create combo");
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
 
         // Update with new steps
         combo.steps = vec![
@@ -572,9 +723,14 @@ mod tests {
             },
         ];
 
-        repo.update(&combo).await.expect("update combo");
+        ComboRepositoryPort::update(&repo, &combo)
+            .await
+            .expect("update combo");
 
-        let found = repo.find(&combo.id).await.expect("find combo").unwrap();
+        let found = ComboRepositoryPort::find(&repo, &combo.id)
+            .await
+            .expect("find combo")
+            .unwrap();
         assert_eq!(found.steps.len(), 2);
         assert_eq!(found.steps[0].provider_id, ProviderId::new("anthropic"));
         assert_eq!(found.steps[1].provider_id, ProviderId::new("ollama"));
@@ -602,17 +758,23 @@ mod tests {
             ],
         );
 
-        repo.create(&combo).await.expect("create combo");
-        repo.delete(&combo.id).await.expect("delete combo");
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
+        ComboRepositoryPort::delete(&repo, &combo.id)
+            .await
+            .expect("delete combo");
 
-        let found = repo.find(&combo.id).await.expect("find after delete");
+        let found = ComboRepositoryPort::find(&repo, &combo.id)
+            .await
+            .expect("find after delete");
         assert!(found.is_none());
     }
 
     #[tokio::test]
     async fn delete_nonexistent_combo_returns_not_found() {
         let (repo, _temp) = setup_test_repo().await;
-        let result = repo.delete(&ComboId::new()).await;
+        let result = ComboRepositoryPort::delete(&repo, &ComboId::new()).await;
         assert!(matches!(result, Err(ComboRepositoryError::NotFound(_))));
     }
 
@@ -640,11 +802,15 @@ mod tests {
             }],
         );
 
-        repo.create(&combo1).await.expect("create first");
+        ComboRepositoryPort::create(&repo, &combo1)
+            .await
+            .expect("create first");
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        repo.create(&combo2).await.expect("create second");
+        ComboRepositoryPort::create(&repo, &combo2)
+            .await
+            .expect("create second");
 
-        let list = repo.list().await.expect("list combos");
+        let list = ComboRepositoryPort::list(&repo).await.expect("list combos");
         assert_eq!(list.len(), 2);
         // Most recent first
         assert_eq!(list[0].name, "second");
@@ -657,7 +823,7 @@ mod tests {
 
         let combo = create_test_combo("", vec![]); // Empty name and empty steps
 
-        let result = repo.create(&combo).await;
+        let result = ComboRepositoryPort::create(&repo, &combo).await;
         assert!(matches!(result, Err(ComboRepositoryError::Validation(_))));
     }
 
@@ -675,12 +841,14 @@ mod tests {
             }],
         );
 
-        repo.create(&combo).await.expect("create combo");
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
 
         // Make it invalid
         combo.steps = vec![];
 
-        let result = repo.update(&combo).await;
+        let result = ComboRepositoryPort::update(&repo, &combo).await;
         assert!(matches!(result, Err(ComboRepositoryError::Validation(_))));
     }
 
@@ -698,7 +866,7 @@ mod tests {
             }],
         );
 
-        let result = repo.update(&combo).await;
+        let result = ComboRepositoryPort::update(&repo, &combo).await;
         assert!(matches!(result, Err(ComboRepositoryError::NotFound(_))));
     }
 }

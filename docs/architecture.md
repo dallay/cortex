@@ -123,7 +123,7 @@ Each implements `ProviderPort` for a specific API. All share the same structure:
 - `is_available()` — synchronous check (e.g., non-empty API key)
 - `health_check()` — async, returns `HealthStatus` with latency
 - `complete()` — makes the actual API call via `reqwest::Client`
-- `stream()` — stub in all providers except OpenAI (not yet implemented)
+- `stream()` — implemented in OpenAI, Anthropic (text-only partial), Ollama; stub in Gemini, Groq
 
 ### `cache-memory`
 

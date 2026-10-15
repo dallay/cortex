@@ -15,13 +15,14 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
-    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
-    ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry,
-    UsageRecorderPort,
+    ApiFormat, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort, ComboRepositoryPort,
+    CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
+    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk,
+    TokenUsage, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
+use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
+use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
 /// Maximum number of retry attempts when a provider fails
@@ -62,6 +63,7 @@ pub struct RouteRequest {
     alias_repository: Arc<dyn ModelAliasRepositoryPort>,
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
+    combo_alias_repository: Option<Arc<dyn ComboAliasRepositoryPort>>,
 }
 
 /// Configuration for model alias resolution
@@ -98,7 +100,21 @@ impl RouteRequest {
             alias_repository,
             alias_config,
             telemetry,
+            combo_alias_repository: None,
         }
+    }
+
+    /// Builder-style wiring for virtual combo (`rook/*`) resolution.
+    /// `None` (default) means virtual aliases are unconfigured: `rook/*`
+    /// models resolve to `404 model_not_found` via the shared lookup helper.
+    pub fn with_combo_alias_repository(mut self, repo: Arc<dyn ComboAliasRepositoryPort>) -> Self {
+        self.combo_alias_repository = Some(repo);
+        self
+    }
+
+    /// Get combo-alias repository reference (for HTTP layer wiring).
+    pub fn combo_alias_repository(&self) -> Option<Arc<dyn ComboAliasRepositoryPort>> {
+        self.combo_alias_repository.clone()
     }
 
     /// Get combo repository reference (for HTTP layer wiring)
@@ -131,12 +147,23 @@ impl RouteRequest {
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         // 0. Resolve model alias if enabled (BEFORE combo dispatch and
-        // restrictions check, so combo execution also uses the canonical model)
-        self.resolve_model_alias(&mut req).await;
+        // restrictions check, so combo execution also uses the canonical model).
+        // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
+        // they are combo aliases handled below.
+        if !is_virtual_model(&req.model) {
+            self.resolve_model_alias(&mut req).await;
+        }
 
-        // 0a. Check if combo execution is requested
+        // 0a. Virtual combo (`rook/*` model): shared lookup + fail-closed auth.
+        if is_virtual_model(&req.model) {
+            return self.execute_virtual_combo(req, client_format).await;
+        }
+
+        // 0b. Legacy combo via X-Rook-Combo header (back-compat).
         if let Some(combo_id) = req.metadata.combo_id {
-            return self.execute_combo(&combo_id, req, client_format).await;
+            return self
+                .execute_legacy_combo(&combo_id, req, client_format)
+                .await;
         }
 
         let cache_key = req.cache_key();
@@ -459,7 +486,17 @@ impl RouteRequest {
             }
         }
 
-        // 0a. Model restriction check (AFTER alias resolution)
+        // 0a. Combo + streaming: combos resolve BEFORE the first byte.
+        // There is no transparent provider switch mid-stream (R2 point of no
+        // return): run the combo to completion, then stream the single result
+        // as one chunk. Fallback inside the combo loop still applies for
+        // 429/5xx/timeouts because no SSE event has been emitted yet.
+        // Unknown alias -> 404, unauthorized step -> 403, same as non-stream.
+        if is_virtual_model(&req.model) || req.metadata.combo_id.is_some() {
+            return self.execute_combo_stream(req, client_format).await;
+        }
+
+        // 0b. Model restriction check (AFTER alias resolution)
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
@@ -649,6 +686,165 @@ impl RouteRequest {
     /// Overall combo timeout: 60 seconds
     const COMBO_TOTAL_TIMEOUT: Duration = Duration::from_secs(60);
 
+    /// Execute a virtual combo request (`model: "rook/*"`).
+    ///
+    /// Single policy: lookup alias -> verify combo exists -> fail-closed
+    /// authorization -> execute with `requested_model` preserved for the client
+    /// and physical step models sent upstream. Unknown alias maps to HTTP 404
+    /// (`CortexError::not_found`); any unauthorized step rejects the whole
+    /// combo with 403 — steps are never silently pruned.
+    pub async fn execute_virtual_combo(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
+        let requested = req.model.clone();
+        let combo_id = self.resolve_virtual_alias(&requested).await?;
+        let combo = self.load_combo(&combo_id).await?;
+        self.check_combo_authorization(&req, &combo, Some(&requested))?;
+        let mut resp = self.execute_combo(&combo_id, req, client_format).await?;
+        // External contract uses the requested virtual model; audit keeps
+        // provider/step details via record_combo_success.
+        resp.model = requested;
+        Ok(resp)
+    }
+
+    /// Execute a legacy header combo (`X-Rook-Combo` + physical model).
+    /// Preserves the existing model check on the requested model and adds the
+    /// fail-closed physical-step authorization (R2).
+    async fn execute_legacy_combo(
+        &self,
+        combo_id: &ComboId,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
+        self.check_model_restriction(&req)?;
+        let combo = self.load_combo(combo_id).await?;
+        self.check_combo_authorization(&req, &combo, None)?;
+        let requested = req.model.clone();
+        let mut resp = self.execute_combo(combo_id, req, client_format).await?;
+        resp.model = requested;
+        Ok(resp)
+    }
+
+    /// Shared alias lookup used by every transport path (and only here).
+    /// Returns the combo id or 404; a dangling alias (combo deleted but alias
+    /// present — impossible with FK CASCADE) surfaces as an integrity error.
+    async fn resolve_virtual_alias(&self, alias: &ModelId) -> Result<ComboId, CortexError> {
+        let repo = self
+            .combo_alias_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::not_found(format!("unknown virtual model '{alias}'")))?;
+        let entry = repo
+            .find_by_alias(alias)
+            .await
+            .map_err(|e| CortexError::provider(format!("combo alias lookup failed: {e}")))?;
+        match entry {
+            None => Err(CortexError::not_found(format!(
+                "unknown virtual model '{alias}'"
+            ))),
+            Some(a) => Ok(a.combo_id),
+        }
+    }
+
+    /// Load a combo or map absence to 404 (unknown/deleted).
+    async fn load_combo(&self, combo_id: &ComboId) -> Result<rook_core::Combo, CortexError> {
+        let repo = self
+            .combo_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::provider("combo repository not configured".to_string()))?;
+        match repo
+            .find(combo_id)
+            .await
+            .map_err(|e| CortexError::provider(format!("combo repository error: {e}")))?
+        {
+            Some(c) => Ok(c),
+            None => Err(CortexError::combo_not_found(*combo_id)),
+        }
+    }
+
+    /// Fail-closed authorization for combo execution (R2).
+    ///
+    /// - Virtual: the key must allow the alias itself (exact `rook/*` entry in
+    ///   `allowed_models` when restrictive) AND every physical step model and
+    ///   provider. `allowed_models` accepts exact `rook/*` ids (no schema change).
+    /// - Legacy: the requested physical model was already checked by the caller;
+    ///   every step model/provider is checked here.
+    /// - Any unauthorized step rejects the whole combo with 403. Empty vecs mean
+    ///   unrestricted (existing semantics).
+    fn check_combo_authorization(
+        &self,
+        req: &CompletionRequest,
+        combo: &rook_core::Combo,
+        virtual_alias: Option<&ModelId>,
+    ) -> Result<(), CortexError> {
+        if let Some(alias) = virtual_alias {
+            if !req.restrictions.allowed_models.is_empty()
+                && !req.restrictions.allowed_models.contains(alias)
+            {
+                return Err(RestrictionViolation::ModelNotAllowed(alias.clone()).into());
+            }
+        }
+        for step in &combo.steps {
+            if !req.restrictions.allowed_models.is_empty()
+                && !req.restrictions.allowed_models.contains(&step.model)
+            {
+                return Err(RestrictionViolation::ModelNotAllowed(step.model.clone()).into());
+            }
+            if !req.restrictions.allowed_providers.is_empty()
+                && !req
+                    .restrictions
+                    .allowed_providers
+                    .contains(&step.provider_id)
+            {
+                return Err(
+                    RestrictionViolation::ProviderNotAllowed(step.provider_id.clone()).into(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Combo execution for streaming requests: resolve + authorize exactly like
+    /// non-streaming, run the combo loop BEFORE any SSE event is emitted, then
+    /// emit the single result as one chunk with the REQUESTED model.
+    /// A failure after this point surfaces as a stream error event — never a
+    /// silent switch to another provider mid-stream.
+    async fn execute_combo_stream(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<
+        futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>,
+        CortexError,
+    > {
+        let requested = req.model.clone();
+        let (combo_id, virtual_alias) = match req.metadata.combo_id {
+            Some(id) => (id, None),
+            None => {
+                let id = self.resolve_virtual_alias(&requested).await?;
+                (id, Some(requested.clone()))
+            }
+        };
+        let combo = self.load_combo(&combo_id).await?;
+        if virtual_alias.is_none() {
+            self.check_model_restriction(&req)?;
+        }
+        self.check_combo_authorization(&req, &combo, virtual_alias.as_ref())?;
+        let mut resp = self.execute_combo(&combo_id, req, client_format).await?;
+        resp.model = requested.clone();
+        let chunk = StreamChunk {
+            id: resp.id,
+            model: requested,
+            delta: resp.content,
+            thinking: resp.thinking,
+            tool_calls: vec![],
+            finish_reason: resp.finish_reason,
+            usage: Some(resp.usage),
+        };
+        Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
+    }
+
     /// Execute a request using a multi-step fallback combo.
     ///
     /// Loads the combo from the repository, then iterates through steps in priority order,
@@ -748,7 +944,12 @@ impl RouteRequest {
             }
 
             // 3b. Get provider from router (we need to find the actual provider instance)
-            let provider = match self.router.select(&req).await {
+            // NOTE: select with the STEP's physical model, not req.model: for
+            // virtual combos req.model is `rook/*`, which no provider supports.
+            // Selecting with the virtual id would exhaust every step.
+            let mut select_req = req.clone();
+            select_req.model = model.clone();
+            let provider = match self.router.select(&select_req).await {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!(
@@ -777,11 +978,14 @@ impl RouteRequest {
 
             // 3c. Execute with per-step timeout
             let provider_format = provider.api_format();
-            let provider_req = self.format_translator.translate_request(
+            let mut provider_req = self.format_translator.translate_request(
                 client_format,
                 provider_format,
                 req.clone(),
             )?;
+            // The provider must receive the STEP's physical model, never a
+            // virtual `rook/*` alias or another step's model.
+            provider_req.model = model.clone();
 
             let step_start = Instant::now();
             let step_result =
@@ -1114,10 +1318,12 @@ mod tests {
     use async_trait::async_trait;
     use futures::{stream, StreamExt};
     use rook_core::{
-        ApiKeyId, CacheStats, Combo, ComboRepositoryError, CostBreakdown, HealthStatus, Message,
-        ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId, ProviderPort,
-        ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry, StreamChunk,
-        TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
+        ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
+        ComboAliasRepositoryPort, ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown,
+        HealthStatus, Message, ModelAlias, ModelAliasRepositoryError, ModelId, Pagination,
+        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry,
+        StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort,
+        UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
@@ -2287,6 +2493,637 @@ mod tests {
         assert!(
             usage_recorder.entries.lock().unwrap().is_empty(),
             "recording should have failed"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // R2 virtual combo routing (Task 2 IO)
+    // ------------------------------------------------------------------
+
+    struct SpyProvider {
+        id: ProviderId,
+        seen_models: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl ProviderPort for SpyProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn supported_models(&self) -> &[ModelId] {
+            std::slice::from_ref(&TEST_MODEL)
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            self.seen_models.lock().unwrap().push(req.model.to_string());
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.id.clone(),
+                model: req.model.clone(),
+                content: "combo says hi".to_string(),
+                content_blocks: vec![rook_core::MessageContent::Text("combo says hi".to_string())],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+                cache_hit: None,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            unreachable!("combo tests use complete()")
+        }
+    }
+
+    struct MapComboRepository {
+        combos: HashMap<ComboId, Combo>,
+    }
+
+    #[async_trait]
+    impl ComboRepositoryPort for MapComboRepository {
+        async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError> {
+            Ok(self.combos.values().cloned().collect())
+        }
+
+        async fn find(&self, id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError> {
+            Ok(self.combos.get(id).cloned())
+        }
+
+        async fn find_by_name(&self, name: &str) -> Result<Option<Combo>, ComboRepositoryError> {
+            Ok(self.combos.values().find(|c| c.name == name).cloned())
+        }
+
+        async fn create(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+
+        async fn update(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ComboId) -> Result<(), ComboRepositoryError> {
+            Ok(())
+        }
+    }
+
+    struct MapComboAliasRepository {
+        aliases: HashMap<String, ComboAlias>,
+    }
+
+    #[async_trait]
+    impl ComboAliasRepositoryPort for MapComboAliasRepository {
+        async fn find_by_alias(
+            &self,
+            alias: &ModelId,
+        ) -> Result<Option<ComboAlias>, ComboAliasRepositoryError> {
+            Ok(self.aliases.get(alias.as_str()).cloned())
+        }
+
+        async fn list(&self) -> Result<Vec<ComboAlias>, ComboAliasRepositoryError> {
+            Ok(self.aliases.values().cloned().collect())
+        }
+
+        async fn create(&self, _alias: ComboAlias) -> Result<(), ComboAliasRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _alias: &ModelId) -> Result<bool, ComboAliasRepositoryError> {
+            Ok(false)
+        }
+    }
+
+    struct ComboHarness {
+        usecase: RouteRequest,
+        seen_models: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct RecordingRouter {
+        provider: Arc<dyn ProviderPort>,
+    }
+
+    #[async_trait]
+    impl RouterPort for RecordingRouter {
+        async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            Ok(self.provider.clone())
+        }
+        async fn select_excluding(
+            &self,
+            _req: &CompletionRequest,
+            _excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            Ok(self.provider.clone())
+        }
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+        fn providers(&self) -> Vec<ProviderId> {
+            vec![self.provider.id().clone()]
+        }
+    }
+
+    fn combo_harness(combo: Combo, aliases: Vec<(&str, ComboId)>) -> ComboHarness {
+        let combo_id = combo.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, combo);
+        let alias_map: HashMap<String, ComboAlias> = aliases
+            .into_iter()
+            .map(|(a, id)| (a.to_string(), ComboAlias::new(ModelId::new(a), id)))
+            .collect();
+        let seen_models = Arc::new(Mutex::new(Vec::new()));
+        let spy: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+            id: ProviderId::new("openai"),
+            seen_models: seen_models.clone(),
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(RecordingRouter { provider: spy }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(MapComboRepository { combos })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases: alias_map }));
+        ComboHarness {
+            usecase,
+            seen_models,
+        }
+    }
+
+    fn combo_req(model: &str, restrictions: rook_core::ApiKeyRestrictions) -> CompletionRequest {
+        let mut r = request();
+        r.model = ModelId::new(model);
+        r.stream = false;
+        r.metadata.cacheable = false;
+        r.restrictions = restrictions;
+        r
+    }
+
+    fn step(provider: &str, model: &str, priority: u8) -> ComboStep {
+        ComboStep {
+            provider_id: ProviderId::new(provider),
+            model: ModelId::new(model),
+            connection_id: None,
+            priority,
+        }
+    }
+
+    fn harness_combo() -> Combo {
+        Combo::new(
+            "harness".to_string(),
+            ComboStrategy::Priority,
+            vec![step("openai", "gpt-4o", 1)],
+        )
+    }
+
+    #[tokio::test]
+    async fn virtual_combo_executes_and_returns_requested_model() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let h = combo_harness(combo, vec![("rook/coding", combo_id)]);
+        let resp = h
+            .usecase
+            .execute(combo_req(
+                "rook/coding",
+                rook_core::ApiKeyRestrictions::default(),
+            ))
+            .await
+            .expect("virtual combo executes");
+        assert_eq!(resp.model.as_str(), "rook/coding");
+        assert_eq!(resp.content, "combo says hi");
+    }
+
+    #[tokio::test]
+    async fn virtual_combo_sends_physical_model_upstream() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let h = combo_harness(combo, vec![("rook/coding", combo_id)]);
+        h.usecase
+            .execute(combo_req(
+                "rook/coding",
+                rook_core::ApiKeyRestrictions::default(),
+            ))
+            .await
+            .expect("executes");
+        let seen = h.seen_models.lock().unwrap();
+        assert_eq!(
+            seen.as_slice(),
+            ["gpt-4o"],
+            "provider must receive the STEP physical model, never rook/coding"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_virtual_alias_is_not_found() {
+        let h = combo_harness(harness_combo(), vec![]);
+        let err = h
+            .usecase
+            .execute(combo_req(
+                "rook/nope",
+                rook_core::ApiKeyRestrictions::default(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.is_not_found(), "expected 404, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_physical_step_rejects_whole_combo() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let h = combo_harness(combo, vec![("rook/coding", combo_id)]);
+        let restrictions = rook_core::ApiKeyRestrictions {
+            allowed_models: vec![ModelId::new("rook/coding"), ModelId::new("other-model")],
+            allowed_providers: vec![],
+        };
+        let err = h
+            .usecase
+            .execute(combo_req("rook/coding", restrictions))
+            .await
+            .unwrap_err();
+        assert!(err.is_forbidden(), "expected 403, got: {err}");
+        assert_eq!(err.forbidden_code(), Some("model_not_allowed"));
+        assert!(
+            h.seen_models.lock().unwrap().is_empty(),
+            "no step may execute when unauthorized"
+        );
+    }
+
+    #[tokio::test]
+    async fn unauthorized_alias_rejects_whole_combo() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let h = combo_harness(combo, vec![("rook/coding", combo_id)]);
+        let restrictions = rook_core::ApiKeyRestrictions {
+            allowed_models: vec![ModelId::new("gpt-4o")],
+            allowed_providers: vec![],
+        };
+        let err = h
+            .usecase
+            .execute(combo_req("rook/coding", restrictions))
+            .await
+            .unwrap_err();
+        assert!(err.is_forbidden(), "expected 403, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn orphan_alias_is_integrity_error() {
+        let missing = ComboId::new();
+        let h = combo_harness(harness_combo(), vec![("rook/orphan", missing)]);
+        let err = h
+            .usecase
+            .execute(combo_req(
+                "rook/orphan",
+                rook_core::ApiKeyRestrictions::default(),
+            ))
+            .await
+            .unwrap_err();
+        // load_combo maps absence to combo_not_found, which is a 404-class error.
+        assert!(err.is_not_found(), "expected 404-class, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn legacy_combo_still_executes() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let h = combo_harness(combo, vec![]);
+        let mut req = combo_req("gpt-4o", rook_core::ApiKeyRestrictions::default());
+        req.metadata.combo_id = Some(combo_id);
+        let resp = h.usecase.execute(req).await.expect("legacy executes");
+        assert_eq!(resp.model.as_str(), "gpt-4o");
+        assert_eq!(resp.content, "combo says hi");
+        assert_eq!(
+            h.seen_models.lock().unwrap().as_slice(),
+            ["gpt-4o"],
+            "legacy steps also receive the physical model"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // R2 streaming (Task 4): fallback before the first event only
+    // ------------------------------------------------------------------
+
+    struct CountRouter {
+        providers: Vec<Arc<dyn ProviderPort>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl RouterPort for CountRouter {
+        async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.providers[n.min(self.providers.len() - 1)].clone())
+        }
+        async fn select_excluding(
+            &self,
+            req: &CompletionRequest,
+            _excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.select(req).await
+        }
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+        fn providers(&self) -> Vec<ProviderId> {
+            self.providers.iter().map(|p| p.id().clone()).collect()
+        }
+    }
+
+    fn stream_harness(
+        combos: HashMap<ComboId, Combo>,
+        aliases: HashMap<String, ComboAlias>,
+        providers: Vec<Arc<dyn ProviderPort>>,
+    ) -> RouteRequest {
+        RouteRequest::new(
+            Arc::new(CountRouter {
+                providers,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(MapComboRepository { combos })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }))
+    }
+
+    fn failing_provider(id: &str) -> Arc<dyn ProviderPort> {
+        Arc::new(TestProvider {
+            id: ProviderId::new(id),
+            complete_error: Some(CortexError::provider("boom")),
+        })
+    }
+
+    fn ok_provider(id: &str) -> Arc<dyn ProviderPort> {
+        Arc::new(TestProvider {
+            id: ProviderId::new(id),
+            complete_error: None,
+        })
+    }
+
+    fn stream_req(model: &str) -> CompletionRequest {
+        let mut r = combo_req(model, rook_core::ApiKeyRestrictions::default());
+        r.stream = true;
+        r
+    }
+
+    #[tokio::test]
+    async fn combo_stream_emits_single_chunk_with_requested_model() {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, combo);
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "rook/coding".to_string(),
+            ComboAlias::new(ModelId::new("rook/coding"), combo_id),
+        );
+        let usecase = stream_harness(combos, aliases, vec![ok_provider("openai")]);
+        let stream = usecase
+            .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+            .await
+            .expect("combo stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+        assert_eq!(chunks.len(), 1, "one chunk: no mid-stream provider switch");
+        let chunk = chunks.into_iter().next().unwrap().expect("chunk ok");
+        assert_eq!(chunk.model.as_str(), "rook/coding");
+        assert_eq!(chunk.delta, "cached path");
+        assert!(chunk.usage.is_some(), "usage rides the final chunk");
+    }
+
+    #[tokio::test]
+    async fn combo_stream_falls_back_before_first_event() {
+        // Step 1 (openai) fails retryable, step 2 (fallback) succeeds. All of
+        // this happens BEFORE any SSE event is emitted (point of no return).
+        let failing = Combo::new(
+            "fb".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                step("openai", "gpt-4o", 1),
+                step("fallback", "gpt-4o-mini", 2),
+            ],
+        );
+        let combo_id = failing.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, failing);
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "rook/fb".to_string(),
+            ComboAlias::new(ModelId::new("rook/fb"), combo_id),
+        );
+        let usecase = stream_harness(
+            combos,
+            aliases,
+            vec![failing_provider("openai"), ok_provider("fallback")],
+        );
+        let stream = usecase
+            .execute_stream_with_format(stream_req("rook/fb"), ApiFormat::OpenAI)
+            .await
+            .expect("fallback combo stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks.into_iter().next().unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn combo_stream_unknown_alias_is_not_found_before_headers() {
+        let usecase = stream_harness(HashMap::new(), HashMap::new(), vec![ok_provider("openai")]);
+        let err = usecase
+            .execute_stream_with_format(stream_req("rook/nope"), ApiFormat::OpenAI)
+            .await
+            .err()
+            .expect("unknown alias must fail before committing headers");
+        assert!(
+            err.is_not_found(),
+            "expected 404 before committing headers, got: {err}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // R4 regression: step-physical selection with a model-filtering router
+    // ------------------------------------------------------------------
+
+    /// Router that behaves like the real FallbackRouter: only providers
+    /// listing `req.model` are selectable. A virtual `rook/*` model matches
+    /// nothing — combo steps must select with the STEP model.
+    struct ModelFilteringRouter {
+        providers: Vec<Arc<dyn ProviderPort>>,
+    }
+
+    #[async_trait]
+    impl RouterPort for ModelFilteringRouter {
+        async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.providers
+                .iter()
+                .find(|p| p.supported_models().contains(&req.model))
+                .cloned()
+                .ok_or_else(CortexError::all_providers_exhausted)
+        }
+        async fn select_excluding(
+            &self,
+            req: &CompletionRequest,
+            _excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.select(req).await
+        }
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+        fn providers(&self) -> Vec<ProviderId> {
+            self.providers.iter().map(|p| p.id().clone()).collect()
+        }
+    }
+
+    struct PhysicalSpyProvider {
+        id: ProviderId,
+        models: Vec<ModelId>,
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl ProviderPort for PhysicalSpyProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+        fn supported_models(&self) -> &[ModelId] {
+            &self.models
+        }
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            self.seen.lock().unwrap().push(req.model.to_string());
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.id.clone(),
+                model: req.model.clone(),
+                content: "physical ok".to_string(),
+                content_blocks: vec![rook_core::MessageContent::Text("physical ok".to_string())],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+                cache_hit: None,
+            })
+        }
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            unreachable!("selection regression uses complete()")
+        }
+    }
+
+    #[tokio::test]
+    async fn virtual_combo_selects_with_step_physical_model() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let provider: Arc<dyn ProviderPort> = Arc::new(PhysicalSpyProvider {
+            id: ProviderId::new("openai"),
+            models: vec![ModelId::new("gpt-4o")],
+            seen: seen.clone(),
+        });
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, combo);
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "rook/coding".to_string(),
+            ComboAlias::new(ModelId::new("rook/coding"), combo_id),
+        );
+        let usecase = RouteRequest::new(
+            Arc::new(ModelFilteringRouter {
+                providers: vec![provider],
+            }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(MapComboRepository { combos })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+        let resp = usecase
+            .execute(combo_req(
+                "rook/coding",
+                rook_core::ApiKeyRestrictions::default(),
+            ))
+            .await
+            .expect("virtual combo must execute against a model-filtering router");
+        assert_eq!(resp.model.as_str(), "rook/coding");
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["gpt-4o"],
+            "selection AND upstream must use the step physical model"
         );
     }
 }

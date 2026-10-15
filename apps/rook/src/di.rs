@@ -17,10 +17,11 @@ use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
 use rook_core::{
-    ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
-    ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, ModelCatalogPort,
-    PasswordHasher, ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort,
-    ProviderRepositoryPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboAliasRepositoryPort,
+    ComboRepositoryPort, ComboStep, ComboStrategy, ConnectionId, DecryptedCredentials,
+    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderId, ProviderKind,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
+    UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -218,8 +219,13 @@ impl RookContainer {
         );
         let usage_recorder: Option<Arc<dyn UsageRecorderPort>> = Some(sqlite_usage.clone());
 
-        // 7c. Combo repository — SQLite-backed combo storage
+        // 7c. Combo repository — SQLite-backed combo storage.
+        // The same SQLite file backs combo aliases (V7 table); a second
+        // connection serves the alias port (each repo owns its connection
+        // with FK enforcement, same as provider/alias repos above).
         let combo_repo: Arc<dyn ComboRepositoryPort> =
+            Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
+        let combo_alias_repo: Arc<dyn ComboAliasRepositoryPort> =
             Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
 
         // 7d. Model alias repository — SQLite-backed alias storage
@@ -324,7 +330,8 @@ impl RookContainer {
                     alias_repo.clone(), // model_alias_repository - wired in Phase 3
                     config.model_aliases.clone().into(),
                     telemetry_tracker, // telemetry tracker from config
-                ),
+                )
+                .with_combo_alias_repository(combo_alias_repo.clone()),
                 ManageProviders::new(router.clone()),
                 health_check,
                 authenticate_client_api.clone(),

@@ -217,7 +217,7 @@ impl From<&rook_core::CompletionResponse> for AnthropicMessagesResponse {
             role: "assistant".to_string(),
             content: anthropic_content_blocks_from_domain(resp),
             model: resp.model.to_string(),
-            stop_reason: "end_turn".to_string(),
+            stop_reason: anthropic_stop_reason(resp.finish_reason),
             stop_sequence: None,
             usage: AnthropicUsage {
                 input_tokens: resp.usage.prompt_tokens,
@@ -258,11 +258,15 @@ pub struct AnthropicUsage {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum AnthropicSseEvent {
-    #[serde(rename = "content_block_delta")]
-    ContentBlockDelta {
+    #[serde(rename = "content_block_start")]
+    ContentBlockStart {
         index: u32,
-        delta: AnthropicTextDelta,
+        content_block: AnthropicStartBlock,
     },
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta { index: u32, delta: AnthropicDelta },
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop { index: u32 },
     #[serde(rename = "message_delta")]
     MessageDelta {
         delta: AnthropicMessageDeltaDetails,
@@ -272,11 +276,24 @@ pub enum AnthropicSseEvent {
     Error(AnthropicErrorEvent),
 }
 
+/// `content_block` payload for a `tool_use` start.
 #[derive(Debug, Serialize)]
-pub struct AnthropicTextDelta {
+pub struct AnthropicStartBlock {
     #[serde(rename = "type")]
-    pub delta_type: String,
-    pub text: String,
+    pub block_type: String,
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
+/// Delta payload: text fragments or tool-argument JSON fragments.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+pub enum AnthropicDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta { partial_json: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -305,34 +322,115 @@ pub struct AnthropicErrorBody {
     pub message: String,
 }
 
+/// Map an Anthropic stop reason from a domain finish reason.
+fn anthropic_stop_reason(finish: Option<rook_core::FinishReason>) -> String {
+    match finish {
+        Some(rook_core::FinishReason::ToolCalls) => "tool_use".to_string(),
+        Some(rook_core::FinishReason::Length) => "max_tokens".to_string(),
+        Some(rook_core::FinishReason::ContentFilter) => "refusal".to_string(),
+        _ => "end_turn".to_string(),
+    }
+}
+
+impl AnthropicSseEvent {
+    /// Translate one domain chunk into zero or more SSE events.
+    ///
+    /// - Non-empty text delta (no finish) → `content_block_delta/text_delta`.
+    /// - Tool entries with id/name (no finish) → `content_block_start/tool_use`.
+    /// - Tool entries with arguments → `content_block_delta/input_json_delta`.
+    /// - Final chunk (`finish_reason` set) → `content_block_stop` per tool
+    ///   index present, then `message_delta` with the mapped `stop_reason`.
+    ///   Starts are NOT re-emitted on the final chunk: its tool entries are a
+    ///   summary for stop generation (see provider `ToolUseTracker`).
+    pub fn events_from_chunk(chunk: &StreamChunk) -> Vec<AnthropicSseEvent> {
+        let mut events = Vec::new();
+        let is_final = chunk.finish_reason.is_some();
+
+        if !is_final {
+            if !chunk.delta.is_empty() {
+                events.push(AnthropicSseEvent::ContentBlockDelta {
+                    index: 0,
+                    delta: AnthropicDelta::TextDelta {
+                        text: chunk.delta.clone(),
+                    },
+                });
+            }
+            for tc in &chunk.tool_calls {
+                if tc.id.is_some() || tc.function.name.is_some() {
+                    events.push(AnthropicSseEvent::ContentBlockStart {
+                        index: tc.index,
+                        content_block: AnthropicStartBlock {
+                            block_type: "tool_use".to_string(),
+                            id: tc.id.clone().unwrap_or_default(),
+                            name: tc.function.name.clone().unwrap_or_default(),
+                            input: serde_json::Value::Object(Default::default()),
+                        },
+                    });
+                }
+                if let Some(args) = &tc.function.arguments {
+                    events.push(AnthropicSseEvent::ContentBlockDelta {
+                        index: tc.index,
+                        delta: AnthropicDelta::InputJsonDelta {
+                            partial_json: args.clone(),
+                        },
+                    });
+                }
+            }
+            return events;
+        }
+
+        // Final chunk: arguments still flow (a combined chunk is legal), but
+        // starts are summaries — only stops + message_delta are emitted.
+        for tc in &chunk.tool_calls {
+            if let Some(args) = &tc.function.arguments {
+                events.push(AnthropicSseEvent::ContentBlockDelta {
+                    index: tc.index,
+                    delta: AnthropicDelta::InputJsonDelta {
+                        partial_json: args.clone(),
+                    },
+                });
+            }
+        }
+        for tc in &chunk.tool_calls {
+            events.push(AnthropicSseEvent::ContentBlockStop { index: tc.index });
+        }
+        let output_tokens = chunk
+            .usage
+            .as_ref()
+            .map(|u| u.completion_tokens)
+            .unwrap_or(0);
+        let input_tokens = chunk.usage.as_ref().map(|u| u.prompt_tokens);
+        events.push(AnthropicSseEvent::MessageDelta {
+            delta: AnthropicMessageDeltaDetails {
+                stop_reason: anthropic_stop_reason(chunk.finish_reason),
+                stop_sequence: None,
+            },
+            usage: AnthropicMessageDeltaUsage {
+                output_tokens,
+                input_tokens,
+            },
+        });
+        events
+    }
+}
+
 impl From<&StreamChunk> for AnthropicSseEvent {
     fn from(chunk: &StreamChunk) -> Self {
-        if chunk.finish_reason.is_some() {
-            let output_tokens = chunk
-                .usage
-                .as_ref()
-                .map(|u| u.completion_tokens)
-                .unwrap_or(0);
-            let input_tokens = chunk.usage.as_ref().map(|u| u.prompt_tokens);
-            AnthropicSseEvent::MessageDelta {
+        // Backward-compatible single-event mapping: first event wins.
+        // Streaming paths should use `events_from_chunk`.
+        Self::events_from_chunk(chunk)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| AnthropicSseEvent::MessageDelta {
                 delta: AnthropicMessageDeltaDetails {
-                    stop_reason: "end_turn".to_string(),
+                    stop_reason: anthropic_stop_reason(chunk.finish_reason),
                     stop_sequence: None,
                 },
                 usage: AnthropicMessageDeltaUsage {
-                    output_tokens,
-                    input_tokens,
+                    output_tokens: 0,
+                    input_tokens: None,
                 },
-            }
-        } else {
-            AnthropicSseEvent::ContentBlockDelta {
-                index: 0,
-                delta: AnthropicTextDelta {
-                    delta_type: "text_delta".to_string(),
-                    text: chunk.delta.clone(),
-                },
-            }
-        }
+            })
     }
 }
 
@@ -624,5 +722,125 @@ mod tests {
                 content: vec![MessageContent::Text("sunny".to_string())],
             }
         );
+    }
+
+    // R3 SSE-out tests ----------------------------------------------------
+
+    use rook_core::{ToolCallDelta, ToolCallFunctionDelta};
+
+    fn tool_chunk(
+        tools: Vec<ToolCallDelta>,
+        finish: Option<FinishReason>,
+        usage: Option<TokenUsage>,
+    ) -> StreamChunk {
+        StreamChunk {
+            id: RequestId::new(),
+            model: ModelId::new("claude-3-5-sonnet"),
+            delta: String::new(),
+            thinking: None,
+            tool_calls: tools,
+            finish_reason: finish,
+            usage,
+        }
+    }
+
+    fn tool_delta(
+        index: u32,
+        id: Option<&str>,
+        name: Option<&str>,
+        args: Option<&str>,
+    ) -> ToolCallDelta {
+        ToolCallDelta {
+            index,
+            id: id.map(str::to_string),
+            function: ToolCallFunctionDelta {
+                name: name.map(str::to_string),
+                arguments: args.map(str::to_string),
+            },
+        }
+    }
+
+    #[test]
+    fn sse_start_event_for_tool_chunk() {
+        let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(
+            vec![tool_delta(1, Some("toolu_123"), Some("get_weather"), None)],
+            None,
+            None,
+        ));
+        assert_eq!(events.len(), 1);
+        let json = serde_json::to_string(&events[0]).unwrap();
+        assert!(json.contains(r#""type":"content_block_start""#));
+        assert!(json.contains(r#""index":1"#));
+        assert!(json.contains(r#""type":"tool_use""#));
+        assert!(json.contains(r#""id":"toolu_123""#));
+        assert!(json.contains(r#""name":"get_weather""#));
+    }
+
+    #[test]
+    fn sse_input_json_delta_for_args_chunk() {
+        let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(
+            vec![tool_delta(1, None, None, Some("{\"city\":"))],
+            None,
+            None,
+        ));
+        assert_eq!(events.len(), 1);
+        let json = serde_json::to_string(&events[0]).unwrap();
+        assert!(json.contains(r#""type":"content_block_delta""#));
+        assert!(json.contains(r#""type":"input_json_delta""#));
+        assert!(json.contains("partial_json"));
+    }
+
+    #[test]
+    fn sse_stops_and_tool_use_reason_on_final_chunk() {
+        let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(
+            vec![
+                tool_delta(0, Some("toolu_1"), Some("get_weather"), None),
+                tool_delta(1, Some("toolu_2"), Some("get_time"), None),
+            ],
+            Some(FinishReason::ToolCalls),
+            Some(make_token_usage(10, 25)),
+        ));
+        // 2 stops + message_delta, NO duplicate starts.
+        assert_eq!(events.len(), 3);
+        let kinds: Vec<String> = events
+            .iter()
+            .map(|e| {
+                serde_json::to_value(e).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["content_block_stop", "content_block_stop", "message_delta"]
+        );
+        let last = serde_json::to_string(events.last().unwrap()).unwrap();
+        assert!(last.contains(r#""stop_reason":"tool_use""#));
+    }
+
+    #[test]
+    fn sse_stop_reason_mapping() {
+        for (finish, expected) in [
+            (FinishReason::Stop, "end_turn"),
+            (FinishReason::Length, "max_tokens"),
+            (FinishReason::ContentFilter, "refusal"),
+            (FinishReason::ToolCalls, "tool_use"),
+        ] {
+            let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(
+                vec![],
+                Some(finish),
+                Some(make_token_usage(1, 1)),
+            ));
+            assert_eq!(events.len(), 1);
+            let json = serde_json::to_string(&events[0]).unwrap();
+            assert!(json.contains(&format!(r#""stop_reason":"{expected}""#)));
+        }
+    }
+
+    #[test]
+    fn sse_empty_chunk_emits_nothing() {
+        let events = AnthropicSseEvent::events_from_chunk(&tool_chunk(vec![], None, None));
+        assert!(events.is_empty());
     }
 }
