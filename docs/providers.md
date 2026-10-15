@@ -97,8 +97,10 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 **Implementation status:**
 
-- `complete()` — ❌ Not yet implemented
-- `stream()` — ❌ Not yet implemented
+- `complete()` — ✅ Implemented (text + `tool_use` blocks; unknown block types skipped, never fail)
+- `stream()` — ✅ Implemented (text deltas + `content_block_start(tool_use)` / `input_json_delta` fragments; tool summary on final chunk)
+
+> Tool-calling round-trips through `MessageContent::ToolUse` / `MessageToolCall` in both directions. SSE-out (`content_block_start`, `input_json_delta`, `content_block_stop`, `stop_reason: tool_use`) lives in `transport-axum/src/anthropic_adapter.rs`.
 
 ---
 
@@ -263,7 +265,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 | Provider      | complete() | stream() | Real health check | Default timeout |
 |---------------|------------|----------|-------------------|-----------------|
 | OpenAI        | ✅          | ✅        | ✅                 | 60s             |
-| Anthropic     | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Anthropic     | ✅          | ✅        | ❌ (placeholder)   | 60s             |
 | Ollama (1)    | ✅          | ✅        | ✅ (2-step)        | 300s            |
 | Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
 
@@ -294,7 +296,7 @@ pub enum HealthStatus {
 }
 ```
 
-OpenAI performs a real `/models` probe. Provider adapters without a real probe (Anthropic, Ollama, Gemini, Groq) return `Unknown { reason: "health_check_not_supported" }`. For these providers, `HealthStatus::is_healthy()` returns `false`, and the public `/health` endpoint renders `healthy: false`, `latency_ms: null`, and `last_error` containing the reason string.
+OpenAI performs a real `/models` probe. Ollama performs a real 2-step probe (`/api/tags` + `/api/chat`). Provider adapters without a real probe (Anthropic, Gemini, Groq) return `Unknown { reason: "health_check_not_supported" }`. For these providers, `HealthStatus::is_healthy()` returns `false`, and the public `/health` endpoint renders `healthy: false`, `latency_ms: null`, and `last_error` containing the reason string.
 
 ## Dynamic Provider Registry
 

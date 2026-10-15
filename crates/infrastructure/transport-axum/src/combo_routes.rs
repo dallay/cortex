@@ -7,12 +7,14 @@ use axum::{
     Json, Router,
 };
 use rook_core::ComboRepositoryPort;
-use shared_kernel::ComboId;
+use rook_core::{ComboAlias, ComboAliasRepositoryPort};
+use shared_kernel::{ComboId, ModelId};
 
 use super::combo_dto::{ComboListResponse, ComboResponse, CreateComboRequest, UpdateComboRequest};
 use super::HttpError;
 
 type ComboRepository = Arc<dyn ComboRepositoryPort>;
+type ComboAliasRepository = Arc<dyn ComboAliasRepositoryPort>;
 
 /// Build the combo CRUD router
 pub fn router(combo_repository: ComboRepository) -> Router {
@@ -23,6 +25,23 @@ pub fn router(combo_repository: ComboRepository) -> Router {
         .route("/api/combos/{id}", put(update_combo))
         .route("/api/combos/{id}", delete(delete_combo))
         .with_state(combo_repository)
+}
+
+/// Admin surface for virtual combo aliases (`rook/*` -> combo).
+/// Separate from `ModelAlias` admin (`/api/models/aliases`): a combo alias
+/// points at a fallback chain, not a canonical model. Reuses combo auth/validation.
+pub fn alias_router(
+    combo_repository: ComboRepository,
+    alias_repository: ComboAliasRepository,
+) -> Router {
+    Router::new()
+        .route("/api/combos/{id}/aliases", get(list_combo_aliases))
+        .route("/api/combos/{id}/aliases", post(create_combo_alias))
+        .route(
+            "/api/combos/{id}/aliases/{alias}",
+            delete(delete_combo_alias),
+        )
+        .with_state((combo_repository, alias_repository))
 }
 
 // -------------------------------------------------------------------------
@@ -162,6 +181,146 @@ fn internal_error() -> HttpError {
     }
 }
 
+// -------------------------------------------------------------------------
+// Virtual combo alias admin (R2)
+// -------------------------------------------------------------------------
+
+type AliasAdminState = (ComboRepository, ComboAliasRepository);
+
+#[derive(serde::Deserialize)]
+struct CreateComboAliasRequest {
+    alias: String,
+}
+
+#[derive(serde::Serialize, Debug)]
+struct ComboAliasResponse {
+    alias: String,
+    combo_id: String,
+}
+
+impl From<&ComboAlias> for ComboAliasResponse {
+    fn from(a: &ComboAlias) -> Self {
+        Self {
+            alias: a.alias.to_string(),
+            combo_id: a.combo_id.to_string(),
+        }
+    }
+}
+
+/// GET /api/combos/{id}/aliases — list virtual models for a combo
+async fn list_combo_aliases(
+    State((combo_repo, alias_repo)): State<AliasAdminState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ComboAliasResponse>>, HttpError> {
+    let combo_id = parse_combo_id(&id)?;
+    ensure_combo_exists(&combo_repo, &combo_id).await?;
+    let all = alias_repo.list().await.map_err(|e| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "REPOSITORY_ERROR",
+        message: format!("failed to list aliases: {e}"),
+    })?;
+    Ok(Json(
+        all.iter()
+            .filter(|a| a.combo_id == combo_id)
+            .map(ComboAliasResponse::from)
+            .collect(),
+    ))
+}
+
+/// POST /api/combos/{id}/aliases {"alias": "rook/coding"} — register alias
+async fn create_combo_alias(
+    State((combo_repo, alias_repo)): State<AliasAdminState>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateComboAliasRequest>,
+) -> Result<(StatusCode, Json<ComboAliasResponse>), HttpError> {
+    let combo_id = parse_combo_id(&id)?;
+    ComboAlias::validate_alias_format(req.alias.trim()).map_err(|msg| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_ALIAS",
+        message: msg,
+    })?;
+    ensure_combo_exists(&combo_repo, &combo_id).await?;
+    let alias = ComboAlias::new(ModelId::new(req.alias.trim().to_string()), combo_id);
+    match alias_repo.create(alias.clone()).await {
+        Ok(()) => {
+            tracing::info!(alias = %alias.alias, combo_id = %combo_id, "combo alias created");
+            Ok((StatusCode::CREATED, Json(ComboAliasResponse::from(&alias))))
+        }
+        Err(rook_core::ComboAliasRepositoryError::AlreadyExists(_)) => Err(HttpError {
+            status: StatusCode::CONFLICT,
+            code: "ALIAS_ALREADY_EXISTS",
+            message: format!("alias '{}' already exists", alias.alias),
+        }),
+        Err(rook_core::ComboAliasRepositoryError::ComboNotFound(_)) => Err(HttpError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND",
+            message: "combo not found".to_string(),
+        }),
+        Err(rook_core::ComboAliasRepositoryError::InvalidAlias(msg)) => Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_ALIAS",
+            message: msg,
+        }),
+        Err(e) => Err(HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REPOSITORY_ERROR",
+            message: format!("failed to create alias: {e}"),
+        }),
+    }
+}
+
+/// DELETE /api/combos/{id}/aliases/{alias} — remove alias (combo untouched)
+async fn delete_combo_alias(
+    State((combo_repo, alias_repo)): State<AliasAdminState>,
+    Path((id, alias)): Path<(String, String)>,
+) -> Result<StatusCode, HttpError> {
+    let combo_id = parse_combo_id(&id)?;
+    ensure_combo_exists(&combo_repo, &combo_id).await?;
+    let alias_id = ModelId::new(alias);
+    // Scope the delete to this combo: only remove if it points here.
+    match alias_repo.find_by_alias(&alias_id).await {
+        Ok(Some(entry)) if entry.combo_id == combo_id => {}
+        Ok(_) => {
+            return Err(HttpError {
+                status: StatusCode::NOT_FOUND,
+                code: "NOT_FOUND",
+                message: "alias not found for this combo".to_string(),
+            });
+        }
+        Err(e) => {
+            return Err(HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "REPOSITORY_ERROR",
+                message: format!("failed to find alias: {e}"),
+            });
+        }
+    }
+    match alias_repo.delete(&alias_id).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(not_found("alias not found")),
+        Err(e) => Err(HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REPOSITORY_ERROR",
+            message: format!("failed to delete alias: {e}"),
+        }),
+    }
+}
+
+async fn ensure_combo_exists(
+    combo_repo: &ComboRepository,
+    combo_id: &ComboId,
+) -> Result<(), HttpError> {
+    match combo_repo.find(combo_id).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(not_found("combo not found")),
+        Err(e) => Err(HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REPOSITORY_ERROR",
+            message: format!("failed to find combo: {e}"),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +396,79 @@ mod tests {
                 priority: 1,
             }],
         )
+    }
+
+    struct TestAliasRepository {
+        aliases: Mutex<HashMap<String, rook_core::ComboAlias>>,
+    }
+
+    impl TestAliasRepository {
+        fn new() -> Self {
+            Self {
+                aliases: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl rook_core::ComboAliasRepositoryPort for TestAliasRepository {
+        async fn find_by_alias(
+            &self,
+            alias: &shared_kernel::ModelId,
+        ) -> Result<Option<rook_core::ComboAlias>, rook_core::ComboAliasRepositoryError> {
+            Ok(self.aliases.lock().unwrap().get(alias.as_str()).cloned())
+        }
+
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ComboAlias>, rook_core::ComboAliasRepositoryError> {
+            Ok(self.aliases.lock().unwrap().values().cloned().collect())
+        }
+
+        async fn create(
+            &self,
+            alias: rook_core::ComboAlias,
+        ) -> Result<(), rook_core::ComboAliasRepositoryError> {
+            let mut map = self.aliases.lock().unwrap();
+            if map.contains_key(alias.alias.as_str()) {
+                return Err(rook_core::ComboAliasRepositoryError::AlreadyExists(
+                    alias.alias,
+                ));
+            }
+            map.insert(alias.alias.to_string(), alias);
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            alias: &shared_kernel::ModelId,
+        ) -> Result<bool, rook_core::ComboAliasRepositoryError> {
+            Ok(self
+                .aliases
+                .lock()
+                .unwrap()
+                .remove(alias.as_str())
+                .is_some())
+        }
+    }
+
+    fn alias_state() -> (
+        ComboRepository,
+        ComboAliasRepository,
+        Combo,
+        State<(ComboRepository, ComboAliasRepository)>,
+    ) {
+        let combo_repo: ComboRepository = Arc::new(TestComboRepository::new());
+        let alias_repo: ComboAliasRepository = Arc::new(TestAliasRepository::new());
+        let combo = test_combo();
+        let state = State((combo_repo.clone(), alias_repo.clone()));
+        (combo_repo, alias_repo, combo, state)
+    }
+
+    async fn seed_combo(repo: &ComboRepository) -> Combo {
+        let combo = test_combo();
+        repo.create(&combo).await.unwrap();
+        combo
     }
 
     #[tokio::test]
@@ -321,5 +553,153 @@ mod tests {
         // Verify deleted
         let result = get_combo(State(repo), Path(combo_id)).await;
         assert!(result.is_err());
+    }
+
+    // --- Virtual combo alias admin (R2) ---
+
+    fn alias_req(alias: &str) -> Json<CreateComboAliasRequest> {
+        Json(CreateComboAliasRequest {
+            alias: alias.to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn create_alias_returns_201() {
+        let (combo_repo, _alias_repo, combo, state) = alias_state();
+        seed_combo(&combo_repo).await;
+        let _ = combo;
+        let (status, body) = create_combo_alias(
+            state,
+            Path(combo_repo.list().await.unwrap()[0].id.to_string()),
+            alias_req("rook/coding"),
+        )
+        .await
+        .expect("create alias");
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body.alias, "rook/coding");
+    }
+
+    #[tokio::test]
+    async fn create_alias_rejects_invalid_shape() {
+        let (combo_repo, _alias_repo, _combo, state) = alias_state();
+        let combo = seed_combo(&combo_repo).await;
+        let err = create_combo_alias(state, Path(combo.id.to_string()), alias_req("rook/"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "INVALID_ALIAS");
+    }
+
+    #[tokio::test]
+    async fn create_alias_missing_combo_is_404() {
+        let (_combo_repo, _alias_repo, _combo, state) = alias_state();
+        let err = create_combo_alias(
+            state,
+            Path("00000000-0000-0000-0000-000000000000".to_string()),
+            alias_req("rook/coding"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn create_alias_duplicate_is_409() {
+        let (combo_repo, _alias_repo, _combo, state) = alias_state();
+        let combo = seed_combo(&combo_repo).await;
+        let id = combo.id.to_string();
+        let _ = create_combo_alias(state.clone(), Path(id.clone()), alias_req("rook/dup"))
+            .await
+            .expect("first");
+        let err = create_combo_alias(state, Path(id), alias_req("rook/dup"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::CONFLICT);
+        assert_eq!(err.code, "ALIAS_ALREADY_EXISTS");
+    }
+
+    #[tokio::test]
+    async fn list_aliases_scoped_to_combo() {
+        let (combo_repo, _alias_repo, _combo, state) = alias_state();
+        let combo = seed_combo(&combo_repo).await;
+        let other = Combo::new(
+            "Other".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: shared_kernel::ProviderId::new("openai"),
+                model: shared_kernel::ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        combo_repo.create(&other).await.unwrap();
+        let _ = create_combo_alias(
+            state.clone(),
+            Path(combo.id.to_string()),
+            alias_req("rook/a"),
+        )
+        .await
+        .expect("a");
+        let _ = create_combo_alias(
+            state.clone(),
+            Path(other.id.to_string()),
+            alias_req("rook/b"),
+        )
+        .await
+        .expect("b");
+        let list = list_combo_aliases(state, Path(combo.id.to_string()))
+            .await
+            .expect("list");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].alias, "rook/a");
+    }
+
+    #[tokio::test]
+    async fn delete_alias_scoped_and_idempotent_shape() {
+        let (combo_repo, _alias_repo, _combo, state) = alias_state();
+        let combo = seed_combo(&combo_repo).await;
+        let id = combo.id.to_string();
+        let _ = create_combo_alias(state.clone(), Path(id.clone()), alias_req("rook/gone"))
+            .await
+            .expect("create");
+        let status = delete_combo_alias(state.clone(), Path((id.clone(), "rook/gone".to_string())))
+            .await
+            .expect("delete");
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let err = delete_combo_alias(state, Path((id, "rook/gone".to_string())))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_alias_of_other_combo_is_404() {
+        let (combo_repo, _alias_repo, _combo, state) = alias_state();
+        let combo = seed_combo(&combo_repo).await;
+        let other = Combo::new(
+            "Other".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: shared_kernel::ProviderId::new("openai"),
+                model: shared_kernel::ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        combo_repo.create(&other).await.unwrap();
+        let _ = create_combo_alias(
+            state.clone(),
+            Path(other.id.to_string()),
+            alias_req("rook/theirs"),
+        )
+        .await
+        .expect("create");
+        let err = delete_combo_alias(
+            state,
+            Path((combo.id.to_string(), "rook/theirs".to_string())),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
     }
 }
