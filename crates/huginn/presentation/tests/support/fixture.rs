@@ -215,10 +215,10 @@ impl Plugin for SecretFormPlugin {
                                     match input.public["mode"].as_str() {
                                         "1" => {
                                             return Err(huginn_core::AgentError::Composition(
-                                                secret.expose().into(),
+                                                "secret redacted".into(),
                                             ))
                                         }
-                                        "2" => panic!("{}", secret.expose()),
+                                        "2" => panic!("secret redacted"),
                                         "3" => {
                                             cancellation.cancel();
                                             std::future::pending::<()>().await;
