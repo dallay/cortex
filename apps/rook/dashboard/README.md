@@ -59,5 +59,5 @@ Pages live in `src/views/`, shared UI in `src/components/`, routing in
 `src/locales/`. `vite.config.ts` defines the base path and proxy; `playwright.config.ts`
 defines browser projects and E2E settings.
 
-See the [Rook configuration guide](../../../docs/configuration.md), [API reference](../../../docs/api.md),
+See the [Rook configuration guide](../../../docs/rook/configuration.md), [API reference](../../../docs/rook/api.md),
 and [workspace README](../../../README.md) for backend setup and product context.

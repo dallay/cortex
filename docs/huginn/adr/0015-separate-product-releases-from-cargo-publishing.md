@@ -1,4 +1,4 @@
-# ADR-0014: Separar releases de producto de publicación Cargo
+# ADR-0015: Separar releases de producto de publicación Cargo
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-10-11

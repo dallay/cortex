@@ -22,14 +22,14 @@ a local programming agent. See `README.md` for the current scope.
 
 Read only the sources related to the change:
 
-- Rook layers, responsibilities, and flow: `docs/architecture.md`.
-- HTTP contracts: `docs/api.md`; configuration: `docs/configuration.md`;
-  provider behavior: `docs/providers.md`.
+- Rook layers, responsibilities, and flow: `docs/rook/architecture.md`.
+- HTTP contracts: `docs/rook/api.md`; configuration: `docs/rook/configuration.md`;
+  provider behavior: `docs/rook/providers.md`.
 - Huginn limits and behavior: `docs/huginn/README.md`.
 - Dashboard: `apps/rook/dashboard/README.md`.
 - Preparation, tests, and diagnostics: `docs/development.md`.
 - Containers and E2E: `dev/README.md`.
-- Deployment: `docs/deployment.md`; contributions: `CONTRIBUTING.md`.
+- Deployment: `docs/rook/deployment.md`; contributions: `CONTRIBUTING.md`.
 
 If the documentation and code differ, verify the behavior in code,
 manifests, and tests before turning the explanation into a rule.

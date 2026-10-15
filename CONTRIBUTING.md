@@ -1,12 +1,6 @@
 # Contributing to Cortex
 
-We love your input! We want to make contributing to Cortex as easy and transparent as possible, whether it's:
-
-- Reporting a bug
-- Discussing the current state of the code
-- Submitting a fix
-- Proposing new features
-- Becoming a maintainer
+We love your input! We want to make contributing to Cortex as easy and transparent as possible.
 
 ## Quick Contribution Guide
 
@@ -18,10 +12,30 @@ We love your input! We want to make contributing to Cortex as easy and transpare
 
 ## Development Workflow
 
-- Follow Rust best practices and project conventions.
-- Ensure all tests pass: `just test`.
-- Run `just ci-local` before submitting a PR.
-- Update documentation as needed.
+1. Follow [Rust best practices](https://rust-lang.github.io/api-guidelines/) and project conventions
+2. Ensure all tests pass: `cargo test`
+3. Run the dashboard checks: `pnpm --filter @dallay/rook-dashboard exec vitest run`
+4. Run `just ci-local` before submitting a PR
+5. Update documentation as needed
+
+For detailed development setup, see [docs/development.md](docs/development.md).
+
+## Policies and Guidelines
+
+| Topic | Location |
+|-------|----------|
+| Issue labeling | [docs/contributing/labeling-policy.md](docs/contributing/labeling-policy.md) |
+| GitHub → Linear sync | [docs/contributing/linear-sync-policy.md](docs/contributing/linear-sync-policy.md) |
+| Architecture decisions | [docs/adr/README.md](docs/adr/README.md) |
+
+### Issue Classification
+
+All issues should be classified using the labeling policy. The system uses:
+- `product/*` — Owning product: `rook`, `huginn`, or `shared`
+- `area/*` — Technical areas: `auth`, `ci`, `core`, `dashboard`, etc.
+- `type/*` — Work type: `bug`, `feature`, `enhancement`, `chore`, etc.
+
+See [docs/contributing/labeling-policy.md](docs/contributing/labeling-policy.md) for full taxonomy.
 
 ## Code of Conduct
 
@@ -29,7 +43,7 @@ This project follows the [Rust Code of Conduct](https://www.rust-lang.org/polici
 
 ## Reporting Bugs
 
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/dallay/cortex/issues/new).
+We use GitHub issues to track bugs. Report a bug by [opening a new issue](https://github.com/dallay/cortex/issues/new).
 
 ## License
 

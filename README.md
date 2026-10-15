@@ -115,7 +115,7 @@ blocked until its acceptance gates are complete.
    ```
 
    > Providers are **not** configured in TOML. Create them at runtime via the
-   > Provider CRUD API (`POST /api/providers`). See the [Configuration Guide](docs/configuration.md).
+   > Provider CRUD API (`POST /api/providers`). See the [Configuration Guide](docs/rook/configuration.md).
 
 2. **Run the server**:
    ```bash
@@ -137,7 +137,7 @@ blocked until its acceptance gates are complete.
     ```
 
    This requires a completion provider configured for Rook; see the
-   [Configuration Guide](docs/configuration.md) before sending requests.
+   [Configuration Guide](docs/rook/configuration.md) before sending requests.
 
 ## 🛠 Usage
 
@@ -145,7 +145,7 @@ blocked until its acceptance gates are complete.
 Define ordered provider/model fallback steps as `[[combos]]` in `rook.toml` or
 through the `/api/combos` CRUD API. Select one per request with
 `X-Rook-Combo`, or set `routing.default_combo`. See the
-[Configuration Guide](docs/configuration.md#combos-multi-step-fallback-chains)
+[Configuration Guide](docs/rook/configuration.md#combos-multi-step-fallback-chains)
 for the schema and execution behavior.
 
 ### Dashboard access
@@ -157,12 +157,12 @@ setup token. See [dashboard README](apps/rook/dashboard/README.md).
 
 ## ⚙️ Configuration
 
-See the [Configuration Guide](docs/configuration.md) for detailed options.
+See the [Configuration Guide](docs/rook/configuration.md) for detailed options.
 
 **Quick reference**:
 - **Server**: host, port, health check interval.
 - **Routing**: strategy (`priority` | `round-robin` | `model-based`), optional `default_combo`.
-- **Providers**: managed through `/api/providers`; see the [Provider Management guide](docs/configuration.md#provider-management-dashboard).
+- **Providers**: managed through `/api/providers`; see the [Provider Management guide](docs/rook/configuration.md#provider-management-dashboard).
 - **Combos**: managed via `/api/combos`, selected with `X-Rook-Combo` or `routing.default_combo`.
 - **Model aliases**: CRUD at `/api/models/aliases`; global aliases resolve before routing (provider-scoped records are not applied during resolution).
 - **Cache / DB / auth / rate limiting**: see full schema in the guide.
@@ -200,7 +200,7 @@ cortex/
 └── docs/                   # Documentation
 ```
 
-See [Architecture Documentation](docs/architecture.md) for details.
+See [Architecture Documentation](docs/rook/architecture.md) for details.
 
 ## 🧰 Tools
 
@@ -252,13 +252,13 @@ just test-e2e
 
 ## 📚 Documentation
 
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md) (providers via CRUD API, combos, aliases)
-- [Providers](docs/providers.md)
-- [API Reference](docs/api.md)
-- [Deployment](docs/deployment.md)
+- [Architecture](docs/rook/architecture.md)
+- [Configuration](docs/rook/configuration.md) (providers via CRUD API, combos, aliases)
+- [Providers](docs/rook/providers.md)
+- [API Reference](docs/rook/api.md)
+- [Deployment](docs/rook/deployment.md)
 - [Release and distribution contract](docs/releasing.md)
-- [ADR-0014: Product releases versus Cargo publishing](docs/adr/0014-separate-product-releases-from-cargo-publishing.md)
+- [ADR-0015: Product releases versus Cargo publishing](docs/huginn/adr/0015-separate-product-releases-from-cargo-publishing.md)
 - [API key troubleshooting](docs/api-key-troubleshooting.md)
 - [Rook dashboard](apps/rook/dashboard/README.md) (Vue SPA, embedded at `/dashboard/`)
 - [Local Docker testing](dev/README.md) (smoke, Playwright E2E, multi-distro)
