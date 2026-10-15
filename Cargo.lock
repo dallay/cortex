@@ -1854,6 +1854,7 @@ name = "huginn-plugin-api"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "futures",
  "huginn-core",
  "tokio",
 ]
@@ -1872,10 +1873,12 @@ dependencies = [
  "huginn-reference-extension",
  "portable-pty",
  "ratatui",
+ "rustix",
  "tempfile",
  "tokio",
  "unicode-width",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

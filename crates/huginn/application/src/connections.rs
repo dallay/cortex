@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use huginn_core::{connections::*, providers::*, CancellationToken};
 use std::{
     collections::BTreeMap,
+    future::{poll_fn, Future},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -21,6 +22,7 @@ pub struct ConnectionAccess {
     bindings: Mutex<BTreeMap<String, Binding>>,
     runtime_secrets: Mutex<BTreeMap<String, Secret>>,
     serial: AsyncMutex<()>,
+    lifecycle: Mutex<()>,
     epoch: AtomicU64,
 }
 impl ConnectionAccess {
@@ -30,6 +32,7 @@ impl ConnectionAccess {
             bindings: Mutex::new(BTreeMap::new()),
             runtime_secrets: Mutex::new(BTreeMap::new()),
             serial: AsyncMutex::new(()),
+            lifecycle: Mutex::new(()),
             epoch: AtomicU64::new(0),
         })
     }
@@ -133,14 +136,11 @@ impl ConnectionCredentials for ConnectionAccess {
             .filter(|b| b.identity == *identity)
             .map(|b| b.record.clone())
             .ok_or(ConnectionError::Revoked)?;
-        if record.secret.is_some() && record.mode != self.secrets.mode() {
-            return Err(ConnectionError::MissingSecret);
-        }
         let secret = match &record.secret {
             Some(reference) => Some(tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Err(ConnectionError::Cancelled),
-                result = self.secrets.read(reference) => result?,
+                result = self.secrets.read_mode(record.mode, reference) => result?,
             }),
             None if record.settings.requires_secret => Some(Secret::new(
                 self.runtime_secrets
@@ -173,7 +173,22 @@ impl ConnectionCredentials for ConnectionAccess {
 struct State {
     metadata: ConnectionMetadata,
     failed: bool,
+    pending_model: Option<ConnectionRecord>,
+    model_save_pending: bool,
     cleanup_status: BTreeMap<SecretReference, ConnectionError>,
+}
+// Selection is not revocation. A failed/dropped publication closes only new
+// admission, including providers that publish before their future completes.
+struct ModelPublication<'a> {
+    manager: &'a ConnectionManager,
+    armed: bool,
+}
+impl Drop for ModelPublication<'_> {
+    fn drop(&mut self) {
+        if self.armed && self.manager.access.epoch.load(Ordering::SeqCst) == self.manager.owner {
+            let _ = self.manager.providers.clear_selection();
+        }
+    }
 }
 struct MetadataMutation<'a> {
     access: &'a ConnectionAccess,
@@ -195,6 +210,7 @@ pub struct ConnectionManager {
     catalog: Arc<dyn ProviderCatalog>,
     state: AsyncMutex<State>,
     owner: u64,
+    retired: CancellationToken,
 }
 pub struct ResolvedConnection {
     pub selection: Option<ModelSelection>,
@@ -231,8 +247,16 @@ impl ConnectionManager {
         catalog: Arc<dyn ProviderCatalog>,
     ) -> ConnectionResult<Self> {
         let serial = access.serial.lock().await;
-        let owner = access.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        access.invalidate_all(providers.as_ref(), owner);
+        let owner = {
+            let lifecycle = access
+                .lifecycle
+                .lock()
+                .map_err(|_| ConnectionError::Revoked)?;
+            let owner = access.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+            access.invalidate_all(providers.as_ref(), owner);
+            drop(lifecycle);
+            owner
+        };
         let mut opening = MetadataMutation {
             access: &access,
             providers: providers.as_ref(),
@@ -240,6 +264,31 @@ impl ConnectionManager {
             owner,
         };
         let metadata = store.load().await?;
+        Self::validate_metadata(&metadata)?;
+        let manager = Self {
+            store,
+            access: access.clone(),
+            providers: providers.clone(),
+            catalog,
+            state: AsyncMutex::new(State {
+                metadata,
+                failed: false,
+                pending_model: None,
+                model_save_pending: false,
+                cleanup_status: BTreeMap::new(),
+            }),
+            owner,
+            retired: CancellationToken::new(),
+        };
+        let mut state = manager.state.lock().await;
+        manager.restore_locked(&mut state).await?;
+        drop(state);
+        opening.armed = false;
+        drop(opening);
+        drop(serial);
+        Ok(manager)
+    }
+    fn validate_metadata(metadata: &ConnectionMetadata) -> ConnectionResult<()> {
         let mut references = std::collections::BTreeSet::new();
         for (id, record) in &metadata.connections {
             if *id != record.id || record.settings.requires_secret != record.secret.is_some() {
@@ -255,22 +304,12 @@ impl ConnectionManager {
                 }
             }
         }
-        let manager = Self {
-            store,
-            access: access.clone(),
-            providers: providers.clone(),
-            catalog,
-            state: AsyncMutex::new(State {
-                metadata,
-                failed: false,
-                cleanup_status: BTreeMap::new(),
-            }),
-            owner,
-        };
-        let mut state = manager.state.lock().await;
+        Ok(())
+    }
+    async fn restore_locked(&self, state: &mut State) -> ConnectionResult<()> {
         // Reopening on the same activation must retire stale bindings before installing
         // the authoritative records, including records removed by an uncertain write.
-        if let Err(error) = manager.reconcile_locked(&mut state).await {
+        if let Err(error) = self.reconcile_locked(state).await {
             if !state.cleanup_status.values().any(|e| *e == error) || state.failed {
                 return Err(error);
             }
@@ -283,9 +322,9 @@ impl ConnectionManager {
             }
             record.settings.validate()?;
             // A locked/missing backend is not silently downgraded. Diagnosis can still list records.
-            if manager.check_ready(record).await.is_ok() {
+            if self.check_ready(record).await.is_ok() {
                 // Adapter availability is per record, not a fatal metadata error.
-                match manager.install(record).await {
+                match self.install(record).await {
                     Ok(_) | Err(ConnectionError::AdapterUnavailable) => {}
                     Err(error) => return Err(error),
                 }
@@ -295,17 +334,12 @@ impl ConnectionManager {
             if !state.metadata.connections.contains_key(&id) {
                 return Err(ConnectionError::InvalidSelection);
             }
-            if manager.access.identity(id).is_ok() {
-                manager
-                    .select_runtime(&state.metadata.connections[&id])
+            if self.access.identity(id).is_ok() {
+                self.select_runtime(&state.metadata.connections[&id])
                     .await?;
             }
         }
-        drop(state);
-        opening.armed = false;
-        drop(opening);
-        drop(serial);
-        Ok(manager)
+        Ok(())
     }
     async fn operation(&self) -> ConnectionResult<tokio::sync::MutexGuard<'_, ()>> {
         let guard = self.access.serial.lock().await;
@@ -313,6 +347,32 @@ impl ConnectionManager {
             return Err(ConnectionError::Revoked);
         }
         Ok(guard)
+    }
+    // Retirement and each poll share a publication gate. The synchronous guard
+    // never survives Pending: store/secret I/O holds only the async serial lock.
+    // This also covers synchronous publication within an otherwise async provider
+    // action, without relying on that action to honor cancellation atomically.
+    async fn run_operation<T>(
+        &self,
+        future: impl Future<Output = ConnectionResult<T>>,
+    ) -> ConnectionResult<T> {
+        let mut future = Box::pin(future);
+        let mut cancelled = Box::pin(self.retired.cancelled());
+        poll_fn(|cx| {
+            let lifecycle = self
+                .access
+                .lifecycle
+                .lock()
+                .map_err(|_| ConnectionError::Revoked)?;
+            if self.access.epoch.load(Ordering::SeqCst) != self.owner {
+                return std::task::Poll::Ready(Err(ConnectionError::Revoked));
+            }
+            let _ = cancelled.as_mut().poll(cx);
+            let result = future.as_mut().poll(cx);
+            drop(lifecycle);
+            result
+        })
+        .await
     }
     const fn check_state(state: &State) -> ConnectionResult<()> {
         if state.failed {
@@ -332,7 +392,7 @@ impl ConnectionManager {
             .checked_add(1)
             .ok_or(ConnectionError::Metadata)?;
         // If this future is dropped during I/O, stale in-memory metadata must not
-        // perform another mutation. Reopening reads the authoritative document.
+        // perform another mutation. Recovery reads the authoritative document.
         state.failed = true;
         let mut mutation = MetadataMutation {
             access: &self.access,
@@ -340,6 +400,11 @@ impl ConnectionManager {
             armed: true,
             owner: self.owner,
         };
+        if state.model_save_pending {
+            // A preference write can be cancelled without revoking authorization
+            // held by existing turns. Recovery will read the authoritative store.
+            mutation.armed = false;
+        }
         // The state lock stays held through the I/O and guard drop: mutation and
         // authoritative recovery must remain serialized, even on cancellation.
         self.store.save(state.metadata.version, &next).await?;
@@ -349,12 +414,12 @@ impl ConnectionManager {
         Ok(())
     }
     async fn check_secret(&self, record: &ConnectionRecord) -> ConnectionResult<()> {
-        if record.secret.is_some() && record.mode != self.access.secrets.mode() {
-            return Err(ConnectionError::MissingSecret);
-        }
         match &record.secret {
             Some(reference) => {
-                self.access.secrets.read(reference).await?;
+                self.access
+                    .secrets
+                    .read_mode(record.mode, reference)
+                    .await?;
                 Ok(())
             }
             None if record.settings.requires_secret => Err(ConnectionError::MissingSecret),
@@ -424,35 +489,104 @@ impl ConnectionManager {
         Ok(selection)
     }
     pub async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
-        let _operation = self.operation().await?;
-        let state = self.state.lock().await;
-        Self::check_state(&state)?;
-        Ok(state.metadata.connections.values().cloned().collect())
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let state = self.state.lock().await;
+            Self::check_state(&state)?;
+            Ok(state.metadata.connections.values().cloned().collect())
+        })
+        .await
+    }
+    /// Reload after uncertain persistence without replacing this manager's owner.
+    pub async fn recover(&self) -> ConnectionResult<()> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            if !state.failed {
+                return Ok(());
+            }
+            if state.model_save_pending {
+                let metadata = self.store.load().await?;
+                Self::validate_metadata(&metadata)?;
+                state.metadata = metadata;
+                state.model_save_pending = false;
+                if let Some(record) = state
+                    .metadata
+                    .selected
+                    .and_then(|id| state.metadata.connections.get(&id).cloned())
+                {
+                    state.pending_model = Some(record.clone());
+                    return self.publish_model(&mut state, &record).await;
+                }
+                self.providers
+                    .clear_selection()
+                    .map_err(|_| ConnectionError::InvalidSelection)?;
+                state.failed = false;
+                return Ok(());
+            }
+            if let Some(record) = state.pending_model.clone() {
+                // Persistence completed: retry only publication, retaining the
+                // exact authorization of existing turns and credential revision.
+                return self.publish_model(&mut state, &record).await;
+            }
+            self.access
+                .invalidate_all(self.providers.as_ref(), self.owner);
+            let mut recovery = MetadataMutation {
+                access: &self.access,
+                providers: self.providers.as_ref(),
+                armed: true,
+                owner: self.owner,
+            };
+            let metadata = self.store.load().await?;
+            Self::validate_metadata(&metadata)?;
+            // Keep the published state failed until ALL restoration has completed.
+            // In particular, cleanup persistence may succeed before installation is dropped.
+            let mut restored = State {
+                metadata,
+                failed: false,
+                pending_model: None,
+                model_save_pending: false,
+                cleanup_status: BTreeMap::new(),
+            };
+            self.restore_locked(&mut restored).await?;
+            *state = restored;
+            drop(state);
+            recovery.armed = false;
+            Ok(())
+        })
+        .await
     }
     pub async fn status(&self, id: Uuid) -> ConnectionResult<()> {
-        let _operation = self.operation().await?;
-        let state = self.state.lock().await;
-        Self::check_state(&state)?;
-        let record = state
-            .metadata
-            .connections
-            .get(&id)
-            .cloned()
-            .ok_or(ConnectionError::InvalidSelection)?;
-        drop(state);
-        if record.settings.is_legacy_loopback_http() {
-            return Err(ConnectionError::InvalidConfiguration);
-        }
-        record.settings.validate()?;
-        self.check_ready(&record).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let state = self.state.lock().await;
+            Self::check_state(&state)?;
+            let record = state
+                .metadata
+                .connections
+                .get(&id)
+                .cloned()
+                .ok_or(ConnectionError::InvalidSelection)?;
+            drop(state);
+            if record.settings.is_legacy_loopback_http() {
+                return Err(ConnectionError::InvalidConfiguration);
+            }
+            record.settings.validate()?;
+            self.check_ready(&record).await
+        })
+        .await
     }
     pub async fn create(
         &self,
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
-        let _operation = self.operation().await?;
-        self.write_connection(None, settings, secret).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.write_connection(None, settings, secret, self.access.secrets.mode())
+                .await
+        })
+        .await
     }
     pub async fn update(
         &self,
@@ -460,8 +594,12 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
-        let _operation = self.operation().await?;
-        self.write_connection(Some(id), settings, secret).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.write_connection(Some(id), settings, secret, self.access.secrets.mode())
+                .await
+        })
+        .await
     }
     // The lock serializes the entire mutation, including installation and cleanup.
     #[allow(clippy::significant_drop_tightening)]
@@ -470,6 +608,7 @@ impl ConnectionManager {
         previous: Option<Uuid>,
         settings: ConnectionSettings,
         secret: Option<Secret>,
+        mode: SecretMode,
     ) -> ConnectionResult<ConnectionRecord> {
         settings.validate()?;
         if settings.requires_secret != secret.is_some() {
@@ -517,7 +656,7 @@ impl ConnectionManager {
             revision: Uuid::new_v4(),
             settings,
             secret: secret.as_ref().map(|_| SecretReference::new()),
-            mode: self.access.secrets.mode(),
+            mode,
         };
         let mut intent = state.metadata.clone();
         if let Some(old) = &old {
@@ -539,7 +678,10 @@ impl ConnectionManager {
         self.persist(&mut state, intent).await?;
         if let (Some(reference), Some(secret)) = (&record.secret, &secret) {
             // Cancellation/drop leaves a durable orphan intent for the next open/reconcile.
-            self.access.secrets.write(reference, secret).await?;
+            self.access
+                .secrets
+                .write_mode(record.mode, reference, secret)
+                .await?;
         }
         let mut commit = state.metadata.clone();
         if let Some(reference) = &record.secret {
@@ -559,8 +701,100 @@ impl ConnectionManager {
     // Keep persistence and runtime selection in the same serialized transition.
     #[allow(clippy::significant_drop_tightening)]
     pub async fn select(&self, id: Uuid) -> ConnectionResult<ModelSelection> {
-        let _operation = self.operation().await?;
-        self.select_locked(id).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.select_locked(id).await
+        })
+        .await
+    }
+    /// A model preference is not credential rotation: retain the authorization
+    /// identity so already pinned turns continue with their original model.
+    pub async fn select_model(&self, id: Uuid, model: String) -> ConnectionResult<ModelSelection> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            Self::check_state(&state)?;
+            let mut record = state
+                .metadata
+                .connections
+                .get(&id)
+                .cloned()
+                .ok_or(ConnectionError::InvalidSelection)?;
+            record.settings.model = model;
+            record.settings.validate()?;
+            let descriptor = self
+                .catalog
+                .adapters()
+                .into_iter()
+                .find(|(r, _)| r.provider == record.settings.provider)
+                .ok_or(ConnectionError::AdapterUnavailable)?
+                .1;
+            if !descriptor.models.is_empty()
+                && !descriptor
+                    .models
+                    .iter()
+                    .any(|m| m.id == record.settings.model)
+            {
+                return Err(ConnectionError::InvalidSelection);
+            }
+            self.check_secret(&record).await?;
+            if self.access.identity(id).is_err() {
+                self.install(&record).await?;
+            }
+            let mut next = state.metadata.clone();
+            next.connections.insert(id, record.clone());
+            next.selected = Some(id);
+            self.providers
+                .clear_selection()
+                .map_err(|_| ConnectionError::InvalidSelection)?;
+            state.model_save_pending = true;
+            self.persist(&mut state, next).await?;
+            state.model_save_pending = false;
+            // No await between confirmed persistence and arming recovery. Keep
+            // the state lock until publication succeeds or its guard is dropped.
+            state.failed = true;
+            state.pending_model = Some(record.clone());
+            self.publish_model(&mut state, &record).await?;
+            drop(state);
+            Ok(ModelSelection {
+                connection: self.access.identity(id)?,
+                model: record.settings.model,
+            })
+        })
+        .await
+    }
+    async fn publish_model(
+        &self,
+        state: &mut State,
+        record: &ConnectionRecord,
+    ) -> ConnectionResult<()> {
+        let mut publication = ModelPublication {
+            manager: self,
+            armed: true,
+        };
+        match self.access.identity(record.id) {
+            Ok(identity) => {
+                self.access.bind(identity.clone(), record.clone())?;
+                match self.select_runtime(record).await {
+                    Ok(_) => {}
+                    Err(ConnectionError::Revoked) => {
+                        self.access.unbind(record.id);
+                        self.install(record).await?;
+                        self.select_runtime(record).await?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(ConnectionError::Revoked) => {
+                self.install(record).await?;
+                self.select_runtime(record).await?;
+            }
+            Err(error) => return Err(error),
+        }
+        state.pending_model = None;
+        state.failed = false;
+        publication.armed = false;
+        Ok(())
     }
     #[allow(clippy::significant_drop_tightening)]
     async fn select_locked(&self, id: Uuid) -> ConnectionResult<ModelSelection> {
@@ -591,32 +825,38 @@ impl ConnectionManager {
     // Durable revocation and cleanup are one serialized metadata mutation.
     #[allow(clippy::significant_drop_tightening)]
     pub async fn revoke(&self, id: Uuid) -> ConnectionResult<()> {
-        let _operation = self.operation().await?;
-        let mut state = self.state.lock().await;
-        Self::check_state(&state)?;
-        let record = state
-            .metadata
-            .connections
-            .get(&id)
-            .cloned()
-            .ok_or(ConnectionError::InvalidSelection)?;
-        self.invalidate(id).await;
-        let mut next = state.metadata.clone();
-        next.connections.remove(&id);
-        if next.selected == Some(id) {
-            next.selected = None;
-        }
-        if let Some(reference) = record.secret {
-            next.cleanup.insert(reference, record.mode);
-        }
-        self.persist(&mut state, next).await?;
-        self.reconcile_locked(&mut state).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            Self::check_state(&state)?;
+            let record = state
+                .metadata
+                .connections
+                .get(&id)
+                .cloned()
+                .ok_or(ConnectionError::InvalidSelection)?;
+            self.invalidate(id).await;
+            let mut next = state.metadata.clone();
+            next.connections.remove(&id);
+            if next.selected == Some(id) {
+                next.selected = None;
+            }
+            if let Some(reference) = record.secret {
+                next.cleanup.insert(reference, record.mode);
+            }
+            self.persist(&mut state, next).await?;
+            self.reconcile_locked(&mut state).await
+        })
+        .await
     }
     pub async fn reconcile(&self) -> ConnectionResult<()> {
-        let _operation = self.operation().await?;
-        let mut state = self.state.lock().await;
-        Self::check_state(&state)?;
-        self.reconcile_locked(&mut state).await
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            Self::check_state(&state)?;
+            self.reconcile_locked(&mut state).await
+        })
+        .await
     }
     async fn reconcile_locked(&self, state: &mut State) -> ConnectionResult<()> {
         let mut next = state.metadata.clone();
@@ -631,16 +871,11 @@ impl ConnectionManager {
             {
                 return Err(ConnectionError::Metadata);
             }
-            if *mode == self.access.secrets.mode() {
-                if let Err(error) = self.access.secrets.delete(reference).await {
+            {
+                if let Err(error) = self.access.secrets.delete_mode(*mode, reference).await {
                     state.cleanup_status.insert(reference.clone(), error);
                     continue;
                 }
-            } else if *mode == SecretMode::Secure {
-                state
-                    .cleanup_status
-                    .insert(reference.clone(), ConnectionError::BackendUnavailable);
-                continue;
             }
             next.cleanup.remove(reference);
         }
@@ -658,76 +893,161 @@ impl ConnectionManager {
     pub async fn cleanup_status(
         &self,
     ) -> ConnectionResult<BTreeMap<SecretReference, ConnectionError>> {
-        let _operation = self.operation().await?;
-        let state = self.state.lock().await;
-        Self::check_state(&state)?;
-        Ok(state.cleanup_status.clone())
-    }
-    pub async fn resolve(&self, inputs: ConnectionInputs) -> ConnectionResult<ResolvedConnection> {
-        let _operation = self.operation().await?;
-        if let Some((choice, provenance)) = inputs.highest() {
-            let id = match choice {
-                ConnectionChoice::Stored(id) => id,
-                ConnectionChoice::Explicit { settings, secret } => {
-                    // Clear before validation/I/O too: an invalid winner must never
-                    // leave a lower-precedence connection usable for new turns.
-                    let state = self.state.lock().await;
-                    Self::check_state(&state)?;
-                    self.providers
-                        .clear_selection()
-                        .map_err(|_| ConnectionError::InvalidSelection)?;
-                    drop(state);
-                    let id = Uuid::new_v4();
-                    let record = ConnectionRecord {
-                        id,
-                        revision: Uuid::new_v4(),
-                        mode: self.access.secrets.mode(),
-                        secret: None,
-                        settings: settings.clone(),
-                    };
-                    settings.validate()?;
-                    if settings.requires_secret != secret.is_some() {
-                        return Err(ConnectionError::MissingSecret);
-                    }
-                    let identity = self.install(&record).await?;
-                    self.access
-                        .bind_runtime(identity.clone(), settings.clone(), secret)?;
-                    let selection = ModelSelection {
-                        connection: identity,
-                        model: settings.model,
-                    };
-                    self.providers
-                        .execute(
-                            ProviderAction::Select(selection.clone()),
-                            CancellationToken::new(),
-                        )
-                        .await
-                        .map_err(|_| ConnectionError::InvalidSelection)?;
-                    return Ok(ResolvedConnection {
-                        selection: Some(selection),
-                        provenance,
-                    });
-                }
-            };
-            return Ok(ResolvedConnection {
-                selection: Some(self.select_locked(id).await?),
-                provenance,
-            });
-        }
-        let selected = {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
             let state = self.state.lock().await;
             Self::check_state(&state)?;
-            state.metadata.selected
-        };
-        match selected {
-            Some(id) => Ok(ResolvedConnection {
-                selection: Some(self.select_locked(id).await?),
-                provenance: ConnectionProvenance::Persisted,
-            }),
-            None => Ok(ResolvedConnection {
-                selection: None,
-                provenance: ConnectionProvenance::Unconfigured,
-            }),
+            Ok(state.cleanup_status.clone())
+        })
+        .await
+    }
+    pub async fn resolve(&self, inputs: ConnectionInputs) -> ConnectionResult<ResolvedConnection> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            if let Some((choice, provenance)) = inputs.highest() {
+                let id = match choice {
+                    ConnectionChoice::Stored(id) => id,
+                    ConnectionChoice::Explicit { settings, secret } => {
+                        // Clear before validation/I/O too: an invalid winner must never
+                        // leave a lower-precedence connection usable for new turns.
+                        let state = self.state.lock().await;
+                        Self::check_state(&state)?;
+                        self.providers
+                            .clear_selection()
+                            .map_err(|_| ConnectionError::InvalidSelection)?;
+                        drop(state);
+                        let id = Uuid::new_v4();
+                        let record = ConnectionRecord {
+                            id,
+                            revision: Uuid::new_v4(),
+                            mode: self.access.secrets.mode(),
+                            secret: None,
+                            settings: settings.clone(),
+                        };
+                        settings.validate()?;
+                        if settings.requires_secret != secret.is_some() {
+                            return Err(ConnectionError::MissingSecret);
+                        }
+                        let identity = self.install(&record).await?;
+                        self.access
+                            .bind_runtime(identity.clone(), settings.clone(), secret)?;
+                        let selection = ModelSelection {
+                            connection: identity,
+                            model: settings.model,
+                        };
+                        self.providers
+                            .execute(
+                                ProviderAction::Select(selection.clone()),
+                                CancellationToken::new(),
+                            )
+                            .await
+                            .map_err(|_| ConnectionError::InvalidSelection)?;
+                        return Ok(ResolvedConnection {
+                            selection: Some(selection),
+                            provenance,
+                        });
+                    }
+                };
+                return Ok(ResolvedConnection {
+                    selection: Some(self.select_locked(id).await?),
+                    provenance,
+                });
+            }
+            let selected = {
+                let state = self.state.lock().await;
+                Self::check_state(&state)?;
+                state.metadata.selected
+            };
+            match selected {
+                Some(id) => Ok(ResolvedConnection {
+                    selection: Some(self.select_locked(id).await?),
+                    provenance: ConnectionProvenance::Persisted,
+                }),
+                None => Ok(ResolvedConnection {
+                    selection: None,
+                    provenance: ConnectionProvenance::Unconfigured,
+                }),
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl ConnectionManagement for ConnectionManager {
+    async fn recover(&self) -> ConnectionResult<()> {
+        self.recover().await
+    }
+    async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
+        self.list().await
+    }
+    async fn status(&self, id: Uuid) -> ConnectionResult<()> {
+        self.status(id).await
+    }
+    async fn save(
+        &self,
+        id: Option<Uuid>,
+        settings: ConnectionSettings,
+        secret: Option<Secret>,
+        mode: SecretMode,
+    ) -> ConnectionResult<ConnectionRecord> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.write_connection(id, settings, secret, mode).await
+        })
+        .await
+    }
+    async fn select_model(&self, id: Uuid, model: String) -> ConnectionResult<ModelSelection> {
+        self.select_model(id, model).await
+    }
+    async fn revoke(&self, id: Uuid) -> ConnectionResult<()> {
+        self.revoke(id).await
+    }
+}
+
+/// Publish management independently from the optional UI service.
+pub struct ConnectionsPlugin(pub Arc<ConnectionManager>);
+struct ManagerLease(Arc<ConnectionManager>);
+impl Drop for ManagerLease {
+    fn drop(&mut self) {
+        let lifecycle = self
+            .0
+            .access
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.0
+            .access
+            .invalidate_all(self.0.providers.as_ref(), self.0.owner);
+        let _ = self.0.access.epoch.compare_exchange(
+            self.0.owner,
+            self.0.owner + 1,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        self.0.retired.cancel();
+        drop(lifecycle);
+    }
+}
+#[async_trait]
+impl huginn_core::kernel::Plugin for ConnectionsPlugin {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: "builtin.providers.connections".into(),
+            provides: vec![connections_id()],
+            requires: vec![
+                crate::providers::providers_id(),
+                crate::providers::catalog_id(),
+            ],
         }
+    }
+    async fn activate(
+        &mut self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+    ) -> huginn_core::Result<()> {
+        ctx.resolve::<ProvidersService>(&crate::providers::providers_id())?;
+        ctx.resolve::<ProviderCatalogService>(&crate::providers::catalog_id())?;
+        ctx.own_resource(ManagerLease(self.0.clone()));
+        ctx.provide(connections_id(), ConnectionsService(self.0.clone()))
     }
 }

@@ -163,6 +163,78 @@ impl Plugin for LongDialogPlugin {
 }
 /// Test-only recovered panic through the normal command-dispatch path.
 struct BoomPlugin;
+struct SecretFormPlugin;
+#[async_trait]
+impl Plugin for SecretFormPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.secret-form".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        use huginn_plugin_api::v1::{Field, FieldKind, Workflow};
+        let cancellation = ctx.cancellation.clone();
+        ctx.resolve::<UiService>(&contributions_id())?
+            .0
+            .clone()
+            .register(
+                ctx,
+                "fixture.secret-form".into(),
+                Contribution::Command {
+                    name: "/secret-form".into(),
+                    handler: Arc::new(move |_| {
+                        let cancellation = cancellation.clone();
+                        Ok(CommandResult::Workflow(Workflow::new(
+                            "Secret form fixture",
+                            "Host-owned input",
+                            vec![
+                                Field {
+                                    id: "key".into(),
+                                    label: "Credential".into(),
+                                    kind: FieldKind::Secret,
+                                    initial: String::new(),
+                                },
+                                Field {
+                                    id: "mode".into(),
+                                    label: "Mode".into(),
+                                    kind: FieldKind::Choice(vec![
+                                        "wait".into(),
+                                        "fail".into(),
+                                        "panic".into(),
+                                        "invalidate".into(),
+                                    ]),
+                                    initial: String::new(),
+                                },
+                            ],
+                            Arc::new(move |input, _| {
+                                let cancellation = cancellation.clone();
+                                Box::pin(async move {
+                                    let secret = input.secrets.get("key").unwrap();
+                                    match input.public["mode"].as_str() {
+                                        "1" => {
+                                            return Err(huginn_core::AgentError::Composition(
+                                                "secret redacted".into(),
+                                            ))
+                                        }
+                                        "2" => panic!("secret redacted"),
+                                        "3" => {
+                                            cancellation.cancel();
+                                            std::future::pending::<()>().await;
+                                        }
+                                        _ => std::future::pending::<()>().await,
+                                    }
+                                    Ok(CommandResult::Notice(View::text("unexpected completion")))
+                                })
+                            }),
+                        )?))
+                    }),
+                },
+            )?;
+        Ok(())
+    }
+}
 #[async_trait]
 impl Plugin for BoomPlugin {
     fn manifest(&self) -> Manifest {
@@ -220,10 +292,29 @@ async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("panic-after-callback") {
         supervisor.register(Box::new(BoomPlugin))?;
     }
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("secret-form" | "secret-unload" | "secret-refresh")
+    ) {
+        supervisor.register(Box::new(SecretFormPlugin))?;
+    }
     supervisor.start().await?;
     let mut session = Session::new(".".into());
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
     let connection = presentation.0.open(&session).await?;
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("secret-unload" | "secret-refresh")
+    ) {
+        while !std::path::Path::new("invalidate-secret").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        supervisor.remove("fixture.secret-form").await?;
+        if std::env::args().nth(1).as_deref() == Some("secret-refresh") {
+            supervisor.register(Box::new(SecretFormPlugin))?;
+            supervisor.start().await?;
+        }
+    }
     if matches!(
         std::env::args().nth(1).as_deref(),
         Some("replace" | "replace-approval")

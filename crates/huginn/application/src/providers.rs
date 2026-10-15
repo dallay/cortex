@@ -19,6 +19,7 @@ pub fn catalog_id() -> ServiceId {
 }
 
 struct AdapterEntry {
+    credential_backed: bool,
     registration: ProviderRegistration,
     descriptor: ProviderDescriptor,
     implementation: Arc<dyn ProviderAdapter>,
@@ -254,6 +255,14 @@ impl Providers {
         ctx: &mut PluginContext,
         adapter: Arc<dyn ProviderAdapter>,
     ) -> Result<ProviderRegistration> {
+        self.stage_adapter(ctx, adapter, true)
+    }
+    fn stage_adapter(
+        &self,
+        ctx: &mut PluginContext,
+        adapter: Arc<dyn ProviderAdapter>,
+        credential_backed: bool,
+    ) -> Result<ProviderRegistration> {
         // Core activation may stage its legacy adapter before its own publication.
         if self.cancellation.is_cancelled() {
             return Err(ProviderError::Revoked.into());
@@ -280,6 +289,7 @@ impl Providers {
         }
         let registration = ProviderRegistration::new(descriptor.id.clone(), ctx.generation());
         let entry = Arc::new(AdapterEntry {
+            credential_backed,
             registration: registration.clone(),
             descriptor,
             implementation: adapter,
@@ -478,8 +488,11 @@ impl ModelProvider for ModelRouter {
             _ = connection.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
             _ = connection.adapter.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
             result = async {
-                if let Some(credentials) = &self.0.credentials {
-                    let material = credentials.resolve(&selection.connection, lifetime.token.clone()).await?;
+                if let Some(credentials) = self.0.credentials.as_ref().filter(|_| connection.adapter.credential_backed) {
+                    let mut material = credentials.resolve(&selection.connection, lifetime.token.clone()).await?;
+                    // Preferences may change while this factory awaits credential I/O.
+                    // Only the turn snapshot chooses its model, never newer metadata.
+                    material.settings.model.clone_from(&selection.model);
                     connection.adapter.implementation.create_connection_model(&selection, material, lifetime.token.clone()).await
                 } else {
                     connection.adapter.implementation.create_model(&selection, lifetime.token.clone()).await
@@ -568,6 +581,15 @@ impl ProvidersPlugin {
             credentials: Some(credentials),
         }
     }
+    pub fn with_credentials_and_legacy(
+        credentials: Arc<dyn huginn_core::connections::ConnectionCredentials>,
+        model: Arc<dyn ModelProvider>,
+    ) -> Self {
+        Self {
+            legacy: Some(model),
+            credentials: Some(credentials),
+        }
+    }
 }
 struct LegacyAdapter(Arc<dyn ModelProvider>);
 #[async_trait]
@@ -614,7 +636,7 @@ impl Plugin for ProvidersPlugin {
         ctx.own_resource(CoreLease(providers.state.clone()));
         if let Some(model) = self.legacy.as_ref().filter(|model| model.is_configured()) {
             let handle =
-                providers.stage_registration(ctx, Arc::new(LegacyAdapter(model.clone())))?;
+                providers.stage_adapter(ctx, Arc::new(LegacyAdapter(model.clone())), false)?;
             let mut state = providers.lock()?;
             let adapter = state.adapters[&handle.provider].clone();
             let identity = Providers::connect(&mut state, "legacy".into(), adapter)?;

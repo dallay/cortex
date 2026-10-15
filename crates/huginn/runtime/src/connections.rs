@@ -42,6 +42,58 @@ impl SecretStore for EphemeralSecrets {
 }
 
 pub struct OsSecrets;
+
+/// Each record chooses its backend explicitly. Secure failures never fall back.
+#[derive(Default)]
+pub struct HostSecrets {
+    ephemeral: EphemeralSecrets,
+}
+#[async_trait]
+impl SecretStore for HostSecrets {
+    fn mode(&self) -> SecretMode {
+        SecretMode::Secure
+    }
+    async fn read(&self, reference: &SecretReference) -> ConnectionResult<Secret> {
+        OsSecrets.read(reference).await
+    }
+    async fn write(&self, reference: &SecretReference, secret: &Secret) -> ConnectionResult<()> {
+        OsSecrets.write(reference, secret).await
+    }
+    async fn delete(&self, reference: &SecretReference) -> ConnectionResult<()> {
+        OsSecrets.delete(reference).await
+    }
+    async fn read_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<Secret> {
+        match mode {
+            SecretMode::Secure => self.read(reference).await,
+            SecretMode::Ephemeral => self.ephemeral.read(reference).await,
+        }
+    }
+    async fn write_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+        secret: &Secret,
+    ) -> ConnectionResult<()> {
+        match mode {
+            SecretMode::Secure => self.write(reference, secret).await,
+            SecretMode::Ephemeral => self.ephemeral.write(reference, secret).await,
+        }
+    }
+    async fn delete_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<()> {
+        match mode {
+            SecretMode::Secure => self.delete(reference).await,
+            SecretMode::Ephemeral => self.ephemeral.delete(reference).await,
+        }
+    }
+}
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn os_operation() -> tokio::sync::OwnedMutexGuard<()> {
     static SERIAL: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> = std::sync::OnceLock::new();
@@ -156,10 +208,21 @@ impl SecretStore for OsSecrets {
 pub struct SqliteConnections {
     db: Arc<Mutex<rusqlite::Connection>>,
     operation: Arc<tokio::sync::Mutex<()>>,
-    lease: Arc<std::fs::File>,
+    lease: Arc<ConnectionLease>,
     #[cfg(all(feature = "test-hooks", debug_assertions))]
     probe: Arc<test_hooks::WorkerProbe>,
 }
+
+struct ConnectionLease(std::fs::File);
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        // A concurrent fork can retain the descriptor until exec. Explicitly
+        // unlock when the last store/worker owner drops so the child cannot
+        // extend the lease, while pending workers still retain ownership.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
 impl SqliteConnections {
     pub fn open(path: &Path) -> ConnectionResult<Self> {
         use fs2::FileExt;
@@ -180,6 +243,7 @@ impl SqliteConnections {
         lease
             .try_lock_exclusive()
             .map_err(|_| ConnectionError::Conflict)?;
+        let lease = ConnectionLease(lease);
         // Create with restrictive permissions before SQLite opens it.
         options.open(path).map_err(|_| ConnectionError::Metadata)?;
         let db = rusqlite::Connection::open(path).map_err(|_| ConnectionError::Metadata)?;

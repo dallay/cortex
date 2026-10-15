@@ -175,6 +175,69 @@ pub trait SecretStore: Send + Sync {
     async fn write(&self, reference: &SecretReference, secret: &Secret) -> ConnectionResult<()>;
     /// Idempotent: missing entries count as successfully deleted.
     async fn delete(&self, reference: &SecretReference) -> ConnectionResult<()>;
+    /// Explicit backend routing; never silently downgrade secure credentials.
+    async fn read_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<Secret> {
+        if mode != self.mode() {
+            return Err(ConnectionError::MissingSecret);
+        }
+        self.read(reference).await
+    }
+    async fn write_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+        secret: &Secret,
+    ) -> ConnectionResult<()> {
+        if mode != self.mode() {
+            return Err(ConnectionError::BackendUnavailable);
+        }
+        self.write(reference, secret).await
+    }
+    async fn delete_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<()> {
+        if mode != self.mode() {
+            return if mode == SecretMode::Ephemeral {
+                Ok(())
+            } else {
+                Err(ConnectionError::BackendUnavailable)
+            };
+        }
+        self.delete(reference).await
+    }
+}
+
+/// Headless management port, also consumed by optional declarative UI authors.
+#[async_trait]
+pub trait ConnectionManagement: Send + Sync {
+    /// Recover uncertain metadata writes from authoritative storage on the same owner.
+    /// A healthy manager is unchanged; failed recovery must remain fail-closed.
+    async fn recover(&self) -> ConnectionResult<()>;
+    async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>>;
+    async fn status(&self, id: uuid::Uuid) -> ConnectionResult<()>;
+    async fn save(
+        &self,
+        id: Option<uuid::Uuid>,
+        settings: ConnectionSettings,
+        secret: Option<Secret>,
+        mode: SecretMode,
+    ) -> ConnectionResult<ConnectionRecord>;
+    async fn select_model(
+        &self,
+        id: uuid::Uuid,
+        model: String,
+    ) -> ConnectionResult<crate::providers::ModelSelection>;
+    async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()>;
+}
+pub struct ConnectionsService(pub std::sync::Arc<dyn ConnectionManagement>);
+pub fn connections_id() -> crate::kernel::ServiceId {
+    crate::kernel::ServiceId::new("agent:connections", 1)
 }
 #[async_trait]
 pub trait ConnectionStore: Send + Sync {

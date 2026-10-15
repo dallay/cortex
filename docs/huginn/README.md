@@ -18,6 +18,11 @@ From the checkout, use `just huginn-run` or `cargo run -p huginn --` followed
 by the same arguments. `mock` is an offline diagnostic provider with a
 read-only `list files` example; it does not perform real coding reasoning.
 
+En la TUI, usa `/login`, `/providers`, `/model` y `/logout` para
+[gestionar conexiones con formularios secretos del host](providers-ui.md),
+sin editar configuración ni reiniciar. La verificación de esta UI usa dobles;
+no acredita aceptación de proveedores reales ni onboarding.
+
 For a model, set `HUGINN_BASE_URL` (including `/v1`), `HUGINN_MODEL`, and
 `HUGINN_API_KEY` in the invoking shell, then run:
 
@@ -56,12 +61,12 @@ emits machine-readable events instead.
 - Approvals and dialogs take priority over suggestions. Completing text
   never grants permissions; a revoked plugin selection never runs its replacement.
 
-`doctor` validates configuration and reports services without contacting the
-model or launching MCP. `huginn doctor` succeeds without model settings or
-credentials and reports `model_readiness: "unconfigured"`. Inference commands
-such as `run` and `resume --prompt` require a configured model and any credentials
-required by the provider. `--db` selects another session database; `--config`
-selects a TOML file.
+`doctor` valida configuración y muestra servicios sin contactar al modelo ni
+iniciar MCP. Sin configuración explícita ni selección persistida utilizable,
+informa `model_readiness: "unconfigured"`. Una selección recuperada solo indica
+preparación local: no verifica disponibilidad remota. `run` y `resume --prompt`
+necesitan un modelo y las credenciales que requiera el proveedor. `--db` elige
+otra base de sesiones; `--config` elige un archivo TOML.
 
 ## Configuration and permissions
 
@@ -81,10 +86,11 @@ HTTPS endpoints use validated certificates. Plain HTTP requires
 `allow_loopback_http = true` and a literal loopback IP (`127.0.0.1` or `[::1]`);
 private/LAN addresses and DNS names are not a local exception. Existing local
 HTTP configurations must explicitly enable this setting. Redirects are rejected.
-For the headless built-in adapters and the actually tested Ollama models, see
-[inference adapters and local verification](inference-adapters.md). Their
-connection catalog is not yet wired into the legacy CLI factory or Providers UI;
-that composition is a separate integration delivery.
+Para los adaptadores integrados y los modelos Ollama probados anteriormente,
+consulta [adaptadores y verificación local](inference-adapters.md). El
+catálogo remoto no se consulta desde los formularios: la UI admite un modelo
+candidato cuando no hay modelos estáticos. La aceptación automatizada del flujo
+completo con adaptadores reales sigue siendo una entrega de integración separada.
 
 Reads are limited to resolved paths within the workspace. Edits show their
 complete diff and require approval; changed files require a new diff.

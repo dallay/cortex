@@ -26,7 +26,9 @@ struct Metadata {
     fail: AtomicUsize,
     after: AtomicUsize,
     suspend: AtomicUsize,
+    suspend_at: AtomicUsize,
     entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
 }
 // Atomically fail exactly the Nth configured operation (for deterministic store failpoints).
 fn hit(counter: &AtomicUsize) -> bool {
@@ -45,10 +47,18 @@ impl ConnectionStore for Metadata {
         Ok(self.value.lock().unwrap().clone())
     }
     async fn save(&self, previous: u64, next: &ConnectionMetadata) -> ConnectionResult<()> {
-        let suspend = self.suspend.swap(0, Ordering::SeqCst);
+        let suspend = if self.suspend_at.load(Ordering::SeqCst) == 0 || hit(&self.suspend_at) {
+            self.suspend.swap(0, Ordering::SeqCst)
+        } else {
+            0
+        };
         if suspend == 1 {
             self.entered.notify_one();
             std::future::pending::<()>().await;
+        }
+        if suspend == 3 {
+            self.entered.notify_one();
+            self.release.notified().await;
         }
         if hit(&self.fail) {
             return Err(ConnectionError::Metadata);
@@ -77,6 +87,9 @@ struct Secrets {
     delete_error: Mutex<Option<ConnectionError>>,
     read_error: Mutex<Option<ConnectionError>>,
     read_fail: AtomicUsize,
+    read_suspend: AtomicUsize,
+    read_entered: tokio::sync::Notify,
+    read_release: tokio::sync::Notify,
     mode: SecretMode,
 }
 impl Secrets {
@@ -88,6 +101,9 @@ impl Secrets {
             delete_error: Mutex::new(None),
             read_error: Mutex::new(None),
             read_fail: AtomicUsize::new(0),
+            read_suspend: AtomicUsize::new(0),
+            read_entered: tokio::sync::Notify::new(),
+            read_release: tokio::sync::Notify::new(),
             mode,
         })
     }
@@ -98,6 +114,10 @@ impl SecretStore for Secrets {
         self.mode
     }
     async fn read(&self, reference: &SecretReference) -> ConnectionResult<Secret> {
+        if hit(&self.read_suspend) {
+            self.read_entered.notify_one();
+            self.read_release.notified().await;
+        }
         if hit(&self.read_fail) {
             return Err(ConnectionError::SecretStore);
         }
@@ -146,10 +166,16 @@ impl ProviderAdapter for CredentialAdapter {
         ProviderDescriptor {
             id: "secure".into(),
             display_name: "Secure double".into(),
-            models: vec![ModelDescriptor {
-                id: "alpha".into(),
-                supports_tools: true,
-            }],
+            models: vec![
+                ModelDescriptor {
+                    id: "alpha".into(),
+                    supports_tools: true,
+                },
+                ModelDescriptor {
+                    id: "beta".into(),
+                    supports_tools: true,
+                },
+            ],
             authentication: vec![AuthenticationMethod::ApiKey, AuthenticationMethod::None],
         }
     }
@@ -181,6 +207,42 @@ struct Harness {
     model: Arc<ModelService>,
     providers: Arc<ProvidersService>,
     seen: Arc<Mutex<Vec<String>>>,
+}
+struct PublicationFault {
+    inner: Arc<dyn ProviderManagement>,
+    mode: AtomicUsize,
+}
+#[async_trait]
+impl ProviderManagement for PublicationFault {
+    fn diagnostic(&self) -> huginn_core::Result<ProvidersDiagnostic> {
+        self.inner.diagnostic()
+    }
+    fn clear_selection(&self) -> huginn_core::Result<()> {
+        self.inner.clear_selection()
+    }
+    fn invalidate(&self, identity: &ConnectionIdentity) -> huginn_core::Result<()> {
+        self.inner.invalidate(identity)
+    }
+    async fn execute(
+        &self,
+        action: ProviderAction,
+        cancel: CancellationToken,
+    ) -> huginn_core::Result<ProviderActionOutput> {
+        let selected_identity = match &action {
+            ProviderAction::Select(selection) => Some(selection.connection.clone()),
+            _ => None,
+        };
+        let selecting = selected_identity.is_some();
+        let output = self.inner.execute(action, cancel).await?;
+        if selecting {
+            match self.mode.swap(0, Ordering::SeqCst) {
+                1 => return Err(ProviderError::Unavailable.into()),
+                2 => std::future::pending::<()>().await,
+                _ => {}
+            }
+        }
+        Ok(output)
+    }
 }
 async fn open(store: Arc<Metadata>, secrets: Arc<Secrets>) -> Harness {
     let access = ConnectionAccess::new(secrets);
@@ -240,6 +302,249 @@ const fn empty() -> ConnectionInputs {
         toml: None,
         environment: None,
     }
+}
+
+#[tokio::test]
+async fn unload_cancels_admitted_save_before_publication() {
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    h.supervisor
+        .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+    let service = h
+        .supervisor
+        .resolve::<ConnectionsService>(&connections_id())
+        .unwrap();
+    store.suspend.store(3, Ordering::SeqCst);
+    let mut saving = Box::pin(
+        service
+            .0
+            .save(None, settings(), secret("save"), SecretMode::Secure),
+    );
+    assert!(futures::poll!(saving.as_mut()).is_pending());
+    store.entered.notified().await;
+    h.supervisor
+        .remove("builtin.providers.connections")
+        .await
+        .unwrap();
+    store.release.notify_one();
+    assert_eq!(saving.await, Err(ConnectionError::Revoked));
+    let diagnostic = h.providers.0.diagnostic().unwrap();
+    assert!(diagnostic.connections.is_empty());
+    assert!(diagnostic.selection.is_none());
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn unload_cancels_admitted_select_before_publication() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store, secrets.clone()).await;
+    let record = h
+        .manager
+        .create(settings(), secret("select"))
+        .await
+        .unwrap();
+    h.supervisor
+        .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+    secrets.read_suspend.store(1, Ordering::SeqCst);
+    let mut selecting = Box::pin(h.manager.select(record.id));
+    assert!(futures::poll!(selecting.as_mut()).is_pending());
+    secrets.read_entered.notified().await;
+    h.supervisor
+        .remove("builtin.providers.connections")
+        .await
+        .unwrap();
+    secrets.read_release.notify_one();
+    assert_eq!(selecting.await, Err(ConnectionError::Revoked));
+    let diagnostic = h.providers.0.diagnostic().unwrap();
+    assert!(diagnostic.connections.is_empty());
+    assert!(diagnostic.selection.is_none());
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn unload_cancels_admitted_recovery_before_publication() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let record = h
+        .manager
+        .create(settings(), secret("recover"))
+        .await
+        .unwrap();
+    store.after.store(1, Ordering::SeqCst);
+    assert_eq!(
+        h.manager.select(record.id).await,
+        Err(ConnectionError::Metadata)
+    );
+    h.supervisor
+        .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+    secrets.read_suspend.store(1, Ordering::SeqCst);
+    let mut recovering = Box::pin(h.manager.recover());
+    assert!(futures::poll!(recovering.as_mut()).is_pending());
+    secrets.read_entered.notified().await;
+    h.supervisor
+        .remove("builtin.providers.connections")
+        .await
+        .unwrap();
+    secrets.read_release.notify_one();
+    assert_eq!(recovering.await, Err(ConnectionError::Revoked));
+    let diagnostic = h.providers.0.diagnostic().unwrap();
+    assert!(diagnostic.connections.is_empty());
+    assert!(diagnostic.selection.is_none());
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn unload_wakes_suspended_operation_without_waiting_for_store() {
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    h.supervisor
+        .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+    store.suspend.store(3, Ordering::SeqCst);
+    let saving = h.manager.create(settings(), secret("save"));
+    let unloading = async {
+        store.entered.notified().await;
+        h.supervisor
+            .remove("builtin.providers.connections")
+            .await
+            .unwrap();
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(saving, unloading)
+    })
+    .await
+    .expect("unload must wake cancellation without a store response");
+    assert_eq!(result, Err(ConnectionError::Revoked));
+    assert!(h.providers.0.diagnostic().unwrap().connections.is_empty());
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn unloading_old_lease_preserves_replacement_manager_selection() {
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    let record = h
+        .manager
+        .create(settings(), secret("replacement"))
+        .await
+        .unwrap();
+    h.supervisor
+        .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+    let replacement = reopen(&h, store).await.unwrap();
+    let selected = replacement.select(record.id).await.unwrap();
+    h.supervisor
+        .remove("builtin.providers.connections")
+        .await
+        .unwrap();
+    assert_eq!(
+        h.providers.0.diagnostic().unwrap().selection,
+        Some(selected.clone())
+    );
+    h.access
+        .resolve(&selected.connection, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(replacement.select(record.id).await.unwrap(), selected);
+    assert_eq!(text(h.model.0.as_ref()).await.unwrap(), "response");
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn durable_model_choice_preserves_pinned_authorization_and_secret_revision() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let record = h
+        .manager
+        .create(settings(), secret(SENTINEL))
+        .await
+        .unwrap();
+    let initial = h.manager.select(record.id).await.unwrap();
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    let selected = h
+        .manager
+        .select_model(record.id, "beta".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        selected.connection, initial.connection,
+        "model preference must not rotate authorization"
+    );
+    let records = h.manager.list().await.unwrap();
+    assert_eq!(records[0].revision, record.revision);
+    assert_eq!(records[0].secret, record.secret);
+    assert_eq!(records[0].settings.model, "beta");
+    assert!(h
+        .manager
+        .select_model(record.id, "unknown".into())
+        .await
+        .is_err());
+    assert_eq!(
+        h.providers.0.diagnostic().unwrap().selection.unwrap().model,
+        "beta"
+    );
+    let request = huginn_core::ModelRequest {
+        messages: vec![],
+        tools: vec![],
+        max_tokens: 32,
+    };
+    assert!(pinned
+        .stream(request.clone(), CancellationToken::new())
+        .await
+        .is_ok());
+    // The adapter checks that factory material and the snapshot model agree.
+    assert!(h.model.0.pin_turn(CancellationToken::new()).await.is_ok());
+    h.manager.revoke(record.id).await.unwrap();
+    assert!(pinned
+        .stream(request, CancellationToken::new())
+        .await
+        .is_err());
+    h.supervisor.shutdown().await;
+    let h = open(store, secrets).await;
+    assert!(
+        !h.model.0.is_configured(),
+        "revocation must survive restart"
+    );
+}
+
+#[tokio::test]
+async fn restart_recovers_model_preference_without_rotating_credentials() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let record = h
+        .manager
+        .create(settings(), secret(SENTINEL))
+        .await
+        .unwrap();
+    h.manager
+        .select_model(record.id, "beta".into())
+        .await
+        .unwrap();
+    h.supervisor.shutdown().await;
+    let h = open(store, secrets).await;
+    assert_eq!(
+        h.providers.0.diagnostic().unwrap().selection.unwrap().model,
+        "beta"
+    );
+    assert!(h.model.0.pin_turn(CancellationToken::new()).await.is_ok());
 }
 
 #[tokio::test]
@@ -541,6 +846,245 @@ async fn precedence_never_fills_an_invalid_explicit_connection() {
 }
 
 #[tokio::test]
+async fn model_selection_second_secret_failure_is_recoverable_without_revoking_pins() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let record = h.manager.create(settings(), secret("a")).await.unwrap();
+    let initial = h.manager.select(record.id).await.unwrap();
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    secrets.read_fail.store(2, Ordering::SeqCst);
+    assert_eq!(
+        h.manager.select_model(record.id, "beta".into()).await,
+        Err(ConnectionError::SecretStore)
+    );
+    assert_eq!(
+        store.load().await.unwrap().connections[&record.id]
+            .settings
+            .model,
+        "beta"
+    );
+    assert!(
+        text(h.model.0.as_ref()).await.is_err(),
+        "stale alpha must not admit new turns"
+    );
+    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+    assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    h.manager.recover().await.unwrap();
+    let selected = h.providers.0.diagnostic().unwrap().selection.unwrap();
+    assert_eq!(selected.model, "beta");
+    assert_eq!(selected.connection, initial.connection);
+    assert_eq!(h.manager.list().await.unwrap()[0].settings.model, "beta");
+    assert_eq!(text(h.model.0.as_ref()).await.unwrap(), "response");
+    assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelled_model_selection_during_save_preserves_pins_and_recovers() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets).await;
+    let record = h.manager.create(settings(), secret("a")).await.unwrap();
+    h.manager.select(record.id).await.unwrap();
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+
+    store.suspend.store(1, Ordering::SeqCst);
+    let manager = h.manager.clone();
+    let task = tokio::spawn(async move { manager.select_model(record.id, "beta".into()).await });
+    store.entered.notified().await;
+    assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+
+    // Cancellation during durable save must not revoke a turn pinned before
+    // the preference change, and recovery must reconcile the authoritative row.
+    assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    h.manager.recover().await.unwrap();
+    assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    assert_eq!(text(h.model.0.as_ref()).await.unwrap(), "response");
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn dropped_model_selection_second_read_preserves_pins_and_recovers() {
+    for abort in [false, true] {
+        let store = Arc::new(Metadata::default());
+        let secrets = Secrets::new(SecretMode::Secure);
+        let mut h = open(store.clone(), secrets.clone()).await;
+        let record = h.manager.create(settings(), secret("a")).await.unwrap();
+        let initial = h.manager.select(record.id).await.unwrap();
+        let pinned = h
+            .model
+            .0
+            .pin_turn(CancellationToken::new())
+            .await
+            .unwrap()
+            .unwrap();
+        secrets.read_suspend.store(2, Ordering::SeqCst);
+        if abort {
+            let manager = h.manager.clone();
+            let task =
+                tokio::spawn(async move { manager.select_model(record.id, "beta".into()).await });
+            secrets.read_entered.notified().await;
+            assert_eq!(
+                store.load().await.unwrap().connections[&record.id]
+                    .settings
+                    .model,
+                "beta"
+            );
+            assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        } else {
+            let mut selecting = Box::pin(h.manager.select_model(record.id, "beta".into()));
+            assert!(futures::poll!(selecting.as_mut()).is_pending());
+            assert_eq!(
+                store.load().await.unwrap().connections[&record.id]
+                    .settings
+                    .model,
+                "beta"
+            );
+            assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+            drop(selecting);
+        }
+        assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+        assert!(text(h.model.0.as_ref()).await.is_err());
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+        // A dropped recovery remains pending and must not revoke the original pin.
+        secrets.read_suspend.store(1, Ordering::SeqCst);
+        let mut recovery = Box::pin(h.manager.recover());
+        assert!(futures::poll!(recovery.as_mut()).is_pending());
+        drop(recovery);
+        assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+        h.manager.recover().await.unwrap();
+        let selected = h.providers.0.diagnostic().unwrap().selection.unwrap();
+        assert_eq!(selected.model, "beta");
+        assert_eq!(selected.connection, initial.connection);
+        assert_eq!(text(h.model.0.as_ref()).await.unwrap(), "response");
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+        h.supervisor.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn retired_model_selection_cannot_publish_or_recover_after_second_read() {
+    for replacement in [false, true] {
+        let store = Arc::new(Metadata::default());
+        let secrets = Secrets::new(SecretMode::Secure);
+        let mut h = open(store.clone(), secrets.clone()).await;
+        let record = h.manager.create(settings(), secret("a")).await.unwrap();
+        h.manager.select(record.id).await.unwrap();
+        h.supervisor
+            .register(Box::new(ConnectionsPlugin(h.manager.clone())))
+            .unwrap();
+        h.supervisor.start().await.unwrap();
+        secrets.read_suspend.store(2, Ordering::SeqCst);
+        let mut selecting = Box::pin(h.manager.select_model(record.id, "beta".into()));
+        assert!(futures::poll!(selecting.as_mut()).is_pending());
+        h.supervisor
+            .remove("builtin.providers.connections")
+            .await
+            .unwrap();
+        secrets.read_release.notify_one();
+        assert_eq!(selecting.await, Err(ConnectionError::Revoked));
+        let current = if replacement {
+            let manager = reopen(&h, store.clone()).await.unwrap();
+            Some(
+                manager
+                    .select_model(record.id, "alpha".into())
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        assert_eq!(h.manager.recover().await, Err(ConnectionError::Revoked));
+        assert_eq!(h.providers.0.diagnostic().unwrap().selection, current);
+        assert_eq!(
+            store.load().await.unwrap().connections[&record.id]
+                .settings
+                .model,
+            if replacement { "alpha" } else { "beta" }
+        );
+        h.supervisor.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn failed_or_dropped_model_publication_closes_admission_and_retries() {
+    for mode in [1, 2] {
+        let store = Arc::new(Metadata::default());
+        let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+        let faults = Arc::new(PublicationFault {
+            inner: h.providers.0.clone(),
+            mode: AtomicUsize::new(0),
+        });
+        h.manager = Arc::new(
+            ConnectionManager::open(
+                store.clone(),
+                h.access.clone(),
+                faults.clone(),
+                h.supervisor
+                    .resolve::<ProviderCatalogService>(&catalog_id())
+                    .unwrap()
+                    .0
+                    .clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let record = h.manager.create(settings(), secret("a")).await.unwrap();
+        let initial = h.manager.select(record.id).await.unwrap();
+        let pinned = h
+            .model
+            .0
+            .pin_turn(CancellationToken::new())
+            .await
+            .unwrap()
+            .unwrap();
+        faults.mode.store(mode, Ordering::SeqCst);
+        let mut selecting = Box::pin(h.manager.select_model(record.id, "beta".into()));
+        if mode == 1 {
+            assert_eq!(selecting.await, Err(ConnectionError::InvalidSelection));
+        } else {
+            assert!(futures::poll!(selecting.as_mut()).is_pending());
+            drop(selecting);
+        }
+        assert_eq!(
+            store.load().await.unwrap().connections[&record.id]
+                .settings
+                .model,
+            "beta"
+        );
+        assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+        assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+        assert!(text(h.model.0.as_ref()).await.is_err());
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+        h.manager.recover().await.unwrap();
+        let selected = h.providers.0.diagnostic().unwrap().selection.unwrap();
+        assert_eq!(selected.model, "beta");
+        assert_eq!(selected.connection, initial.connection);
+        assert_eq!(text(h.model.0.as_ref()).await.unwrap(), "response");
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+        h.supervisor.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn selection_second_secret_read_failure_closes_new_admission_only() {
     let store = Arc::new(Metadata::default());
     let secrets = Secrets::new(SecretMode::Secure);
@@ -560,6 +1104,193 @@ async fn selection_second_secret_read_failure_closes_new_admission_only() {
     assert_eq!(store.load().await.unwrap().selected, Some(b.id));
     assert!(text(h.model.0.as_ref()).await.is_err());
     assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelled_mutation_recovers_authoritative_state_on_same_manager() {
+    for suspend in [1, 2] {
+        cancelled_mutation_scenarios_for_suspend(suspend).await;
+    }
+}
+
+async fn cancelled_mutation_scenarios_for_suspend(suspend: usize) {
+    for updating in [false, true] {
+        for step in 1..=if updating { 2 } else { 1 } {
+            for abort in [false, true] {
+                cancelled_mutation_scenario(suspend, updating, step, abort).await;
+            }
+        }
+    }
+}
+
+async fn cancelled_mutation_scenario(suspend: usize, updating: bool, step: usize, abort: bool) {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let a = h.manager.create(settings(), secret("a")).await.unwrap();
+    let b = h.manager.create(settings(), secret("b")).await.unwrap();
+    let initial = h.manager.select(a.id).await.unwrap();
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    store.suspend.store(suspend, Ordering::SeqCst);
+    store.suspend_at.store(step, Ordering::SeqCst);
+    let manager = h.manager.clone();
+    let mutation = async move {
+        if updating {
+            manager
+                .update(a.id, settings(), secret("replacement"))
+                .await
+                .map(|_| ())
+        } else {
+            manager.select_model(b.id, "beta".into()).await.map(|_| ())
+        }
+    };
+    if abort {
+        let task = tokio::spawn(mutation);
+        store.entered.notified().await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    } else {
+        let mut mutation = Box::pin(mutation);
+        assert!(futures::poll!(mutation.as_mut()).is_pending());
+    }
+    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+    if !updating {
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    } else {
+        assert!(text(pinned.as_ref()).await.is_err());
+    }
+    assert!(text(h.model.0.as_ref()).await.is_err());
+    let durable = store.load().await.unwrap();
+    h.manager.recover().await.unwrap();
+    assert_eq!(
+        h.manager.list().await.unwrap(),
+        durable.connections.values().cloned().collect::<Vec<_>>()
+    );
+    assert_eq!(store.load().await.unwrap().selected, durable.selected);
+    let selected = h.providers.0.diagnostic().unwrap().selection;
+    assert_eq!(
+        selected.as_ref().map(|s| s.connection.id.clone()),
+        durable.selected.map(|id| id.to_string())
+    );
+    if let Some(selected) = selected {
+        if updating {
+            assert_ne!(selected.connection, initial.connection);
+        }
+        text(h.model.0.as_ref()).await.unwrap();
+    } else {
+        assert!(text(h.model.0.as_ref()).await.is_err());
+    }
+    if updating {
+        assert!(h
+            .access
+            .resolve(&initial.connection, CancellationToken::new())
+            .await
+            .is_err());
+        assert!(text(pinned.as_ref()).await.is_err());
+    } else {
+        assert!(h
+            .access
+            .resolve(&initial.connection, CancellationToken::new())
+            .await
+            .is_ok());
+        assert_eq!(text(pinned.as_ref()).await.unwrap(), "response");
+    }
+    assert!(store.load().await.unwrap().cleanup.is_empty());
+    assert_eq!(
+        secrets.value.lock().unwrap().len(),
+        durable.connections.len()
+    );
+    h.manager.select(b.id).await.unwrap();
+    let current = h.providers.0.diagnostic().unwrap().selection.unwrap();
+    // Healthy recovery is idempotent, including runtime authorization.
+    h.manager.recover().await.unwrap();
+    assert_eq!(
+        h.providers.0.diagnostic().unwrap().selection.unwrap(),
+        current
+    );
+    h.manager.create(settings(), secret("new")).await.unwrap();
+    assert_eq!(
+        h.manager.list().await.unwrap().len(),
+        durable.connections.len() + 1
+    );
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelled_recovery_is_serialized_fail_closed_and_retryable() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let a = h.manager.create(settings(), secret("a")).await.unwrap();
+    let b = h.manager.create(settings(), secret("b")).await.unwrap();
+    let initial = h.manager.select(a.id).await.unwrap();
+    store.suspend.store(2, Ordering::SeqCst);
+    let mut update = Box::pin(h.manager.update(a.id, settings(), secret("replacement")));
+    assert!(futures::poll!(update.as_mut()).is_pending());
+    drop(update);
+    // Recovery cleanup has its own uncertain metadata write. A second recovery
+    // cannot race it, and dropping the first must not publish a healthy state.
+    store.suspend.store(2, Ordering::SeqCst);
+    let mut recovery = Box::pin(h.manager.recover());
+    assert!(futures::poll!(recovery.as_mut()).is_pending());
+    let mut retry = Box::pin(h.manager.recover());
+    assert!(futures::poll!(retry.as_mut()).is_pending());
+    drop(recovery);
+    drop(retry); // Remove the queued lock waiter before checking the failed state.
+    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+    assert!(text(h.model.0.as_ref()).await.is_err());
+    h.manager.recover().await.unwrap();
+    assert_eq!(h.manager.list().await.unwrap(), vec![b.clone()]);
+    assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+    assert!(store.load().await.unwrap().cleanup.is_empty());
+    assert_eq!(secrets.value.lock().unwrap().len(), 1);
+    assert!(h
+        .access
+        .resolve(&initial.connection, CancellationToken::new())
+        .await
+        .is_err());
+    h.manager.select(b.id).await.unwrap();
+    text(h.model.0.as_ref()).await.unwrap();
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_recovery_retires_partial_bindings_until_authoritative_retry() {
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let mut h = open(store.clone(), secrets.clone()).await;
+    let a = h.manager.create(settings(), secret("a")).await.unwrap();
+    h.manager.select(a.id).await.unwrap();
+    store.suspend.store(1, Ordering::SeqCst);
+    let mut selection = Box::pin(h.manager.select(a.id));
+    assert!(futures::poll!(selection.as_mut()).is_pending());
+    drop(selection);
+    store.value.lock().unwrap().selected = Some(uuid::Uuid::new_v4());
+    assert_eq!(
+        h.manager.recover().await,
+        Err(ConnectionError::InvalidSelection)
+    );
+    assert_eq!(h.manager.list().await, Err(ConnectionError::Metadata));
+    assert!(h.providers.0.diagnostic().unwrap().connections.is_empty());
+    assert!(text(h.model.0.as_ref()).await.is_err());
+    // Missing credentials must not cause recovery to select another connection.
+    store.value.lock().unwrap().selected = Some(a.id);
+    *secrets.read_error.lock().unwrap() = Some(ConnectionError::Locked);
+    h.manager.recover().await.unwrap();
+    assert_eq!(h.manager.list().await.unwrap(), vec![a.clone()]);
+    assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+    assert!(text(h.model.0.as_ref()).await.is_err());
+    assert_eq!(h.manager.status(a.id).await, Err(ConnectionError::Locked));
+    *secrets.read_error.lock().unwrap() = None;
+    h.manager.select(a.id).await.unwrap();
+    text(h.model.0.as_ref()).await.unwrap();
     h.supervisor.shutdown().await;
 }
 
@@ -950,6 +1681,7 @@ async fn healthy_reopen_retires_all_old_manager_operations() {
         Err(ConnectionError::Revoked)
     );
     assert_eq!(h.manager.list().await, Err(ConnectionError::Revoked));
+    assert_eq!(h.manager.recover().await, Err(ConnectionError::Revoked));
     assert_eq!(store.load().await.unwrap(), before);
     h.access
         .resolve(&selected.connection, CancellationToken::new())

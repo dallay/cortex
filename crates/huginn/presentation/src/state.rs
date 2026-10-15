@@ -144,6 +144,9 @@ pub struct UiState {
     pub status_error: bool,
     pub modal: Option<Modal>,
     pub plugin_dialog: Option<PluginDialog>,
+    pub workflow: Option<crate::workflow::HostWorkflow>,
+    /// Input lease changes whenever a host form gains or relinquishes focus.
+    pub workflow_focus: u64,
     pub widgets: Vec<(String, View)>,
     tool_names: BTreeMap<String, String>,
     pub busy: bool,
@@ -389,6 +392,7 @@ impl Ui {
                     self.notice(format!("Unavailable plugin dialog: {id}"));
                 }
             }
+            Ok(CommandResult::Workflow(workflow)) => self.open_workflow(workflow),
             Err(error) => self.notice(error.to_string()),
         }
         self.dirty.notify_one();
@@ -423,7 +427,7 @@ impl Ui {
             })
             .collect();
         let mut state = self.lock();
-        if state.modal.is_some() || state.plugin_dialog.is_some() {
+        if state.modal.is_some() || state.plugin_dialog.is_some() || state.workflow.is_some() {
             // Rendering/input already give modals priority. Preserve the
             // palette's generation and invalidation until the editor changes.
             return false;
@@ -496,6 +500,35 @@ impl Ui {
     }
     /// Tick-time refresh makes revocation remove transient views even when idle.
     pub fn refresh_contributions(&self) -> bool {
+        let mut workflow_result = None;
+        let mut workflow_changed = false;
+        {
+            let mut state = self.lock();
+            if let Some(workflow) = state.workflow.as_mut() {
+                if !workflow.workflow.is_active() || self.stop.is_cancelled() {
+                    state.workflow.take();
+                    state.workflow_focus = state.workflow_focus.wrapping_add(1);
+                    state.status = "UI action no longer available".into();
+                    workflow_changed = true;
+                } else if let Some(result) = workflow.completed() {
+                    workflow_result = Some(result);
+                    state.workflow.take();
+                    state.workflow_focus = state.workflow_focus.wrapping_add(1);
+                    workflow_changed = true;
+                }
+            }
+            drop(state);
+        }
+        if let Some(result) = workflow_result {
+            match result {
+                Ok(CommandResult::Workflow(workflow)) => self.open_workflow(workflow),
+                Ok(CommandResult::Notice(view)) => self.notice(view.plain_text()),
+                _ => self.notice(
+                    "UI action failed; retry or reopen management. Completion may be unknown."
+                        .into(),
+                ),
+            }
+        }
         let widgets = self.contributions.widgets();
         let mut state = self.lock();
         let expired = state
@@ -508,7 +541,51 @@ impl Ui {
         let changed = state.widgets != widgets;
         state.widgets = widgets;
         drop(state);
-        expired || changed
+        expired || changed || workflow_changed
+    }
+    fn open_workflow(&self, workflow: huginn_plugin_api::v1::Workflow) {
+        if !workflow.is_active() || self.stop.is_cancelled() {
+            return;
+        }
+        let mut state = self.lock();
+        if state.modal.is_some() {
+            return;
+        }
+        state.plugin_dialog.take();
+        let mut form = crate::workflow::HostWorkflow::new(workflow);
+        if form.workflow.fields().is_empty() {
+            form.submit();
+        }
+        state.workflow = Some(form);
+        state.workflow_focus = state.workflow_focus.wrapping_add(1);
+    }
+    pub fn submit_workflow(&self) -> bool {
+        self.lock()
+            .workflow
+            .as_mut()
+            .is_some_and(crate::workflow::HostWorkflow::submit)
+    }
+    pub fn cancel_workflow(&self) {
+        let cancelled = {
+            let mut state = self.lock();
+            let pending = state
+                .workflow
+                .as_ref()
+                .map(|workflow| workflow.is_pending());
+            if pending.is_some() {
+                state.workflow.take();
+                state.workflow_focus = state.workflow_focus.wrapping_add(1);
+            }
+            pending
+        };
+        match cancelled {
+            Some(true) => self.notice(
+                "Action cancelled locally. Remote or durable completion may be unknown; reopen the command to check.".into(),
+            ),
+            Some(false) => self.notice("Form discarded.".into()),
+            None => {}
+        }
+        self.dirty.notify_one();
     }
     pub fn choose_plugin_dialog(&self) {
         let dialog = self.lock().plugin_dialog.take();
@@ -536,6 +613,8 @@ impl Ui {
         }
         state.modal.take();
         state.plugin_dialog.take();
+        state.workflow.take();
+        state.workflow_focus = state.workflow_focus.wrapping_add(1);
         state.widgets.clear();
     }
 }
@@ -594,6 +673,8 @@ impl ApprovalPrompt for Ui {
             state.epoch += 1;
             let epoch = state.epoch;
             state.plugin_dialog.take();
+            state.workflow.take();
+            state.workflow_focus = state.workflow_focus.wrapping_add(1);
             state.modal = Some(Modal {
                 epoch,
                 number,

@@ -105,6 +105,54 @@ async fn metadata_restart_cas_lock_and_sentinel_absence() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+#[allow(unsafe_code)] // Only async-signal-safe libc calls in the forked child.
+fn dropped_metadata_store_releases_lease_while_forked_child_is_alive() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.db");
+    let store = SqliteConnections::open(&path).unwrap();
+    let (mut parent, child) = UnixStream::pair().unwrap();
+    let child_fd = child.as_raw_fd();
+    // Hold the inherited descriptor open to reproduce a concurrent command's
+    // fork-to-exec window without relying on subprocess scheduling.
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        let mut release = 0u8;
+        unsafe {
+            let received = libc::read(child_fd, std::ptr::addr_of_mut!(release).cast(), 1);
+            libc::_exit(if received == 1 && release == b'x' {
+                0
+            } else {
+                1
+            });
+        }
+    }
+    drop(child);
+    let parent_is_exclusive = matches!(
+        SqliteConnections::open(&path),
+        Err(ConnectionError::Conflict)
+    );
+    drop(store);
+    let reopened = SqliteConnections::open(&path);
+    // Reap the child before asserting so a regression cannot orphan it.
+    parent.write_all(b"x").unwrap();
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert_eq!(status, 0);
+    assert!(parent_is_exclusive, "live store still owns the lease");
+    let _store = reopened.expect("drop must release the metadata lease before child exits");
+    assert!(matches!(
+        SqliteConnections::open(&path),
+        Err(ConnectionError::Conflict)
+    ));
+}
+
 fn explicit(model: &str, env: &str) -> ConfiguredChoice {
     ConfiguredChoice::Explicit(ExplicitConnectionConfig {
         provider: "secure".into(),

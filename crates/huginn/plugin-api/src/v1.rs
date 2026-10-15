@@ -13,6 +13,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
+mod workflow;
+pub use workflow::{Field, FieldKind, FormInput, Workflow, WorkflowFuture, WorkflowHandler};
+
 pub fn contributions_id() -> ServiceId {
     ServiceId::new("agent:ui-contributions", 1)
 }
@@ -50,6 +53,8 @@ impl View {
 pub enum CommandResult {
     Notice(View),
     Dialog(String),
+    /// The host owns input, focus and execution; callbacks only describe work.
+    Workflow(Workflow),
 }
 pub struct ToolResult {
     pub tool: String,
@@ -191,6 +196,7 @@ impl Contribution {
 pub struct Registration {
     owner: Activation,
     revoked: CancellationToken,
+    lifecycle: CancellationToken,
 }
 impl Registration {
     pub fn is_active(&self) -> bool {
@@ -381,6 +387,7 @@ impl Contributions {
         let registration = Registration {
             owner: ctx.activation(),
             revoked: CancellationToken::new(),
+            lifecycle: ctx.cancellation.clone(),
         };
         entries.insert(
             id.clone(),
@@ -499,6 +506,9 @@ impl Command {
                 CommandResult::Notice(view) => Ok(CommandResult::Notice(view.checked()?)),
                 CommandResult::Dialog(id) if identifier(&id) => Ok(CommandResult::Dialog(id)),
                 CommandResult::Dialog(_) => Err(error("invalid dialog id")),
+                CommandResult::Workflow(workflow) => Ok(CommandResult::Workflow(
+                    workflow.bind(self.registration.clone())?,
+                )),
             })
     }
 }

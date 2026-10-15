@@ -15,8 +15,9 @@ use crossterm::{
 };
 use huginn_core::{AgentError, CancellationToken, Result, Session};
 use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Layout},
+    backend::{Backend, ClearType, CrosstermBackend, WindowSize},
+    buffer::Cell,
+    layout::{Constraint, Layout, Position, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
@@ -35,7 +36,101 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
-type Screen = Terminal<CrosstermBackend<std::io::Stdout>>;
+type Screen = Terminal<HostBackend>;
+
+/// Ratatui performs its stock initial cursor query. Subsequent inline resizes
+/// and clear() must not start a second input parser behind the host's back.
+struct HostBackend {
+    inner: CrosstermBackend<std::io::Stdout>,
+    cursor: Option<Position>,
+}
+
+impl Backend for HostBackend {
+    type Error = std::io::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        let cursor = &mut self.cursor;
+        self.inner.draw(content.inspect(|(x, y, cell)| {
+            let width = unicode_width::UnicodeWidthStr::width(cell.symbol());
+            *cursor = Some(Position::new(x.saturating_add(width as u16), *y));
+        }))
+    }
+    fn get_cursor_position(&mut self) -> std::io::Result<Position> {
+        if let Some(position) = self.cursor {
+            let size = self.inner.size()?;
+            return Ok(Position::new(
+                position.x.min(size.width.saturating_sub(1)),
+                position.y.min(size.height.saturating_sub(1)),
+            ));
+        }
+        let position = self.inner.get_cursor_position()?;
+        self.cursor = Some(position);
+        Ok(position)
+    }
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> std::io::Result<()> {
+        let position = position.into();
+        self.inner.set_cursor_position(position)?;
+        self.cursor = Some(position);
+        Ok(())
+    }
+    fn append_lines(&mut self, count: u16) -> std::io::Result<()> {
+        self.inner.append_lines(count)?;
+        if let Some(position) = self.cursor.as_mut() {
+            position.x = 0;
+            position.y = position
+                .y
+                .saturating_add(count)
+                .min(self.inner.size()?.height.saturating_sub(1));
+        }
+        Ok(())
+    }
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        self.inner.hide_cursor()
+    }
+    fn show_cursor(&mut self) -> std::io::Result<()> {
+        self.inner.show_cursor()
+    }
+    fn clear(&mut self) -> std::io::Result<()> {
+        self.inner.clear()
+    }
+    fn clear_region(&mut self, clear_type: ClearType) -> std::io::Result<()> {
+        self.inner.clear_region(clear_type)
+    }
+    fn size(&self) -> std::io::Result<Size> {
+        self.inner.size()
+    }
+    fn window_size(&mut self) -> std::io::Result<WindowSize> {
+        self.inner.window_size()
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Backend::flush(&mut self.inner)
+    }
+}
+
+impl Write for HostBackend {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Write::flush(&mut self.inner)
+    }
+}
+
+fn discard_input(mut event: Event) {
+    use zeroize::Zeroize;
+    match &mut event {
+        Event::Paste(text) => text.zeroize(),
+        Event::Key(key) => {
+            if let KeyCode::Char(ch) = &mut key.code {
+                ch.zeroize();
+            }
+        }
+        _ => {}
+    }
+}
 
 /// Constructed before raw mode: partial initialization is also covered by Drop.
 struct TerminalGuard {
@@ -76,6 +171,8 @@ impl TerminalGuard {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.active.swap(false, Ordering::SeqCst) {
+            #[cfg(unix)]
+            crate::input::revoke();
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
             let _ = disable_raw_mode();
             OWNER.store(false, Ordering::SeqCst);
@@ -89,7 +186,10 @@ impl Drop for TerminalGuard {
 }
 struct Driver {
     screen: Screen,
+    #[cfg(unix)]
+    input_generation: u64,
     model_configured: bool,
+    readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     guard: Arc<TerminalGuard>,
     ui: Arc<Ui>,
     _done: Completion,
@@ -122,6 +222,7 @@ pub struct Ratatui {
     pub lifecycle: CancellationToken,
     pub drivers: Arc<Mutex<Vec<(CancellationToken, CancellationToken)>>>,
     pub model_configured: bool,
+    pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -154,7 +255,10 @@ impl Presentation for Ratatui {
         enable_raw_mode()?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let screen = Terminal::with_options(
-            CrosstermBackend::new(std::io::stdout()),
+            HostBackend {
+                inner: CrosstermBackend::new(std::io::stdout()),
+                cursor: None,
+            },
             TerminalOptions {
                 viewport: Viewport::Inline(12.min(height - 1)),
             },
@@ -162,11 +266,16 @@ impl Presentation for Ratatui {
         let stop = CancellationToken::new();
         let (ui, prompts) = Ui::new(session, self.contributions.clone(), stop.clone());
         ui.start_file_index(session.workspace.clone());
-        if !self.model_configured {
-            ui.notice(
-                "No model configured. Configure a provider and restart Huginn to enable inference."
-                    .into(),
-            );
+        if !self
+            .readiness
+            .as_ref()
+            .map_or(self.model_configured, |ready| ready())
+        {
+            ui.notice(if self.contributions.command("/login").is_some() {
+                "No model configured. Use /login to connect a provider, then /model to select a model. No restart needed.".into()
+            } else {
+                "No model configured. Configure a provider and restart Huginn to enable inference.".into()
+            });
         }
         let done = CancellationToken::new();
         drivers.push((stop.clone(), done.clone()));
@@ -175,13 +284,16 @@ impl Presentation for Ratatui {
         let cleanup_guard = guard.clone();
         let mut driver = Driver {
             screen,
+            #[cfg(unix)]
+            input_generation: crate::input::begin(),
             guard,
             ui: ui.clone(),
             model_configured: self.model_configured,
+            readiness: self.readiness.clone(),
             _done: Completion(done),
         };
-        // The driver is the ONLY reader. Timed, nonblocking Crossterm polling
-        // avoids a competing EventStream thread during stock inline cursor queries.
+        // The driver is the ONLY reader, after stock inline cursor initialization.
+        // Unix framing stays in the host so unfinished pastes retain their lease.
         let lifecycle = self.lifecycle.clone();
         let task = tokio::spawn(async move { driver.run(prompts, lifecycle).await });
         Ok(Connection::new(
@@ -248,10 +360,56 @@ struct View {
     busy: bool,
     modal: Option<(String, u64, String, String, usize)>,
     plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
+    workflow: Option<(String, String, Vec<String>, usize, bool)>,
     widgets: String,
 }
+impl View {
+    fn snapshot(state: &crate::state::UiState) -> Self {
+        Self {
+            editor: state.editor.clone(),
+            completion: state.completion.clone(),
+            tail: state.tail.clone(),
+            status: state.status.clone(),
+            status_error: state.status_error,
+            busy: state.busy,
+            workflow: state
+                .workflow
+                .as_ref()
+                .map(crate::workflow::HostWorkflow::snapshot),
+            plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
+                (
+                    dialog.handle.title().into(),
+                    dialog.handle.body().into(),
+                    dialog.handle.choices().to_vec(),
+                    dialog.selected,
+                    dialog.body_scroll,
+                )
+            }),
+            widgets: state
+                .widgets
+                .iter()
+                .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            modal: state.modal.as_ref().map(|m| {
+                (
+                    approval_preview(&m.request.action, m.number, &m.request.preview),
+                    m.number,
+                    m.code.clone(),
+                    m.typed.clone(),
+                    m.scroll,
+                )
+            }),
+        }
+    }
+}
 impl Driver {
-    fn next_input(&self) -> Result<Option<Event>> {
+    fn model_configured(&self) -> bool {
+        self.readiness
+            .as_ref()
+            .map_or(self.model_configured, |ready| ready())
+    }
+    fn next_input(&self, focus: u64) -> Result<Option<Event>> {
         // Restoration/replacement and reads share the same lease boundary.
         // Aborting a task alone cannot revoke a currently executing poll/read.
         let _io = TERMINAL_IO
@@ -260,10 +418,18 @@ impl Driver {
         if !self.guard.active.load(Ordering::SeqCst) || self.ui.stop.is_cancelled() {
             return Ok(None);
         }
-        if crossterm::event::poll(Duration::ZERO)? {
-            Ok(Some(crossterm::event::read()?))
-        } else {
-            Ok(None)
+        #[cfg(unix)]
+        {
+            Ok(crate::input::next(self.input_generation, focus)?)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = focus;
+            if crossterm::event::poll(Duration::ZERO)? {
+                Ok(Some(crossterm::event::read()?))
+            } else {
+                Ok(None)
+            }
         }
     }
     fn draw(&mut self) -> Result<()> {
@@ -280,40 +446,25 @@ impl Driver {
         // 33 ms tick only bounds how often this runs, not the work per run.
         let (committed, view) = {
             let mut state = self.ui.lock();
-            let view = View {
-                editor: state.editor.clone(),
-                completion: state.completion.clone(),
-                tail: state.tail.clone(),
-                status: state.status.clone(),
-                status_error: state.status_error,
-                busy: state.busy,
-                plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
-                    (
-                        dialog.handle.title().into(),
-                        dialog.handle.body().into(),
-                        dialog.handle.choices().to_vec(),
-                        dialog.selected,
-                        dialog.body_scroll,
-                    )
-                }),
-                widgets: state
-                    .widgets
-                    .iter()
-                    .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
-                    .collect::<Vec<_>>()
-                    .join(" | "),
-                modal: state.modal.as_ref().map(|m| {
-                    (
-                        approval_preview(&m.request.action, m.number, &m.request.preview),
-                        m.number,
-                        m.code.clone(),
-                        m.typed.clone(),
-                        m.scroll,
-                    )
-                }),
-            };
-            (std::mem::take(&mut state.committed), view)
+            (std::mem::take(&mut state.committed), View::snapshot(&state))
         };
+        self.commit_messages(committed)?;
+        let last_scroll = self.draw_frame(&view)?;
+        self.update_modal_scroll(&view, last_scroll);
+        Ok(())
+    }
+
+    fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
+        if let Some((_, _, code, _, _)) = &view.modal {
+            if let Some(modal) = self.ui.lock().modal.as_mut() {
+                if &modal.code == code {
+                    modal.last_scroll = last_scroll;
+                }
+            }
+        }
+    }
+
+    fn commit_messages(&mut self, committed: Vec<String>) -> Result<()> {
         let width = self.screen.size()?.width;
         for block in committed {
             let lines = markdown(wrapped(&block, width));
@@ -325,6 +476,10 @@ impl Driver {
                 })?;
             }
         }
+        Ok(())
+    }
+
+    fn draw_frame(&mut self, view: &View) -> Result<usize> {
         let mut last_scroll = 0;
         self.screen.draw(|frame| {
             let area = frame.area();
@@ -354,6 +509,22 @@ impl Driver {
                     )),
                     footer,
                 );
+                return;
+            }
+            if let Some((title, body, fields, selected, pending)) = &view.workflow {
+                let [heading, content, footer] = Layout::vertical([
+                    Constraint::Length(2), Constraint::Min(1), Constraint::Length(2),
+                ]).areas(area);
+                frame.render_widget(Paragraph::new(safe(body)), heading);
+                let rows = usize::from(content.height.saturating_sub(2)).max(1);
+                let start = selected.saturating_sub(rows.saturating_sub(1));
+                let text = if *pending { "Waiting… Esc cancels locally; completion may be unknown".into() } else {
+                    fields.iter().enumerate().skip(start).take(rows)
+                        .map(|(i, field)| format!("{} {}", if i == *selected { ">" } else { " " }, safe(field)))
+                        .collect::<Vec<_>>().join("\n")
+                };
+                frame.render_widget(Paragraph::new(text).block(Block::bordered().title(safe(title))), content);
+                frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
                 return;
             }
             if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
@@ -466,15 +637,24 @@ impl Driver {
                 status,
             );
         })?;
-        if let Some((_, _, code, _, _)) = &view.modal {
-            if let Some(modal) = self.ui.lock().modal.as_mut() {
-                if &modal.code == code {
-                    modal.last_scroll = last_scroll;
-                }
+        Ok(last_scroll)
+    }
+    fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
+        let focus = self.ui.lock().workflow_focus;
+        // Discard queued keys/pastes before showing a new challenge. The
+        // unpredictable challenge additionally defeats late buffered input.
+        while let Some(event) = self.next_input(shown_focus)? {
+            discard_input(event);
+        }
+        self.draw()?;
+        if let Some(modal) = self.ui.lock().modal.as_mut() {
+            if modal.epoch == epoch {
+                modal.armed = true;
             }
         }
-        Ok(())
+        Ok(focus)
     }
+
     async fn run(
         &mut self,
         prompts: tokio::sync::mpsc::Sender<String>,
@@ -484,22 +664,12 @@ impl Driver {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = true;
         let mut shown_epoch = 0;
+        let mut shown_focus = 0;
+        let mut terminal_size = crossterm::terminal::size()?;
         loop {
             let epoch = self.ui.lock().modal.as_ref().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
-                // Discard queued keys/pastes before showing a new challenge. The
-                // unpredictable challenge additionally defeats late buffered input.
-                for _ in 0..256 {
-                    if self.next_input()?.is_none() {
-                        break;
-                    }
-                }
-                self.draw()?;
-                if let Some(modal) = self.ui.lock().modal.as_mut() {
-                    if modal.epoch == epoch {
-                        modal.armed = true;
-                    }
-                }
+                shown_focus = self.arm_modal(epoch, shown_focus)?;
                 shown_epoch = epoch;
                 dirty = false;
             }
@@ -508,22 +678,89 @@ impl Driver {
                 _ = self.ui.stop.cancelled() => return Ok(()),
                 _ = lifecycle.cancelled() => return Ok(()),
                 _ = tick.tick() => {
+                    // The host reader does not install Crossterm's SIGWINCH
+                    // event source. Size queries do not consume terminal input.
+                    let size = crossterm::terminal::size()?;
+                    dirty |= size != terminal_size;
+                    terminal_size = size;
                     dirty |= self.ui.refresh_contributions();
                     for _ in 0..256 {
-                        let Some(event) = self.next_input()? else { break; };
-                        self.input(event, &prompts);
+                        dirty |= self.ui.refresh_contributions();
+                        let focus = self.ui.lock().workflow_focus;
+                        if focus != shown_focus {
+                            // Read available bytes under the old lease; framing
+                            // retains that ownership even if the paste finishes
+                            // only after the next focus has been drawn.
+                            while let Some(event) = self.next_input(shown_focus)? {
+                                discard_input(event);
+                            }
+                            shown_focus = focus;
+                            self.draw()?;
+                            dirty = false;
+                            continue;
+                        }
+                        let Some(event) = self.next_input(shown_focus)? else { break; };
+                        self.input(event, &prompts, shown_focus);
                         dirty = true;
                     }
-                    dirty |= self.ui.refresh_completion(self.model_configured);
+                    #[cfg(unix)]
+                    if crate::input::take_overflow() {
+                        self.ui.notice("Paste exceeded the 64 KiB input limit and was discarded; finish the paste before retrying.".into());
+                        dirty = true;
+                    }
+                    dirty |= self.ui.refresh_completion(self.model_configured());
                     if dirty { self.draw()?; dirty = false; }
                 }
                 _ = self.ui.dirty.notified() => dirty = true,
             }
         }
     }
-    fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>) {
-        self.ui.refresh_completion(self.model_configured);
+    fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>, focus: u64) {
+        self.ui.refresh_completion(self.model_configured());
         let mut state = self.ui.lock();
+        if state.workflow_focus != focus {
+            discard_input(event);
+            return;
+        }
+        if state.modal.is_none() {
+            if let Some(form) = state.workflow.as_mut() {
+                match event {
+                    Event::Paste(mut text) => {
+                        form.insert(&text);
+                        use zeroize::Zeroize;
+                        text.zeroize();
+                    }
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('c')
+                                if key.code == KeyCode::Esc || ctrl =>
+                            {
+                                drop(state);
+                                self.ui.cancel_workflow();
+                            }
+                            KeyCode::Tab | KeyCode::Down => form.navigate(true),
+                            KeyCode::BackTab | KeyCode::Up => form.navigate(false),
+                            KeyCode::Left => form.choice(false),
+                            KeyCode::Right => form.choice(true),
+                            KeyCode::Backspace => form.backspace(),
+                            KeyCode::Char(ch) if !ctrl => {
+                                let mut bytes = [0; 4];
+                                form.insert(ch.encode_utf8(&mut bytes));
+                                use zeroize::Zeroize;
+                                bytes.zeroize();
+                            }
+                            KeyCode::Enter => {
+                                form.submit();
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+        }
         if let Event::Paste(text) = &event {
             if state.modal.is_none() && state.plugin_dialog.is_none() {
                 state.editor.insert(text);
