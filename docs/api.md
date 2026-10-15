@@ -42,9 +42,9 @@ OpenAI-compatible chat completions endpoint.
 
 | Field         | Type    | Required | Default | Description                            |
 |---------------|---------|----------|---------|----------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`)              |
+| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`) or virtual combo `rook/<alias>` (no `X-Rook-Combo` together: `400 ambiguous_route`) |
 | `messages`    | array   | Yes      | —       | Array of message objects               |
-| `stream`      | bool    | No       | `false` | Enable streaming (not yet implemented) |
+| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
 | `max_tokens`  | integer | No       | —       | Maximum tokens to generate             |
 | `temperature` | float   | No       | —       | Sampling temperature (0.0–2.0)         |
 | `n`           | integer | No       | `1`     | Ignored for now                        |
@@ -163,9 +163,9 @@ Anthropic-compatible messages endpoint.
 
 | Field         | Type    | Required | Default | Description                        |
 |---------------|---------|----------|---------|------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID                           |
+| `model`       | string  | Yes      | —       | Model ID or virtual combo `rook/<alias>` (unknown → `404 model_not_found`) |
 | `messages`    | array   | Yes      | —       | Array of message objects           |
-| `stream`      | bool    | No       | `false` | Enable streaming (not implemented) |
+| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
 | `max_tokens`  | integer | Yes      | —       | Must be >= 1                       |
 | `temperature` | float   | No       | —       | Sampling temperature               |
 
