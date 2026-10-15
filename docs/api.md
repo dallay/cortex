@@ -42,9 +42,9 @@ OpenAI-compatible chat completions endpoint.
 
 | Field         | Type    | Required | Default | Description                            |
 |---------------|---------|----------|---------|----------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`)              |
+| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`) or virtual combo `rook/<alias>` (no `X-Rook-Combo` together: `400 AMBIGUOUS_ROUTE`) |
 | `messages`    | array   | Yes      | —       | Array of message objects               |
-| `stream`      | bool    | No       | `false` | Enable streaming (not yet implemented) |
+| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
 | `max_tokens`  | integer | No       | —       | Maximum tokens to generate             |
 | `temperature` | float   | No       | —       | Sampling temperature (0.0–2.0)         |
 | `n`           | integer | No       | `1`     | Ignored for now                        |
@@ -124,6 +124,26 @@ Returns `Retry-After` header with retry delay in seconds.
 }
 ```
 
+### Routing errors — `POST /v1/chat/completions` wire shapes
+
+`combo_id_from_headers` failures return the generic `HttpError` shape
+(`{"error": "<message>", "code": "<CODE>"}`), not the OpenAI `error.type` shape:
+
+```json
+// 400 model 'rook/coding' + X-Rook-Combo together
+{"error": "model selects a virtual combo and X-Rook-Combo is also present; send only one (code: ambiguous_route)", "code": "AMBIGUOUS_ROUTE"}
+```
+
+Unknown virtual alias is resolution (usecase 404), and differs between
+non-streaming and streaming paths:
+
+```json
+// 404 non-streaming: OpenAI error shape, lowercase code
+{"error": {"type": "invalid_request_error", "code": "model_not_found", "message": "...", "param": "model"}}
+// 404 streaming: generic HttpError shape, uppercase code
+{"error": "...", "code": "MODEL_NOT_FOUND"}
+```
+
 ---
 
 ## GET /v1/models
@@ -163,9 +183,9 @@ Anthropic-compatible messages endpoint.
 
 | Field         | Type    | Required | Default | Description                        |
 |---------------|---------|----------|---------|------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID                           |
+| `model`       | string  | Yes      | —       | Model ID or virtual combo `rook/<alias>` (unknown → `404 model_not_found`) |
 | `messages`    | array   | Yes      | —       | Array of message objects           |
-| `stream`      | bool    | No       | `false` | Enable streaming (not implemented) |
+| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
 | `max_tokens`  | integer | Yes      | —       | Must be >= 1                       |
 | `temperature` | float   | No       | —       | Sampling temperature               |
 
@@ -202,6 +222,20 @@ All providers unavailable
 
 ```json
 provider error: connection timeout
+```
+
+### Routing errors — `POST /v1/messages` wire shapes
+
+Unlike OpenAI, the non-streaming Anthropic handler returns bare bodies
+(no JSON envelope) for routing failures:
+
+```text
+// 400 model 'rook/coding' + X-Rook-Combo together: HttpError JSON
+{"error": "model selects a virtual combo and X-Rook-Combo is also present; send only one (code: ambiguous_route)", "code": "AMBIGUOUS_ROUTE"}
+// 404 unknown virtual alias, non-streaming: bare 404 text body (no JSON)
+unknown virtual model 'rook/unknown'
+// 404 unknown virtual alias, streaming: generic HttpError JSON
+{"error": "...", "code": "MODEL_NOT_FOUND"}
 ```
 
 ---
