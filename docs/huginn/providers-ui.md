@@ -54,11 +54,45 @@ con catálogo asociado a la conexión admiten un identificador candidato: esta
 UI no afirma haber descubierto ni validado modelos remotos. La integración y
 aceptación con adaptadores reales corresponde a P0.5, no a estas pruebas.
 
-## Comprobación
+## Prueba manual en macOS
 
-Las pruebas de contrato y estado usan dobles controlados. Las pruebas PTY
-capturan la salida de formularios con secretos centinela, errores y pánicos.
-No validan proveedores reales, Keychain/Secret Service del usuario ni onboarding.
+La TUI requiere una terminal real. Desde el checkout del PR, en una ventana de
+Terminal o iTerm:
+
+```sh
+cargo run -p huginn --
+```
+
+Deberías entrar a la conversación y ver una indicación para configurar un modelo.
+Prueba primero el flujo sin credenciales externas:
+
+1. Escribe `/login` y pulsa Enter. Recorre proveedores y autenticación; cancela
+   con Esc. No hace falta guardar nada para comprobar el formulario.
+2. Si tienes Ollama local y un modelo ya descargado, inicia Ollama y sigue
+   `/login` con endpoint `http://127.0.0.1:11434`, permitiendo explícitamente
+   HTTP solo para loopback. Usa el identificador de un modelo local instalado.
+   No descargues nada como parte de esta prueba.
+3. Alternativamente, si tú decides usar una cuenta de prueba, introduce la clave
+   únicamente en el campo secreto enmascarado. No la pongas en argumentos CLI,
+   el prompt, el archivo de configuración, capturas, logs ni comentarios. La UI
+   no valida aquí la disponibilidad remota; evita claves de producción.
+4. En `/providers`, revisa el estado y cambia el modelo; `/model` debe indicar que
+   la selección aplica al siguiente turno. Comprueba que `/logout` confirma la
+   revocación local, sin afirmar que invalida la clave en el proveedor.
+5. Prueba Ctrl+C durante un formulario y pega texto incompleto si tu terminal
+   soporta bracketed paste. El formulario debe cancelarse sin mostrar el contenido
+   pegado ni cerrar la TUI. Esc dentro de un paste incompleto pertenece al framing;
+   usa Ctrl+C para cancelar.
+6. Sal con `/quit`. Reiniciar permite comprobar el estado persistido, pero no el
+   modo efímero, salvo que lo selecciones explícitamente y aceptes perder la clave
+   al cerrar.
+
+La prueba local con Ollama sí toca un adaptador real, pero no valida Keychain /
+Secret Service del usuario ni onboarding P0.5. Las pruebas automatizadas usan
+dobles controlados; PTY captura que secretos centinela, errores y pánicos no
+aparezcan en salida.
+
+## Comprobación automatizada
 
 ```sh
 cargo test -p huginn-plugin-api
