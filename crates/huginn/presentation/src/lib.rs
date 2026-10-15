@@ -3,8 +3,12 @@ pub mod approval;
 pub mod completion;
 pub mod contributions;
 pub mod files;
+#[cfg(unix)]
+mod input;
+pub mod providers;
 pub mod state;
 mod terminal;
+mod workflow;
 
 use async_trait::async_trait;
 use contributions::Contributions;
@@ -79,6 +83,7 @@ impl Drop for Connection {
 pub struct RatatuiPlugin {
     lifecycle: Option<CancellationToken>,
     model_configured: bool,
+    readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 impl Default for RatatuiPlugin {
     fn default() -> Self {
@@ -90,6 +95,14 @@ impl RatatuiPlugin {
         Self {
             lifecycle: None,
             model_configured,
+            readiness: None,
+        }
+    }
+    pub fn with_readiness(readiness: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        Self {
+            lifecycle: None,
+            model_configured: false,
+            readiness: Some(readiness),
         }
     }
 }
@@ -135,6 +148,7 @@ impl Plugin for RatatuiPlugin {
                 lifecycle: ctx.cancellation.clone(),
                 drivers,
                 model_configured: self.model_configured,
+                readiness: self.readiness.clone(),
             })),
         )
     }

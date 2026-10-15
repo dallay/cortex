@@ -40,11 +40,12 @@ fn first_run_opens_tui_without_configured_model() {
     pty.wait_for("Huginn");
     pty.wait_for("No model configured");
     pty.send("hello\r");
-    pty.wait_for("Set HUGINN_BASE_URL and HUGINN_MODEL");
+    pty.wait_for("then /model. No restart needed.");
     // Enter must work again after the unconfigured prompt is rejected.
     pty.send("/quit\r");
     let output = pty.finish(true);
     assert!(!output.contains("Offline mock:"), "got: {output}");
+    assert!(!output.contains("Set HUGINN_BASE_URL and HUGINN_MODEL"));
 }
 
 #[test]

@@ -42,6 +42,58 @@ impl SecretStore for EphemeralSecrets {
 }
 
 pub struct OsSecrets;
+
+/// Each record chooses its backend explicitly. Secure failures never fall back.
+#[derive(Default)]
+pub struct HostSecrets {
+    ephemeral: EphemeralSecrets,
+}
+#[async_trait]
+impl SecretStore for HostSecrets {
+    fn mode(&self) -> SecretMode {
+        SecretMode::Secure
+    }
+    async fn read(&self, reference: &SecretReference) -> ConnectionResult<Secret> {
+        OsSecrets.read(reference).await
+    }
+    async fn write(&self, reference: &SecretReference, secret: &Secret) -> ConnectionResult<()> {
+        OsSecrets.write(reference, secret).await
+    }
+    async fn delete(&self, reference: &SecretReference) -> ConnectionResult<()> {
+        OsSecrets.delete(reference).await
+    }
+    async fn read_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<Secret> {
+        match mode {
+            SecretMode::Secure => self.read(reference).await,
+            SecretMode::Ephemeral => self.ephemeral.read(reference).await,
+        }
+    }
+    async fn write_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+        secret: &Secret,
+    ) -> ConnectionResult<()> {
+        match mode {
+            SecretMode::Secure => self.write(reference, secret).await,
+            SecretMode::Ephemeral => self.ephemeral.write(reference, secret).await,
+        }
+    }
+    async fn delete_mode(
+        &self,
+        mode: SecretMode,
+        reference: &SecretReference,
+    ) -> ConnectionResult<()> {
+        match mode {
+            SecretMode::Secure => self.delete(reference).await,
+            SecretMode::Ephemeral => self.ephemeral.delete(reference).await,
+        }
+    }
+}
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn os_operation() -> tokio::sync::OwnedMutexGuard<()> {
     static SERIAL: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> = std::sync::OnceLock::new();

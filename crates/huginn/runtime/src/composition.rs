@@ -30,8 +30,47 @@ pub async fn build_native(
     config: LoopConfig,
     timeout_secs: u64,
 ) -> Result<Supervisor> {
+    build_native_plugin(
+        Box::new(ModelPlugin(model)),
+        registry,
+        sessions,
+        config,
+        timeout_secs,
+    )
+    .await
+}
+
+pub async fn build_native_with_connections(
+    model: Arc<dyn ModelProvider>,
+    access: Arc<huginn_application::connections::ConnectionAccess>,
+    registry: crate::tools::Registry,
+    sessions: Arc<dyn SessionStore>,
+    config: LoopConfig,
+    timeout_secs: u64,
+) -> Result<Supervisor> {
+    build_native_plugin(
+        Box::new(
+            huginn_application::providers::ProvidersPlugin::with_credentials_and_legacy(
+                access, model,
+            ),
+        ),
+        registry,
+        sessions,
+        config,
+        timeout_secs,
+    )
+    .await
+}
+
+async fn build_native_plugin(
+    providers: Box<dyn huginn_core::kernel::Plugin>,
+    registry: crate::tools::Registry,
+    sessions: Arc<dyn SessionStore>,
+    config: LoopConfig,
+    timeout_secs: u64,
+) -> Result<Supervisor> {
     let mut supervisor = Supervisor::default();
-    supervisor.register(Box::new(ModelPlugin(model)))?;
+    supervisor.register(providers)?;
     supervisor.register(Box::new(crate::tools::RegistryPlugin(registry)))?;
     for tool in crate::tools::native_tools(timeout_secs) {
         supervisor.register(Box::new(crate::tools::NativeToolPlugin(tool)))?;
