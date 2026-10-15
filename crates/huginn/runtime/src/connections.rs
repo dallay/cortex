@@ -208,10 +208,21 @@ impl SecretStore for OsSecrets {
 pub struct SqliteConnections {
     db: Arc<Mutex<rusqlite::Connection>>,
     operation: Arc<tokio::sync::Mutex<()>>,
-    lease: Arc<std::fs::File>,
+    lease: Arc<ConnectionLease>,
     #[cfg(all(feature = "test-hooks", debug_assertions))]
     probe: Arc<test_hooks::WorkerProbe>,
 }
+
+struct ConnectionLease(std::fs::File);
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        // A concurrent fork can retain the descriptor until exec. Explicitly
+        // unlock when the last store/worker owner drops so the child cannot
+        // extend the lease, while pending workers still retain ownership.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
 impl SqliteConnections {
     pub fn open(path: &Path) -> ConnectionResult<Self> {
         use fs2::FileExt;
@@ -232,6 +243,7 @@ impl SqliteConnections {
         lease
             .try_lock_exclusive()
             .map_err(|_| ConnectionError::Conflict)?;
+        let lease = ConnectionLease(lease);
         // Create with restrictive permissions before SQLite opens it.
         options.open(path).map_err(|_| ConnectionError::Metadata)?;
         let db = rusqlite::Connection::open(path).map_err(|_| ConnectionError::Metadata)?;
