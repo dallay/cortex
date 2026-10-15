@@ -9,7 +9,7 @@ Harness: `crates/infrastructure/transport-axum/tests/gateway_perf.rs` — router
 | Overhead secuencial N=200 `POST /v1/chat/completions` | p50 **529µs**, p95 **807µs**, p99 **915µs** (assert p95 < 25ms ✅) |
 | Concurrentes N=50 | wall **0.026s**, **1901.7 r/s** ✅ (>20 r/s baseline) |
 | RSS durante tests (`/proc/self/status` VmRSS) | **~15.4–15.7 MB** (solo test harness + gateway in-process) |
-| Cancelación streaming | `drop(stream)` tras 1er chunk → in-flight **1→0** ✅ (Drop guard; sin CancellationToken explícito, depende de drop tokio) |
+| Cancelación streaming | drop del body SSE tras 1er frame vía gateway → in-flight **1→0** ✅ (Drop guard; sin CancellationToken explícito, depende de drop tokio) |
 | Backpressure N=100 concurrentes | **100/100 OK** — sin `Semaphore`/límite hoy (gap documentado, no implementado) |
 
 ## Cancelación y backpressure (código)

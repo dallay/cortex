@@ -21,12 +21,11 @@ use futures::stream;
 use rook_core::{
     ApiFormat, ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
     ApiKeyTier, AuditEntry, AuditPort, BoxStream, CachePort, CacheStats, CompletionRequest,
-    CompletionResponse, CortexResult, HealthStatus, Message, MessageContent, ModelAlias,
+    CompletionResponse, CortexResult, HealthStatus, MessageContent, ModelAlias,
     ModelAliasRepositoryError, ModelAliasRepositoryPort, ModelId, NewSession, NewUser,
-    PasswordHash, PasswordHashError, PasswordHasher, ProviderId, ProviderPort, RequestId,
-    RequestMetadata, Role, Session, SessionId, SessionRepositoryError, SessionRepositoryPort,
-    SignatureEntry, StreamChunk, TokenCacheStats, TokenUsage, User, UserId, UserRepositoryError,
-    UserRepositoryPort,
+    PasswordHash, PasswordHashError, PasswordHasher, ProviderId, ProviderPort, Session, SessionId,
+    SessionRepositoryError, SessionRepositoryPort, SignatureEntry, StreamChunk, TokenCacheStats,
+    TokenUsage, User, UserId, UserRepositoryError, UserRepositoryPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login,
@@ -474,32 +473,6 @@ fn read_rss_kb() -> Option<u64> {
         })
 }
 
-fn perf_domain_req() -> CompletionRequest {
-    CompletionRequest {
-        id: RequestId::new(),
-        model: ModelId::new("perf-model"),
-        messages: vec![Message {
-            role: Role::User,
-            content: "ping".into(),
-            tool_calls: vec![],
-        }],
-        stream: false,
-        max_tokens: None,
-        temperature: None,
-        tools: None,
-        tool_choice: None,
-        metadata: RequestMetadata {
-            origin: "perf".to_string(),
-            cacheable: false,
-            priority: 1,
-            api_key_id: None,
-            requested_tier: None,
-            combo_id: None,
-        },
-        restrictions: rook_core::ApiKeyRestrictions::default(),
-    }
-}
-
 #[tokio::test]
 async fn overhead_sequential_p50_p95() {
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -550,21 +523,59 @@ async fn throughput_concurrent_50() {
 
 #[tokio::test]
 async fn streaming_cancel_drops_in_flight() {
-    use futures::StreamExt;
+    use http_body_util::BodyExt;
     let in_flight = Arc::new(AtomicUsize::new(0));
-    let provider = InstantProvider::new(in_flight.clone());
-    let req = perf_domain_req();
-    let mut s = provider.stream(&req).await.unwrap();
+    let app = build_app(in_flight.clone());
+    let body = serde_json::json!({
+        "model": "perf-model",
+        "messages": [{"role": "user", "content": "ping"}],
+        "stream": true
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer perf")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ctype = resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        ctype.contains("text/event-stream"),
+        "unexpected content-type: {ctype}"
+    );
+    // Provider stream was created eagerly by the handler.
     assert_eq!(in_flight.load(Ordering::SeqCst), 1);
-    let first = s.next().await.unwrap().unwrap();
-    assert_eq!(first.delta, "he");
-    drop(s);
+    let mut resp_body = resp.into_body();
+    let first = resp_body
+        .frame()
+        .await
+        .expect("stream ended before first SSE frame")
+        .expect("frame error");
+    assert!(first.data_ref().map(|d| !d.is_empty()).unwrap_or(false));
+    drop(resp_body);
+    for _ in 0..100 {
+        if in_flight.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
     assert_eq!(
         in_flight.load(Ordering::SeqCst),
         0,
-        "cancel no liberó in-flight"
+        "cancel no liberó in-flight tras drop del body SSE"
     );
-    println!("PERF cancel_ok in_flight=0 tras drop");
+    println!("PERF cancel_ok in_flight=0 tras drop via gateway");
 }
 
 #[tokio::test]
