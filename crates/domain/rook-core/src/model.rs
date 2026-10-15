@@ -647,6 +647,63 @@ impl std::fmt::Display for ComboValidationError {
 impl std::error::Error for ComboValidationError {}
 
 // ============================================================================
+// ComboAlias — virtual model (rook/*) mapping to a combo fallback chain
+// ============================================================================
+
+/// A virtual combo alias: `rook/coding` -> combo_id.
+/// Separate from `ModelAlias` (alias -> canonical model). Exact match only,
+/// namespace `rook/` reserved. Regex: `^rook/[a-z0-9][a-z0-9_-]{0,63}$`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComboAlias {
+    /// The virtual model name (e.g., "rook/coding")
+    pub alias: ModelId,
+    /// The combo to execute
+    pub combo_id: ComboId,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ComboAlias {
+    pub fn new(alias: ModelId, combo_id: ComboId) -> Self {
+        Self {
+            alias,
+            combo_id,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Validate alias shape without a regex dependency.
+    pub fn validate_alias_format(alias: &str) -> Result<(), String> {
+        const PREFIX: &str = "rook/";
+        if !alias.starts_with(PREFIX) {
+            return Err("alias must start with 'rook/'".to_string());
+        }
+        let rest = &alias[PREFIX.len()..];
+        if rest.is_empty() {
+            return Err("alias name after 'rook/' must not be empty".to_string());
+        }
+        if rest.len() > 64 {
+            return Err("alias name after 'rook/' must be at most 64 chars".to_string());
+        }
+        let mut chars = rest.chars();
+        let first = chars.next().unwrap();
+        if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+            return Err("alias must match ^rook/[a-z0-9][a-z0-9_-]{0,63}$".to_string());
+        }
+        for c in rest.chars() {
+            if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+                return Err("alias must match ^rook/[a-z0-9][a-z0-9_-]{0,63}$".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        Self::validate_alias_format(self.alias.as_str())
+    }
+}
+
+// ============================================================================
 // ModelAlias — model alias mapping for stable model names
 // ============================================================================
 

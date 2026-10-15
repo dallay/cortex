@@ -164,11 +164,20 @@ impl CortexError {
 
     // --- Error classification helpers ---
 
+    /// Returns true for resource-not-found errors (unknown virtual alias,
+    /// deleted combo, missing record). Maps to HTTP 404.
+    pub fn is_not_found(&self) -> bool {
+        self.source.is::<NotFoundError>() || self.source.is::<ComboNotFoundError>()
+    }
+
     /// Returns true if the error represents an HTTP 4xx status (client error),
     /// excluding 429 (rate limiting).
     pub fn is_4xx(&self) -> bool {
         // Check for structured errors that map to 4xx
-        self.is_invalid_request() || self.is_auth_failed() || self.is_forbidden()
+        self.is_invalid_request()
+            || self.is_auth_failed()
+            || self.is_forbidden()
+            || self.is_not_found()
     }
 
     /// Returns true if the error is retryable (5xx, network errors, or rate limiting).
