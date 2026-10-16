@@ -953,7 +953,6 @@ impl Driver {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -976,7 +975,9 @@ mod tests {
 
         // Wide unicode characters
         let lines_unicode = wrapped("hello 😀 world", 8);
-        assert!(lines_unicode.iter().all(|l| unicode_width::UnicodeWidthStr::width(l.as_str()) <= 8));
+        assert!(lines_unicode
+            .iter()
+            .all(|l| unicode_width::UnicodeWidthStr::width(l.as_str()) <= 8));
     }
 
     #[test]
