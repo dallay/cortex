@@ -511,15 +511,23 @@ async fn assert_surfaces(h: &Harness, root: &std::path::Path) {
     assert_public(&serde_json::to_string(&h.store.load().await.unwrap()).unwrap());
     assert_public(&serde_json::to_string(&h.session).unwrap());
     // Inspect live database/WAL/SHM bytes, not just a post-checkpoint SQL query.
+    // The directory listing is untrusted for CodeQL path-injection purposes:
+    // only read entries that stay inside the temporary fixture root.
     for entry in std::fs::read_dir(root).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
-            let bytes = std::fs::read(entry.path()).unwrap();
+            let path = entry.path();
+            assert!(
+                path.starts_with(root),
+                "test fixture escaped tempdir: {}",
+                path.display()
+            );
+            let bytes = std::fs::read(&path).unwrap();
             for secret in [A, B] {
                 assert!(
                     !bytes.windows(secret.len()).any(|w| w == secret.as_bytes()),
                     "secret in {}",
-                    entry.path().display()
+                    path.display()
                 );
             }
         }

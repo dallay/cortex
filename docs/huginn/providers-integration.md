@@ -192,3 +192,9 @@ baseline package suites, separate presentation `test-driver` PTY target, native
 OS secret backend contract and legacy-binary interoperability check were not
 rerun here; their earlier results and limitations remain above. These focused
 results do not establish a full CI pass.
+
+A Darwin arm64 rerun confirmed the same focused counts (`providers_flow` 6,
+`providers_recovery` 7, `providers_integration` 8), plus `cargo fmt --all --
+--check` and workspace Clippy with `-D warnings`. The `assert_surfaces`
+directory scan now validates that every read stays inside the temporary fixture
+root before checking bytes for sentinel secrets.
