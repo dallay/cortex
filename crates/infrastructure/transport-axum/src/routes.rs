@@ -723,9 +723,10 @@ fn compute_model_entries(
     entries
         .into_iter()
         .filter(|entry| {
-            allowed_models
-                .iter()
-                .any(|allowed| allowed == &entry.id || entry.id.ends_with(&format!("/{allowed}")))
+            allowed_models.iter().any(|allowed| {
+                allowed == &entry.id
+                    || (entry.owned_by != "combo" && entry.id.ends_with(&format!("/{allowed}")))
+            })
         })
         .collect()
 }
@@ -1268,6 +1269,17 @@ mod tests {
         assert_eq!(
             entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             vec!["openai-a/gpt-4o-mini"]
+        );
+    }
+
+    #[test]
+    fn catalog_bare_model_restriction_does_not_match_virtual_alias() {
+        let entries =
+            compute_model_entries(&[], &["rook/coding".to_string()], &["coding".to_string()]);
+
+        assert!(
+            entries.is_empty(),
+            "bare model must not expose virtual alias"
         );
     }
 }
