@@ -148,7 +148,7 @@ driver tick before releasing public focus, with a final-output regression check.
 This addresses the observed split transport delivery; it cannot identify
 arbitrarily delayed unframed secret bytes as distinct from fresh public typing.
 Bracketed-paste ownership has separate regression coverage. Final integration and
-gate results are recorded below after execution.
+gate results from a subsequent Linux run are recorded below.
 
 Independent security review confirmed this scope: a deliberately unframed suffix
 sent 200 ms after cancellation can appear in the public composer, while the same
@@ -162,3 +162,33 @@ Existing executable CLI/configuration/session-ownership checks passed (13 tests)
 The optional `legacy_lock_interop` target was also invoked but its one test was
 ignored because no `CORTEX_AGENT_LEGACY_BIN` was supplied. It is not evidence of
 interoperability with a pre-rename executable.
+
+### Final integration and gate results
+
+The focused follow-up on October 16, 2026 used Amazon Linux x86_64 and
+Rust/Cargo 1.99.0. The focused targets listed above produced these results:
+
+| Package | Test target | Passed | Failed | Ignored |
+| --- | --- | ---: | ---: | ---: |
+| `huginn-runtime` | `providers_integration` | 8 | 0 | 0 |
+| `huginn` | `providers_flow` | 6 | 0 | 0 |
+| `huginn` | `providers_recovery` | 7 | 0 | 0 |
+| `huginn` | `tui` | 7 | 0 | 0 |
+
+All four targets ran without filters: 28 tests passed, none failed or were
+ignored. The recovery target also confirms the CLI's distinct stderr markers:
+`No model configured` after losing an ephemeral credential, and
+`model is required` for an incomplete explicit connection.
+
+`cargo fmt --all -- --check` and the Huginn architecture check (including its
+negative control) passed. The first architecture invocation failed because Cargo
+did not resolve the toolchain; rerunning with `RUSTUP_TOOLCHAIN=1.99.0` passed.
+Markdown lint also passed across all 52 documentation files.
+
+`just ci-local` was **not run**: this follow-up validates the focused recovery
+test and documentation corrections. Workspace-wide Clippy, Cargo check/tests,
+frontend tests, rustdoc, Cargo audit and Docker E2E were not run. The other
+baseline package suites, separate presentation `test-driver` PTY target, native
+OS secret backend contract and legacy-binary interoperability check were not
+rerun here; their earlier results and limitations remain above. These focused
+results do not establish a full CI pass.

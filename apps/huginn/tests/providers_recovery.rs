@@ -429,6 +429,8 @@ async fn restarted_ephemeral_selection_is_unconfigured_and_never_calls_inference
         !run.status.success(),
         "missing ephemeral credentials must block run"
     );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("No model configured"), "got: {stderr}");
     assert!(unavailable.requests.lock().unwrap().is_empty());
     assert!(
         competitor.requests.lock().unwrap().is_empty(),
@@ -556,6 +558,8 @@ async fn explicit_http_cli_precedence_uses_only_its_credential_and_never_durable
     ]))
     .await;
     assert!(!incomplete.status.success());
+    let stderr = String::from_utf8_lossy(&incomplete.stderr);
+    assert!(stderr.contains("model is required"), "got: {stderr}");
     assert_eq!(explicit.requests.lock().unwrap().len(), count);
     assert!(competing.requests.lock().unwrap().is_empty());
 }
