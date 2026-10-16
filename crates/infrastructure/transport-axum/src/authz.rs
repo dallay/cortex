@@ -209,9 +209,6 @@ impl CorsConfig {
         let origin = origin.and_then(|value| value.to_str().ok())?;
         if self.allowed_origins.iter().any(|allowed| allowed == "*")
             || self.allowed_origins.iter().any(|allowed| allowed == origin)
-            || (cfg!(debug_assertions)
-                && (origin.starts_with("http://localhost:")
-                    || origin.starts_with("http://127.0.0.1:")))
         {
             HeaderValue::from_str(origin).ok()
         } else {
@@ -1516,6 +1513,17 @@ mod tests {
 
         assert!(headers.get("access-control-allow-origin").is_none());
         assert!(headers.get("access-control-allow-credentials").is_none());
+    }
+
+    #[test]
+    fn cors_does_not_allow_unlisted_localhost_port() {
+        let cors = CorsConfig {
+            allowed_origins: vec!["http://localhost:3000".to_string()],
+        };
+
+        assert!(cors
+            .allow_origin(Some(&HeaderValue::from_static("http://localhost:9999")))
+            .is_none());
     }
 
     #[test]
