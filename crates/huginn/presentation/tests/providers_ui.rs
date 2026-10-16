@@ -261,6 +261,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
             "OAuth must not be a choice"
         );
         form.choice(true);
+        drop(state);
     }
     submit(&ui).await;
     {
@@ -275,6 +276,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
         form.navigate(true);
         form.navigate(true);
         form.choice(true);
+        drop(state);
     }
     submit(&ui).await;
     let records = manager.records.lock().unwrap();
@@ -282,6 +284,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
     assert!(records
         .values()
         .any(|record| !record.settings.requires_secret && record.secret.is_none()));
+    drop(records);
 }
 async fn settle(ui: &Ui) {
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
