@@ -952,3 +952,50 @@ impl Driver {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapped_handles_width_newlines_tabs_and_unicode() {
+        let text = "hello\tworld\nthis is a longer line that needs wrapping";
+        let lines = wrapped(text, 10);
+        assert_eq!(lines[0], "hello    w");
+        assert_eq!(lines[1], "orld");
+        assert_eq!(lines[2], "this is a ");
+        assert_eq!(lines[3], "longer lin");
+        assert_eq!(lines[4], "e that nee");
+        assert_eq!(lines[5], "ds wrappin");
+        assert_eq!(lines[6], "g");
+
+        // Edge case: width 0
+        let lines_small = wrapped("abc", 0);
+        assert_eq!(lines_small, vec!["a", "b", "c"]);
+
+        // Wide unicode characters
+        let lines_unicode = wrapped("hello 😀 world", 8);
+        assert!(lines_unicode.iter().all(|l| unicode_width::UnicodeWidthStr::width(l.as_str()) <= 8));
+    }
+
+    #[test]
+    fn markdown_styles_code_blocks_and_headers() {
+        let input = vec![
+            "# Heading".to_string(),
+            "Normal text".to_string(),
+            "```rust".to_string(),
+            "let x = 1;".to_string(),
+            "```".to_string(),
+            "Back to normal".to_string(),
+        ];
+        let lines = markdown(input);
+        assert_eq!(lines.len(), 6);
+        assert_eq!(lines[0].style.fg, Some(Color::Yellow));
+        assert_eq!(lines[1].style.fg, Some(Color::Reset));
+        assert_eq!(lines[2].style.fg, Some(Color::Cyan));
+        assert_eq!(lines[3].style.fg, Some(Color::Cyan));
+        assert_eq!(lines[4].style.fg, Some(Color::Reset));
+        assert_eq!(lines[5].style.fg, Some(Color::Reset));
+    }
+}
