@@ -462,28 +462,12 @@ impl RouteRequest {
     {
         let start = Instant::now();
 
-        // 0. Resolve model alias if enabled (BEFORE restrictions check)
-        if self.alias_config.enabled {
-            match self.alias_repository.find_by_alias(&req.model, None).await {
-                Ok(Some(alias_entry)) => {
-                    tracing::debug!(
-                        alias = %req.model,
-                        canonical = %alias_entry.canonical,
-                        "Resolved model alias"
-                    );
-                    req.model = alias_entry.canonical;
-                }
-                Ok(None) => {
-                    // No alias found, proceed with original model
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        model = %req.model,
-                        "Alias resolution failed, using original model"
-                    );
-                }
-            }
+        // 0. Resolve model alias if enabled (BEFORE restrictions check).
+        // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
+        // they are combo aliases handled below. Shared helper with the
+        // non-streaming path so both enforce the same invariant.
+        if !is_virtual_model(&req.model) {
+            self.resolve_model_alias(&mut req).await;
         }
 
         // 0a. Combo + streaming: combos resolve BEFORE the first byte.
@@ -3294,6 +3278,226 @@ mod tests {
             seen.lock().unwrap().as_slice(),
             ["gpt-4o"],
             "selection AND upstream must use the step physical model"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // A01 stream-virtual-alias-hijack regression (TDD)
+    // ------------------------------------------------------------------
+
+    /// ModelAlias repo that hijacks `rook/coding -> gpt-4o` plus a normal
+    /// alias `coding -> gpt-4o`. Tracks whether it was consulted for rook/*.
+    struct HijackAliasRepo {
+        rook_consulted: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ModelAliasRepositoryPort for HijackAliasRepo {
+        async fn find_by_alias(
+            &self,
+            alias: &ModelId,
+            _provider_id: Option<&ProviderId>,
+        ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+            if alias.as_str().starts_with("rook/") {
+                self.rook_consulted
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                if alias.as_str() == "rook/coding" {
+                    return Ok(Some(ModelAlias {
+                        alias: ModelId::new("rook/coding"),
+                        canonical: ModelId::new("gpt-4o"),
+                        provider_id: None,
+                        created_at: Utc::now(),
+                    }));
+                }
+                return Ok(None);
+            }
+            if alias.as_str() == "coding" {
+                return Ok(Some(ModelAlias {
+                    alias: ModelId::new("coding"),
+                    canonical: ModelId::new("gpt-4o"),
+                    provider_id: None,
+                    created_at: Utc::now(),
+                }));
+            }
+            Ok(None)
+        }
+
+        async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+            Ok(false)
+        }
+
+        async fn seed(
+            &self,
+            _aliases: Vec<ModelAlias>,
+        ) -> Result<usize, ModelAliasRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    /// Streaming provider that echoes the REQUEST model into each chunk, so a
+    /// hijack (`rook/coding` rewritten to `gpt-4o` before dispatch) is
+    /// observable as chunk.model == "gpt-4o" instead of "rook/coding".
+    struct EchoStreamProvider {
+        id: ProviderId,
+    }
+
+    #[async_trait]
+    impl ProviderPort for EchoStreamProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn supported_models(&self) -> &[ModelId] {
+            std::slice::from_ref(&TEST_MODEL)
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+
+        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            Ok(CompletionResponse {
+                id: req.id.clone(),
+                provider: self.id.clone(),
+                model: req.model.clone(),
+                content: "echo".to_string(),
+                content_blocks: vec![rook_core::MessageContent::Text("echo".to_string())],
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_usd: None,
+                },
+                latency_ms: 1,
+                cache_hit: None,
+            })
+        }
+
+        async fn stream(
+            &self,
+            req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            let model = req.model.clone();
+            let id = req.id.clone();
+            Ok(Box::pin(stream::iter(vec![Ok(StreamChunk {
+                id,
+                model,
+                delta: "hi".to_string(),
+                thinking: None,
+                tool_calls: vec![],
+                finish_reason: None,
+                usage: None,
+            })])))
+        }
+    }
+
+    fn hijack_stream_harness(rook_consulted: Arc<std::sync::atomic::AtomicBool>) -> RouteRequest {
+        let combo = harness_combo();
+        let combo_id = combo.id;
+        let mut combos = HashMap::new();
+        combos.insert(combo_id, combo);
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "rook/coding".to_string(),
+            ComboAlias::new(ModelId::new("rook/coding"), combo_id),
+        );
+        let provider: Arc<dyn ProviderPort> = Arc::new(EchoStreamProvider {
+            id: ProviderId::new("openai"),
+        });
+        RouteRequest::new(
+            Arc::new(RecordingRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            Some(Arc::new(MapComboRepository { combos })),
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(HijackAliasRepo { rook_consulted }),
+            ModelAliasesConfig {
+                enabled: true,
+                auto_seed: false,
+            },
+            None,
+        )
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }))
+    }
+
+    #[tokio::test]
+    async fn streaming_virtual_model_never_enters_model_alias_resolution() {
+        let rook_consulted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let usecase = hijack_stream_harness(rook_consulted.clone());
+        // Even though ModelAlias contains rook/coding -> gpt-4o, streaming
+        // must NOT rewrite rook/*: it must take the virtual-combo path and
+        // keep the requested model.
+        let stream = usecase
+            .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+            .await
+            .expect("virtual combo stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+        assert_eq!(chunks.len(), 2, "combo stream emits content + final chunk");
+        let mut chunks = chunks.into_iter().map(|c| c.expect("chunk ok"));
+        let content = chunks.next().unwrap();
+        let final_chunk = chunks.next().unwrap();
+        assert_eq!(
+            content.model.as_str(),
+            "rook/coding",
+            "streaming must preserve rook/coding (combo), never rewrite to physical gpt-4o"
+        );
+        assert_eq!(final_chunk.model.as_str(), "rook/coding");
+        assert!(
+            !rook_consulted.load(std::sync::atomic::Ordering::SeqCst),
+            "ModelAlias repo must never be consulted for rook/*"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_normal_alias_still_resolves() {
+        let rook_consulted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let usecase = hijack_stream_harness(rook_consulted.clone());
+        // Non-virtual alias `coding -> gpt-4o` must still resolve on the
+        // streaming path (echo provider surfaces the rewritten model).
+        let stream = usecase
+            .execute_stream_with_format(stream_req("coding"), ApiFormat::OpenAI)
+            .await
+            .expect("stream starts");
+        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
+        assert_eq!(chunks.len(), 1, "physical stream emits single echo chunk");
+        let chunk = chunks.into_iter().next().unwrap().expect("chunk ok");
+        assert_eq!(
+            chunk.model.as_str(),
+            "gpt-4o",
+            "normal alias must still resolve in streaming path"
         );
     }
 }

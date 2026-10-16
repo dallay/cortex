@@ -90,6 +90,16 @@ pub async fn create_alias(
         });
     }
 
+    // `rook/` is reserved for virtual combo aliases (`rook/* -> combo`) and
+    // must never shadow the ModelAlias table (`alias -> canonical model`).
+    if is_reserved_model_alias(&req.alias) {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_ALIAS",
+            message: "alias prefix 'rook/' is reserved for virtual models".to_string(),
+        });
+    }
+
     // Check if canonical is itself an alias (cycle prevention)
     let canonical_model_id = ModelId::new(req.canonical.clone());
     let provider_scope = req.provider_id.as_ref().map(ProviderId::new);
@@ -172,5 +182,96 @@ pub async fn delete_alias(
             code: "REPOSITORY_ERROR",
             message: format!("Failed to delete alias: {}", e),
         }),
+    }
+}
+
+/// `rook/` prefix is reserved for virtual combo aliases (`rook/* -> combo`).
+/// A `ModelAlias` (`alias -> canonical model`) must never shadow it:
+/// case-insensitive, surrounding whitespace ignored.
+pub fn is_reserved_model_alias(alias: &str) -> bool {
+    alias.trim().to_ascii_lowercase().starts_with("rook/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoopAliasRepo;
+
+    #[async_trait::async_trait]
+    impl ModelAliasRepositoryPort for NoopAliasRepo {
+        async fn find_by_alias(
+            &self,
+            _alias: &ModelId,
+            _provider_id: Option<&ProviderId>,
+        ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+            Ok(None)
+        }
+
+        async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+            Ok(false)
+        }
+
+        async fn seed(
+            &self,
+            _aliases: Vec<ModelAlias>,
+        ) -> Result<usize, ModelAliasRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    fn state() -> State<AliasRepository> {
+        State(Arc::new(NoopAliasRepo) as AliasRepository)
+    }
+
+    #[test]
+    fn reserved_prefix_detection_is_case_insensitive_and_trimmed() {
+        assert!(is_reserved_model_alias("rook/evil"));
+        assert!(is_reserved_model_alias("  rook/evil  "));
+        assert!(is_reserved_model_alias("ROOK/EVIL"));
+        assert!(is_reserved_model_alias("Rook/Coding"));
+        assert!(!is_reserved_model_alias("coding"));
+        assert!(!is_reserved_model_alias("brook/coding"));
+    }
+
+    #[tokio::test]
+    async fn create_alias_rejects_rook_prefix_with_invalid_alias() {
+        for alias in ["rook/evil", "  rook/evil  ", "ROOK/evil", "Rook/Coding"] {
+            let err = create_alias(
+                state(),
+                Json(CreateAliasRequest {
+                    alias: alias.to_string(),
+                    canonical: "gpt-4o".to_string(),
+                    provider_id: None,
+                }),
+            )
+            .await
+            .expect_err("rook/* must be rejected");
+            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+            assert_eq!(err.code, "INVALID_ALIAS");
+        }
+    }
+
+    #[tokio::test]
+    async fn create_alias_accepts_normal_alias() {
+        let status = create_alias(
+            state(),
+            Json(CreateAliasRequest {
+                alias: "coding".to_string(),
+                canonical: "gpt-4o".to_string(),
+                provider_id: None,
+            }),
+        )
+        .await
+        .expect("normal alias must be accepted");
+        assert_eq!(status, StatusCode::CREATED);
     }
 }
