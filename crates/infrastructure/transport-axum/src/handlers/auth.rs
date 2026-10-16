@@ -50,11 +50,11 @@ pub async fn login_handler(
             // state-changing request, avoiding the GET /login round-trip
             // that races with the Set-Cookie landing in WebKit's cookie jar.
             let csrf_token = generate_csrf_token();
-            let secure = !cfg!(debug_assertions);
-            let csrf_cookie = build_csrf_token_cookie(&csrf_token, secure);
+            let rook_env = rook_environment();
+            let csrf_cookie = build_csrf_token_cookie(&csrf_token, rook_env.as_deref());
 
             // Build auth_token Set-Cookie header
-            let auth_cookie = build_auth_token_cookie(&cookie_value);
+            let auth_cookie = build_auth_token_cookie(&cookie_value, rook_env.as_deref());
 
             let body = LoginResponse {
                 session_id,
@@ -135,15 +135,13 @@ pub async fn logout_handler(
     match usecases.revoke_session_by_token_hash(&token_hash).await {
         Ok(()) => {
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie =
-                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            let clear_cookie = build_clear_auth_token_cookie(rook_environment().as_deref());
             (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
         Err(_) => {
             // Session already gone — treat as successful logout and clear the cookie.
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie =
-                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            let clear_cookie = build_clear_auth_token_cookie(rook_environment().as_deref());
             (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
     }
@@ -151,10 +149,9 @@ pub async fn logout_handler(
 
 /// Build the auth_token cookie string
 ///
-/// Secure flag is set based on whether we're in debug mode.
-/// In production (release builds), cookies require HTTPS.
-fn build_auth_token_cookie(token: &str) -> HeaderValue {
-    let secure = !cfg!(debug_assertions);
+/// Secure flag is controlled by the runtime deployment environment.
+fn build_auth_token_cookie(token: &str, rook_env: Option<&str>) -> HeaderValue {
+    let secure = is_production(rook_env);
     let mut cookie = format!(
         "auth_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
         token
@@ -162,8 +159,14 @@ fn build_auth_token_cookie(token: &str) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie)
-        .unwrap_or_else(|_| HeaderValue::from_str("auth_token=invalid; HttpOnly; Path=/").unwrap())
+    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
+        let fallback = if secure {
+            "auth_token=invalid; HttpOnly; Path=/; Secure"
+        } else {
+            "auth_token=invalid; HttpOnly; Path=/"
+        };
+        HeaderValue::from_str(fallback).unwrap()
+    })
 }
 
 /// Extract a cookie value by name from a HeaderMap
@@ -231,8 +234,7 @@ pub async fn get_login_handler(
         .filter(|value| is_valid_csrf_token(value))
         .unwrap_or_else(generate_csrf_token);
 
-    let secure = !cfg!(debug_assertions);
-    let cookie = build_csrf_token_cookie(&token, secure);
+    let cookie = build_csrf_token_cookie(&token, rook_environment().as_deref());
 
     let body = serde_json::json!({
         "csrf_token": token,
@@ -259,7 +261,8 @@ fn generate_csrf_token() -> String {
 }
 
 /// Build the csrf_token cookie string
-fn build_csrf_token_cookie(token: &str, secure: bool) -> HeaderValue {
+fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>) -> HeaderValue {
+    let secure = is_production(rook_env);
     let mut cookie = format!(
         "csrf_token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
         token
@@ -267,6 +270,74 @@ fn build_csrf_token_cookie(token: &str, secure: bool) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie)
-        .unwrap_or_else(|_| HeaderValue::from_str("csrf_token=invalid; HttpOnly; Path=/").unwrap())
+    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
+        let fallback = if secure {
+            "csrf_token=invalid; HttpOnly; Path=/; Secure"
+        } else {
+            "csrf_token=invalid; HttpOnly; Path=/"
+        };
+        HeaderValue::from_str(fallback).unwrap()
+    })
+}
+
+fn build_clear_auth_token_cookie(rook_env: Option<&str>) -> HeaderValue {
+    let mut cookie = String::from("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    if is_production(rook_env) {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).expect("static cookie attributes form a valid header")
+}
+
+fn rook_environment() -> Option<String> {
+    std::env::var("ROOK_ENV").ok()
+}
+
+fn is_production(rook_env: Option<&str>) -> bool {
+    rook_env == Some("production")
+}
+
+#[cfg(test)]
+mod cookie_security_tests {
+    use super::{build_auth_token_cookie, build_clear_auth_token_cookie, build_csrf_token_cookie};
+
+    #[test]
+    fn auth_and_csrf_cookies_use_runtime_environment() {
+        for (env, expected_secure) in [
+            (Some("production"), true),
+            (None, false),
+            (Some("development"), false),
+        ] {
+            let auth = build_auth_token_cookie("token", env)
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let csrf = build_csrf_token_cookie("token", env)
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(auth.contains("; Secure"), expected_secure);
+            assert_eq!(csrf.contains("; Secure"), expected_secure);
+        }
+
+        assert!(build_auth_token_cookie("bad\nvalue", Some("production"))
+            .to_str()
+            .unwrap()
+            .contains("; Secure"));
+        assert!(build_csrf_token_cookie("bad\nvalue", Some("production"))
+            .to_str()
+            .unwrap()
+            .contains("; Secure"));
+    }
+
+    #[test]
+    fn clearing_auth_cookie_uses_runtime_environment() {
+        assert!(build_clear_auth_token_cookie(Some("production"))
+            .to_str()
+            .unwrap()
+            .contains("; Secure"));
+        assert!(!build_clear_auth_token_cookie(None)
+            .to_str()
+            .unwrap()
+            .contains("; Secure"));
+    }
 }

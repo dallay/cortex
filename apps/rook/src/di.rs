@@ -513,6 +513,14 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     }
 
     if secret_path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to restrict api_key_secret.key permissions: {e}")
+                })?;
+        }
         let s = std::fs::read_to_string(&secret_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
         let s = s.trim().to_string();
@@ -528,6 +536,22 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             anyhow::anyhow!("failed to create data dir for api_key_secret.key: {e}")
         })?;
     }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&secret_path)
+            .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
+        file.write_all(secret.as_bytes())
+            .and_then(|()| file.set_permissions(std::fs::Permissions::from_mode(0o600)))
+            .map_err(|e| anyhow::anyhow!("failed to secure api_key_secret.key: {e}"))?;
+    }
+    #[cfg(not(unix))]
     std::fs::write(&secret_path, &secret)
         .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
 
@@ -538,6 +562,59 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     );
 
     Ok(secret)
+}
+
+#[cfg(test)]
+mod api_key_secret_tests {
+    use super::resolve_api_key_secret;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_api_key_secret_file_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("rook.db");
+        std::fs::write(&db, "").unwrap();
+        let secret_path = dir.path().join("api_key_secret.key");
+        let old = std::env::var_os("API_KEY_HASH_SECRET");
+        std::env::remove_var("API_KEY_HASH_SECRET");
+
+        let result = resolve_api_key_secret(db.to_str().unwrap());
+
+        if let Some(value) = old {
+            std::env::set_var("API_KEY_HASH_SECRET", value);
+        }
+        result.unwrap();
+        assert_eq!(
+            std::fs::metadata(secret_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_api_key_secret_file_permissions_are_restricted_without_changing_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("rook.db");
+        std::fs::write(&db, "").unwrap();
+        let secret_path = dir.path().join("api_key_secret.key");
+        std::fs::write(&secret_path, "existing-secret\n").unwrap();
+        std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert_eq!(
+            resolve_api_key_secret(db.to_str().unwrap()).unwrap(),
+            "existing-secret"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&secret_path).unwrap(),
+            "existing-secret\n"
+        );
+        assert_eq!(
+            std::fs::metadata(secret_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 }
 
 /// Seed combos from config into SQLite on startup.
