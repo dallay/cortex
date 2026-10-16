@@ -55,7 +55,11 @@ impl ConnectionManagement for Manager {
         mode: SecretMode,
     ) -> ConnectionResult<ConnectionRecord> {
         settings.validate()?;
-        assert_eq!(secret.as_ref().unwrap().expose(), SENTINEL);
+        if settings.requires_secret {
+            assert_eq!(secret.as_ref().unwrap().expose(), SENTINEL);
+        } else {
+            assert!(secret.is_none());
+        }
         if self.fail.load(Ordering::SeqCst) {
             return Err(ConnectionError::Locked);
         }
@@ -64,7 +68,7 @@ impl ConnectionManagement for Manager {
             id,
             revision: uuid::Uuid::new_v4(),
             settings,
-            secret: Some(SecretReference::new()),
+            secret: secret.map(|_| SecretReference::new()),
             mode,
         };
         self.records.lock().unwrap().insert(id, record.clone());
@@ -105,7 +109,7 @@ impl ConnectionManagement for Manager {
         Ok(())
     }
 }
-struct Catalog;
+struct Catalog(Vec<AuthenticationMethod>);
 impl ProviderCatalog for Catalog {
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         vec![(
@@ -123,7 +127,7 @@ impl ProviderCatalog for Catalog {
                         supports_tools: true,
                     },
                 ],
-                authentication: vec![AuthenticationMethod::ApiKey],
+                authentication: self.0.clone(),
             },
         )]
     }
@@ -138,6 +142,7 @@ impl ProviderCatalog for Catalog {
 struct Host {
     contributions: Arc<Contributions>,
     manager: Arc<Manager>,
+    authentication: Vec<AuthenticationMethod>,
 }
 #[async_trait]
 impl Plugin for Host {
@@ -157,11 +162,16 @@ impl Plugin for Host {
         ctx.provide(connections_id(), ConnectionsService(self.manager.clone()))?;
         ctx.provide(
             ServiceId::new("agent:provider-catalog", 1),
-            ProviderCatalogService(Arc::new(Catalog)),
+            ProviderCatalogService(Arc::new(Catalog(self.authentication.clone()))),
         )
     }
 }
 async fn setup() -> (Supervisor, Arc<Ui>, Arc<Manager>) {
+    setup_with_authentication(vec![AuthenticationMethod::ApiKey]).await
+}
+async fn setup_with_authentication(
+    authentication: Vec<AuthenticationMethod>,
+) -> (Supervisor, Arc<Ui>, Arc<Manager>) {
     let contributions = Arc::new(Contributions::default());
     let manager = Arc::new(Manager::default());
     let mut supervisor = Supervisor::default();
@@ -169,6 +179,7 @@ async fn setup() -> (Supervisor, Arc<Ui>, Arc<Manager>) {
         .register(Box::new(Host {
             contributions: contributions.clone(),
             manager: manager.clone(),
+            authentication,
         }))
         .unwrap();
     supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
@@ -180,6 +191,97 @@ async fn setup() -> (Supervisor, Arc<Ui>, Arc<Manager>) {
     )
     .0;
     (supervisor, ui, manager)
+}
+
+#[tokio::test]
+async fn oauth_only_adapter_is_reported_as_unsupported_not_absent() {
+    for command in ["/login", "/providers"] {
+        let (_supervisor, ui, manager) =
+            setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+        assert!(ui.dispatch_command(command));
+        settle(&ui).await;
+        let state = ui.lock();
+        assert!(
+            state.workflow.is_none(),
+            "OAuth must not expose an actionable form"
+        );
+        let output = state.committed.join("\n");
+        assert!(output.contains("Test provider"));
+        assert!(output.contains("OAuth: unsupported"));
+        assert!(!output.contains("No provider adapters available"));
+        drop(state);
+        assert!(manager.records.lock().unwrap().is_empty());
+        assert!(manager.selected.lock().unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() {
+    let (_supervisor, ui, manager) = setup_with_authentication(vec![
+        AuthenticationMethod::ApiKey,
+        AuthenticationMethod::OAuth,
+        AuthenticationMethod::None,
+    ])
+    .await;
+    login(&ui).await; // API-key behavior and secret masking remain unchanged.
+    assert!(
+        manager
+            .records
+            .lock()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .settings
+            .requires_secret
+    );
+    ui.dispatch_command("/providers");
+    settle(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .1
+        .contains("OAuth: unsupported"));
+    ui.cancel_workflow();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow.as_mut().unwrap();
+        assert!(form.snapshot().1.contains("OAuth: unsupported"));
+        assert!(form.snapshot().2[0].contains("API key"));
+        form.choice(true);
+        assert!(form.snapshot().2[0].contains("no authentication"));
+        form.choice(true);
+        assert!(
+            form.snapshot().2[0].contains("API key"),
+            "OAuth must not be a choice"
+        );
+        form.choice(true);
+    }
+    submit(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow.as_mut().unwrap();
+        assert_eq!(
+            form.snapshot().2.len(),
+            3,
+            "local form has no secret or storage field"
+        );
+        form.insert("http://127.0.0.1:11434");
+        form.navigate(true);
+        form.navigate(true);
+        form.choice(true);
+    }
+    submit(&ui).await;
+    let records = manager.records.lock().unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records
+        .values()
+        .any(|record| !record.settings.requires_secret && record.secret.is_none()));
 }
 async fn settle(ui: &Ui) {
     tokio::time::timeout(std::time::Duration::from_secs(2), async {

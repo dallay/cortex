@@ -33,6 +33,11 @@ credenciales ausentes, no disponibilidad ficticia.
 
 ## Contrato y límites
 
+For current authentication support, see the
+[OAuth support matrix and blocker](oauth.md). `/login` and `/providers` explicitly
+report unsupported OAuth, including adapters that declare only OAuth. They do not
+offer OAuth choices or token fields; API-key and local forms are unchanged.
+
 `huginn-plugin-api::v1::Workflow` describe campos y una operación asíncrona.
 El callback síncrono solo devuelve esa descripción. El host captura los campos
 públicos y secretos por separado en `FormInput` y ejecuta el futuro fuera del
