@@ -223,7 +223,11 @@ impl CorsConfig {
 impl Default for CorsConfig {
     fn default() -> Self {
         Self {
-            allowed_origins: vec!["*".to_string()],
+            allowed_origins: vec![
+                "http://localhost:3000".to_string(),
+                "http://localhost:4747".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+            ],
         }
     }
 }
@@ -1500,6 +1504,18 @@ mod tests {
         assert!(headers.get("access-control-allow-origin").is_none());
         assert!(headers.get("access-control-allow-credentials").is_none());
         assert!(headers.get("content-type").is_none());
+    }
+
+    #[test]
+    fn default_cors_config_rejects_arbitrary_credentialed_origin() {
+        let cors = CorsConfig::default();
+        let origin = HeaderValue::from_static("https://evil.example.com");
+        let mut headers = HeaderMap::new();
+
+        apply_cors_headers(&mut headers, Some(&origin), &cors);
+
+        assert!(headers.get("access-control-allow-origin").is_none());
+        assert!(headers.get("access-control-allow-credentials").is_none());
     }
 
     #[test]
