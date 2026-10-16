@@ -121,8 +121,9 @@ untrusted TLS, and trusted-fixture HTTPS downgrade rejection. Fixtures are not
 evidence of compatibility with any actual Ollama model.
 
 The headless registration API is available; the existing CLI factory remains a
-legacy compatibility path rather than a second model publisher. Automated full
-Providers UI/CLI composition and recovery belongs to P0.5. OAuth, ChatGPT
+legacy compatibility path rather than a second model publisher. See
+[Providers integration and safe recovery](providers-integration.md) for P0.5
+automated composition paths and their verification boundaries. OAuth, ChatGPT
 credentials, Rook, dynamic loading, and the separate onboarding QA issues are
 outside this delivery. This document does not close those QA gates.
 

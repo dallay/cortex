@@ -293,7 +293,8 @@ fn closing_pending_secret_action_discards_queued_keys_and_accepts_fresh_input() 
     pty.send("fresh-public-draft");
     pty.wait_for("fresh-public-draft");
     pty.send("\x03");
-    pty.finish(true);
+    let output = pty.finish(true);
+    assert!(!output.contains("QUEUED_CREDENTIAL"));
 }
 
 #[test]

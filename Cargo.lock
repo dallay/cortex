@@ -1805,10 +1805,13 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "clap",
  "dirs",
+ "futures",
  "huginn-application",
  "huginn-core",
+ "huginn-plugin-api",
  "huginn-presentation",
  "huginn-reference-extension",
  "huginn-runtime",
