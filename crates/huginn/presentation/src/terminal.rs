@@ -665,11 +665,13 @@ impl Driver {
         let mut dirty = true;
         let mut shown_epoch = 0;
         let mut shown_focus = 0;
+        let mut draining_focus = None;
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
             let epoch = self.ui.lock().modal.as_ref().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
                 shown_focus = self.arm_modal(epoch, shown_focus)?;
+                draining_focus = None;
                 shown_epoch = epoch;
                 dirty = false;
             }
@@ -691,9 +693,20 @@ impl Driver {
                             // Read available bytes under the old lease; framing
                             // retains that ownership even if the paste finishes
                             // only after the next focus has been drawn.
+                            let mut drained = false;
                             while let Some(event) = self.next_input(shown_focus)? {
                                 discard_input(event);
+                                drained = true;
                             }
+                            // A single PTY write can arrive in multiple readable
+                            // chunks. Keep the old lease until a later tick is
+                            // quiet, before exposing the new focus to the user.
+                            if draining_focus != Some(focus) || drained {
+                                draining_focus = Some(focus);
+                                dirty = true;
+                                break;
+                            }
+                            draining_focus = None;
                             shown_focus = focus;
                             self.draw()?;
                             dirty = false;
@@ -709,7 +722,10 @@ impl Driver {
                         dirty = true;
                     }
                     dirty |= self.ui.refresh_completion(self.model_configured());
-                    if dirty { self.draw()?; dirty = false; }
+                    if dirty && draining_focus.is_none() && self.ui.lock().workflow_focus == shown_focus {
+                        self.draw()?;
+                        dirty = false;
+                    }
                 }
                 _ = self.ui.dirty.notified() => dirty = true,
             }

@@ -30,6 +30,9 @@ toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
+futures.workspace = true
+huginn-plugin-api = { path = "../../crates/huginn/plugin-api" }
 portable-pty = "0.9"
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "process", "time"] }
