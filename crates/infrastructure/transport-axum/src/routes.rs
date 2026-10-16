@@ -146,7 +146,7 @@ pub fn router(
             ip_rate_limiter_middleware,
         ))
         // API key rate limiter — applied to authenticated CLIENT_API routes
-        // Runs after CSRF guard but before authz to read headers stamped by authz
+        // Runs after authz so it reads the server-side stamped `x-authz-tier`
         .layer(middleware::from_fn_with_state(
             api_key_rate_limiter.clone(),
             api_key_rate_limiter_middleware,
@@ -228,8 +228,10 @@ pub async fn api_key_rate_limiter_middleware(
         return next.run(request).await;
     }
 
-    // Extract rate limit context from authz headers (set by authz middleware)
-    // x-authz-tier: free | pro | enterprise
+    // Extract rate limit context from authz-stamped headers (the authz
+    // middleware strips any client-supplied `x-authz-*` and stamps these
+    // server-side, so they are trusted here).
+    // x-authz-tier: free | pro | enterprise (stamped from the ApiKey tier)
     // x-authz-auth-id: api_key_xyz or "_anonymous"
     let headers = request.headers();
     let tier_str = headers
@@ -483,15 +485,9 @@ async fn chat_completions(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
     // Extract X-Rook-Combo header if present (shared R2 policy: get_all +
     // classify; duplicates/malformed/ambiguous become 400 here).
     if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
@@ -790,15 +786,9 @@ async fn anthropic_messages(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
     // Extract X-Rook-Combo header if present (shared R2 policy).
     if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
         req.metadata.combo_id = Some(combo_id);
