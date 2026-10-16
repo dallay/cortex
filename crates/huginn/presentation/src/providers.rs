@@ -112,7 +112,31 @@ fn value(input: &mut FormInput, id: &str) -> String {
     input.public.remove(id).unwrap_or_default()
 }
 impl Management {
+    fn authentication_diagnostics(&self) -> String {
+        self.catalog
+            .adapters()
+            .into_iter()
+            .map(|(_, descriptor)| {
+                let available: Vec<_> = descriptor
+                    .authentication
+                    .iter()
+                    .filter_map(|method| match method {
+                        AuthenticationMethod::ApiKey => Some("API key"),
+                        AuthenticationMethod::None => Some("no authentication"),
+                        AuthenticationMethod::OAuth => None,
+                    })
+                    .collect();
+                format!(
+                    "{} — OAuth: unsupported in Huginn (no verified interactive local flow). Available: {}.",
+                    descriptor.display_name,
+                    if available.is_empty() { "none".into() } else { available.join(", ") }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
     fn login(&self) -> Result<CommandResult> {
+        let diagnostics = self.authentication_diagnostics();
         let options: Vec<_> = self
             .catalog
             .adapters()
@@ -126,6 +150,11 @@ impl Management {
             })
             .collect();
         if options.is_empty() {
+            if !diagnostics.is_empty() {
+                return Ok(notice(format!(
+                    "No supported login methods.\n{diagnostics}"
+                )));
+            }
             return Ok(notice(
                 "No provider adapters available. The Providers core still works headless.",
             ));
@@ -147,7 +176,7 @@ impl Management {
         let management = self.clone();
         Ok(CommandResult::Workflow(Workflow::new(
             "Connect provider",
-            "Choose a provider/authentication method. OAuth is not included.",
+            format!("Choose a provider/authentication method.\n{diagnostics}"),
             vec![choice("provider", "Provider", labels)],
             Arc::new(move |input, _| {
                 let management = management.clone();
@@ -269,9 +298,14 @@ impl Management {
             Err(error) => return Ok(failure(error)),
         };
         if records.is_empty() {
-            return Ok(notice(
-                "No connections. Use /login to connect a provider, then /model.",
-            ));
+            return Ok(notice(format!(
+                "No connections. Use /login to connect a provider, then /model.{}",
+                if command == "/providers" {
+                    format!("\n{}", self.authentication_diagnostics())
+                } else {
+                    String::new()
+                }
+            )));
         }
         if records.len() > 256 {
             return Ok(notice(
@@ -312,7 +346,12 @@ impl Management {
             ));
         }
         let management = self.clone();
-        Ok(CommandResult::Workflow(Workflow::new("Providers", "Selection affects the NEXT turn, not the model pinned in an active turn. Revocation blocks subsequent inference even in that turn. Local cancellation does not prove remote revocation.", fields,
+        let diagnostics = if command == "/providers" {
+            format!("\n{}", self.authentication_diagnostics())
+        } else {
+            String::new()
+        };
+        Ok(CommandResult::Workflow(Workflow::new("Providers", format!("Selection affects the NEXT turn, not the model pinned in an active turn. Revocation blocks subsequent inference even in that turn. Local cancellation does not prove remote revocation.{diagnostics}"), fields,
             Arc::new(move |input, _| {
                 let management = management.clone();
                 let record = records.get(index(&input, "connection")).cloned();

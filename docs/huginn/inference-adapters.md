@@ -20,6 +20,10 @@ The OpenAI-compatible endpoint includes its API prefix, for example
 `http://127.0.0.1:11434`, with explicit HTTP opt-in. The latter is deliberately
 local-only, not an Ollama cloud adapter.
 
+See [OAuth support decisions and official evidence](oauth.md) for the per-target
+authorization matrix and current interactive OAuth blocker. API-key and local
+no-auth connection forms remain available; OAuth is unsupported in Huginn.
+
 ## Discovery, capabilities, and failures
 
 OpenAI-compatible discovery uses `GET /models`; Ollama discovery uses
