@@ -93,6 +93,13 @@ fn manager() -> ManageConnections {
 }
 
 fn request(flow_type: OAuthFlowType) -> StartOAuthFlowRequest {
+    // Anchor the allowlist for every flow test: the suite's canonical
+    // dashboard host plus the loopback dev origins (same value everywhere
+    // so parallel tests never race on different values).
+    std::env::set_var(
+        "ALLOWED_ORIGINS",
+        "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000",
+    );
     StartOAuthFlowRequest {
         flow_type,
         connection_id: None,
@@ -499,4 +506,48 @@ async fn remote_cleartext_token_override_rejects_exchange() {
         .await
         .expect_err("cleartext override must be rejected");
     assert!(err.to_string().contains("HTTPS or loopback"));
+}
+
+#[tokio::test]
+async fn authorization_rejects_https_callback_on_unlisted_host() {
+    let manager = manager();
+    let mut bad = request(OAuthFlowType::AuthorizationCode);
+    bad.redirect_uri = "https://evil.example/api/oauth/callback".to_string();
+
+    let err = manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, bad)
+        .await
+        .expect_err("unlisted HTTPS host must never start a flow");
+    assert!(
+        matches!(err, rook_usecases::ManageConnectionsError::OAuth(_)),
+        "foreign host must surface an OAuth error, got: {err}"
+    );
+    assert!(err.to_string().contains("origin is not allowed"));
+}
+
+#[tokio::test]
+async fn authorization_accepts_allowlisted_host_and_loopback_http() {
+    let manager = manager();
+    // Allowlisted dashboard host: flow starts and the IdP URL echoes it back.
+    let started = manager
+        .start_oauth_flow(
+            rook_core::ProviderKind::AzureOpenAI,
+            request(OAuthFlowType::AuthorizationCode),
+        )
+        .await
+        .expect("allowlisted host must start a flow");
+    let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
+    let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+    assert_eq!(
+        query.get("redirect_uri").map(String::as_str),
+        Some("https://rook.example.com/api/oauth/callback")
+    );
+
+    // Loopback HTTP stays usable for dev.
+    let mut loopback = request(OAuthFlowType::AuthorizationCode);
+    loopback.redirect_uri = "http://localhost:3000/api/oauth/callback".to_string();
+    manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, loopback)
+        .await
+        .expect("loopback HTTP must start a flow");
 }

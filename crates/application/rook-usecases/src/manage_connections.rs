@@ -1578,8 +1578,9 @@ fn build_authorization_url(
 fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
     let uri = reqwest::Url::parse(value)
         .map_err(|_| ManageConnectionsError::OAuth("redirectUri must be an absolute URL".into()))?;
-    let local_http =
-        uri.scheme() == "http" && matches!(uri.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    let host = uri.host_str().unwrap_or_default().to_ascii_lowercase();
+    let is_loopback_host = matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]");
+    let local_http = uri.scheme() == "http" && is_loopback_host;
     if (uri.scheme() != "https" && !local_http)
         || uri.path() != "/api/oauth/callback"
         || uri.username() != ""
@@ -1591,7 +1592,59 @@ fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
             "redirectUri must be HTTPS (or loopback HTTP) and use /api/oauth/callback".into(),
         ));
     }
+    // Loopback callbacks (dev) stay usable without allowlist configuration;
+    // `localhost` can never exfiltrate an authorization code to an attacker.
+    if is_loopback_host {
+        return Ok(());
+    }
+    // Anchor HTTPS callbacks to the operator-configured dashboard origin(s).
+    // Reuses the same `ALLOWED_ORIGINS` variable as `CorsConfig::from_env`
+    // (transport-axum) so there is a single source of truth; entries are
+    // origins (`scheme://host[:port]`), compared by scheme, host, and
+    // effective port. A `*` entry never authorizes an arbitrary OAuth origin.
+    let is_allowed_origin = allowed_oauth_redirect_origins().iter().any(|allowed| {
+        allowed.scheme() == uri.scheme()
+            && allowed
+                .host_str()
+                .is_some_and(|allowed_host| allowed_host.eq_ignore_ascii_case(&host))
+            && allowed.port_or_known_default() == uri.port_or_known_default()
+    });
+    if !is_allowed_origin {
+        return Err(ManageConnectionsError::OAuth(
+            "redirectUri origin is not allowed".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Origins derived from `ALLOWED_ORIGINS` (same variable and defaults as
+/// `CorsConfig::from_env` in transport-axum, which lives in a downstream
+/// crate the application layer cannot import).
+fn allowed_oauth_redirect_origins() -> Vec<reqwest::Url> {
+    std::env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| {
+            "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
+        })
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .filter_map(|origin| {
+            if origin == "*" {
+                return None;
+            }
+            let url = if origin.contains("://") {
+                reqwest::Url::parse(origin).ok()?
+            } else {
+                reqwest::Url::parse(&format!("https://{origin}")).ok()?
+            };
+            (url.path() == "/"
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none())
+            .then_some(url)
+        })
+        .collect()
 }
 
 async fn parse_token_response(
@@ -3881,5 +3934,68 @@ mod tests {
 
                 assert!(registry.providers().is_empty());
             });
+    }
+
+    // ---------------------------------------------------------------------------
+    // OAuth redirect URI host allowlist (A01) regression tests
+    // ---------------------------------------------------------------------------
+
+    fn with_test_origins() {
+        std::env::set_var(
+            "ALLOWED_ORIGINS",
+            "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000",
+        );
+    }
+
+    static REDIRECT_ORIGIN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn redirect_uri_rejects_unlisted_https_host_with_oauth_error() {
+        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
+        with_test_origins();
+        let err = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback")
+            .expect_err("unlisted host must be rejected");
+        assert!(
+            matches!(err, ManageConnectionsError::OAuth(_)),
+            "must be an OAuth error, got: {err}"
+        );
+        assert!(err.to_string().contains("origin is not allowed"));
+    }
+
+    #[test]
+    fn redirect_uri_accepts_allowlisted_https_host() {
+        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
+        with_test_origins();
+        validate_oauth_redirect_uri("https://rook.example.com/api/oauth/callback")
+            .expect("allowlisted dashboard host must pass");
+    }
+
+    #[test]
+    fn redirect_uri_rejects_unlisted_port_on_allowlisted_host() {
+        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
+        with_test_origins();
+        let err = validate_oauth_redirect_uri("https://rook.example.com:8443/api/oauth/callback")
+            .expect_err("an unlisted port must not inherit the allowed host");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
+    }
+
+    #[test]
+    fn redirect_uri_accepts_loopback_http_for_dev() {
+        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
+        with_test_origins();
+        validate_oauth_redirect_uri("http://localhost:3000/api/oauth/callback")
+            .expect("loopback HTTP must keep working for dev");
+        validate_oauth_redirect_uri("http://127.0.0.1:4747/api/oauth/callback")
+            .expect("loopback HTTP must keep working for dev");
+    }
+
+    #[test]
+    fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
+        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
+        std::env::set_var("ALLOWED_ORIGINS", "*");
+        let result = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback");
+        with_test_origins();
+        let err = result.expect_err("wildcard must not authorize arbitrary hosts");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
     }
 }
