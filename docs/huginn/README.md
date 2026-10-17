@@ -260,6 +260,26 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 | `/clear` | Clear current conversation |
 | `/quit` | Exit Huginn |
 
+### `/settings` modal
+
+Open with `/settings` (chat mode only — `--line-mode` excludes the modal).
+The dialog hosts five tabs in the order `theme · indicators · sound · toasts · integrations`.
+Navigate with `←/→` (or `Tab`/`BackTab`) and pick rows with `↑/↓`. Enter writes
+the working copy to `config.toml` under `[ui]` via `toml_edit` and shows
+`Settings saved`; Esc discards without touching the file and shows
+`Settings discarded`. v1 persists the values only — none of the tabs is
+wired into its runtime subsystem yet, so the dialog is a shell for
+follow-up changes. The `integrations` tab exposes a single
+`(+) Add provider…` row that surfaces `Add provider not implemented yet`.
+
+The `[ui]` schema lives at the bottom of
+[config.example.toml](../../apps/huginn/config.example.toml).
+Hand-added keys under `[ui]` are tolerated on load and preserved across
+rounds (`toml_edit::DocumentMut`). The active precedence chain is
+`Modal > Settings > PluginDialog > completion`: an approval arriving
+while the modal is open disposes of the settings dialog first, and Esc
+inside settings never reaches the cancel-turn branch.
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
