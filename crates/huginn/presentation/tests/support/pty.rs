@@ -100,6 +100,17 @@ impl Pty {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+    pub fn wait_until_screen_not_contains(&self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.screen_text().contains(needle) {
+            assert!(
+                Instant::now() < deadline,
+                "screen still contains {needle:?} after timeout:\n{}",
+                self.screen_text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     pub fn finish(&mut self, success: bool) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
         let status = loop {
