@@ -519,24 +519,8 @@ async fn authorization_rejects_https_callback_on_unlisted_host() {
 }
 
 #[tokio::test]
-async fn authorization_accepts_allowlisted_host_and_loopback_http() {
+async fn authorization_accepts_loopback_http() {
     let manager = manager();
-    // Allowlisted dashboard host: flow starts and the IdP URL echoes it back.
-    let started = manager
-        .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
-            request(OAuthFlowType::AuthorizationCode),
-        )
-        .await
-        .expect("allowlisted host must start a flow");
-    let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
-    let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
-    assert_eq!(
-        query.get("redirect_uri").map(String::as_str),
-        Some("http://localhost:3000/api/oauth/callback")
-    );
-
-    // Loopback HTTP stays usable for dev.
     let mut loopback = request(OAuthFlowType::AuthorizationCode);
     loopback.redirect_uri = "http://localhost:3000/api/oauth/callback".to_string();
     manager

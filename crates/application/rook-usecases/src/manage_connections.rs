@@ -1619,6 +1619,14 @@ fn build_authorization_url(
 }
 
 fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
+    let origins = allowed_oauth_redirect_origins();
+    validate_oauth_redirect_uri_with_origins(value, &origins)
+}
+
+fn validate_oauth_redirect_uri_with_origins(
+    value: &str,
+    allowed_origins: &[reqwest::Url],
+) -> ManageConnectionsResult<()> {
     let uri = reqwest::Url::parse(value)
         .map_err(|_| ManageConnectionsError::OAuth("redirectUri must be an absolute URL".into()))?;
     let host = uri.host_str().unwrap_or_default().to_ascii_lowercase();
@@ -1645,7 +1653,7 @@ fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
     // (transport-axum) so there is a single source of truth; entries are
     // origins (`scheme://host[:port]`), compared by scheme, host, and
     // effective port. A `*` entry never authorizes an arbitrary OAuth origin.
-    let is_allowed_origin = allowed_oauth_redirect_origins().iter().any(|allowed| {
+    let is_allowed_origin = allowed_origins.iter().any(|allowed| {
         allowed.scheme() == uri.scheme()
             && allowed
                 .host_str()
@@ -1663,11 +1671,8 @@ fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
 /// Origins derived from `ALLOWED_ORIGINS` (same variable and defaults as
 /// `CorsConfig::from_env` in transport-axum, which lives in a downstream
 /// crate the application layer cannot import).
-fn allowed_oauth_redirect_origins() -> Vec<reqwest::Url> {
-    std::env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| {
-            "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
-        })
+fn parse_allowed_oauth_redirect_origins(value: &str) -> Vec<reqwest::Url> {
+    value
         .split(',')
         .map(str::trim)
         .filter(|origin| !origin.is_empty())
@@ -1688,6 +1693,13 @@ fn allowed_oauth_redirect_origins() -> Vec<reqwest::Url> {
             .then_some(url)
         })
         .collect()
+}
+
+fn allowed_oauth_redirect_origins() -> Vec<reqwest::Url> {
+    let value = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
+        "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
+    });
+    parse_allowed_oauth_redirect_origins(&value)
 }
 
 async fn parse_token_response(
@@ -4155,38 +4167,14 @@ mod tests {
     // OAuth redirect URI host allowlist (A01) regression tests
     // ---------------------------------------------------------------------------
 
-    struct EnvVarGuard {
-        name: &'static str,
-        original: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(name: &'static str, value: &str) -> Self {
-            let original = std::env::var_os(name);
-            std::env::set_var(name, value);
-            Self { name, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match self.original.take() {
-                Some(value) => std::env::set_var(self.name, value),
-                None => std::env::remove_var(self.name),
-            }
-        }
-    }
-
-    const TEST_ORIGINS: &str = "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000";
-
-    static REDIRECT_ORIGIN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn redirect_uri_rejects_unlisted_https_host_with_oauth_error() {
-        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
-        let err = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback")
-            .expect_err("unlisted host must be rejected");
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "https://evil.example/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("unlisted host must be rejected");
         assert!(
             matches!(err, ManageConnectionsError::OAuth(_)),
             "must be an OAuth error, got: {err}"
@@ -4196,36 +4184,58 @@ mod tests {
 
     #[test]
     fn redirect_uri_accepts_allowlisted_https_host() {
-        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
-        validate_oauth_redirect_uri("https://rook.example.com/api/oauth/callback")
-            .expect("allowlisted dashboard host must pass");
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        validate_oauth_redirect_uri_with_origins(
+            "https://rook.example.com/api/oauth/callback",
+            &origins,
+        )
+        .expect("allowlisted dashboard host must pass");
     }
 
     #[test]
     fn redirect_uri_rejects_unlisted_port_on_allowlisted_host() {
-        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
-        let err = validate_oauth_redirect_uri("https://rook.example.com:8443/api/oauth/callback")
-            .expect_err("an unlisted port must not inherit the allowed host");
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "https://rook.example.com:8443/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("an unlisted port must not inherit the allowed host");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
+    }
+
+    #[test]
+    fn redirect_uri_rejects_wrong_scheme_for_allowlisted_host() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "http://rook.example.com/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("non-loopback HTTP must not inherit an HTTPS allowlist entry");
         assert!(matches!(err, ManageConnectionsError::OAuth(_)));
     }
 
     #[test]
     fn redirect_uri_accepts_loopback_http_for_dev() {
-        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
-        validate_oauth_redirect_uri("http://localhost:3000/api/oauth/callback")
-            .expect("loopback HTTP must keep working for dev");
-        validate_oauth_redirect_uri("http://127.0.0.1:4747/api/oauth/callback")
-            .expect("loopback HTTP must keep working for dev");
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        validate_oauth_redirect_uri_with_origins(
+            "http://localhost:3000/api/oauth/callback",
+            &origins,
+        )
+        .expect("loopback HTTP must keep working for dev");
+        validate_oauth_redirect_uri_with_origins(
+            "http://127.0.0.1:4747/api/oauth/callback",
+            &origins,
+        )
+        .expect("loopback HTTP must keep working for dev");
     }
 
     #[test]
     fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
-        let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", "*");
-        let result = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback");
+        let origins = parse_allowed_oauth_redirect_origins("*");
+        let result = validate_oauth_redirect_uri_with_origins(
+            "https://evil.example/api/oauth/callback",
+            &origins,
+        );
         let err = result.expect_err("wildcard must not authorize arbitrary hosts");
         assert!(matches!(err, ManageConnectionsError::OAuth(_)));
     }
