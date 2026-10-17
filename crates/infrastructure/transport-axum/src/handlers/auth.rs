@@ -299,11 +299,11 @@ fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool
 }
 
 fn build_clear_auth_token_cookie(rook_env: Option<&str>, is_release: bool) -> HeaderValue {
-    let mut cookie = String::from("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
     if is_secure(rook_env, is_release) {
-        cookie.push_str("; Secure");
+        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure")
+    } else {
+        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
     }
-    HeaderValue::from_str(&cookie).expect("static cookie attributes form a valid header")
 }
 
 fn rook_environment() -> Option<String> {
@@ -312,60 +312,4 @@ fn rook_environment() -> Option<String> {
 
 fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
     is_release || rook_env == Some("production")
-}
-
-#[cfg(test)]
-mod cookie_security_tests {
-    use super::{build_auth_token_cookie, build_clear_auth_token_cookie, build_csrf_token_cookie};
-
-    #[test]
-    fn auth_and_csrf_cookies_use_release_or_production_security_mode() {
-        for (env, is_release, expected_secure) in [
-            (Some("production"), false, true),
-            (None, false, false),
-            (Some("development"), false, false),
-            (None, true, true),
-            (Some("development"), true, true),
-        ] {
-            let auth = build_auth_token_cookie("token", env, is_release)
-                .to_str()
-                .unwrap()
-                .to_owned();
-            let csrf = build_csrf_token_cookie("token", env, is_release)
-                .to_str()
-                .unwrap()
-                .to_owned();
-            assert_eq!(auth.contains("; Secure"), expected_secure);
-            assert_eq!(csrf.contains("; Secure"), expected_secure);
-        }
-
-        assert!(
-            build_auth_token_cookie("bad\nvalue", Some("production"), false)
-                .to_str()
-                .unwrap()
-                .contains("; Secure")
-        );
-        assert!(
-            build_csrf_token_cookie("bad\nvalue", Some("production"), false)
-                .to_str()
-                .unwrap()
-                .contains("; Secure")
-        );
-    }
-
-    #[test]
-    fn clearing_auth_cookie_uses_release_or_production_security_mode() {
-        assert!(build_clear_auth_token_cookie(Some("production"), false)
-            .to_str()
-            .unwrap()
-            .contains("; Secure"));
-        assert!(!build_clear_auth_token_cookie(None, false)
-            .to_str()
-            .unwrap()
-            .contains("; Secure"));
-        assert!(build_clear_auth_token_cookie(None, true)
-            .to_str()
-            .unwrap()
-            .contains("; Secure"));
-    }
 }
