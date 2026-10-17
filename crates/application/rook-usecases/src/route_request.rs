@@ -220,7 +220,13 @@ impl RouteRequest {
             let connection_id = self.resolve_connection_id(&provider_id).await;
 
             // Provider restriction check (after selection, before execution)
-            self.check_provider_restriction(&req, &provider_id)?;
+            if let Err(error) = self.check_provider_restriction(&req, &provider_id) {
+                if local_backpressure.is_some() {
+                    excluded.push(provider_id);
+                    continue;
+                }
+                return Err(error);
+            }
 
             let provider_format = provider.api_format();
             let provider_req = match self.format_translator.translate_request(
@@ -539,6 +545,10 @@ impl RouteRequest {
                 if !req.restrictions.allowed_providers.is_empty()
                     && !req.restrictions.allowed_providers.contains(&provider_id)
                 {
+                    if local_backpressure.is_some() {
+                        excluded.push(provider_id);
+                        continue;
+                    }
                     return Err(
                         RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into(),
                     );
@@ -1857,6 +1867,93 @@ mod tests {
                 .stream_calls
                 .load(std::sync::atomic::Ordering::SeqCst),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_preserves_local_backpressure_when_fallback_is_disallowed() {
+        let (primary, holder) = busy_limited_test_provider().await;
+        let secondary: Arc<dyn ProviderPort> = Arc::new(CountingStreamProvider {
+            id: ProviderId::new("secondary"),
+            models: vec![TEST_MODEL.clone()],
+            stream_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(PriorityFallbackRouter {
+                providers: vec![primary, secondary],
+            }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        );
+        let mut req = request();
+        req.stream = false;
+        req.metadata.cacheable = false;
+        req.restrictions.allowed_providers = vec![ProviderId::new("test-provider")];
+
+        let error = usecase
+            .execute(req)
+            .await
+            .expect_err("disallowed fallback must not mask local backpressure");
+        holder.abort();
+        assert!(
+            error.is_local_backpressure(),
+            "expected local 429 classification, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_stream_preserves_local_backpressure_when_fallback_is_disallowed() {
+        let (primary, holder) = busy_limited_test_provider().await;
+        let secondary = Arc::new(CountingStreamProvider {
+            id: ProviderId::new("secondary"),
+            models: vec![TEST_MODEL.clone()],
+            stream_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let usecase = RouteRequest::new(
+            Arc::new(PriorityFallbackRouter {
+                providers: vec![primary, secondary],
+            }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        );
+        let mut req = request();
+        req.stream = true;
+        req.restrictions.allowed_providers = vec![ProviderId::new("test-provider")];
+
+        let error = match usecase.execute_stream(req).await {
+            Err(error) => error,
+            Ok(_) => panic!("disallowed fallback must not mask local backpressure"),
+        };
+        holder.abort();
+        assert!(
+            error.is_local_backpressure(),
+            "expected local 429 classification, got {error}"
         );
     }
 
