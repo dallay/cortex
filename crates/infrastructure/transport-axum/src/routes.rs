@@ -1272,7 +1272,7 @@ mod tests {
                     ("http://localhost:3000", false),
                 ],
             ),
-            (Some("*"), vec![("https://arbitrary.example", true)]),
+            (Some("*"), vec![("https://arbitrary.example", false)]),
         ] {
             match setting {
                 Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),

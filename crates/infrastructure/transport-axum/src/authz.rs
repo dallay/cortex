@@ -193,7 +193,7 @@ pub struct CorsConfig {
 
 impl CorsConfig {
     fn from_env() -> Self {
-        let allowed_origins = std::env::var("ALLOWED_ORIGINS")
+        let mut allowed_origins: Vec<String> = std::env::var("ALLOWED_ORIGINS")
             .unwrap_or_else(|_| {
                 "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
             })
@@ -202,14 +202,18 @@ impl CorsConfig {
             .filter(|origin| !origin.is_empty())
             .map(ToOwned::to_owned)
             .collect();
+        if allowed_origins.iter().any(|origin| origin == "*") {
+            tracing::warn!(
+                "ALLOWED_ORIGINS contains '*'; wildcard CORS is unsafe with cookie-authenticated management routes, disabling all CORS origins"
+            );
+            allowed_origins.clear();
+        }
         Self { allowed_origins }
     }
 
     fn allow_origin(&self, origin: Option<&HeaderValue>) -> Option<HeaderValue> {
         let origin = origin.and_then(|value| value.to_str().ok())?;
-        if self.allowed_origins.iter().any(|allowed| allowed == "*")
-            || self.allowed_origins.iter().any(|allowed| allowed == origin)
-        {
+        if self.allowed_origins.iter().any(|allowed| allowed == origin) {
             HeaderValue::from_str(origin).ok()
         } else {
             None

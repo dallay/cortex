@@ -552,7 +552,7 @@ Set `ALLOWED_ORIGINS` before starting Rook to a comma-separated list of browser 
 
 When unset, the allowed origins are `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Setting the variable replaces these defaults. An empty value allows no cross-origin browser access. Same-origin requests do not require a CORS allowance.
 
-An explicit `*` entry allows any origin: Rook echoes the requesting origin and sends `Access-Control-Allow-Credentials: true` and `Vary: Origin`. Exact matches receive the same headers. Unlisted origins receive neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Credentials`; the browser denies access to the response. CORS does not replace authentication or reject the HTTP request itself.
+Wildcard (`*`) entries are unsupported and fail closed: if `ALLOWED_ORIGINS` contains `*`, no cross-origin browser access is allowed and Rook logs a warning. Use explicit origins only. Exact matches receive `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials: true`, and `Vary: Origin`; unlisted origins receive neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Credentials`. CORS does not replace authentication or reject the HTTP request itself.
 
 Preflight `OPTIONS` requests return `204 No Content`. Allowed methods are `GET, POST, PUT, DELETE, OPTIONS`; allowed request headers are `Content-Type, Authorization, X-API-Key`; the preflight cache lifetime is 86400 seconds.
 
@@ -565,7 +565,7 @@ Authorization-code flows started through `POST /api/oauth/{provider}/authorize` 
 - The URL must be absolute, use the exact path `/api/oauth/callback`, and contain no username, password, query, or fragment.
 - Non-loopback callbacks require HTTPS and an explicit origin in `ALLOWED_ORIGINS`. Matching uses scheme, case-insensitive host, and effective port (omitted HTTPS port equals `443`). Different ports and subdomains require separate entries.
 - `localhost`, `127.0.0.1`, and `[::1]` callbacks may use HTTP or HTTPS on any port without an allowlist entry. The path and other URL restrictions still apply. This exception does not expand the CORS allowlist.
-- `*` permits arbitrary browser origins for CORS but never authorizes a non-loopback OAuth callback. Configure each HTTPS callback origin explicitly.
+- `*` is unsupported for CORS and does not authorize OAuth callbacks. Configure each HTTPS callback origin explicitly.
 
 Invalid or unlisted callbacks return `400 Bad Request` with code `VALIDATION_ERROR` and message `OAuth operation failed`. Register the same callback URL with your OAuth provider.
 

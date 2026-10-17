@@ -311,7 +311,7 @@ This permits that exact browser origin and the OAuth callback `https://rook.exam
 
 When unset, CORS allows only `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Entries are trimmed, then compared exactly with the browser's `Origin` header. Do not append a path or trailing slash. Ports, schemes, and subdomains must match; debug builds have the same restrictions. An empty value permits no cross-origin browser access. Same-origin dashboard requests do not need an entry for CORS.
 
-An explicit `*` entry allows every browser origin, with the request origin echoed and credentials enabled. It does **not** allow arbitrary OAuth callback origins. Use explicit origins for a production dashboard, including when CORS is otherwise open.
+Wildcard (`*`) entries are unsupported and fail closed: if `ALLOWED_ORIGINS` contains `*`, Rook allows no cross-origin browser access and logs a warning. Use explicit origins only; wildcard CORS is unsafe with cookie-authenticated management routes. A wildcard does not allow arbitrary OAuth callback origins.
 
 Non-loopback OAuth callbacks require HTTPS, the exact path `/api/oauth/callback`, and an explicitly listed origin. OAuth matching compares scheme, host without case sensitivity, and effective port; omitted HTTPS port and `443` are equivalent. Other ports require their own entries. Callback URLs cannot contain credentials, query parameters, or fragments. Invalid callbacks return HTTP 400 with code `VALIDATION_ERROR`.
 
