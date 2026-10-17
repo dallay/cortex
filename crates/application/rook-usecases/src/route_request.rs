@@ -189,6 +189,8 @@ impl RouteRequest {
 
         // 2. Retry loop: select provider, execute, failover on recoverable errors
         let mut excluded: Vec<ProviderId> = Vec::new();
+        let mut local_backpressure = None;
+        let mut provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
         let max_attempts = MAX_RETRY_ATTEMPTS.min(total_providers.max(1));
 
@@ -205,7 +207,14 @@ impl RouteRequest {
             let _select_span = tracing::debug_span!("router.select_excluding");
             let provider = match self.router.select_excluding(&req, &excluded).await {
                 Ok(p) => p,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    if !provider_attempt_failed {
+                        if let Some(error) = local_backpressure {
+                            return Err(error);
+                        }
+                    }
+                    return Err(e);
+                }
             };
             let provider_id = provider.id().clone();
             let connection_id = self.resolve_connection_id(&provider_id).await;
@@ -254,6 +263,11 @@ impl RouteRequest {
                 Err(e) => {
                     // Record failure for circuit breaker (before checking retryability)
                     notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
+                    if e.is_local_backpressure() {
+                        local_backpressure = Some(CortexError::local_backpressure());
+                    } else {
+                        provider_attempt_failed = true;
+                    }
                     let final_latency = start.elapsed().as_millis() as u64;
 
                     // Non-retryable errors: record audit/usage/telemetry and return
@@ -298,6 +312,11 @@ impl RouteRequest {
 
                     // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
                     if excluded.len() >= total_providers {
+                        if !provider_attempt_failed {
+                            if let Some(error) = local_backpressure {
+                                return Err(error);
+                            }
+                        }
                         tracing::error!(
                             providers = ?self.router.providers(),
                             excluded = ?excluded,
@@ -326,6 +345,11 @@ impl RouteRequest {
         }
 
         // This should not be reached, but safety fallback
+        if !provider_attempt_failed {
+            if let Some(error) = local_backpressure {
+                return Err(error);
+            }
+        }
         Err(CortexError::all_providers_exhausted())
     }
 
@@ -938,6 +962,8 @@ impl RouteRequest {
         // Track errors for the final AllProvidersExhausted
         let mut steps_attempted = 0;
         let mut errors: Vec<(ProviderId, String)> = Vec::new();
+        let mut local_backpressure = None;
+        let mut provider_attempt_failed = false;
 
         // Overall combo timeout
         let combo_start = Instant::now();
@@ -1028,8 +1054,6 @@ impl RouteRequest {
                     .await;
 
             let latency_ms = step_start.elapsed().as_millis() as u64;
-            steps_attempted += 1;
-
             match step_result {
                 Ok(Ok(provider_resp)) => {
                     // SUCCESS
@@ -1059,6 +1083,12 @@ impl RouteRequest {
                     return Ok(resp);
                 }
                 Ok(Err(e)) => {
+                    if e.is_local_backpressure() {
+                        local_backpressure = Some(e);
+                        continue;
+                    }
+                    steps_attempted += 1;
+                    provider_attempt_failed = true;
                     // Provider returned an error
                     errors.push((provider_id.clone(), e.to_string()));
 
@@ -1094,6 +1124,8 @@ impl RouteRequest {
                     continue;
                 }
                 Err(_timeout) => {
+                    steps_attempted += 1;
+                    provider_attempt_failed = true;
                     // Step timed out
                     let err = CortexError::provider(format!(
                         "step {} timed out after {:?}",
@@ -1125,6 +1157,11 @@ impl RouteRequest {
         }
 
         // All steps exhausted
+        if !provider_attempt_failed {
+            if let Some(error) = local_backpressure {
+                return Err(error);
+            }
+        }
         let total_latency_ms = combo_start.elapsed().as_millis() as u64;
         tracing::error!(
             combo_id = %combo_id,
@@ -1504,6 +1541,198 @@ mod tests {
         .await;
         let upstream_state = router.circuit_states();
         assert!(upstream_state[0].1.cooldown_until.is_some());
+    }
+
+    struct BlockingTestProvider {
+        inner: TestProvider,
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    }
+
+    #[async_trait]
+    impl ProviderPort for BlockingTestProvider {
+        fn id(&self) -> &ProviderId {
+            &self.inner.id
+        }
+        fn supported_models(&self) -> &[ModelId] {
+            self.inner.supported_models()
+        }
+        fn api_format(&self) -> ApiFormat {
+            self.inner.api_format()
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> HealthStatus {
+            self.inner.health_check().await
+        }
+        async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            if let Some(started) = self.started.lock().unwrap().take() {
+                let _ = started.send(());
+            }
+            std::future::pending().await
+        }
+        async fn stream(
+            &self,
+            req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            self.inner.stream(req).await
+        }
+    }
+
+    async fn busy_limited_test_provider() -> (Arc<dyn ProviderPort>, tokio::task::JoinHandle<()>) {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let inner: Arc<dyn ProviderPort> = Arc::new(BlockingTestProvider {
+            inner: TestProvider {
+                id: ProviderId::new("test-provider"),
+                complete_error: None,
+            },
+            started: Mutex::new(Some(started_tx)),
+        });
+        let limited =
+            Arc::new(crate::provider_concurrency::ConcurrencyLimitedProvider::new(inner, 1));
+        let holding_provider = limited.clone();
+        let holder = tokio::spawn(async move {
+            let _ = holding_provider.complete(&request()).await;
+        });
+        started_rx.await.expect("provider call holds admission");
+        (limited, holder)
+    }
+
+    fn make_usecase_with_provider(provider: Arc<dyn ProviderPort>) -> RouteRequest {
+        RouteRequest::new(
+            Arc::new(TestRouter { provider }),
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn execute_returns_local_backpressure_when_provider_admission_is_busy() {
+        let (provider, holder) = busy_limited_test_provider().await;
+        let usecase = make_usecase_with_provider(provider);
+        let mut req = request();
+        req.stream = false;
+        req.metadata.cacheable = false;
+
+        let error = usecase
+            .execute(req)
+            .await
+            .expect_err("busy provider rejects admission");
+        holder.abort();
+        assert!(
+            error.is_local_backpressure(),
+            "expected local 429 classification, got {error}"
+        );
+    }
+
+    struct ExhaustingAfterExcludedRouter {
+        provider: Arc<dyn ProviderPort>,
+    }
+
+    #[async_trait]
+    impl RouterPort for ExhaustingAfterExcludedRouter {
+        async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            Ok(self.provider.clone())
+        }
+
+        async fn select_excluding(
+            &self,
+            _req: &CompletionRequest,
+            excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            if excluded.contains(self.provider.id()) {
+                Err(CortexError::all_providers_exhausted())
+            } else {
+                Ok(self.provider.clone())
+            }
+        }
+
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+
+        fn providers(&self) -> Vec<ProviderId> {
+            vec![
+                self.provider.id().clone(),
+                ProviderId::new("not-supporting-model"),
+            ]
+        }
+    }
+
+    #[tokio::test]
+    async fn local_backpressure_survives_router_exhaustion_after_exclusion() {
+        let (provider, holder) = busy_limited_test_provider().await;
+        let router = Arc::new(ExhaustingAfterExcludedRouter { provider });
+        let usecase = RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        );
+        let mut req = request();
+        req.metadata.cacheable = false;
+
+        let error = usecase
+            .execute(req)
+            .await
+            .expect_err("local backpressure should survive provider selection exhaustion");
+        holder.abort();
+        assert!(
+            error.is_local_backpressure(),
+            "expected local 429 classification, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_combo_returns_local_backpressure_when_all_admission_is_busy() {
+        let (provider, holder) = busy_limited_test_provider().await;
+        let usecase = make_usecase_with_provider(provider);
+        let combo = Combo::new(
+            "busy".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: ProviderId::new("test-provider"),
+                model: TEST_MODEL.clone(),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        let mut req = request();
+        req.stream = false;
+        req.metadata.cacheable = false;
+
+        let error = usecase
+            .execute_combo(&combo, req, ApiFormat::OpenAI)
+            .await
+            .expect_err("busy combo provider rejects admission");
+        holder.abort();
+        assert!(
+            error.is_local_backpressure(),
+            "expected local 429 classification, got {error}"
+        );
     }
 
     struct TestCache {
