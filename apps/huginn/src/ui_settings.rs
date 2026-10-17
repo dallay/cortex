@@ -54,10 +54,7 @@ fn write_ui(doc: &mut DocumentMut, ui: &UiConfig) {
 }
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
-    let need = match doc.get(key) {
-        None => true,
-        Some(item) => !item.is_table(),
-    };
+    let need = doc.get(key).is_none_or(|item| !item.is_table());
     if need {
         doc[key] = Item::Table(Table::new());
     }
@@ -65,10 +62,7 @@ fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
 }
 
 fn ensure_sub_table<'a>(parent: &'a mut Table, key: &str) -> &'a mut Table {
-    let need = match parent.get(key) {
-        None => true,
-        Some(item) => !item.is_table(),
-    };
+    let need = parent.get(key).is_none_or(|item| !item.is_table());
     if need {
         parent[key] = Item::Table(Table::new());
     }

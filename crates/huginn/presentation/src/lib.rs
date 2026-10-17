@@ -89,8 +89,7 @@ pub struct RatatuiPlugin {
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ui_config: Option<Arc<crate::settings::UiConfig>>,
-    save_ui_config:
-        Option<Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>>,
+    save_ui_config: Option<crate::settings::SaveUiConfig>,
 }
 impl Default for RatatuiPlugin {
     fn default() -> Self {
@@ -121,7 +120,7 @@ impl RatatuiPlugin {
     pub fn with_settings(
         mut self,
         ui_config: Arc<crate::settings::UiConfig>,
-        save_ui_config: Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>,
+        save_ui_config: crate::settings::SaveUiConfig,
     ) -> Self {
         self.ui_config = Some(ui_config);
         self.save_ui_config = Some(save_ui_config);

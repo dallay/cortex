@@ -469,7 +469,7 @@ async fn tui_chat(
         });
     let ui_config = Arc::new(config.ui.clone());
     let save_path = config_path.clone();
-    let save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync> =
+    let save_ui_config: huginn_presentation::settings::SaveUiConfig =
         Arc::new(move |ui: &UiConfig| ui_settings::persist(ui, &save_path));
     supervisor.register(Box::new(
         RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))

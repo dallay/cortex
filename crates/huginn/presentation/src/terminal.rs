@@ -224,8 +224,7 @@ pub struct Ratatui {
     pub model_configured: bool,
     pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub ui_config: Option<Arc<crate::settings::UiConfig>>,
-    pub save_ui_config:
-        Option<Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>>,
+    pub save_ui_config: Option<crate::settings::SaveUiConfig>,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -272,8 +271,7 @@ impl Presentation for Ratatui {
             .clone()
             .unwrap_or_else(|| Arc::new(crate::settings::UiConfig::defaults()));
         let save_ui_config = self.save_ui_config.clone().unwrap_or_else(|| {
-            Arc::new(|_: &crate::settings::UiConfig| Ok(()))
-                as Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>
+            Arc::new(|_: &crate::settings::UiConfig| Ok(())) as crate::settings::SaveUiConfig
         });
         let (ui, prompts) = Ui::new(
             session,
@@ -368,6 +366,17 @@ fn markdown(lines: Vec<String>) -> Vec<Line<'static>> {
         })
         .collect()
 }
+/// Settings dialog projection: (tabs, active, items, selected, error).
+/// Tabs are owned strings because `SettingsSnapshot::tabs` holds `&'a str`;
+/// owning keeps `View` 'static.
+type SettingsView = Option<(
+    Vec<String>,
+    usize,
+    Vec<(String, bool, u8)>,
+    usize,
+    Option<String>,
+)>;
+
 struct View {
     editor: Editor,
     completion: Suggestions,
@@ -378,16 +387,7 @@ struct View {
     modal: Option<(String, u64, String, String, usize)>,
     plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
     workflow: Option<(String, String, Vec<String>, usize, bool)>,
-    /// Settings dialog: (title, tabs, active, items, selected, error).
-    /// Tabs are owned strings because the dialog emits them via
-    /// `SettingsSnapshot.tabs` as `&'a str` — owning keeps `View` 'static.
-    settings: Option<(
-        Vec<String>,
-        usize,
-        Vec<(String, bool, u8)>,
-        usize,
-        Option<String>,
-    )>,
+    settings: SettingsView,
     widgets: String,
 }
 impl View {

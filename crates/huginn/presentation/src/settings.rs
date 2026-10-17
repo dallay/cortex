@@ -85,6 +85,9 @@ pub const TAB_SOUND: usize = 2;
 pub const TAB_TOASTS: usize = 3;
 pub const TAB_INTEGRATIONS: usize = 4;
 
+/// Persistence closure invoked by the dialog on Enter.
+pub type SaveUiConfig = std::sync::Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>;
+
 /// Available themes for the `theme` tab (D6 — 13 names).
 pub const THEME_NAMES: [&str; 13] = [
     "one-dark",
@@ -250,15 +253,15 @@ impl SettingsDialog {
         }
     }
 
-    pub fn next_tab(&mut self) {
+    pub const fn next_tab(&mut self) {
         self.active_tab = (self.active_tab + 1) % TAB_COUNT;
     }
 
-    pub fn prev_tab(&mut self) {
+    pub const fn prev_tab(&mut self) {
         self.active_tab = (self.active_tab + TAB_COUNT - 1) % TAB_COUNT;
     }
 
-    fn item_count(&self) -> usize {
+    const fn item_count(&self) -> usize {
         match self.active_tab {
             TAB_THEME => THEME_NAMES.len(),
             TAB_INDICATORS => 3,
@@ -269,7 +272,7 @@ impl SettingsDialog {
         }
     }
 
-    pub fn select_next(&mut self) {
+    pub const fn select_next(&mut self) {
         let count = self.item_count();
         if count == 0 {
             return;
@@ -278,7 +281,7 @@ impl SettingsDialog {
         *cur = (*cur + 1) % count;
     }
 
-    pub fn select_prev(&mut self) {
+    pub const fn select_prev(&mut self) {
         let count = self.item_count();
         if count == 0 {
             return;
@@ -289,7 +292,7 @@ impl SettingsDialog {
 
     /// Bool → flip; Cycle → advance index; Pick → set the working copy
     /// to the named option; Action → no-op.
-    pub fn toggle_selected(&mut self) {
+    pub const fn toggle_selected(&mut self) {
         let selected = self.selections[self.active_tab].selected;
         match self.active_tab {
             TAB_THEME => {
@@ -369,14 +372,14 @@ impl SettingsDialog {
     }
 
     /// Drop the working copy without calling `save`.
-    pub fn discard(&mut self) {
+    pub const fn discard(&mut self) {
         // Nothing to free; the dialog is heap-owned by `state.settings`.
     }
 
     /// True when the currently selected row is the `(+) Add provider…`
     /// action row on the integrations tab. The driver closes the dialog
     /// and surfaces the notice — no persistence call.
-    pub fn handle_add_provider(&self) -> bool {
+    pub const fn handle_add_provider(&self) -> bool {
         self.active_tab == TAB_INTEGRATIONS && self.selections[TAB_INTEGRATIONS].selected == 0
     }
 

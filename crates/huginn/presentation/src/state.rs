@@ -1,7 +1,7 @@
 //! Deterministic state projection and UTF-8 composer, independent of terminal I/O.
 use crate::approval::{approval_header, effect_line};
 use crate::completion::{CatalogCommand, Completion};
-use crate::settings::{SettingsDialog, UiConfig};
+use crate::settings::{SaveUiConfig, SettingsDialog, UiConfig};
 use crate::{contributions::Contributions, Interaction};
 use async_trait::async_trait;
 use huginn_core::{
@@ -332,7 +332,7 @@ pub struct Ui {
     pub stop: CancellationToken,
     pub contributions: Arc<Contributions>,
     pub ui_config: Arc<UiConfig>,
-    pub save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>,
+    pub save_ui_config: SaveUiConfig,
     requests: tokio::sync::Mutex<()>,
     prompts: tokio::sync::Mutex<mpsc::Receiver<String>>,
 }
@@ -342,7 +342,7 @@ impl Ui {
         contributions: Arc<Contributions>,
         stop: CancellationToken,
         ui_config: Arc<UiConfig>,
-        save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>,
+        save_ui_config: SaveUiConfig,
     ) -> (Arc<Self>, mpsc::Sender<String>) {
         let (sender, receiver) = mpsc::channel(1);
         let mut state = UiState::default();
