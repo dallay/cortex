@@ -1208,10 +1208,9 @@ mod tests {
     use http_body_util::BodyExt;
     use shared_kernel::{RateLimitRule, RateLimitScope};
     use std::collections::HashMap;
-    use std::sync::Mutex;
     use tower::ServiceExt;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     struct EnvVarGuard {
         name: &'static str,
@@ -1245,7 +1244,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         // The API key config is read only to build this isolated authz stack.
         let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-test-key");
         let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
@@ -1293,7 +1292,7 @@ mod tests {
 
     #[tokio::test]
     async fn api_key_limiter_observes_server_stamped_authz_identity() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         let _env = EnvVarGuard::set("CLIENT_API_KEYS", "middleware-order-test-key");
         let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
 
