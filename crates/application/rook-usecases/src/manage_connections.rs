@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -42,6 +42,7 @@ pub struct ManageConnections {
     oauth_states: DashMap<String, String>,
     oauth_http_client: Option<reqwest::Client>,
     oauth_endpoint_overrides: OAuthEndpointOverrides,
+    admission_states: DashMap<ConnectionId, Weak<crate::provider_concurrency::AdmissionState>>,
 }
 
 /// Code-level test hook for OAuth HTTP endpoints.
@@ -104,11 +105,29 @@ impl ManageConnections {
             oauth_states: DashMap::new(),
             oauth_http_client,
             oauth_endpoint_overrides,
+            admission_states: DashMap::new(),
         }
     }
 
     pub fn oauth_token_port(&self) -> Arc<dyn OAuthTokenPort> {
         self.oauth_token_manager.clone()
+    }
+
+    fn admission_state_for_connection(
+        &self,
+        connection_id: ConnectionId,
+        max_concurrent: u32,
+    ) -> Arc<crate::provider_concurrency::AdmissionState> {
+        let mut state = self.admission_states.entry(connection_id).or_default();
+        if let Some(admission) = state.upgrade() {
+            admission
+        } else {
+            let admission = Arc::new(crate::provider_concurrency::AdmissionState::new(
+                max_concurrent,
+            ));
+            *state = Arc::downgrade(&admission);
+            admission
+        }
     }
 
     pub async fn refresh_expiring_oauth_tokens(&self) -> usize {
@@ -1094,6 +1113,7 @@ impl ManageConnections {
 
         let mut providers = Vec::new();
         let mut errors = Vec::new();
+        let mut active_connection_ids = std::collections::HashSet::new();
 
         for conn in connections.iter().filter(|c| c.is_active) {
             if let Err(error) = validate_provider_config(conn.provider_kind, &conn.config) {
@@ -1130,14 +1150,18 @@ impl ManageConnections {
 
             match self.builder.build(input).await {
                 Ok(provider) => {
+                    active_connection_ids.insert(conn.id);
                     tracing::debug!(
                         connection_id = %conn.id,
                         provider_id = %provider.id(),
                         "provider built successfully"
                     );
+                    let admission =
+                        self.admission_state_for_connection(conn.id, conn.config.max_concurrent);
                     providers.push(Arc::new(
-                        crate::provider_concurrency::ConcurrencyLimitedProvider::new(
+                        crate::provider_concurrency::ConcurrencyLimitedProvider::with_admission(
                             provider,
+                            admission,
                             conn.config.max_concurrent,
                         ),
                     ) as Arc<dyn ProviderPort>);
@@ -1165,6 +1189,9 @@ impl ManageConnections {
             tracing::error!(error = %e, "failed to replace provider registry");
             ManageConnectionsError::RegistryUpdateFailed(format!("replace_all failed: {e}"))
         })?;
+
+        self.admission_states
+            .retain(|id, state| active_connection_ids.contains(id) || state.strong_count() > 0);
 
         Ok(())
     }
@@ -1968,6 +1995,17 @@ mod tests {
             default_model: None,
             base_url: None,
         }
+    }
+
+    #[test]
+    fn admission_state_is_reused_for_the_same_connection_id() {
+        let manager = usecase();
+        let connection_id = ConnectionId::new();
+
+        let old_state = manager.admission_state_for_connection(connection_id, 2);
+        let refreshed_state = manager.admission_state_for_connection(connection_id, 1);
+
+        assert!(Arc::ptr_eq(&old_state, &refreshed_state));
     }
 
     #[test]
@@ -3945,19 +3983,36 @@ mod tests {
     // OAuth redirect URI host allowlist (A01) regression tests
     // ---------------------------------------------------------------------------
 
-    fn with_test_origins() {
-        std::env::set_var(
-            "ALLOWED_ORIGINS",
-            "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000",
-        );
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<std::ffi::OsString>,
     }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
+    const TEST_ORIGINS: &str = "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000";
 
     static REDIRECT_ORIGIN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn redirect_uri_rejects_unlisted_https_host_with_oauth_error() {
         let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        with_test_origins();
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
         let err = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback")
             .expect_err("unlisted host must be rejected");
         assert!(
@@ -3970,7 +4025,7 @@ mod tests {
     #[test]
     fn redirect_uri_accepts_allowlisted_https_host() {
         let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        with_test_origins();
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
         validate_oauth_redirect_uri("https://rook.example.com/api/oauth/callback")
             .expect("allowlisted dashboard host must pass");
     }
@@ -3978,7 +4033,7 @@ mod tests {
     #[test]
     fn redirect_uri_rejects_unlisted_port_on_allowlisted_host() {
         let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        with_test_origins();
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
         let err = validate_oauth_redirect_uri("https://rook.example.com:8443/api/oauth/callback")
             .expect_err("an unlisted port must not inherit the allowed host");
         assert!(matches!(err, ManageConnectionsError::OAuth(_)));
@@ -3987,7 +4042,7 @@ mod tests {
     #[test]
     fn redirect_uri_accepts_loopback_http_for_dev() {
         let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        with_test_origins();
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", TEST_ORIGINS);
         validate_oauth_redirect_uri("http://localhost:3000/api/oauth/callback")
             .expect("loopback HTTP must keep working for dev");
         validate_oauth_redirect_uri("http://127.0.0.1:4747/api/oauth/callback")
@@ -3997,9 +4052,8 @@ mod tests {
     #[test]
     fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
         let _guard = REDIRECT_ORIGIN_ENV_LOCK.lock().unwrap();
-        std::env::set_var("ALLOWED_ORIGINS", "*");
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", "*");
         let result = validate_oauth_redirect_uri("https://evil.example/api/oauth/callback");
-        with_test_origins();
         let err = result.expect_err("wildcard must not authorize arbitrary hosts");
         assert!(matches!(err, ManageConnectionsError::OAuth(_)));
     }

@@ -11,29 +11,32 @@ use shared_kernel::{RateLimitRule, RateLimitScope, RateLimitStatus};
 use std::{
     collections::HashMap,
     net::IpAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
 };
+use tokio::sync::Mutex;
 
 use crate::HttpError;
 
-const MAX_COUNTERS: usize = 100_000;
-
 #[derive(Clone, Default)]
-pub struct RateLimitRuleStore(Arc<Mutex<StoreState>>);
+pub struct RateLimitRuleStore(Arc<RwLock<StoreState>>);
 
 #[derive(Default)]
 struct StoreState {
-    rules: HashMap<String, RateLimitRule>,
-    counters: HashMap<String, Counter>,
+    rules: HashMap<String, StoredRule>,
+    identities: HashMap<(RateLimitScope, String), String>,
 }
 
-#[derive(Clone, Default)]
+struct StoredRule {
+    rule: RateLimitRule,
+    counter: Arc<Mutex<Counter>>,
+}
+
+#[derive(Default)]
 struct Counter {
     minute_start: i64,
     minute_count: u64,
     day_start: i64,
     day_count: u64,
-    last_seen: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -50,16 +53,40 @@ impl RateLimitRuleStore {
         Self::default()
     }
 
-    pub fn insert(&self, rule: RateLimitRule) {
-        self.0.lock().unwrap().rules.insert(rule.id.clone(), rule);
+    pub fn insert(&self, rule: RateLimitRule) -> bool {
+        let mut state = self.0.write().unwrap();
+        let identity = (rule.scope, rule.target.clone());
+        if state.identities.contains_key(&identity) || state.rules.contains_key(&rule.id) {
+            return false;
+        }
+        state.identities.insert(identity, rule.id.clone());
+        state.rules.insert(
+            rule.id.clone(),
+            StoredRule {
+                rule,
+                counter: Arc::new(Mutex::new(Counter::default())),
+            },
+        );
+        true
     }
 
     pub fn list(&self) -> Vec<RateLimitRule> {
-        self.0.lock().unwrap().rules.values().cloned().collect()
+        self.0
+            .read()
+            .unwrap()
+            .rules
+            .values()
+            .map(|entry| entry.rule.clone())
+            .collect()
     }
 
     pub fn get(&self, id: &str) -> Option<RateLimitRule> {
-        self.0.lock().unwrap().rules.get(id).cloned()
+        self.0
+            .read()
+            .unwrap()
+            .rules
+            .get(id)
+            .map(|entry| entry.rule.clone())
     }
 
     pub fn update(
@@ -67,17 +94,22 @@ impl RateLimitRuleStore {
         id: &str,
         update: impl FnOnce(&mut RateLimitRule),
     ) -> Option<RateLimitRule> {
-        let mut state = self.0.lock().unwrap();
-        let rule = state.rules.get_mut(id)?;
-        update(rule);
-        Some(rule.clone())
+        let mut state = self.0.write().unwrap();
+        let entry = state.rules.get_mut(id)?;
+        update(&mut entry.rule);
+        Some(entry.rule.clone())
     }
 
     pub fn remove(&self, id: &str) -> Option<RateLimitRule> {
-        self.0.lock().unwrap().rules.remove(id)
+        let mut state = self.0.write().unwrap();
+        let entry = state.rules.remove(id)?;
+        state
+            .identities
+            .remove(&(entry.rule.scope, entry.rule.target.clone()));
+        Some(entry.rule)
     }
 
-    pub fn check_request(
+    pub async fn check_request(
         &self,
         api_key: Option<&str>,
         ip: Option<IpAddr>,
@@ -91,22 +123,26 @@ impl RateLimitRuleStore {
             .unwrap()
             .and_utc()
             .timestamp();
-        let mut state = self.0.lock().unwrap();
-        let matching: Vec<_> = state
-            .rules
-            .values()
-            .filter(|rule| match rule.scope {
-                RateLimitScope::Global => rule.target == "global",
-                RateLimitScope::ApiKey => api_key == Some(rule.target.as_str()),
-                RateLimitScope::IpAddress => {
-                    ip.map(|value| value.to_string()) == Some(rule.target.clone())
-                }
-            })
-            .cloned()
-            .collect();
+        let candidates = [
+            Some((RateLimitScope::Global, "global".to_owned())),
+            api_key.map(|target| (RateLimitScope::ApiKey, target.to_owned())),
+            ip.map(|target| (RateLimitScope::IpAddress, target.to_string())),
+        ];
+        let matching: Vec<_> = {
+            let state = self.0.read().unwrap();
+            candidates
+                .into_iter()
+                .flatten()
+                .filter_map(|identity| {
+                    let id = state.identities.get(&identity)?;
+                    let entry = state.rules.get(id)?;
+                    Some((entry.rule.clone(), Arc::clone(&entry.counter)))
+                })
+                .collect()
+        };
         let effective_limit = matching
             .iter()
-            .map(|r| r.requests_per_minute)
+            .map(|(rule, _)| rule.requests_per_minute)
             .min()
             .unwrap_or(u32::MAX);
         if matching.is_empty() {
@@ -122,8 +158,9 @@ impl RateLimitRuleStore {
         let mut retry_after = 1;
         let mut reset_unix = minute_start as u64 + 60;
         let mut remaining = u64::from(effective_limit);
-        for rule in &matching {
-            let counter = state.counters.get(&rule.id).cloned().unwrap_or_default();
+        let mut counters = Vec::with_capacity(matching.len());
+        for (rule, counter) in &matching {
+            let counter = counter.lock().await;
             let minute_count = if counter.minute_start == minute_start {
                 counter.minute_count
             } else {
@@ -151,14 +188,10 @@ impl RateLimitRuleStore {
                 retry_after = retry_after.max((day_reset - now_sec).max(1) as u64);
                 reset_unix = reset_unix.max(day_reset as u64);
             }
+            counters.push(counter);
         }
         if allowed {
-            for rule in matching {
-                let counter = state.counters.entry(rule.id).or_insert_with(|| Counter {
-                    minute_start,
-                    day_start,
-                    ..Counter::default()
-                });
+            for ((rule, _), counter) in matching.iter().zip(counters.iter_mut()) {
                 if counter.minute_start != minute_start {
                     counter.minute_start = minute_start;
                     counter.minute_count = 0;
@@ -169,25 +202,8 @@ impl RateLimitRuleStore {
                 }
                 counter.minute_count += 1;
                 counter.day_count += 1;
-                counter.last_seen = now_sec;
                 remaining = remaining
                     .min(u64::from(rule.requests_per_minute).saturating_sub(counter.minute_count));
-            }
-        }
-        if state.counters.len() > MAX_COUNTERS {
-            let cutoff = now_sec - 86_400;
-            state
-                .counters
-                .retain(|_, counter| counter.last_seen >= cutoff);
-            while state.counters.len() > MAX_COUNTERS {
-                if let Some(oldest) = state
-                    .counters
-                    .iter()
-                    .min_by_key(|(_, c)| c.last_seen)
-                    .map(|(id, _)| id.clone())
-                {
-                    state.counters.remove(&oldest);
-                }
             }
         }
         RateLimitDecision {
@@ -199,18 +215,19 @@ impl RateLimitRuleStore {
         }
     }
 
-    pub fn status(
+    pub async fn status(
         &self,
         scope: RateLimitScope,
         target: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<RateLimitStatusWithLimits> {
-        let state = self.0.lock().unwrap();
-        let rule = state
-            .rules
-            .values()
-            .find(|r| r.scope == scope && r.target == target)?;
-        let counter = state.counters.get(&rule.id).cloned().unwrap_or_default();
+        let (rule, counter) = {
+            let state = self.0.read().unwrap();
+            let id = state.identities.get(&(scope, target.to_owned()))?;
+            let entry = state.rules.get(id)?;
+            (entry.rule.clone(), Arc::clone(&entry.counter))
+        };
+        let counter = counter.lock().await;
         let now_sec = now.timestamp();
         let minute_start = now_sec.div_euclid(60) * 60;
         let day_start = now
@@ -364,7 +381,16 @@ pub async fn create_rule(
         provider_limits: Default::default(),
     };
 
-    store.insert(rule.clone());
+    if !store.insert(rule.clone()) {
+        return Err(HttpError {
+            status: StatusCode::CONFLICT,
+            code: "DUPLICATE_RULE",
+            message: format!(
+                "A rate limit rule already exists for {:?}:{}",
+                rule.scope, rule.target
+            ),
+        });
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -440,6 +466,7 @@ pub async fn get_status(
 
     let status = store
         .status(scope, &target, chrono::Utc::now())
+        .await
         .ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND",
@@ -468,32 +495,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rule_store_counts_matching_global_key_and_ip_rules_and_uses_lowest_limit() {
+    #[tokio::test]
+    async fn rule_store_counts_matching_global_key_and_ip_rules_and_uses_lowest_limit() {
         let store = RateLimitRuleStore::new();
         store.insert(rule(RateLimitScope::Global, "global", 8, None));
         store.insert(rule(RateLimitScope::ApiKey, "key-1", 3, None));
         store.insert(rule(RateLimitScope::IpAddress, "127.0.0.1", 5, None));
         let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
 
-        let first = store.check_request(Some("key-1"), Some(IpAddr::from([127, 0, 0, 1])), now);
+        let first = store
+            .check_request(Some("key-1"), Some(IpAddr::from([127, 0, 0, 1])), now)
+            .await;
         assert!(first.allowed);
         assert_eq!(first.limit, 3);
         assert_eq!(first.remaining, 2);
+        for (scope, target) in [
+            (RateLimitScope::Global, "global"),
+            (RateLimitScope::ApiKey, "key-1"),
+            (RateLimitScope::IpAddress, "127.0.0.1"),
+        ] {
+            let status = store.status(scope, target, now).await.unwrap();
+            assert_eq!(status.status.current_minute_count, 1);
+        }
     }
 
-    #[test]
-    fn rule_store_denies_minute_and_daily_limits_and_reports_real_status() {
+    #[tokio::test]
+    async fn rule_store_denies_minute_and_daily_limits_and_reports_real_status() {
         let store = RateLimitRuleStore::new();
         store.insert(rule(RateLimitScope::ApiKey, "key-1", 2, Some(3)));
         let start = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
 
         for _ in 0..2 {
-            assert!(store.check_request(Some("key-1"), None, start).allowed);
+            assert!(
+                store
+                    .check_request(Some("key-1"), None, start)
+                    .await
+                    .allowed
+            );
         }
-        assert!(!store.check_request(Some("key-1"), None, start).allowed);
+        assert!(
+            !store
+                .check_request(Some("key-1"), None, start)
+                .await
+                .allowed
+        );
         let status = store
             .status(RateLimitScope::ApiKey, "key-1", start)
+            .await
             .unwrap();
         assert_eq!(status.status.current_minute_count, 2);
         assert_eq!(status.status.current_day_count, 2);
@@ -502,9 +550,10 @@ mod tests {
         assert!(
             store
                 .check_request(Some("key-1"), None, next_minute)
+                .await
                 .allowed
         );
-        let daily_denial = store.check_request(Some("key-1"), None, next_minute);
+        let daily_denial = store.check_request(Some("key-1"), None, next_minute).await;
         assert!(!daily_denial.allowed);
         let day_start = next_minute
             .date_naive()
@@ -515,17 +564,47 @@ mod tests {
         assert_eq!(daily_denial.reset_unix, day_start + 86_400);
         let status = store
             .status(RateLimitScope::ApiKey, "key-1", next_minute)
+            .await
             .unwrap();
         assert_eq!(status.status.current_minute_count, 1);
         assert_eq!(status.status.current_day_count, 3);
 
         let tomorrow = start + chrono::Duration::days(1);
-        assert!(store.check_request(Some("key-1"), None, tomorrow).allowed);
+        assert!(
+            store
+                .check_request(Some("key-1"), None, tomorrow)
+                .await
+                .allowed
+        );
         let status = store
             .status(RateLimitScope::ApiKey, "key-1", tomorrow)
+            .await
             .unwrap();
         assert_eq!(status.status.current_minute_count, 1);
         assert_eq!(status.status.current_day_count, 1);
+    }
+
+    #[tokio::test]
+    async fn rule_store_keeps_unrelated_identity_counters_separate() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::ApiKey, "key-a", 5, None));
+        store.insert(rule(RateLimitScope::ApiKey, "key-b", 5, None));
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+
+        assert!(store.check_request(Some("key-a"), None, now).await.allowed);
+        assert!(store.check_request(Some("key-b"), None, now).await.allowed);
+        assert!(store.check_request(Some("key-b"), None, now).await.allowed);
+
+        let key_a = store
+            .status(RateLimitScope::ApiKey, "key-a", now)
+            .await
+            .unwrap();
+        let key_b = store
+            .status(RateLimitScope::ApiKey, "key-b", now)
+            .await
+            .unwrap();
+        assert_eq!(key_a.status.current_minute_count, 1);
+        assert_eq!(key_b.status.current_minute_count, 2);
     }
 
     #[tokio::test]
@@ -717,5 +796,27 @@ mod tests {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
             Ok(_) => panic!("expected error"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_rule_rejects_duplicate_scope_and_target() {
+        let store = RateLimitRuleStore::new();
+        let request = || {
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::ApiKey,
+                target: "duplicate-key".to_string(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            })
+        };
+
+        assert!(create_rule(State(store.clone()), request()).await.is_ok());
+        let error = match create_rule(State(store), request()).await {
+            Err(error) => error,
+            Ok(_) => panic!("duplicate rule must be rejected"),
+        };
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "DUPLICATE_RULE");
     }
 }

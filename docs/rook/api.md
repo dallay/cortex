@@ -610,6 +610,7 @@ Create a new rate limit rule.
 - `scope: "global"` must have `target: "global"`
 - `requests_per_minute` must be greater than 0
 - Non-null `tokens_per_minute` is rejected with `400 Bad Request` and code `UNSUPPORTED_LIMIT`.
+- Only one rule can exist for each `(scope, target)` pair; duplicates return `409 Conflict` with code `DUPLICATE_RULE`.
 
 ### PUT /api/rate-limits/:id
 

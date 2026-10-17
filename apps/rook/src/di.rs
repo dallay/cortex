@@ -569,22 +569,41 @@ mod api_key_secret_tests {
     use super::resolve_api_key_secret;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard(Option<std::ffi::OsString>);
+
+    impl EnvVarGuard {
+        fn remove(name: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::remove_var(name);
+            Self(original)
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("API_KEY_HASH_SECRET", value),
+                None => std::env::remove_var("API_KEY_HASH_SECRET"),
+            }
+        }
+    }
 
     #[cfg(unix)]
     #[test]
     fn generated_api_key_secret_file_is_owner_only() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("rook.db");
         std::fs::write(&db, "").unwrap();
         let secret_path = dir.path().join("api_key_secret.key");
-        let old = std::env::var_os("API_KEY_HASH_SECRET");
-        std::env::remove_var("API_KEY_HASH_SECRET");
+        let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
 
         let result = resolve_api_key_secret(db.to_str().unwrap());
 
-        if let Some(value) = old {
-            std::env::set_var("API_KEY_HASH_SECRET", value);
-        }
         result.unwrap();
         assert_eq!(
             std::fs::metadata(secret_path).unwrap().permissions().mode() & 0o777,
@@ -595,6 +614,7 @@ mod api_key_secret_tests {
     #[cfg(unix)]
     #[test]
     fn existing_api_key_secret_file_permissions_are_restricted_without_changing_content() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("rook.db");
         std::fs::write(&db, "").unwrap();

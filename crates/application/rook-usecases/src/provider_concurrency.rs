@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -7,27 +7,87 @@ use rook_core::{
     ProviderPort, StreamChunk,
 };
 use shared_kernel::{CortexError, CortexResult, ProviderId};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+struct AdmissionCounts {
+    in_flight: usize,
+    max_concurrent: usize,
+}
+
+/// Admission state shared by every wrapper for one provider connection.
+pub(crate) struct AdmissionState {
+    counts: Mutex<AdmissionCounts>,
+}
+
+impl AdmissionState {
+    pub(crate) fn new(max_concurrent: u32) -> Self {
+        Self {
+            counts: Mutex::new(AdmissionCounts {
+                in_flight: 0,
+                max_concurrent: max_concurrent as usize,
+            }),
+        }
+    }
+
+    fn set_limit(&self, max_concurrent: u32) {
+        self.counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_concurrent = max_concurrent as usize;
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> CortexResult<AdmissionPermit> {
+        let mut counts = self
+            .counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if counts.in_flight >= counts.max_concurrent {
+            return Err(CortexError::local_backpressure());
+        }
+        counts.in_flight += 1;
+        Ok(AdmissionPermit(self.clone()))
+    }
+}
+
+struct AdmissionPermit(Arc<AdmissionState>);
+
+impl Drop for AdmissionPermit {
+    fn drop(&mut self) {
+        let mut counts = self
+            .0
+            .counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        counts.in_flight -= 1;
+    }
+}
 
 /// Immediate, bounded admission for a dynamic provider connection.
 pub(crate) struct ConcurrencyLimitedProvider {
     inner: Arc<dyn ProviderPort>,
-    permits: Arc<Semaphore>,
+    admission: Arc<AdmissionState>,
 }
 
 impl ConcurrencyLimitedProvider {
+    #[cfg(test)]
     pub(crate) fn new(inner: Arc<dyn ProviderPort>, max_concurrent: u32) -> Self {
-        Self {
+        Self::with_admission(
             inner,
-            permits: Arc::new(Semaphore::new(max_concurrent as usize)),
-        }
+            Arc::new(AdmissionState::new(max_concurrent)),
+            max_concurrent,
+        )
     }
 
-    fn try_admit(&self) -> CortexResult<OwnedSemaphorePermit> {
-        self.permits
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| CortexError::local_backpressure())
+    pub(crate) fn with_admission(
+        inner: Arc<dyn ProviderPort>,
+        admission: Arc<AdmissionState>,
+        max_concurrent: u32,
+    ) -> Self {
+        admission.set_limit(max_concurrent);
+        Self { inner, admission }
+    }
+
+    fn try_admit(&self) -> CortexResult<AdmissionPermit> {
+        self.admission.try_acquire()
     }
 }
 
@@ -86,7 +146,7 @@ mod tests {
     use shared_kernel::{CortexError, CortexResult, ProviderId};
     use tokio::sync::Notify;
 
-    use super::ConcurrencyLimitedProvider;
+    use super::{AdmissionState, ConcurrencyLimitedProvider};
 
     struct BlockingProvider {
         calls: std::sync::atomic::AtomicUsize,
@@ -175,6 +235,42 @@ mod tests {
         inner.release.notify_one();
         let _ = first.await.unwrap();
         assert!(provider.complete(&request()).await.is_err());
+        assert_eq!(inner.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn refreshed_provider_shares_admission_and_honors_lowered_limit() {
+        let inner = Arc::new(BlockingProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            entered: Notify::new(),
+            release: Notify::new(),
+            id: ProviderId::new("dynamic"),
+        });
+        let admission = Arc::new(AdmissionState::new(2));
+        let old_provider = Arc::new(ConcurrencyLimitedProvider::with_admission(
+            inner.clone(),
+            admission.clone(),
+            2,
+        ));
+        let old_call = {
+            let old_provider = old_provider.clone();
+            tokio::spawn(async move { old_provider.complete(&request()).await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), inner.entered.notified())
+            .await
+            .unwrap();
+
+        // Rewrapping during refresh updates the cap without replacing active
+        // admission state, so the old provider's call still consumes capacity.
+        let refreshed_provider =
+            ConcurrencyLimitedProvider::with_admission(inner.clone(), admission, 1);
+        let error = refreshed_provider.complete(&request()).await.unwrap_err();
+        assert!(error.is_local_backpressure());
+        assert_eq!(inner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        inner.release.notify_one();
+        let _ = old_call.await.unwrap();
+        assert!(refreshed_provider.complete(&request()).await.is_err());
         assert_eq!(inner.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }

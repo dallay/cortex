@@ -131,7 +131,7 @@ fn authorize_body() -> serde_json::Value {
             "baseUrl": "https://resource.openai.azure.com",
         },
         "clientId": "client-id",
-        "redirectUri": "https://rook.example.com/api/oauth/callback",
+        "redirectUri": "http://localhost:3000/api/oauth/callback",
     })
 }
 
@@ -498,9 +498,6 @@ async fn wired_router(
     token_url: Option<String>,
     devicecode_url: Option<String>,
 ) -> (axum::Router, Arc<MemoryRepoV2>) {
-    // OAuth callback validation anchors HTTPS redirects to ALLOWED_ORIGINS.
-    // Keep the integration fixture's documented dashboard origin explicit.
-    std::env::set_var("ALLOWED_ORIGINS", "https://rook.example.com");
     let repo = Arc::new(MemoryRepoV2::new(connections));
     let manager = _ManageV2::with_oauth_endpoint_overrides(
         repo.clone() as Arc<dyn _RepoV2>,

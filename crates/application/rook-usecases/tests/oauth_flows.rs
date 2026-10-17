@@ -93,13 +93,6 @@ fn manager() -> ManageConnections {
 }
 
 fn request(flow_type: OAuthFlowType) -> StartOAuthFlowRequest {
-    // Anchor the allowlist for every flow test: the suite's canonical
-    // dashboard host plus the loopback dev origins (same value everywhere
-    // so parallel tests never race on different values).
-    std::env::set_var(
-        "ALLOWED_ORIGINS",
-        "https://rook.example.com,http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000",
-    );
     StartOAuthFlowRequest {
         flow_type,
         connection_id: None,
@@ -119,7 +112,7 @@ fn request(flow_type: OAuthFlowType) -> StartOAuthFlowRequest {
         client_id: "client-id".to_string(),
         client_secret: Some("must-not-appear-in-url".to_string()),
         tenant_id: Some("tenant-guid".to_string()),
-        redirect_uri: "https://rook.example.com/api/oauth/callback".to_string(),
+        redirect_uri: "http://localhost:3000/api/oauth/callback".to_string(),
         project_id: None,
     }
 }
@@ -144,7 +137,7 @@ async fn azure_authorization_code_uses_pkce_and_keeps_secret_out_of_url() {
     );
     assert_eq!(
         query.get("redirect_uri").map(String::as_str),
-        Some("https://rook.example.com/api/oauth/callback")
+        Some("http://localhost:3000/api/oauth/callback")
     );
     assert!(!url.as_str().contains("must-not-appear-in-url"));
     assert!(!query.get("code_challenge").unwrap().is_empty());
@@ -540,7 +533,7 @@ async fn authorization_accepts_allowlisted_host_and_loopback_http() {
     let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
     assert_eq!(
         query.get("redirect_uri").map(String::as_str),
-        Some("https://rook.example.com/api/oauth/callback")
+        Some("http://localhost:3000/api/oauth/callback")
     );
 
     // Loopback HTTP stays usable for dev.

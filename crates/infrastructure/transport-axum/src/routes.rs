@@ -192,11 +192,13 @@ pub async fn admin_rate_limit_middleware(
     } else {
         None
     };
-    let decision = store.check_request(
-        api_key_id,
-        Some(extract_client_ip(&request)),
-        chrono::Utc::now(),
-    );
+    let decision = store
+        .check_request(
+            api_key_id,
+            Some(extract_client_ip(&request)),
+            chrono::Utc::now(),
+        )
+        .await;
     if decision.allowed {
         let mut response = next.run(request).await;
         set_admin_rate_limit_headers(response.headers_mut(), &decision);
@@ -1211,6 +1213,28 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
     fn headers_with(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
         for v in values {
@@ -1223,9 +1247,8 @@ mod tests {
     async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
         let _guard = ENV_LOCK.lock().unwrap();
         // The API key config is read only to build this isolated authz stack.
-        std::env::set_var("CLIENT_API_KEYS", "admin-rate-test-key");
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-test-key");
         let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
-        std::env::remove_var("CLIENT_API_KEYS");
         let store = handlers::rate_limits::RateLimitRuleStore::new();
         store.insert(RateLimitRule {
             id: "rl-test".into(),
@@ -1271,9 +1294,8 @@ mod tests {
     #[tokio::test]
     async fn api_key_limiter_observes_server_stamped_authz_identity() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("CLIENT_API_KEYS", "middleware-order-test-key");
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "middleware-order-test-key");
         let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
-        std::env::remove_var("CLIENT_API_KEYS");
 
         let mut config = crate::middleware::api_key_rate_limiter::RateLimiterConfig::default();
         config
