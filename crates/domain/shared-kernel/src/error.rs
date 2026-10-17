@@ -48,6 +48,18 @@ impl CortexError {
         }
     }
 
+    /// Local admission rejection. It maps to HTTP 429 but must not affect
+    /// upstream provider health or cooldown state.
+    pub fn local_backpressure() -> Self {
+        Self {
+            source: Box::new(LocalBackpressureError),
+        }
+    }
+
+    pub fn is_local_backpressure(&self) -> bool {
+        self.source.is::<LocalBackpressureError>()
+    }
+
     pub fn all_providers_exhausted() -> Self {
         Self {
             source: Box::new(AllProvidersExhaustedError),
@@ -113,7 +125,7 @@ impl CortexError {
     }
 
     pub fn is_rate_limited(&self) -> bool {
-        self.source.is::<RateLimitedError>()
+        self.source.is::<RateLimitedError>() || self.is_local_backpressure()
     }
 
     pub fn retry_after_secs(&self) -> Option<u64> {
@@ -201,6 +213,17 @@ impl CortexError {
         true
     }
 }
+
+#[derive(Debug)]
+struct LocalBackpressureError;
+
+impl fmt::Display for LocalBackpressureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "provider connection concurrency limit reached")
+    }
+}
+
+impl std::error::Error for LocalBackpressureError {}
 
 #[derive(Debug)]
 pub struct ProviderError(pub String);

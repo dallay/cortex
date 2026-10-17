@@ -1135,7 +1135,12 @@ impl ManageConnections {
                         provider_id = %provider.id(),
                         "provider built successfully"
                     );
-                    providers.push(provider);
+                    providers.push(Arc::new(
+                        crate::provider_concurrency::ConcurrencyLimitedProvider::new(
+                            provider,
+                            conn.config.max_concurrent,
+                        ),
+                    ) as Arc<dyn ProviderPort>);
                 }
                 Err(e) => {
                     tracing::warn!(

@@ -25,6 +25,16 @@ use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViola
 use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
+async fn notify_provider_failure(
+    router: &dyn RouterPort,
+    provider: &ProviderId,
+    error: &CortexError,
+) {
+    if !error.is_local_backpressure() {
+        router.on_failure(provider, error).await;
+    }
+}
+
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
 
@@ -243,7 +253,7 @@ impl RouteRequest {
                 }
                 Err(e) => {
                     // Record failure for circuit breaker (before checking retryability)
-                    self.router.on_failure(&provider_id, &e).await;
+                    notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
                     let final_latency = start.elapsed().as_millis() as u64;
 
                     // Non-retryable errors: record audit/usage/telemetry and return
@@ -530,7 +540,7 @@ impl RouteRequest {
                         yield chunk;
                     }
                     Err(error) => {
-                        router.on_failure(&provider_id, &error).await;
+                        notify_provider_failure(router.as_ref(), &provider_id, &error).await;
                         let status = if error.is_rate_limited() {
                             RequestStatus::RateLimited
                         } else {
@@ -1074,7 +1084,7 @@ impl RouteRequest {
                     .await;
 
                     // Notify router of failure (circuit breaker)
-                    self.router.on_failure(provider_id, &e).await;
+                    notify_provider_failure(self.router.as_ref(), provider_id, &e).await;
 
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
@@ -1108,7 +1118,7 @@ impl RouteRequest {
                     )
                     .await;
 
-                    self.router.on_failure(provider_id, &err).await;
+                    notify_provider_failure(self.router.as_ref(), provider_id, &err).await;
                     continue;
                 }
             }
@@ -1470,6 +1480,30 @@ mod tests {
         fn providers(&self) -> Vec<ProviderId> {
             vec![self.provider.id().clone()]
         }
+    }
+
+    #[tokio::test]
+    async fn local_backpressure_skips_circuit_but_upstream_rate_limit_opens_cooldown() {
+        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+            id: ProviderId::new("limited"),
+            complete_error: None,
+        });
+        let provider_id = provider.id().clone();
+        let router = crate::FallbackRouter::new(vec![provider], crate::RoutingStrategy::Priority);
+
+        notify_provider_failure(&router, &provider_id, &CortexError::local_backpressure()).await;
+        let local_state = router.circuit_states();
+        assert_eq!(local_state[0].1.failures, 0);
+        assert!(local_state[0].1.cooldown_until.is_none());
+
+        notify_provider_failure(
+            &router,
+            &provider_id,
+            &CortexError::rate_limited(provider_id.clone(), 30),
+        )
+        .await;
+        let upstream_state = router.circuit_states();
+        assert!(upstream_state[0].1.cooldown_until.is_some());
     }
 
     struct TestCache {
