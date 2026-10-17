@@ -902,98 +902,22 @@ async fn callback_unknown_state_returns_bad_request_with_manager() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-// Other tests in this binary use only loopback callbacks, which are independent
-// of ALLOWED_ORIGINS. Keep all environment-dependent cases in this one test.
 #[tokio::test]
-async fn oauth_http_callback_allowlist_contract() {
-    struct RestoreOrigins(Option<std::ffi::OsString>);
-    impl Drop for RestoreOrigins {
-        fn drop(&mut self) {
-            match &self.0 {
-                Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),
-                None => std::env::remove_var("ALLOWED_ORIGINS"),
-            }
-        }
-    }
-    let _restore = RestoreOrigins(std::env::var_os("ALLOWED_ORIGINS"));
+async fn oauth_http_callback_rejects_unexpected_path() {
+    // Origin matching is covered by pure ManageConnections tests; keep this
+    // HTTP-level validation case free of process-global environment mutation.
     let (router, _) = wired_router(vec![], None, None).await;
-    for (setting, cases) in [
-        (
-            None,
-            vec![
-                ("http://localhost:9999/api/oauth/callback", true),
-                ("http://127.0.0.1:8123/api/oauth/callback", true),
-                ("http://[::1]:8123/api/oauth/callback", true),
-                ("https://localhost:8123/api/oauth/callback", true),
-                ("https://dashboard.example/api/oauth/callback", false),
-            ],
-        ),
-        (
-            Some(" https://dashboard.example:8443 , https://secure.example "),
-            vec![
-                ("https://dashboard.example:8443/api/oauth/callback", true),
-                ("https://secure.example:443/api/oauth/callback", true),
-                ("https://dashboard.example/api/oauth/callback", false),
-                ("https://dashboard.example:9443/api/oauth/callback", false),
-                (
-                    "https://sub.dashboard.example:8443/api/oauth/callback",
-                    false,
-                ),
-                ("http://dashboard.example:8443/api/oauth/callback", false),
-                ("https://dashboard.example:8443/wrong", false),
-                (
-                    "https://dashboard.example:8443/api/oauth/callback?extra=1",
-                    false,
-                ),
-                (
-                    "https://dashboard.example:8443/api/oauth/callback#fragment",
-                    false,
-                ),
-                (
-                    "https://user@dashboard.example:8443/api/oauth/callback",
-                    false,
-                ),
-            ],
-        ),
-        (
-            Some("*"),
-            vec![("https://arbitrary.example/api/oauth/callback", false)],
-        ),
-    ] {
-        match setting {
-            Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),
-            None => std::env::remove_var("ALLOWED_ORIGINS"),
-        }
-        for (redirect, allowed) in cases {
-            let mut body = authorize_body();
-            body["redirectUri"] = serde_json::json!(redirect);
-            let response = router
-                .clone()
-                .oneshot(json_request(
-                    Method::POST,
-                    "/api/oauth/azure-openai/authorize",
-                    body,
-                ))
-                .await
-                .unwrap();
-            assert_eq!(
-                response.status(),
-                if allowed {
-                    StatusCode::OK
-                } else {
-                    StatusCode::BAD_REQUEST
-                },
-                "{setting:?}: {redirect}"
-            );
-            let json = response_json(response).await;
-            if allowed {
-                let url = reqwest::Url::parse(json["authorizationUrl"].as_str().unwrap()).unwrap();
-                assert!(url
-                    .query_pairs()
-                    .any(|(key, value)| key == "redirect_uri" && value == redirect));
-            } else {
-                assert_eq!(json["code"], "VALIDATION_ERROR");
-            }
-        }
-    }
+    let mut body = authorize_body();
+    body["redirectUri"] = serde_json::json!("http://localhost:3000/wrong");
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            body,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response_json(response).await["code"], "VALIDATION_ERROR");
 }
