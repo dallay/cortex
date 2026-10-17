@@ -9,6 +9,7 @@ mod input;
 #[doc(hidden)]
 pub use input::test_support as input_test_support;
 pub mod providers;
+pub mod settings;
 pub mod state;
 mod terminal;
 mod workflow;

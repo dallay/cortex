@@ -25,8 +25,11 @@ huginn-application = { path = "../application", optional = true }
 huginn-core = { path = "../core" }
 huginn-plugin-api = { path = "../plugin-api" }
 huginn-reference-extension = { path = "../reference-extension" }
+anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+serde.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
