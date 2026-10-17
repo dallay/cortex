@@ -188,6 +188,8 @@ async fn setup_with_authentication(
         &Session::new(".".into()),
         contributions,
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0;
     (supervisor, ui, manager)

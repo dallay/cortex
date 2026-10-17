@@ -13,6 +13,8 @@ fn ui() -> Arc<Ui> {
         &Session::new(".".into()),
         Arc::new(Contributions::default()),
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0
 }

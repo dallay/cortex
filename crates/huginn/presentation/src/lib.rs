@@ -88,6 +88,9 @@ pub struct RatatuiPlugin {
     lifecycle: Option<CancellationToken>,
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ui_config: Option<Arc<crate::settings::UiConfig>>,
+    save_ui_config:
+        Option<Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>>,
 }
 impl Default for RatatuiPlugin {
     fn default() -> Self {
@@ -100,6 +103,8 @@ impl RatatuiPlugin {
             lifecycle: None,
             model_configured,
             readiness: None,
+            ui_config: None,
+            save_ui_config: None,
         }
     }
     pub fn with_readiness(readiness: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
@@ -107,7 +112,20 @@ impl RatatuiPlugin {
             lifecycle: None,
             model_configured: false,
             readiness: Some(readiness),
+            ui_config: None,
+            save_ui_config: None,
         }
+    }
+    /// Inject the host-owned UI config and a persistence closure. The
+    /// plugin pipes both into the `Ui` via `Ratatui`.
+    pub fn with_settings(
+        mut self,
+        ui_config: Arc<crate::settings::UiConfig>,
+        save_ui_config: Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>,
+    ) -> Self {
+        self.ui_config = Some(ui_config);
+        self.save_ui_config = Some(save_ui_config);
+        self
     }
 }
 #[async_trait]
@@ -153,6 +171,8 @@ impl Plugin for RatatuiPlugin {
                 drivers,
                 model_configured: self.model_configured,
                 readiness: self.readiness.clone(),
+                ui_config: self.ui_config.clone(),
+                save_ui_config: self.save_ui_config.clone(),
             })),
         )
     }

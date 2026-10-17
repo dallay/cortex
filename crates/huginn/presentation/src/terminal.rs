@@ -223,6 +223,9 @@ pub struct Ratatui {
     pub drivers: Arc<Mutex<Vec<(CancellationToken, CancellationToken)>>>,
     pub model_configured: bool,
     pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub ui_config: Option<Arc<crate::settings::UiConfig>>,
+    pub save_ui_config:
+        Option<Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>>,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -264,7 +267,21 @@ impl Presentation for Ratatui {
             },
         )?;
         let stop = CancellationToken::new();
-        let (ui, prompts) = Ui::new(session, self.contributions.clone(), stop.clone());
+        let ui_config = self
+            .ui_config
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::settings::UiConfig::defaults()));
+        let save_ui_config = self.save_ui_config.clone().unwrap_or_else(|| {
+            Arc::new(|_: &crate::settings::UiConfig| Ok(()))
+                as Arc<dyn Fn(&crate::settings::UiConfig) -> anyhow::Result<()> + Send + Sync>
+        });
+        let (ui, prompts) = Ui::new(
+            session,
+            self.contributions.clone(),
+            stop.clone(),
+            ui_config,
+            save_ui_config,
+        );
         ui.start_file_index(session.workspace.clone());
         if !self
             .readiness

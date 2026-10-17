@@ -129,6 +129,8 @@ async fn setup(error: bool) -> Harness {
         &Session::new(".".into()),
         registry,
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0;
     Harness {

@@ -83,6 +83,8 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
         &Session::new(".".into()),
         registry,
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0;
     (supervisor, ui)

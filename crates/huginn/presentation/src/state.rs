@@ -1,6 +1,7 @@
 //! Deterministic state projection and UTF-8 composer, independent of terminal I/O.
 use crate::approval::{approval_header, effect_line};
 use crate::completion::{CatalogCommand, Completion};
+use crate::settings::{SettingsDialog, UiConfig};
 use crate::{contributions::Contributions, Interaction};
 use async_trait::async_trait;
 use huginn_core::{
@@ -147,6 +148,9 @@ pub struct UiState {
     pub workflow: Option<crate::workflow::HostWorkflow>,
     /// Input lease changes whenever a host form gains or relinquishes focus.
     pub workflow_focus: u64,
+    pub settings: Option<SettingsDialog>,
+    /// Input lease changes whenever the settings dialog opens or closes.
+    pub settings_focus_epoch: u64,
     pub widgets: Vec<(String, View)>,
     tool_names: BTreeMap<String, String>,
     pub busy: bool,
@@ -327,6 +331,8 @@ pub struct Ui {
     pub dirty: Notify,
     pub stop: CancellationToken,
     pub contributions: Arc<Contributions>,
+    pub ui_config: Arc<UiConfig>,
+    pub save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>,
     requests: tokio::sync::Mutex<()>,
     prompts: tokio::sync::Mutex<mpsc::Receiver<String>>,
 }
@@ -335,6 +341,8 @@ impl Ui {
         session: &Session,
         contributions: Arc<Contributions>,
         stop: CancellationToken,
+        ui_config: Arc<UiConfig>,
+        save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>,
     ) -> (Arc<Self>, mpsc::Sender<String>) {
         let (sender, receiver) = mpsc::channel(1);
         let mut state = UiState::default();
@@ -352,6 +360,8 @@ impl Ui {
             dirty: Notify::new(),
             stop,
             contributions,
+            ui_config,
+            save_ui_config,
             requests: tokio::sync::Mutex::new(()),
             prompts: tokio::sync::Mutex::new(receiver),
         });
@@ -675,6 +685,8 @@ impl ApprovalPrompt for Ui {
             state.plugin_dialog.take();
             state.workflow.take();
             state.workflow_focus = state.workflow_focus.wrapping_add(1);
+            state.settings.take();
+            state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
             state.modal = Some(Modal {
                 epoch,
                 number,

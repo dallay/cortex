@@ -225,7 +225,14 @@ async fn open(root: &std::path::Path, secrets: Arc<dyn SecretStore>) -> Harness 
     supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
     supervisor.start().await.unwrap();
     let session = Session::new(root.into());
-    let ui = Ui::new(&session, contributions, CancellationToken::new()).0;
+    let ui = Ui::new(
+        &session,
+        contributions,
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
+    )
+    .0;
     Harness {
         supervisor,
         ui,
