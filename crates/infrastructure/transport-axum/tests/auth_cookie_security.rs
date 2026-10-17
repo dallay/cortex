@@ -18,6 +18,9 @@ use transport_axum::{
     handlers::auth::{get_login_handler, login_handler, logout_handler, LoginRequest},
 };
 
+// codeql[rust/hard-coded-cryptographic-value] Test fixture only
+const TEST_ADMIN_PASSWORD: &str = "test-password";
+
 struct EmptyUserRepository;
 
 #[async_trait]
@@ -111,7 +114,7 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
         State(usecases.clone()),
         Json(LoginRequest {
             username: "admin".to_string(),
-            password: "test-password".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         }),
     )
     .await
