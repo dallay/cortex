@@ -1,4 +1,5 @@
 use anyhow::Context;
+use huginn_presentation::settings::UiConfig;
 use huginn_runtime::mcp::ServerConfig;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,11 @@ pub struct Config {
     pub context_tokens: usize,
     pub max_output_tokens: u32,
     pub mcp: Vec<ServerConfig>,
+    /// TUI preferences — populated from `[ui]` in `config.toml`. REQ-10,
+    /// REQ-11: default-tolerant; inner structs do **not** carry
+    /// `deny_unknown_fields`.
+    #[serde(default)]
+    pub ui: UiConfig,
     #[serde(skip)]
     pub provider_explicit: bool,
 }
@@ -56,6 +62,7 @@ impl Default for Config {
             context_tokens: 32768,
             max_output_tokens: 4096,
             mcp: vec![],
+            ui: UiConfig::defaults(),
             provider_explicit: false,
         }
     }

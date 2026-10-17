@@ -1,11 +1,13 @@
 mod config;
 mod terminal;
+mod ui_settings;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use config::{Config, ModelReadiness};
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
+use huginn_presentation::settings::UiConfig;
 use huginn_runtime::{
     composition, loop_engine::LoopConfig, mcp, sessions::SqliteSessions, tools::Registry,
 };
@@ -288,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
     if tui {
         let result = tui_chat(
             &config,
+            cli.config.as_deref(),
             &mut session,
             &mut supervisor,
             allowed,
@@ -444,6 +447,7 @@ async fn run_compact(
 
 async fn tui_chat(
     config: &Config,
+    cli_config: Option<&std::path::Path>,
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
@@ -454,9 +458,23 @@ async fn tui_chat(
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
     let readiness = router.clone();
-    supervisor.register(Box::new(RatatuiPlugin::with_readiness(Arc::new(
-        move || readiness.is_configured(),
-    ))))?;
+    // Resolve the config path the same way `Config::load` does so the
+    // settings dialog and `Config::load` agree on the file.
+    let config_path: PathBuf = cli_config
+        .map(|path| path.to_path_buf())
+        .unwrap_or_else(|| {
+            dirs::config_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("cortex/huginn/config.toml")
+        });
+    let ui_config = Arc::new(config.ui.clone());
+    let save_path = config_path.clone();
+    let save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync> =
+        Arc::new(move |ui: &UiConfig| ui_settings::persist(ui, &save_path));
+    supervisor.register(Box::new(
+        RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))
+            .with_settings(ui_config, save_ui_config),
+    ))?;
     supervisor.register(Box::new(ConversationPlugin))?;
     if connection_management {
         supervisor.register(Box::new(huginn_presentation::providers::ProvidersUiPlugin))?;
