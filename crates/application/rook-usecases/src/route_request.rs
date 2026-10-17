@@ -192,13 +192,18 @@ impl RouteRequest {
         let mut local_backpressure = None;
         let mut provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
-        let max_attempts = MAX_RETRY_ATTEMPTS.min(total_providers.max(1));
+        let selection_budget = total_providers.max(1);
+        let max_attempts = MAX_RETRY_ATTEMPTS.min(selection_budget);
+        let mut provider_attempts = 0;
 
-        for attempt in 0..max_attempts {
+        for _ in 0..selection_budget {
+            if provider_attempts >= max_attempts {
+                break;
+            }
             // Create span for this retry attempt
             let _attempt_span = tracing::info_span!(
                 "router.retry.attempt",
-                attempt = attempt + 1,
+                attempt = provider_attempts + 1,
                 max_attempts = max_attempts,
                 excluded_count = excluded.len()
             );
@@ -239,6 +244,7 @@ impl RouteRequest {
             };
 
             // Execute
+            provider_attempts += 1;
             let result = provider.complete(&provider_req).await;
             let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -248,7 +254,7 @@ impl RouteRequest {
                     if !excluded.is_empty() {
                         tracing::info!(
                             provider = %provider_id,
-                            attempt = attempt + 1,
+                            attempt = provider_attempts,
                             excluded_providers = ?excluded,
                             "failover successful"
                         );
@@ -300,7 +306,7 @@ impl RouteRequest {
                     // Log retry attempt
                     tracing::warn!(
                         provider = %provider_id,
-                        attempt = attempt + 1,
+                        attempt = provider_attempts,
                         max_attempts = max_attempts,
                         error = %e,
                         "provider failed, trying next"
@@ -309,7 +315,7 @@ impl RouteRequest {
                     // Record retry attempt metric (via tracing for now)
                     tracing::debug!(
                         provider = %provider_id,
-                        attempt = attempt + 1,
+                        attempt = provider_attempts,
                         "retry attempt"
                     );
 
@@ -530,11 +536,17 @@ impl RouteRequest {
         // Local connection saturation happens before the provider starts a
         // stream, so it is safe to try another provider before any SSE bytes
         // are exposed to the caller. Bound attempts by registered providers.
-        let max_attempts = self.router.providers().len().min(MAX_RETRY_ATTEMPTS);
+        let total_providers = self.router.providers().len();
+        let selection_budget = total_providers.max(1);
+        let max_attempts = selection_budget.min(MAX_RETRY_ATTEMPTS);
+        let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
         let (provider_id, connection_id, mut upstream) = 'select: {
-            for _ in 0..max_attempts {
+            for _ in 0..selection_budget {
+                if provider_attempts >= max_attempts {
+                    break;
+                }
                 let provider = match self.router.select_excluding(&req, &excluded).await {
                     Ok(provider) => provider,
                     Err(error) => {
@@ -559,6 +571,7 @@ impl RouteRequest {
                     provider_format,
                     req.clone(),
                 )?;
+                provider_attempts += 1;
                 match provider.stream(&provider_req).await {
                     Ok(upstream) => {
                         let connection_id = self.resolve_connection_id(&provider_id).await;
@@ -1775,6 +1788,42 @@ mod tests {
         }
     }
 
+    fn usecase_with_router(router: Arc<dyn RouterPort>) -> RouteRequest {
+        RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+    }
+
+    fn ordinary_provider(id: &str) -> Arc<dyn ProviderPort> {
+        Arc::new(TestProvider {
+            id: ProviderId::new(id),
+            complete_error: None,
+        })
+    }
+
+    fn counting_stream_provider(id: &str) -> Arc<CountingStreamProvider> {
+        Arc::new(CountingStreamProvider {
+            id: ProviderId::new(id),
+            models: vec![TEST_MODEL.clone()],
+            stream_calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
     struct CountingStreamProvider {
         id: ProviderId,
         models: Vec<ModelId>,
@@ -1825,32 +1874,11 @@ mod tests {
     #[tokio::test]
     async fn stream_falls_back_when_primary_provider_is_at_concurrency_limit() {
         let (primary, holder) = busy_limited_test_provider().await;
-        let secondary = Arc::new(CountingStreamProvider {
-            id: ProviderId::new("secondary"),
-            models: vec![TEST_MODEL.clone()],
-            stream_calls: std::sync::atomic::AtomicUsize::new(0),
-        });
+        let secondary = counting_stream_provider("secondary");
         let router = Arc::new(PriorityFallbackRouter {
             providers: vec![primary, secondary.clone()],
         });
-        let usecase = RouteRequest::new(
-            router,
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            None,
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None,
-        );
+        let usecase = usecase_with_router(router);
         let mut req = request();
         req.stream = true;
 
@@ -1864,6 +1892,73 @@ mod tests {
         assert_eq!(chunk.delta, "fallback stream");
         assert_eq!(
             secondary
+                .stream_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_reaches_fifth_allowed_provider_after_skipping_restricted_candidates() {
+        let (primary, holder) = busy_limited_test_provider().await;
+        let mut providers = vec![primary];
+        providers.extend([
+            ordinary_provider("disallowed-2"),
+            ordinary_provider("disallowed-3"),
+            ordinary_provider("disallowed-4"),
+            ordinary_provider("allowed-5"),
+        ]);
+        let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter { providers }));
+        let mut req = request();
+        req.metadata.cacheable = false;
+        req.restrictions.allowed_providers = vec![
+            ProviderId::new("test-provider"),
+            ProviderId::new("allowed-5"),
+        ];
+
+        let response = usecase
+            .execute(req)
+            .await
+            .expect("restricted skips must not consume provider-call attempts");
+        holder.abort();
+
+        assert_eq!(response.provider, ProviderId::new("allowed-5"));
+    }
+
+    #[tokio::test]
+    async fn execute_stream_reaches_fifth_allowed_provider_after_skipping_restricted_candidates() {
+        let (primary, holder) = busy_limited_test_provider().await;
+        let disallowed = [
+            counting_stream_provider("disallowed-2"),
+            counting_stream_provider("disallowed-3"),
+            counting_stream_provider("disallowed-4"),
+        ];
+        let allowed_fifth = counting_stream_provider("allowed-5");
+        let mut providers: Vec<Arc<dyn ProviderPort>> = vec![primary];
+        providers.extend(
+            disallowed
+                .into_iter()
+                .map(|provider| provider as Arc<dyn ProviderPort>),
+        );
+        providers.push(allowed_fifth.clone());
+        let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter { providers }));
+        let mut req = request();
+        req.stream = true;
+        req.restrictions.allowed_providers = vec![
+            ProviderId::new("test-provider"),
+            ProviderId::new("allowed-5"),
+        ];
+
+        let mut stream = usecase
+            .execute_stream(req)
+            .await
+            .expect("restricted skips must not consume provider-call attempts");
+        let chunk = stream.next().await.unwrap().unwrap();
+        holder.abort();
+
+        assert_eq!(chunk.delta, "fallback stream");
+        assert_eq!(
+            allowed_fifth
                 .stream_calls
                 .load(std::sync::atomic::Ordering::SeqCst),
             1
