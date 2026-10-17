@@ -377,6 +377,24 @@ impl Ui {
     pub fn dispatch_command(&self, line: &str) -> bool {
         let line = line.trim();
         let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
+        // Host short-circuit: `/settings` lives entirely inside presentation.
+        // There is no plugin contribution for it, no CommandResult::Settings.
+        // REQ-01, REQ-12, REQ-15. The match MUST be first so a future
+        // plugin can never shadow `/settings`.
+        if &line[..boundary] == "/settings" {
+            let mut state = self.lock();
+            // Modal already takes precedence over settings. Open the dialog
+            // only when nothing else owns the screen. We still consume the
+            // event so the editor clears and the line is NOT sent to the
+            // model as a prompt.
+            if state.modal.is_none() && state.settings.is_none() {
+                state.settings = Some(SettingsDialog::new(&self.ui_config));
+                state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
+                drop(state);
+                self.dirty.notify_one();
+            }
+            return true;
+        }
         let Some(command) = self.contributions.command(&line[..boundary]) else {
             return false;
         };
@@ -417,6 +435,7 @@ impl Ui {
         commands.extend([
             CatalogCommand::host("/quit", "Exit the chat"),
             CatalogCommand::host("/exit", "Exit the chat"),
+            CatalogCommand::host("/settings", "TUI settings"),
         ]);
         if model_configured {
             commands.extend([
