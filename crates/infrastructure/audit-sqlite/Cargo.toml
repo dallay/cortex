@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["rt", "sync", "fs"] }
 serde = { version = "1", features = ["derive"] }
 
 # Database
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -28,5 +28,5 @@ thiserror = "2"
 anyhow = "1"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "=3.27.0"
 db-migration = { path = "../db-migration" }
