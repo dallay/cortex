@@ -1206,7 +1206,10 @@ mod tests {
     use http_body_util::BodyExt;
     use shared_kernel::{RateLimitRule, RateLimitScope};
     use std::collections::HashMap;
+    use std::sync::Mutex;
     use tower::ServiceExt;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn headers_with(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -1218,6 +1221,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // The API key config is read only to build this isolated authz stack.
         std::env::set_var("CLIENT_API_KEYS", "admin-rate-test-key");
         let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
@@ -1262,6 +1266,45 @@ mod tests {
         assert_eq!(second.headers()["x-admin-ratelimit-remaining"], "0");
         let body = second.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&body).contains("RATE_LIMITED"));
+    }
+
+    #[tokio::test]
+    async fn api_key_limiter_observes_server_stamped_authz_identity() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("CLIENT_API_KEYS", "middleware-order-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        std::env::remove_var("CLIENT_API_KEYS");
+
+        let mut config = crate::middleware::api_key_rate_limiter::RateLimiterConfig::default();
+        config
+            .tiers
+            .get_mut(&rook_core::ApiKeyTier::Free)
+            .expect("free tier config")
+            .requests_per_minute = 1;
+        let limiter = Arc::new(ApiKeyRateLimiter::with_config(Arc::new(config)));
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter,
+                api_key_rate_limiter_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer middleware-order-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
     }
 
     #[test]
