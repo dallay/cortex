@@ -307,7 +307,9 @@ fn invalidating_secret_contribution_discards_queued_input() {
         "credential\t\x1b[C\x1b[C\x1b[C\r{}",
         "INVALIDATED_CREDENTIAL".repeat(50)
     ));
-    pty.wait_for("UI action no longer available");
+    // The status message is transient and can be overwritten by asynchronous
+    // workspace indexing; the closed form is the stable state this test needs.
+    pty.wait_until_screen_not_contains("Secret form fixture");
     pty.send("fresh-after-invalidation");
     pty.wait_for("fresh-after-invalidation");
     pty.send("\x03");

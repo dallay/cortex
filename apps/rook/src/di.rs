@@ -132,7 +132,7 @@ fn build_rate_limit_store(
     config: &RookConfig,
 ) -> Option<transport_axum::handlers::rate_limits::RateLimitRuleStore> {
     if config.rate_limiting.enabled {
-        Some(Arc::new(dashmap::DashMap::new()))
+        Some(transport_axum::handlers::rate_limits::RateLimitRuleStore::new())
     } else {
         None
     }
@@ -513,6 +513,21 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     }
 
     if secret_path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::metadata(&secret_path)
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to inspect api_key_secret.key permissions: {e}")
+                })?
+                .permissions();
+            if permissions.mode() & 0o077 != 0 {
+                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to restrict api_key_secret.key permissions: {e}")
+                    })?;
+            }
+        }
         let s = std::fs::read_to_string(&secret_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
         let s = s.trim().to_string();
@@ -528,6 +543,22 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             anyhow::anyhow!("failed to create data dir for api_key_secret.key: {e}")
         })?;
     }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&secret_path)
+            .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
+        file.write_all(secret.as_bytes())
+            .and_then(|()| file.set_permissions(std::fs::Permissions::from_mode(0o600)))
+            .map_err(|e| anyhow::anyhow!("failed to secure api_key_secret.key: {e}"))?;
+    }
+    #[cfg(not(unix))]
     std::fs::write(&secret_path, &secret)
         .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
 

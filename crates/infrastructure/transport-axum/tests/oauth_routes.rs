@@ -131,7 +131,7 @@ fn authorize_body() -> serde_json::Value {
             "baseUrl": "https://resource.openai.azure.com",
         },
         "clientId": "client-id",
-        "redirectUri": "https://rook.example.com/api/oauth/callback",
+        "redirectUri": "http://localhost:3000/api/oauth/callback",
     })
 }
 
@@ -900,4 +900,24 @@ async fn callback_unknown_state_returns_bad_request_with_manager() {
         .unwrap();
     let response = router.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn oauth_http_callback_rejects_unexpected_path() {
+    // Origin matching is covered by pure ManageConnections tests; keep this
+    // HTTP-level validation case free of process-global environment mutation.
+    let (router, _) = wired_router(vec![], None, None).await;
+    let mut body = authorize_body();
+    body["redirectUri"] = serde_json::json!("http://localhost:3000/wrong");
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/oauth/azure-openai/authorize",
+            body,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response_json(response).await["code"], "VALIDATION_ERROR");
 }

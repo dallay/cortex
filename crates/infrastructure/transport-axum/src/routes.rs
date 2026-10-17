@@ -128,7 +128,11 @@ pub fn router(
 
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
-        router = router.merge(rate_limits_routes(store));
+        router = router.merge(rate_limits_routes(store.clone()));
+        router = router.layer(middleware::from_fn_with_state(
+            store,
+            admin_rate_limit_middleware,
+        ));
     }
 
     router
@@ -146,7 +150,7 @@ pub fn router(
             ip_rate_limiter_middleware,
         ))
         // API key rate limiter — applied to authenticated CLIENT_API routes
-        // Runs after CSRF guard but before authz to read headers stamped by authz
+        // Runs after authz so it reads the server-side stamped `x-authz-tier`
         .layer(middleware::from_fn_with_state(
             api_key_rate_limiter.clone(),
             api_key_rate_limiter_middleware,
@@ -162,6 +166,82 @@ pub fn router(
             csrf_guard,
             csrf_guard::csrf_guard_middleware,
         ))
+}
+
+/// Applies administrator-defined request limits only to authenticated CLIENT_API ingress.
+pub async fn admin_rate_limit_middleware(
+    State(store): State<handlers::rate_limits::RateLimitRuleStore>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    let path = request.uri().path();
+    let headers = request.headers();
+    if !path.starts_with("/v1/")
+        || headers
+            .get("x-authz-route-class")
+            .and_then(|v| v.to_str().ok())
+            != Some("CLIENT_API")
+    {
+        return next.run(request).await;
+    }
+    let auth_kind = headers
+        .get("x-authz-auth-kind")
+        .and_then(|v| v.to_str().ok());
+    let api_key_id = if auth_kind == Some("api_key") {
+        headers.get("x-authz-auth-id").and_then(|v| v.to_str().ok())
+    } else {
+        None
+    };
+    let decision = store
+        .check_request(
+            api_key_id,
+            Some(extract_client_ip(&request)),
+            chrono::Utc::now(),
+        )
+        .await;
+    if decision.allowed {
+        let mut response = next.run(request).await;
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
+        response
+    } else {
+        let body = serde_json::json!({
+            "error": "rate_limit_exceeded",
+            "message": "Administrative request rate limit exceeded.",
+            "code": "RATE_LIMITED",
+            "retry_after": decision.retry_after_secs,
+        });
+        let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            axum::http::HeaderValue::from(decision.retry_after_secs),
+        );
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
+        response
+    }
+}
+
+fn set_admin_rate_limit_headers(
+    headers: &mut HeaderMap,
+    decision: &handlers::rate_limits::RateLimitDecision,
+) {
+    // Keep the admin-policy metadata distinct from the built-in authz tier
+    // limiter, whose standard x-ratelimit-* headers are stamped outside this layer.
+    headers.insert(
+        "x-admin-ratelimit-limit",
+        axum::http::HeaderValue::from(decision.limit),
+    );
+    headers.insert(
+        "x-admin-ratelimit-remaining",
+        axum::http::HeaderValue::from(decision.remaining),
+    );
+    headers.insert(
+        "x-admin-ratelimit-reset",
+        axum::http::HeaderValue::from(decision.reset_unix),
+    );
 }
 
 /// Login rate limiter middleware — applies to POST /login only
@@ -228,8 +308,10 @@ pub async fn api_key_rate_limiter_middleware(
         return next.run(request).await;
     }
 
-    // Extract rate limit context from authz headers (set by authz middleware)
-    // x-authz-tier: free | pro | enterprise
+    // Extract rate limit context from authz-stamped headers (the authz
+    // middleware strips any client-supplied `x-authz-*` and stamps these
+    // server-side, so they are trusted here).
+    // x-authz-tier: free | pro | enterprise (stamped from the ApiKey tier)
     // x-authz-auth-id: api_key_xyz or "_anonymous"
     let headers = request.headers();
     let tier_str = headers
@@ -483,15 +565,9 @@ async fn chat_completions(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
     // Extract X-Rook-Combo header if present (shared R2 policy: get_all +
     // classify; duplicates/malformed/ambiguous become 400 here).
     if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
@@ -727,9 +803,10 @@ fn compute_model_entries(
     entries
         .into_iter()
         .filter(|entry| {
-            allowed_models
-                .iter()
-                .any(|allowed| allowed == &entry.id || entry.id.ends_with(&format!("/{allowed}")))
+            allowed_models.iter().any(|allowed| {
+                allowed == &entry.id
+                    || (entry.owned_by != "combo" && entry.id.ends_with(&format!("/{allowed}")))
+            })
         })
         .collect()
 }
@@ -790,15 +867,9 @@ async fn anthropic_messages(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
     // Extract X-Rook-Combo header if present (shared R2 policy).
     if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
         req.metadata.combo_id = Some(combo_id);
@@ -1137,6 +1208,35 @@ fn cache_routes(usecases: Usecases) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use shared_kernel::{RateLimitRule, RateLimitScope};
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
 
     fn headers_with(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -1144,6 +1244,216 @@ mod tests {
             headers.append("x-rook-combo", v.parse().unwrap());
         }
         headers
+    }
+
+    #[tokio::test]
+    async fn cors_http_contract_matches_configured_origins_exactly() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", "");
+        for (setting, cases) in [
+            (
+                None,
+                vec![
+                    ("http://localhost:3000", true),
+                    ("http://localhost:4747", true),
+                    ("http://127.0.0.1:3000", true),
+                    ("http://localhost:9999", false),
+                    ("https://dashboard.example", false),
+                ],
+            ),
+            (
+                Some(" https://dashboard.example:8443 , http://localhost:8080 "),
+                vec![
+                    ("https://dashboard.example:8443", true),
+                    ("http://localhost:8080", true),
+                    ("https://dashboard.example", false),
+                    ("https://dashboard.example:8443/", false),
+                    ("https://sub.dashboard.example:8443", false),
+                    ("http://localhost:3000", false),
+                ],
+            ),
+            (Some("*"), vec![("https://arbitrary.example", false)]),
+        ] {
+            match setting {
+                Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),
+                None => std::env::remove_var("ALLOWED_ORIGINS"),
+            }
+            let app = Router::new()
+                .route("/health", get(|| async { "ok" }))
+                .layer(middleware::from_fn_with_state(
+                    authz::AuthzConfig::from_env(),
+                    authz::middleware,
+                ));
+            for (origin, allowed) in cases {
+                for method in ["GET", "OPTIONS"] {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            axum::http::Request::builder()
+                                .method(method)
+                                .uri("/health")
+                                .header("origin", origin)
+                                .header("access-control-request-method", "GET")
+                                .body(axum::body::Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if method == "OPTIONS" {
+                            StatusCode::NO_CONTENT
+                        } else {
+                            StatusCode::OK
+                        }
+                    );
+                    let headers = response.headers();
+                    assert_eq!(
+                        headers
+                            .get("access-control-allow-origin")
+                            .map(|v| v.to_str().unwrap()),
+                        allowed.then_some(origin),
+                        "{setting:?}: {origin}"
+                    );
+                    assert_eq!(
+                        headers.get("access-control-allow-credentials").is_some(),
+                        allowed
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-methods"],
+                        "GET, POST, PUT, DELETE, OPTIONS"
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-headers"],
+                        "Content-Type, Authorization, X-API-Key"
+                    );
+                    if allowed {
+                        assert!(headers["vary"].to_str().unwrap().contains("Origin"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
+        let _guard = ENV_LOCK.lock().await;
+        // The API key config is read only to build this isolated authz stack.
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        store.insert(RateLimitRule {
+            id: "rl-test".into(),
+            scope: RateLimitScope::ApiKey,
+            target: "key_1".into(),
+            requests_per_minute: 1,
+            requests_per_day: None,
+            tokens_per_minute: None,
+            burst: None,
+            provider_limits: HashMap::new(),
+        });
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer admin-rate-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["x-admin-ratelimit-limit"], "1");
+
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
+        assert_eq!(second.headers()["x-admin-ratelimit-limit"], "1");
+        assert_eq!(second.headers()["x-admin-ratelimit-remaining"], "0");
+        let body = second.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("RATE_LIMITED"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_without_custom_rule_has_no_admin_limit_headers() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-no-rule-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/test")
+                    .header("authorization", "Bearer admin-rate-no-rule-key")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key("x-admin-ratelimit-limit"));
+        assert!(!response
+            .headers()
+            .contains_key("x-admin-ratelimit-remaining"));
+        assert!(!response.headers().contains_key("x-admin-ratelimit-reset"));
+    }
+
+    #[tokio::test]
+    async fn api_key_limiter_observes_server_stamped_authz_identity() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "middleware-order-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+
+        let mut config = crate::middleware::api_key_rate_limiter::RateLimiterConfig::default();
+        config
+            .tiers
+            .get_mut(&rook_core::ApiKeyTier::Free)
+            .expect("free tier config")
+            .requests_per_minute = 1;
+        let limiter = Arc::new(ApiKeyRateLimiter::with_config(Arc::new(config)));
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter,
+                api_key_rate_limiter_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer middleware-order-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
     }
 
     #[test]
@@ -1278,6 +1588,17 @@ mod tests {
         assert_eq!(
             entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             vec!["openai-a/gpt-4o-mini"]
+        );
+    }
+
+    #[test]
+    fn catalog_bare_model_restriction_does_not_match_virtual_alias() {
+        let entries =
+            compute_model_entries(&[], &["rook/coding".to_string()], &["coding".to_string()]);
+
+        assert!(
+            entries.is_empty(),
+            "bare model must not expose virtual alias"
         );
     }
 }

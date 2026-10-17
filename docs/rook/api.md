@@ -544,11 +544,34 @@ Retry-After: 30
 Content-Type: application/json
 ```
 
-The `Retry-After` header value is derived from the provider's rate limit response. If not available, defaults to 60 seconds.
+The `Retry-After` header value is derived from the provider's rate limit response. If not available, defaults to 60 seconds. Dynamic provider connections also enforce their configured `max_concurrent`; when local capacity is exhausted, requests can return `429 Too Many Requests` without starting an upstream request or marking the provider unhealthy.
 
 ## CORS
 
-Rook uses `tower-http` CORS middleware with permissive settings (allows all origins, all methods, all headers). This is suitable for development. For production, configure explicit allowed origins in `transport-axum/src/routes.rs`.
+Set `ALLOWED_ORIGINS` before starting Rook to a comma-separated list of browser origins (`scheme://host[:port]`). Whitespace around entries is trimmed. CORS compares each entry exactly with the request's `Origin` header: scheme, host spelling, and port must match; subdomains, trailing slashes, and other localhost ports are not implicitly allowed, including in debug builds.
+
+When unset, the allowed origins are `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Setting the variable replaces these defaults. An empty value allows no cross-origin browser access. Same-origin requests do not require a CORS allowance.
+
+Wildcard (`*`) entries are unsupported and fail closed: if `ALLOWED_ORIGINS` contains `*`, no cross-origin browser access is allowed and Rook logs a warning. Use explicit origins only. Exact matches receive `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials: true`, and `Vary: Origin`; unlisted origins receive neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Credentials`. CORS does not replace authentication or reject the HTTP request itself.
+
+Preflight `OPTIONS` requests return `204 No Content`. Allowed methods are `GET, POST, PUT, DELETE, OPTIONS`; allowed request headers are `Content-Type, Authorization, X-API-Key`; the preflight cache lifetime is 86400 seconds.
+
+See [browser and OAuth configuration](configuration.md#browser-origins-and-oauth-callbacks) for deployment examples.
+
+## OAuth Callback URLs
+
+Authorization-code flows started through `POST /api/oauth/{provider}/authorize` validate `redirectUri` before returning an authorization URL:
+
+- The URL must be absolute, use the exact path `/api/oauth/callback`, and contain no username, password, query, or fragment.
+- Non-loopback callbacks require HTTPS and an explicit origin in `ALLOWED_ORIGINS`. Matching uses scheme, case-insensitive host, and effective port (omitted HTTPS port equals `443`). Different ports and subdomains require separate entries.
+- `localhost`, `127.0.0.1`, and `[::1]` callbacks may use HTTP or HTTPS on any port without an allowlist entry. The path and other URL restrictions still apply. This exception does not expand the CORS allowlist.
+- `*` is unsupported for CORS and does not authorize OAuth callbacks. Configure each HTTPS callback origin explicitly.
+
+Invalid or unlisted callbacks return `400 Bad Request` with code `VALIDATION_ERROR` and message `OAuth operation failed`. Register the same callback URL with your OAuth provider.
+
+## Model Alias Namespace
+
+`rook/*` names are reserved for virtual combo aliases. Creating an ordinary model alias through `POST /api/models/aliases` with a `rook/` prefix returns `400 Bad Request` with code `INVALID_ALIAS`. This check ignores case and surrounding whitespace. Virtual combo requests, including streams, enforce the API key's model and provider restrictions and may return `403 Forbidden` when access is denied.
 
 ## Request IDs
 
@@ -558,7 +581,7 @@ Each incoming request is assigned a `rook-{uuid}` ID for tracing. Audit entries 
 
 ## Rate Limit Admin API
 
-When `[rate_limiting].enabled = true`, admin users can manage custom rate limit rules via `/api/rate-limits` endpoints.
+When `[rate_limiting].enabled = true`, admin users can manage custom request-ingress rate limit rules via `/api/rate-limits` endpoints. Active global, API-key, and IP-address rules are enforced for authenticated `CLIENT_API` requests to `/v1/*`; the most restrictive matching rule applies. The admin API itself is excluded from these rules to prevent administrative lockout. This endpoint enforces requests per minute and requests per day only; token-per-minute limits are unsupported here because request token usage is not coupled to this ingress limiter. Provider-aware token limits belong to provider routing and usage accounting.
 
 All endpoints require admin session authentication.
 
@@ -575,8 +598,7 @@ List all rate limit rules.
     "scope": "api-key",
     "target": "key_abc123",
     "requests_per_minute": 120,
-    "requests_per_day": 5000,
-    "tokens_per_minute": 50000
+    "requests_per_day": 5000
   }
 ]
 ```
@@ -592,8 +614,7 @@ Create a new rate limit rule.
   "scope": "api-key",
   "target": "key_abc123",
   "requests_per_minute": 120,
-  "requests_per_day": 5000,
-  "tokens_per_minute": 50000
+  "requests_per_day": 5000
 }
 ```
 
@@ -603,28 +624,32 @@ Create a new rate limit rule.
 | `target`               | string | Yes      | API key ID, IP address, or `"global"`            |
 | `requests_per_minute`  | u32    | Yes      | Maximum requests per minute (must be > 0)        |
 | `requests_per_day`     | u32    | No       | Maximum requests per day                         |
-| `tokens_per_minute`    | u32    | No       | Maximum tokens per minute                        |
+| `tokens_per_minute`    | u32    | No       | Unsupported; non-null values are rejected with `UNSUPPORTED_LIMIT` |
 
 **Response:** `201 Created` with the created rule including generated `id`.
 
 **Validation:**
 - `target` cannot be empty
+- IP-address targets must be valid IPv4 or IPv6 addresses; invalid values return `400 Bad Request` with code `VALIDATION_ERROR`. Accepted addresses are stored and returned in canonical form (for example, `2001:0DB8:0:0:0:0:0:1` becomes `2001:db8::1`). Equivalent spellings identify the same rule.
 - `scope: "global"` must have `target: "global"`
 - `requests_per_minute` must be greater than 0
+- Non-null `tokens_per_minute` is rejected with `400 Bad Request` and code `UNSUPPORTED_LIMIT`.
+- Only one rule can exist for each `(scope, target)` pair; duplicates return `409 Conflict` with code `DUPLICATE_RULE`.
 
 ### PUT /api/rate-limits/:id
 
 Update an existing rate limit rule.
 
-**Request:** (all fields optional)
+**Request:** all fields are optional. `tokens_per_minute` may be omitted or `null`; a non-null value is rejected.
 
 ```json
 {
   "requests_per_minute": 200,
-  "requests_per_day": 10000,
-  "tokens_per_minute": 100000
+  "requests_per_day": 10000
 }
 ```
+
+**Validation:** A non-null `tokens_per_minute` returns `400 Bad Request` with code `UNSUPPORTED_LIMIT`. Omit the field or send `null` to leave it unset.
 
 **Response:** `200 OK` with the updated rule.
 
@@ -636,7 +661,11 @@ Delete a rate limit rule.
 
 ### GET /api/rate-limits/:scope/:target/status
 
-Get current rate limit status for a specific target.
+Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule. `reset_at` is the next minute boundary unless the daily limit is exhausted, in which case it is the next day boundary (the later reset applies when both limits are exhausted).
+
+Use `api_key`, `ip_address`, or `global` for the status URL's scope segment. Use the canonical IP returned at creation for IP status lookups.
+
+`reset_at` is the next minute boundary unless the daily quota is exhausted, in which case it is midnight UTC at the start of the next day. Daily exhaustion persists across minute boundaries. The request limiter uses the same daily reset for `Retry-After` and `X-Admin-RateLimit-Reset` when RPD blocks.
 
 **Example:** `GET /api/rate-limits/api_key/key_abc123/status`
 
@@ -650,6 +679,8 @@ Get current rate limit status for a specific target.
   "current_day_count": 2300,
   "remaining_minute": 55,
   "remaining_day": 2700,
+  "active_requests_per_minute": 120,
+  "active_requests_per_day": 5000,
   "reset_at": "2026-06-03T13:04:00Z"
 }
 ```
@@ -665,6 +696,8 @@ All API responses include rate limit metadata headers:
 | `X-RateLimit-Limit`     | Maximum requests in current window             |
 | `X-RateLimit-Remaining` | Remaining requests in current window           |
 | `X-RateLimit-Reset`     | Unix timestamp when limit resets               |
+
+When an administrator-defined ingress rule matches, responses also include `X-Admin-RateLimit-Limit`, `X-Admin-RateLimit-Remaining`, and `X-Admin-RateLimit-Reset`. These separate headers preserve the built-in authz tier limiter metadata. Requests without a matching custom rule do not receive these custom headers.
 
 When rate limited (HTTP 429):
 

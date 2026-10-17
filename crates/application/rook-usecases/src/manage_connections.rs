@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -42,6 +42,8 @@ pub struct ManageConnections {
     oauth_states: DashMap<String, String>,
     oauth_http_client: Option<reqwest::Client>,
     oauth_endpoint_overrides: OAuthEndpointOverrides,
+    registry_refresh: tokio::sync::Mutex<()>,
+    admission_states: DashMap<ConnectionId, Weak<crate::provider_concurrency::AdmissionState>>,
 }
 
 /// Code-level test hook for OAuth HTTP endpoints.
@@ -104,11 +106,30 @@ impl ManageConnections {
             oauth_states: DashMap::new(),
             oauth_http_client,
             oauth_endpoint_overrides,
+            registry_refresh: tokio::sync::Mutex::new(()),
+            admission_states: DashMap::new(),
         }
     }
 
     pub fn oauth_token_port(&self) -> Arc<dyn OAuthTokenPort> {
         self.oauth_token_manager.clone()
+    }
+
+    fn admission_state_for_connection(
+        &self,
+        connection_id: ConnectionId,
+        max_concurrent: u32,
+    ) -> Arc<crate::provider_concurrency::AdmissionState> {
+        let mut state = self.admission_states.entry(connection_id).or_default();
+        if let Some(admission) = state.upgrade() {
+            admission
+        } else {
+            let admission = Arc::new(crate::provider_concurrency::AdmissionState::new(
+                max_concurrent,
+            ));
+            *state = Arc::downgrade(&admission);
+            admission
+        }
     }
 
     pub async fn refresh_expiring_oauth_tokens(&self) -> usize {
@@ -1087,6 +1108,9 @@ impl ManageConnections {
     /// Lists all connections, decrypts credentials for active ones, builds providers,
     /// and replaces the entire registry atomically.
     pub async fn refresh_registry(&self) -> ManageConnectionsResult<()> {
+        // Serialize from the repository read through publication so an older
+        // build cannot overwrite a newer snapshot or its shared admission cap.
+        let _refresh = self.registry_refresh.lock().await;
         let connections = self.repo.list().await.map_err(|e| {
             tracing::error!(error = %e, "failed to list connections for registry refresh");
             ManageConnectionsError::RegistryUpdateFailed(format!("list failed: {e}"))
@@ -1094,6 +1118,8 @@ impl ManageConnections {
 
         let mut providers = Vec::new();
         let mut errors = Vec::new();
+        let mut admission_updates = Vec::new();
+        let mut active_connection_ids = std::collections::HashSet::new();
 
         for conn in connections.iter().filter(|c| c.is_active) {
             if let Err(error) = validate_provider_config(conn.provider_kind, &conn.config) {
@@ -1130,12 +1156,20 @@ impl ManageConnections {
 
             match self.builder.build(input).await {
                 Ok(provider) => {
+                    active_connection_ids.insert(conn.id);
                     tracing::debug!(
                         connection_id = %conn.id,
                         provider_id = %provider.id(),
                         "provider built successfully"
                     );
-                    providers.push(provider);
+                    let admission =
+                        self.admission_state_for_connection(conn.id, conn.config.max_concurrent);
+                    admission_updates.push((admission.clone(), conn.config.max_concurrent));
+                    providers.push(Arc::new(
+                        crate::provider_concurrency::ConcurrencyLimitedProvider::with_admission(
+                            provider, admission,
+                        ),
+                    ) as Arc<dyn ProviderPort>);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1160,6 +1194,15 @@ impl ManageConnections {
             tracing::error!(error = %e, "failed to replace provider registry");
             ManageConnectionsError::RegistryUpdateFailed(format!("replace_all failed: {e}"))
         })?;
+
+        // Publish limits only after replacement succeeds. There are no await
+        // points between publication and these updates, including on cancellation.
+        for (admission, limit) in admission_updates {
+            admission.set_limit(limit);
+        }
+
+        self.admission_states
+            .retain(|id, state| active_connection_ids.contains(id) || state.strong_count() > 0);
 
         Ok(())
     }
@@ -1576,10 +1619,19 @@ fn build_authorization_url(
 }
 
 fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
+    let origins = allowed_oauth_redirect_origins();
+    validate_oauth_redirect_uri_with_origins(value, &origins)
+}
+
+fn validate_oauth_redirect_uri_with_origins(
+    value: &str,
+    allowed_origins: &[reqwest::Url],
+) -> ManageConnectionsResult<()> {
     let uri = reqwest::Url::parse(value)
         .map_err(|_| ManageConnectionsError::OAuth("redirectUri must be an absolute URL".into()))?;
-    let local_http =
-        uri.scheme() == "http" && matches!(uri.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    let host = uri.host_str().unwrap_or_default().to_ascii_lowercase();
+    let is_loopback_host = matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]");
+    let local_http = uri.scheme() == "http" && is_loopback_host;
     if (uri.scheme() != "https" && !local_http)
         || uri.path() != "/api/oauth/callback"
         || uri.username() != ""
@@ -1591,7 +1643,63 @@ fn validate_oauth_redirect_uri(value: &str) -> ManageConnectionsResult<()> {
             "redirectUri must be HTTPS (or loopback HTTP) and use /api/oauth/callback".into(),
         ));
     }
+    // Loopback callbacks (dev) stay usable without allowlist configuration;
+    // `localhost` can never exfiltrate an authorization code to an attacker.
+    if is_loopback_host {
+        return Ok(());
+    }
+    // Anchor HTTPS callbacks to the operator-configured dashboard origin(s).
+    // Reuses the same `ALLOWED_ORIGINS` variable as `CorsConfig::from_env`
+    // (transport-axum) so there is a single source of truth; entries are
+    // origins (`scheme://host[:port]`), compared by scheme, host, and
+    // effective port. A `*` entry never authorizes an arbitrary OAuth origin.
+    let is_allowed_origin = allowed_origins.iter().any(|allowed| {
+        allowed.scheme() == uri.scheme()
+            && allowed
+                .host_str()
+                .is_some_and(|allowed_host| allowed_host.eq_ignore_ascii_case(&host))
+            && allowed.port_or_known_default() == uri.port_or_known_default()
+    });
+    if !is_allowed_origin {
+        return Err(ManageConnectionsError::OAuth(
+            "redirectUri origin is not allowed".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Origins derived from `ALLOWED_ORIGINS` (same variable and defaults as
+/// `CorsConfig::from_env` in transport-axum, which lives in a downstream
+/// crate the application layer cannot import).
+fn parse_allowed_oauth_redirect_origins(value: &str) -> Vec<reqwest::Url> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .filter_map(|origin| {
+            if origin == "*" {
+                return None;
+            }
+            let url = if origin.contains("://") {
+                reqwest::Url::parse(origin).ok()?
+            } else {
+                reqwest::Url::parse(&format!("https://{origin}")).ok()?
+            };
+            (url.path() == "/"
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none())
+            .then_some(url)
+        })
+        .collect()
+}
+
+fn allowed_oauth_redirect_origins() -> Vec<reqwest::Url> {
+    let value = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
+        "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
+    });
+    parse_allowed_oauth_redirect_origins(&value)
 }
 
 async fn parse_token_response(
@@ -1910,6 +2018,17 @@ mod tests {
             default_model: None,
             base_url: None,
         }
+    }
+
+    #[test]
+    fn admission_state_is_reused_for_the_same_connection_id() {
+        let manager = usecase();
+        let connection_id = ConnectionId::new();
+
+        let old_state = manager.admission_state_for_connection(connection_id, 2);
+        let refreshed_state = manager.admission_state_for_connection(connection_id, 1);
+
+        assert!(Arc::ptr_eq(&old_state, &refreshed_state));
     }
 
     #[test]
@@ -2839,7 +2958,7 @@ mod tests {
             &self,
             _req: &CompletionRequest,
         ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>> {
-            unreachable!("not used in tests")
+            Ok(Box::pin(futures::stream::pending()))
         }
     }
 
@@ -2909,12 +3028,14 @@ mod tests {
 
     struct MockRegistry {
         providers: std::sync::Mutex<Vec<Arc<dyn ProviderPort>>>,
+        reject_replacement: std::sync::atomic::AtomicBool,
     }
 
     impl MockRegistry {
         fn new() -> Self {
             Self {
                 providers: std::sync::Mutex::new(Vec::new()),
+                reject_replacement: std::sync::atomic::AtomicBool::new(false),
             }
         }
     }
@@ -2948,6 +3069,12 @@ mod tests {
             &self,
             new_providers: Vec<Arc<dyn ProviderPort>>,
         ) -> Result<(), RegistryError> {
+            if self
+                .reject_replacement
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(RegistryError::RegistryLocked);
+            }
             *self.providers.lock().unwrap() = new_providers;
             Ok(())
         }
@@ -3345,6 +3472,159 @@ mod tests {
     // ---------------------------------------------------------------------------
     // refresh_registry tests (5.6-5.12)
     // ---------------------------------------------------------------------------
+
+    struct PausingBuilder {
+        entered: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl ProviderBuilderPort for PausingBuilder {
+        async fn build(
+            &self,
+            input: ProviderBuildInput,
+        ) -> ManageConnectionsResult<Arc<dyn ProviderPort>> {
+            self.entered.notify_one();
+            self.resume.notified().await;
+            Ok(Arc::new(MockProvider {
+                provider_id: ProviderId::new(input.default_model.unwrap().as_str()),
+                health_status: HealthStatus::Unknown {
+                    provider: ProviderId::new("dynamic"),
+                    reason: "test".into(),
+                },
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_refreshes_publish_matching_snapshots_and_admission_limits() {
+        let connection = ProviderConnection {
+            id: ConnectionId::new(),
+            provider_kind: ProviderKind::OpenAI,
+            provider_runtime_id: ProviderId::new("dynamic"),
+            name: "dynamic".into(),
+            priority: 1,
+            is_active: true,
+            auth_type: AuthType::ApiKey,
+            credentials: Credentials::ApiKey {
+                api_key: EncryptedBlob("enc:v1:test".into()),
+            },
+            config: ConnectionConfig {
+                default_model: Some(ModelId::new("first")),
+                ..config()
+            },
+            test_status: TestStatus::NeverTested,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let repo = Arc::new(RepoWithRefreshTracker::default());
+        repo.create(&connection).await.unwrap();
+        let builder = Arc::new(PausingBuilder {
+            entered: Default::default(),
+            resume: Default::default(),
+        });
+        let registry = Arc::new(MockRegistry::new());
+        let manager = ManageConnections::new(
+            repo.clone(),
+            registry.clone(),
+            Arc::new(PlainKeyManager),
+            builder.clone(),
+        );
+        let first = manager.refresh_registry();
+        tokio::pin!(first);
+        assert!(futures::poll!(&mut first).is_pending());
+        builder.entered.notified().await;
+
+        // A second refresh must wait before reading a snapshot or building it.
+        let mut updated = connection.clone();
+        updated.config.max_concurrent = 2;
+        updated.config.default_model = Some(ModelId::new("second"));
+        repo.update(&updated, connection.updated_at).await.unwrap();
+        let second = manager.refresh_registry();
+        tokio::pin!(second);
+        assert!(futures::poll!(&mut second).is_pending());
+        assert_eq!(repo.refresh_count(), 1);
+
+        builder.resume.notify_one();
+        first.await.unwrap();
+        let old_provider = registry.get(&ProviderId::new("first")).unwrap();
+        let request = CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: ModelId::new("test"),
+            messages: vec![],
+            stream: true,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 1,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        };
+        let first_stream = old_provider.stream(&request).await.unwrap();
+        assert!(old_provider
+            .stream(&request)
+            .await
+            .err()
+            .unwrap()
+            .is_local_backpressure());
+
+        assert!(futures::poll!(&mut second).is_pending());
+        builder.entered.notified().await;
+        // The in-progress build must leave the active snapshot's cap at one.
+        assert!(old_provider
+            .stream(&request)
+            .await
+            .err()
+            .unwrap()
+            .is_local_backpressure());
+        builder.resume.notify_one();
+        second.await.unwrap();
+        assert_eq!(repo.refresh_count(), 2);
+        assert_eq!(registry.providers(), vec![ProviderId::new("second")]);
+        let current = registry.get(&ProviderId::new("second")).unwrap();
+        let second_stream = current.stream(&request).await.unwrap();
+        assert!(current
+            .stream(&request)
+            .await
+            .err()
+            .unwrap()
+            .is_local_backpressure());
+        // Both snapshots still share capacity after the limit is raised.
+        assert!(old_provider
+            .stream(&request)
+            .await
+            .err()
+            .unwrap()
+            .is_local_backpressure());
+        drop(first_stream);
+        assert!(current.stream(&request).await.is_ok());
+
+        // A failed publication must leave both the snapshot and cap intact.
+        updated.config.max_concurrent = 1;
+        repo.update(&updated, connection.updated_at).await.unwrap();
+        registry
+            .reject_replacement
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let failed = manager.refresh_registry();
+        tokio::pin!(failed);
+        assert!(futures::poll!(&mut failed).is_pending());
+        builder.entered.notified().await;
+        builder.resume.notify_one();
+        assert!(failed.await.is_err());
+        assert!(Arc::ptr_eq(
+            &current,
+            &registry.get(&ProviderId::new("second")).unwrap()
+        ));
+        assert!(current.stream(&request).await.is_ok());
+        drop(second_stream);
+    }
 
     // 5.6 - refresh_registry skips inactive connections
     #[test]
@@ -3881,5 +4161,82 @@ mod tests {
 
                 assert!(registry.providers().is_empty());
             });
+    }
+
+    // ---------------------------------------------------------------------------
+    // OAuth redirect URI host allowlist (A01) regression tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn redirect_uri_rejects_unlisted_https_host_with_oauth_error() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "https://evil.example/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("unlisted host must be rejected");
+        assert!(
+            matches!(err, ManageConnectionsError::OAuth(_)),
+            "must be an OAuth error, got: {err}"
+        );
+        assert!(err.to_string().contains("origin is not allowed"));
+    }
+
+    #[test]
+    fn redirect_uri_accepts_allowlisted_https_host() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        validate_oauth_redirect_uri_with_origins(
+            "https://rook.example.com/api/oauth/callback",
+            &origins,
+        )
+        .expect("allowlisted dashboard host must pass");
+    }
+
+    #[test]
+    fn redirect_uri_rejects_unlisted_port_on_allowlisted_host() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "https://rook.example.com:8443/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("an unlisted port must not inherit the allowed host");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
+    }
+
+    #[test]
+    fn redirect_uri_rejects_wrong_scheme_for_allowlisted_host() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        let err = validate_oauth_redirect_uri_with_origins(
+            "http://rook.example.com/api/oauth/callback",
+            &origins,
+        )
+        .expect_err("non-loopback HTTP must not inherit an HTTPS allowlist entry");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
+    }
+
+    #[test]
+    fn redirect_uri_accepts_loopback_http_for_dev() {
+        let origins = parse_allowed_oauth_redirect_origins("https://rook.example.com");
+        validate_oauth_redirect_uri_with_origins(
+            "http://localhost:3000/api/oauth/callback",
+            &origins,
+        )
+        .expect("loopback HTTP must keep working for dev");
+        validate_oauth_redirect_uri_with_origins(
+            "http://127.0.0.1:4747/api/oauth/callback",
+            &origins,
+        )
+        .expect("loopback HTTP must keep working for dev");
+    }
+
+    #[test]
+    fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
+        let origins = parse_allowed_oauth_redirect_origins("*");
+        let result = validate_oauth_redirect_uri_with_origins(
+            "https://evil.example/api/oauth/callback",
+            &origins,
+        );
+        let err = result.expect_err("wildcard must not authorize arbitrary hosts");
+        assert!(matches!(err, ManageConnectionsError::OAuth(_)));
     }
 }

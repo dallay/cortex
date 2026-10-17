@@ -50,11 +50,19 @@ pub async fn login_handler(
             // state-changing request, avoiding the GET /login round-trip
             // that races with the Set-Cookie landing in WebKit's cookie jar.
             let csrf_token = generate_csrf_token();
-            let secure = !cfg!(debug_assertions);
-            let csrf_cookie = build_csrf_token_cookie(&csrf_token, secure);
+            let rook_env = rook_environment();
+            let csrf_cookie = build_csrf_token_cookie(
+                &csrf_token,
+                rook_env.as_deref(),
+                cfg!(not(debug_assertions)),
+            );
 
             // Build auth_token Set-Cookie header
-            let auth_cookie = build_auth_token_cookie(&cookie_value);
+            let auth_cookie = build_auth_token_cookie(
+                &cookie_value,
+                rook_env.as_deref(),
+                cfg!(not(debug_assertions)),
+            );
 
             let body = LoginResponse {
                 session_id,
@@ -135,15 +143,19 @@ pub async fn logout_handler(
     match usecases.revoke_session_by_token_hash(&token_hash).await {
         Ok(()) => {
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie =
-                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            let clear_cookie = build_clear_auth_token_cookie(
+                rook_environment().as_deref(),
+                cfg!(not(debug_assertions)),
+            );
             (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
         Err(_) => {
             // Session already gone — treat as successful logout and clear the cookie.
             let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie =
-                HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+            let clear_cookie = build_clear_auth_token_cookie(
+                rook_environment().as_deref(),
+                cfg!(not(debug_assertions)),
+            );
             (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
         }
     }
@@ -151,10 +163,9 @@ pub async fn logout_handler(
 
 /// Build the auth_token cookie string
 ///
-/// Secure flag is set based on whether we're in debug mode.
-/// In production (release builds), cookies require HTTPS.
-fn build_auth_token_cookie(token: &str) -> HeaderValue {
-    let secure = !cfg!(debug_assertions);
+/// Secure is required in release builds and can be enabled in debug deployments.
+fn build_auth_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool) -> HeaderValue {
+    let secure = is_secure(rook_env, is_release);
     let mut cookie = format!(
         "auth_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
         token
@@ -162,8 +173,14 @@ fn build_auth_token_cookie(token: &str) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie)
-        .unwrap_or_else(|_| HeaderValue::from_str("auth_token=invalid; HttpOnly; Path=/").unwrap())
+    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
+        let fallback = if secure {
+            "auth_token=invalid; HttpOnly; Path=/; Secure"
+        } else {
+            "auth_token=invalid; HttpOnly; Path=/"
+        };
+        HeaderValue::from_str(fallback).unwrap()
+    })
 }
 
 /// Extract a cookie value by name from a HeaderMap
@@ -231,8 +248,11 @@ pub async fn get_login_handler(
         .filter(|value| is_valid_csrf_token(value))
         .unwrap_or_else(generate_csrf_token);
 
-    let secure = !cfg!(debug_assertions);
-    let cookie = build_csrf_token_cookie(&token, secure);
+    let cookie = build_csrf_token_cookie(
+        &token,
+        rook_environment().as_deref(),
+        cfg!(not(debug_assertions)),
+    );
 
     let body = serde_json::json!({
         "csrf_token": token,
@@ -259,7 +279,8 @@ fn generate_csrf_token() -> String {
 }
 
 /// Build the csrf_token cookie string
-fn build_csrf_token_cookie(token: &str, secure: bool) -> HeaderValue {
+fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool) -> HeaderValue {
+    let secure = is_secure(rook_env, is_release);
     let mut cookie = format!(
         "csrf_token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
         token
@@ -267,6 +288,28 @@ fn build_csrf_token_cookie(token: &str, secure: bool) -> HeaderValue {
     if secure {
         cookie.push_str("; Secure");
     }
-    HeaderValue::from_str(&cookie)
-        .unwrap_or_else(|_| HeaderValue::from_str("csrf_token=invalid; HttpOnly; Path=/").unwrap())
+    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
+        let fallback = if secure {
+            "csrf_token=invalid; HttpOnly; Path=/; Secure"
+        } else {
+            "csrf_token=invalid; HttpOnly; Path=/"
+        };
+        HeaderValue::from_str(fallback).unwrap()
+    })
+}
+
+fn build_clear_auth_token_cookie(rook_env: Option<&str>, is_release: bool) -> HeaderValue {
+    if is_secure(rook_env, is_release) {
+        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure")
+    } else {
+        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+    }
+}
+
+fn rook_environment() -> Option<String> {
+    std::env::var("ROOK_ENV").ok()
+}
+
+fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
+    is_release || rook_env == Some("production")
 }

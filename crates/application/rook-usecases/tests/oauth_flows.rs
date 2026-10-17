@@ -112,7 +112,7 @@ fn request(flow_type: OAuthFlowType) -> StartOAuthFlowRequest {
         client_id: "client-id".to_string(),
         client_secret: Some("must-not-appear-in-url".to_string()),
         tenant_id: Some("tenant-guid".to_string()),
-        redirect_uri: "https://rook.example.com/api/oauth/callback".to_string(),
+        redirect_uri: "http://localhost:3000/api/oauth/callback".to_string(),
         project_id: None,
     }
 }
@@ -137,7 +137,7 @@ async fn azure_authorization_code_uses_pkce_and_keeps_secret_out_of_url() {
     );
     assert_eq!(
         query.get("redirect_uri").map(String::as_str),
-        Some("https://rook.example.com/api/oauth/callback")
+        Some("http://localhost:3000/api/oauth/callback")
     );
     assert!(!url.as_str().contains("must-not-appear-in-url"));
     assert!(!query.get("code_challenge").unwrap().is_empty());
@@ -499,4 +499,32 @@ async fn remote_cleartext_token_override_rejects_exchange() {
         .await
         .expect_err("cleartext override must be rejected");
     assert!(err.to_string().contains("HTTPS or loopback"));
+}
+
+#[tokio::test]
+async fn authorization_rejects_https_callback_on_unlisted_host() {
+    let manager = manager();
+    let mut bad = request(OAuthFlowType::AuthorizationCode);
+    bad.redirect_uri = "https://evil.example/api/oauth/callback".to_string();
+
+    let err = manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, bad)
+        .await
+        .expect_err("unlisted HTTPS host must never start a flow");
+    assert!(
+        matches!(err, rook_usecases::ManageConnectionsError::OAuth(_)),
+        "foreign host must surface an OAuth error, got: {err}"
+    );
+    assert!(err.to_string().contains("origin is not allowed"));
+}
+
+#[tokio::test]
+async fn authorization_accepts_loopback_http() {
+    let manager = manager();
+    let mut loopback = request(OAuthFlowType::AuthorizationCode);
+    loopback.redirect_uri = "http://localhost:3000/api/oauth/callback".to_string();
+    manager
+        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, loopback)
+        .await
+        .expect("loopback HTTP must start a flow");
 }

@@ -299,6 +299,24 @@ When rate limited, the response includes:
 
 When rate limiting is enabled, admin users can manage custom rate limit rules via `/api/rate-limits` endpoints. See [API Reference](api.md#rate-limit-admin-api) for details.
 
+## Browser Origins and OAuth Callbacks
+
+Set `ALLOWED_ORIGINS` in the Rook server environment before startup. This comma-separated list controls browser CORS and the allowed origins for non-loopback OAuth callbacks. For a dashboard served at `https://rook.example.com:8443`:
+
+```bash
+export ALLOWED_ORIGINS="https://rook.example.com:8443"
+```
+
+This permits that exact browser origin and the OAuth callback `https://rook.example.com:8443/api/oauth/callback`. Register this callback with the OAuth provider as well. To permit multiple origins, list each explicitly, separated by commas. Setting this variable replaces the defaults.
+
+When unset, CORS allows only `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Entries are trimmed, then compared exactly with the browser's `Origin` header. Do not append a path or trailing slash. Ports, schemes, and subdomains must match; debug builds have the same restrictions. An empty value permits no cross-origin browser access. Same-origin dashboard requests do not need an entry for CORS.
+
+Wildcard (`*`) entries are unsupported and fail closed: if `ALLOWED_ORIGINS` contains `*`, Rook allows no cross-origin browser access and logs a warning. Use explicit origins only; wildcard CORS is unsafe with cookie-authenticated management routes. A wildcard does not allow arbitrary OAuth callback origins.
+
+Non-loopback OAuth callbacks require HTTPS, the exact path `/api/oauth/callback`, and an explicitly listed origin. OAuth matching compares scheme, host without case sensitivity, and effective port; omitted HTTPS port and `443` are equivalent. Other ports require their own entries. Callback URLs cannot contain credentials, query parameters, or fragments. Invalid callbacks return HTTP 400 with code `VALIDATION_ERROR`.
+
+Callbacks on `localhost`, `127.0.0.1`, or `[::1]` can use HTTP or HTTPS on any port without an allowlist entry, subject to the same path and URL restrictions. This OAuth loopback exception does not permit additional browser origins for CORS. See [API CORS details](api.md#cors) for methods, headers, and preflight behavior.
+
 ## Provider CRUD API
 
 Provider connection management is disabled by default. When enabled, Rook mounts `/api/providers` endpoints for storing provider connection metadata and encrypted credentials. The provider registry is populated from the database on startup and refreshed after each CRUD operation.
