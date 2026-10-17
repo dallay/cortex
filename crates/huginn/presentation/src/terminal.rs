@@ -378,6 +378,16 @@ struct View {
     modal: Option<(String, u64, String, String, usize)>,
     plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
     workflow: Option<(String, String, Vec<String>, usize, bool)>,
+    /// Settings dialog: (title, tabs, active, items, selected, error).
+    /// Tabs are owned strings because the dialog emits them via
+    /// `SettingsSnapshot.tabs` as `&'a str` — owning keeps `View` 'static.
+    settings: Option<(
+        Vec<String>,
+        usize,
+        Vec<(String, bool, u8)>,
+        usize,
+        Option<String>,
+    )>,
     widgets: String,
 }
 impl View {
@@ -400,6 +410,33 @@ impl View {
                     dialog.handle.choices().to_vec(),
                     dialog.selected,
                     dialog.body_scroll,
+                )
+            }),
+            settings: state.settings.as_ref().map(|dialog| {
+                let snapshot = dialog.snapshot();
+                let items = snapshot
+                    .items
+                    .into_iter()
+                    .map(|item| {
+                        let kind_byte = match item.kind {
+                            crate::settings::ItemKind::Pick => 0,
+                            crate::settings::ItemKind::Bool => 1,
+                            crate::settings::ItemKind::Cycle => 2,
+                            crate::settings::ItemKind::Action => 3,
+                        };
+                        (item.label.into_owned(), item.checked, kind_byte)
+                    })
+                    .collect();
+                (
+                    snapshot
+                        .tabs
+                        .iter()
+                        .map(|name| (*name).to_string())
+                        .collect::<Vec<_>>(),
+                    snapshot.active,
+                    items,
+                    snapshot.selected,
+                    snapshot.error,
                 )
             }),
             widgets: state
@@ -542,6 +579,61 @@ impl Driver {
                 };
                 frame.render_widget(Paragraph::new(text).block(Block::bordered().title(safe(title))), content);
                 frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
+                return;
+            }
+            // Modal > Settings > PluginDialog precedence. REQ-12: settings
+            // sits between `workflow` and `plugin_dialog` here.
+            if let Some((tabs, active, items, selected, error)) = &view.settings {
+                let [header, body, footer] = Layout::vertical([
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ])
+                .areas(area);
+                let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
+                for (i, name) in tabs.iter().enumerate() {
+                    let style = if i == *active {
+                        Style::default().reversed()
+                    } else {
+                        Style::default()
+                    };
+                    header_spans.push(Span::styled(
+                        format!(" {name} "),
+                        style,
+                    ));
+                    header_spans.push(Span::raw(" "));
+                }
+                frame.render_widget(
+                    Paragraph::new(Line::from(header_spans)),
+                    header,
+                );
+                let body_rows = usize::from(body.height).saturating_sub(2).max(1);
+                let total_items = items.len();
+                let start = selected
+                    .saturating_sub(body_rows.saturating_sub(1))
+                    .min(total_items.saturating_sub(body_rows));
+                let mut text = String::new();
+                if let Some(err) = error {
+                    text.push_str(&format!("!! {}\n", err));
+                }
+                for (i, (label, checked, _kind)) in
+                    items.iter().enumerate().skip(start).take(body_rows)
+                {
+                    text.push_str(&format!(
+                        "{} {}{}\n",
+                        if i == *selected { ">" } else { " " },
+                        label,
+                        if *checked { " ✓" } else { "" }
+                    ));
+                }
+                frame.render_widget(
+                    Paragraph::new(text).block(Block::bordered().title("Settings")),
+                    body,
+                );
+                frame.render_widget(
+                    Paragraph::new("↑↓ select · ←→ section · ↵ apply · esc close"),
+                    footer,
+                );
                 return;
             }
             if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
@@ -823,6 +915,48 @@ impl Driver {
             return;
         }
         if state.modal.is_none() {
+            // Modal > Settings > PluginDialog precedence. REQ-12: the
+            // settings lease consumes input before `plugin_dialog` does.
+            if let Some(dialog) = state.settings.as_mut() {
+                match key.code {
+                    KeyCode::Esc => {
+                        // Discard working copy without invoking the
+                        // persistence closure. REQ-08, REQ-13.
+                        dialog.discard();
+                        state.settings = None;
+                        state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
+                        drop(state);
+                        self.ui.notice("Settings discarded".into());
+                        return;
+                    }
+                    KeyCode::Left | KeyCode::BackTab => dialog.prev_tab(),
+                    KeyCode::Right | KeyCode::Tab => dialog.next_tab(),
+                    KeyCode::Up => dialog.select_prev(),
+                    KeyCode::Down => dialog.select_next(),
+                    KeyCode::Enter => {
+                        if dialog.handle_add_provider() {
+                            state.settings = None;
+                            state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
+                            drop(state);
+                            self.ui.notice("Add provider not implemented yet".into());
+                            return;
+                        }
+                        let save = self.ui.save_ui_config.clone();
+                        let outcome = dialog.apply(&mut |ui| save(ui));
+                        state.settings = None;
+                        state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
+                        let message = match outcome {
+                            Ok(()) => "Settings saved".to_string(),
+                            Err(error) => format!("Settings apply failed: {error}"),
+                        };
+                        drop(state);
+                        self.ui.notice(message);
+                        return;
+                    }
+                    _ => {}
+                }
+                return;
+            }
             if let Some(dialog) = state.plugin_dialog.as_mut() {
                 match key.code {
                     KeyCode::Esc => {
