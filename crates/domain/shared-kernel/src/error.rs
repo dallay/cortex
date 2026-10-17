@@ -129,6 +129,9 @@ impl CortexError {
     }
 
     pub fn retry_after_secs(&self) -> Option<u64> {
+        if self.is_local_backpressure() {
+            return Some(1);
+        }
         self.source
             .downcast_ref::<RateLimitedError>()
             .map(|e| e.retry_after_secs)

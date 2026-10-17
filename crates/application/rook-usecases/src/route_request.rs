@@ -521,23 +521,48 @@ impl RouteRequest {
             return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
         }
 
-        let provider = self.router.select(&req).await?;
-        let provider_id = provider.id().clone();
-        let connection_id = self.resolve_connection_id(&provider_id).await;
-
-        // 0a. Provider restriction check
-        if !req.restrictions.allowed_providers.is_empty()
-            && !req.restrictions.allowed_providers.contains(&provider_id)
-        {
-            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
-        }
-        let provider_format = provider.api_format();
-        let provider_req = self.format_translator.translate_request(
-            client_format,
-            provider_format,
-            req.clone(),
-        )?;
-        let mut upstream = provider.stream(&provider_req).await?;
+        // Local connection saturation happens before the provider starts a
+        // stream, so it is safe to try another provider before any SSE bytes
+        // are exposed to the caller. Bound attempts by registered providers.
+        let max_attempts = self.router.providers().len().min(MAX_RETRY_ATTEMPTS);
+        let mut excluded = Vec::new();
+        let mut local_backpressure = None;
+        let (provider_id, connection_id, mut upstream) = 'select: {
+            for _ in 0..max_attempts {
+                let provider = match self.router.select_excluding(&req, &excluded).await {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        return Err(local_backpressure.unwrap_or(error));
+                    }
+                };
+                let provider_id = provider.id().clone();
+                if !req.restrictions.allowed_providers.is_empty()
+                    && !req.restrictions.allowed_providers.contains(&provider_id)
+                {
+                    return Err(
+                        RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into(),
+                    );
+                }
+                let provider_format = provider.api_format();
+                let provider_req = self.format_translator.translate_request(
+                    client_format,
+                    provider_format,
+                    req.clone(),
+                )?;
+                match provider.stream(&provider_req).await {
+                    Ok(upstream) => {
+                        let connection_id = self.resolve_connection_id(&provider_id).await;
+                        break 'select (provider_id, connection_id, upstream);
+                    }
+                    Err(error) if error.is_local_backpressure() => {
+                        excluded.push(provider_id);
+                        local_backpressure = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
+        };
         let audit = self.audit.clone();
         let router = self.router.clone();
         let usage_recorder = self.usage_recorder.clone();
@@ -1703,6 +1728,135 @@ mod tests {
         assert!(
             error.is_local_backpressure(),
             "expected local 429 classification, got {error}"
+        );
+    }
+
+    struct PriorityFallbackRouter {
+        providers: Vec<Arc<dyn ProviderPort>>,
+    }
+
+    #[async_trait]
+    impl RouterPort for PriorityFallbackRouter {
+        async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.select_excluding(req, &[]).await
+        }
+
+        async fn select_excluding(
+            &self,
+            req: &CompletionRequest,
+            excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.providers
+                .iter()
+                .find(|provider| {
+                    !excluded.contains(provider.id()) && provider.supports_model(&req.model)
+                })
+                .cloned()
+                .ok_or_else(CortexError::all_providers_exhausted)
+        }
+
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+
+        fn providers(&self) -> Vec<ProviderId> {
+            self.providers
+                .iter()
+                .map(|provider| provider.id().clone())
+                .collect()
+        }
+    }
+
+    struct CountingStreamProvider {
+        id: ProviderId,
+        models: Vec<ModelId>,
+        stream_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ProviderPort for CountingStreamProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+        fn supported_models(&self) -> &[ModelId] {
+            &self.models
+        }
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 0,
+            }
+        }
+        async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            Err(CortexError::provider("unused fallback complete path"))
+        }
+        async fn stream(
+            &self,
+            req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            self.stream_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Box::pin(futures::stream::iter(vec![Ok(StreamChunk {
+                id: RequestId::new(),
+                model: req.model.clone(),
+                delta: "fallback stream".to_string(),
+                thinking: None,
+                tool_calls: Vec::new(),
+                finish_reason: Some(rook_core::FinishReason::Stop),
+                usage: None,
+            })])))
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_falls_back_when_primary_provider_is_at_concurrency_limit() {
+        let (primary, holder) = busy_limited_test_provider().await;
+        let secondary = Arc::new(CountingStreamProvider {
+            id: ProviderId::new("secondary"),
+            models: vec![TEST_MODEL.clone()],
+            stream_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let router = Arc::new(PriorityFallbackRouter {
+            providers: vec![primary, secondary.clone()],
+        });
+        let usecase = RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            None,
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        );
+        let mut req = request();
+        req.stream = true;
+
+        let mut stream = usecase
+            .execute_stream(req)
+            .await
+            .expect("idle secondary provider should accept the stream");
+        let chunk = stream.next().await.unwrap().unwrap();
+        holder.abort();
+
+        assert_eq!(chunk.delta, "fallback stream");
+        assert_eq!(
+            secondary
+                .stream_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
         );
     }
 
