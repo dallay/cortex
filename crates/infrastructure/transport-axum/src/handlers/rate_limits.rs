@@ -17,6 +17,16 @@ use tokio::sync::Mutex;
 
 use crate::HttpError;
 
+fn canonical_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(ip)),
+        ip => ip,
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct RateLimitRuleStore(Arc<RwLock<StoreState>>);
 
@@ -41,6 +51,7 @@ struct Counter {
 
 #[derive(Debug, Clone)]
 pub struct RateLimitDecision {
+    pub matched: bool,
     pub allowed: bool,
     pub limit: u32,
     pub remaining: u64,
@@ -126,7 +137,7 @@ impl RateLimitRuleStore {
         let candidates = [
             Some((RateLimitScope::Global, "global".to_owned())),
             api_key.map(|target| (RateLimitScope::ApiKey, target.to_owned())),
-            ip.map(|target| (RateLimitScope::IpAddress, target.to_string())),
+            ip.map(|target| (RateLimitScope::IpAddress, canonical_ip(target).to_string())),
         ];
         let matching: Vec<_> = {
             let state = self.0.read().unwrap();
@@ -147,6 +158,7 @@ impl RateLimitRuleStore {
             .unwrap_or(u32::MAX);
         if matching.is_empty() {
             return RateLimitDecision {
+                matched: false,
                 allowed: true,
                 limit: u32::MAX,
                 remaining: u64::MAX,
@@ -207,6 +219,7 @@ impl RateLimitRuleStore {
             }
         }
         RateLimitDecision {
+            matched: true,
             allowed,
             limit: effective_limit,
             remaining,
@@ -221,9 +234,14 @@ impl RateLimitRuleStore {
         target: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<RateLimitStatusWithLimits> {
+        let target = if scope == RateLimitScope::IpAddress {
+            canonical_ip(target.parse::<IpAddr>().ok()?).to_string()
+        } else {
+            target.to_owned()
+        };
         let (rule, counter) = {
             let state = self.0.read().unwrap();
-            let id = state.identities.get(&(scope, target.to_owned()))?;
+            let id = state.identities.get(&(scope, target.clone()))?;
             let entry = state.rules.get(id)?;
             (entry.rule.clone(), Arc::clone(&entry.counter))
         };
@@ -257,7 +275,7 @@ impl RateLimitRuleStore {
         Some(RateLimitStatusWithLimits {
             status: RateLimitStatus {
                 scope,
-                target: target.to_owned(),
+                target,
                 current_minute_count: minute,
                 current_day_count: day,
                 remaining_minute: u64::from(rule.requests_per_minute).saturating_sub(minute),
@@ -370,12 +388,12 @@ pub async fn create_rule(
     let target = if req.scope == RateLimitScope::IpAddress {
         req.target
             .parse::<IpAddr>()
+            .map(|ip| canonical_ip(ip).to_string())
             .map_err(|_| HttpError {
                 status: StatusCode::BAD_REQUEST,
                 code: "VALIDATION_ERROR",
-                message: "target must be an IPv4 or IPv6 address".to_string(),
+                message: "IP-address scope target must be a valid IP address".to_string(),
             })?
-            .to_string()
     } else {
         req.target
     };
@@ -926,5 +944,149 @@ mod tests {
         };
         assert_eq!(error.status, StatusCode::CONFLICT);
         assert_eq!(error.code, "DUPLICATE_RULE");
+    }
+
+    #[tokio::test]
+    async fn ip_rule_targets_are_canonicalized_and_invalid_targets_rejected() {
+        let store = RateLimitRuleStore::new();
+        let created = create_rule(
+            State(store.clone()),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::IpAddress,
+                target: "2001:0db8:0:0:0:0:0:1".into(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await;
+        assert!(created.is_ok());
+        assert_eq!(store.list()[0].target, "2001:db8::1");
+
+        let invalid = match create_rule(
+            State(store.clone()),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::IpAddress,
+                target: "not-an-ip".into(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("invalid IP target must be rejected"),
+        };
+        assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+        assert_eq!(invalid.code, "VALIDATION_ERROR");
+
+        let duplicate = match create_rule(
+            State(store),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::IpAddress,
+                target: "2001:db8::1".into(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("canonically equivalent IP target must conflict"),
+        };
+        assert_eq!(duplicate.status, StatusCode::CONFLICT);
+        assert_eq!(duplicate.code, "DUPLICATE_RULE");
+    }
+
+    #[tokio::test]
+    async fn ip_rule_matching_and_status_accept_canonical_ip_spellings() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::IpAddress, "2001:db8::1", 10, None));
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+
+        let decision = store
+            .check_request(None, Some("2001:0db8:0:0:0:0:0:1".parse().unwrap()), now)
+            .await;
+        assert_eq!(decision.remaining, 9);
+        let status = store
+            .status(RateLimitScope::IpAddress, "2001:0db8:0:0:0:0:0:1", now)
+            .await
+            .unwrap();
+        assert_eq!(status.status.target, "2001:db8::1");
+        assert_eq!(status.status.current_minute_count, 1);
+    }
+
+    #[tokio::test]
+    async fn mapped_ipv6_and_ipv4_targets_share_one_canonical_identity() {
+        let store = RateLimitRuleStore::new();
+        let created = create_rule(
+            State(store.clone()),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::IpAddress,
+                target: "::ffff:127.0.0.1".into(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await;
+        assert!(created.is_ok());
+        assert_eq!(store.list()[0].target, "127.0.0.1");
+
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+        let decision = store
+            .check_request(None, Some("::ffff:127.0.0.1".parse().unwrap()), now)
+            .await;
+        assert_eq!(decision.remaining, 9);
+
+        let duplicate = match create_rule(
+            State(store),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::IpAddress,
+                target: "127.0.0.1".into(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: None,
+            }),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("mapped IPv6 and IPv4 targets must conflict"),
+        };
+        assert_eq!(duplicate.code, "DUPLICATE_RULE");
+    }
+
+    #[tokio::test]
+    async fn daily_denial_status_resets_at_day_boundary() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::ApiKey, "key-daily", 1, Some(1)));
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 34, 0).unwrap();
+        assert!(
+            store
+                .check_request(Some("key-daily"), None, now)
+                .await
+                .allowed
+        );
+        let denied = store.check_request(Some("key-daily"), None, now).await;
+        assert!(!denied.allowed);
+        assert_eq!(
+            denied.reset_unix,
+            now.date_naive()
+                .succ_opt()
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp() as u64
+        );
+
+        let status = store
+            .status(RateLimitScope::ApiKey, "key-daily", now)
+            .await
+            .unwrap();
+        assert_eq!(status.status.reset_at, "2026-10-18T00:00:00+00:00");
     }
 }

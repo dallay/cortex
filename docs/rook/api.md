@@ -640,7 +640,7 @@ Create a new rate limit rule.
 
 Update an existing rate limit rule.
 
-**Request:** (all fields optional)
+**Request:** all fields are optional. `tokens_per_minute` may be omitted or `null`; a non-null value is rejected.
 
 ```json
 {
@@ -648,6 +648,8 @@ Update an existing rate limit rule.
   "requests_per_day": 10000
 }
 ```
+
+**Validation:** A non-null `tokens_per_minute` returns `400 Bad Request` with code `UNSUPPORTED_LIMIT`. Omit the field or send `null` to leave it unset.
 
 **Response:** `200 OK` with the updated rule.
 
@@ -659,7 +661,7 @@ Delete a rate limit rule.
 
 ### GET /api/rate-limits/:scope/:target/status
 
-Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule.
+Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule. `reset_at` is the next minute boundary unless the daily limit is exhausted, in which case it is the next day boundary (the later reset applies when both limits are exhausted).
 
 Use `api_key`, `ip_address`, or `global` for the status URL's scope segment. Use the canonical IP returned at creation for IP status lookups.
 
@@ -695,7 +697,7 @@ All API responses include rate limit metadata headers:
 | `X-RateLimit-Remaining` | Remaining requests in current window           |
 | `X-RateLimit-Reset`     | Unix timestamp when limit resets               |
 
-When an administrator-defined ingress rule is active, responses also include `X-Admin-RateLimit-Limit`, `X-Admin-RateLimit-Remaining`, and `X-Admin-RateLimit-Reset`. These separate headers preserve the built-in authz tier limiter metadata.
+When an administrator-defined ingress rule matches, responses also include `X-Admin-RateLimit-Limit`, `X-Admin-RateLimit-Remaining`, and `X-Admin-RateLimit-Reset`. These separate headers preserve the built-in authz tier limiter metadata. Requests without a matching custom rule do not receive these custom headers.
 
 When rate limited (HTTP 429):
 

@@ -201,7 +201,9 @@ pub async fn admin_rate_limit_middleware(
         .await;
     if decision.allowed {
         let mut response = next.run(request).await;
-        set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
         response
     } else {
         let body = serde_json::json!({
@@ -215,7 +217,9 @@ pub async fn admin_rate_limit_middleware(
             header::RETRY_AFTER,
             axum::http::HeaderValue::from(decision.retry_after_secs),
         );
-        set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
         response
     }
 }
@@ -1377,6 +1381,41 @@ mod tests {
         assert_eq!(second.headers()["x-admin-ratelimit-remaining"], "0");
         let body = second.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&body).contains("RATE_LIMITED"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_without_custom_rule_has_no_admin_limit_headers() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-no-rule-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/test")
+                    .header("authorization", "Bearer admin-rate-no-rule-key")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key("x-admin-ratelimit-limit"));
+        assert!(!response
+            .headers()
+            .contains_key("x-admin-ratelimit-remaining"));
+        assert!(!response.headers().contains_key("x-admin-ratelimit-reset"));
     }
 
     #[tokio::test]
