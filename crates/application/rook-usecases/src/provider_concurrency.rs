@@ -28,7 +28,7 @@ impl AdmissionState {
         }
     }
 
-    fn set_limit(&self, max_concurrent: u32) {
+    pub(crate) fn set_limit(&self, max_concurrent: u32) {
         self.counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -70,19 +70,13 @@ pub(crate) struct ConcurrencyLimitedProvider {
 impl ConcurrencyLimitedProvider {
     #[cfg(test)]
     pub(crate) fn new(inner: Arc<dyn ProviderPort>, max_concurrent: u32) -> Self {
-        Self::with_admission(
-            inner,
-            Arc::new(AdmissionState::new(max_concurrent)),
-            max_concurrent,
-        )
+        Self::with_admission(inner, Arc::new(AdmissionState::new(max_concurrent)))
     }
 
     pub(crate) fn with_admission(
         inner: Arc<dyn ProviderPort>,
         admission: Arc<AdmissionState>,
-        max_concurrent: u32,
     ) -> Self {
-        admission.set_limit(max_concurrent);
         Self { inner, admission }
     }
 
@@ -250,7 +244,6 @@ mod tests {
         let old_provider = Arc::new(ConcurrencyLimitedProvider::with_admission(
             inner.clone(),
             admission.clone(),
-            2,
         ));
         let old_call = {
             let old_provider = old_provider.clone();
@@ -260,10 +253,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Rewrapping during refresh updates the cap without replacing active
+        // Committing a refresh updates the cap without replacing active
         // admission state, so the old provider's call still consumes capacity.
         let refreshed_provider =
-            ConcurrencyLimitedProvider::with_admission(inner.clone(), admission, 1);
+            ConcurrencyLimitedProvider::with_admission(inner.clone(), admission.clone());
+        admission.set_limit(1);
         let error = refreshed_provider.complete(&request()).await.unwrap_err();
         assert!(error.is_local_backpressure());
         assert_eq!(inner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);

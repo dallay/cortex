@@ -41,6 +41,20 @@ RUST_LOG=info
 ROOK_CONFIG=/app/config/rook.toml
 ```
 
+### Dashboard Browser and OAuth Origins
+
+For a dashboard at `https://rook.example.com:8443`, pass this environment variable to Rook:
+
+```bash
+ALLOWED_ORIGINS=https://rook.example.com:8443
+```
+
+For Docker use `-e ALLOWED_ORIGINS="https://rook.example.com:8443"`; for Compose add it under `environment`. Use the public dashboard origin, including its scheme and port, when deploying behind a reverse proxy. Register `https://rook.example.com:8443/api/oauth/callback` with the OAuth provider.
+
+`ALLOWED_ORIGINS` replaces the three default CORS origins: `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Browser origins match entries exactly; different ports and subdomains need separate entries. An explicit `*` allows all browser origins with credentials, but non-loopback OAuth callbacks still require an explicit HTTPS origin, matched by scheme, host, and effective port.
+
+Loopback OAuth callbacks (`localhost`, `127.0.0.1`, `[::1]`) may use HTTP or HTTPS on any port without an entry. Every callback must use `/api/oauth/callback` with no credentials, query, or fragment. This exception does not expand CORS permissions. See [configuration](configuration.md#browser-origins-and-oauth-callbacks) for the full contract.
+
 ## Docker Deployment
 
 ### Build the Image

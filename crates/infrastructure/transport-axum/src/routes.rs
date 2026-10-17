@@ -1243,6 +1243,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cors_http_contract_matches_configured_origins_exactly() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", "");
+        for (setting, cases) in [
+            (
+                None,
+                vec![
+                    ("http://localhost:3000", true),
+                    ("http://localhost:4747", true),
+                    ("http://127.0.0.1:3000", true),
+                    ("http://localhost:9999", false),
+                    ("https://dashboard.example", false),
+                ],
+            ),
+            (
+                Some(" https://dashboard.example:8443 , http://localhost:8080 "),
+                vec![
+                    ("https://dashboard.example:8443", true),
+                    ("http://localhost:8080", true),
+                    ("https://dashboard.example", false),
+                    ("https://dashboard.example:8443/", false),
+                    ("https://sub.dashboard.example:8443", false),
+                    ("http://localhost:3000", false),
+                ],
+            ),
+            (Some("*"), vec![("https://arbitrary.example", true)]),
+        ] {
+            match setting {
+                Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),
+                None => std::env::remove_var("ALLOWED_ORIGINS"),
+            }
+            let app = Router::new()
+                .route("/health", get(|| async { "ok" }))
+                .layer(middleware::from_fn_with_state(
+                    authz::AuthzConfig::from_env(),
+                    authz::middleware,
+                ));
+            for (origin, allowed) in cases {
+                for method in ["GET", "OPTIONS"] {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            axum::http::Request::builder()
+                                .method(method)
+                                .uri("/health")
+                                .header("origin", origin)
+                                .header("access-control-request-method", "GET")
+                                .body(axum::body::Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if method == "OPTIONS" {
+                            StatusCode::NO_CONTENT
+                        } else {
+                            StatusCode::OK
+                        }
+                    );
+                    let headers = response.headers();
+                    assert_eq!(
+                        headers
+                            .get("access-control-allow-origin")
+                            .map(|v| v.to_str().unwrap()),
+                        allowed.then_some(origin),
+                        "{setting:?}: {origin}"
+                    );
+                    assert_eq!(
+                        headers.get("access-control-allow-credentials").is_some(),
+                        allowed
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-methods"],
+                        "GET, POST, PUT, DELETE, OPTIONS"
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-headers"],
+                        "Content-Type, Authorization, X-API-Key"
+                    );
+                    if allowed {
+                        assert!(headers["vary"].to_str().unwrap().contains("Origin"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
         let _guard = ENV_LOCK.lock().await;
         // The API key config is read only to build this isolated authz stack.

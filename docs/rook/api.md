@@ -544,11 +544,34 @@ Retry-After: 30
 Content-Type: application/json
 ```
 
-The `Retry-After` header value is derived from the provider's rate limit response. If not available, defaults to 60 seconds.
+The `Retry-After` header value is derived from the provider's rate limit response. If not available, defaults to 60 seconds. Dynamic provider connections also enforce their configured `max_concurrent`; when local capacity is exhausted, requests can return `429 Too Many Requests` without starting an upstream request or marking the provider unhealthy.
 
 ## CORS
 
-Rook uses `tower-http` CORS middleware with permissive settings (allows all origins, all methods, all headers). This is suitable for development. For production, configure explicit allowed origins in `transport-axum/src/routes.rs`.
+Set `ALLOWED_ORIGINS` before starting Rook to a comma-separated list of browser origins (`scheme://host[:port]`). Whitespace around entries is trimmed. CORS compares each entry exactly with the request's `Origin` header: scheme, host spelling, and port must match; subdomains, trailing slashes, and other localhost ports are not implicitly allowed, including in debug builds.
+
+When unset, the allowed origins are `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Setting the variable replaces these defaults. An empty value allows no cross-origin browser access. Same-origin requests do not require a CORS allowance.
+
+An explicit `*` entry allows any origin: Rook echoes the requesting origin and sends `Access-Control-Allow-Credentials: true` and `Vary: Origin`. Exact matches receive the same headers. Unlisted origins receive neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Credentials`; the browser denies access to the response. CORS does not replace authentication or reject the HTTP request itself.
+
+Preflight `OPTIONS` requests return `204 No Content`. Allowed methods are `GET, POST, PUT, DELETE, OPTIONS`; allowed request headers are `Content-Type, Authorization, X-API-Key`; the preflight cache lifetime is 86400 seconds.
+
+See [browser and OAuth configuration](configuration.md#browser-origins-and-oauth-callbacks) for deployment examples.
+
+## OAuth Callback URLs
+
+Authorization-code flows started through `POST /api/oauth/{provider}/authorize` validate `redirectUri` before returning an authorization URL:
+
+- The URL must be absolute, use the exact path `/api/oauth/callback`, and contain no username, password, query, or fragment.
+- Non-loopback callbacks require HTTPS and an explicit origin in `ALLOWED_ORIGINS`. Matching uses scheme, case-insensitive host, and effective port (omitted HTTPS port equals `443`). Different ports and subdomains require separate entries.
+- `localhost`, `127.0.0.1`, and `[::1]` callbacks may use HTTP or HTTPS on any port without an allowlist entry. The path and other URL restrictions still apply. This exception does not expand the CORS allowlist.
+- `*` permits arbitrary browser origins for CORS but never authorizes a non-loopback OAuth callback. Configure each HTTPS callback origin explicitly.
+
+Invalid or unlisted callbacks return `400 Bad Request` with code `VALIDATION_ERROR` and message `OAuth operation failed`. Register the same callback URL with your OAuth provider.
+
+## Model Alias Namespace
+
+`rook/*` names are reserved for virtual combo aliases. Creating an ordinary model alias through `POST /api/models/aliases` with a `rook/` prefix returns `400 Bad Request` with code `INVALID_ALIAS`. This check ignores case and surrounding whitespace. Virtual combo requests, including streams, enforce the API key's model and provider restrictions and may return `403 Forbidden` when access is denied.
 
 ## Request IDs
 
@@ -607,6 +630,7 @@ Create a new rate limit rule.
 
 **Validation:**
 - `target` cannot be empty
+- IP-address targets must be valid IPv4 or IPv6 addresses; invalid values return `400 Bad Request` with code `VALIDATION_ERROR`. Accepted addresses are stored and returned in canonical form (for example, `2001:0DB8:0:0:0:0:0:1` becomes `2001:db8::1`). Equivalent spellings identify the same rule.
 - `scope: "global"` must have `target: "global"`
 - `requests_per_minute` must be greater than 0
 - Non-null `tokens_per_minute` is rejected with `400 Bad Request` and code `UNSUPPORTED_LIMIT`.
@@ -636,6 +660,10 @@ Delete a rate limit rule.
 ### GET /api/rate-limits/:scope/:target/status
 
 Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule.
+
+Use `api_key`, `ip_address`, or `global` for the status URL's scope segment. Use the canonical IP returned at creation for IP status lookups.
+
+`reset_at` is the next minute boundary unless the daily quota is exhausted, in which case it is midnight UTC at the start of the next day. Daily exhaustion persists across minute boundaries. The request limiter uses the same daily reset for `Retry-After` and `X-Admin-RateLimit-Reset` when RPD blocks.
 
 **Example:** `GET /api/rate-limits/api_key/key_abc123/status`
 

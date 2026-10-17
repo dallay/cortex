@@ -246,6 +246,14 @@ impl RateLimitRuleStore {
         } else {
             0
         };
+        let reset = if rule
+            .requests_per_day
+            .is_some_and(|limit| day >= u64::from(limit))
+        {
+            day_start + 86_400
+        } else {
+            minute_start + 60
+        };
         Some(RateLimitStatusWithLimits {
             status: RateLimitStatus {
                 scope,
@@ -256,7 +264,7 @@ impl RateLimitRuleStore {
                 remaining_day: rule
                     .requests_per_day
                     .map_or(u64::MAX, |limit| u64::from(limit).saturating_sub(day)),
-                reset_at: chrono::DateTime::from_timestamp(minute_start + 60, 0)
+                reset_at: chrono::DateTime::from_timestamp(reset, 0)
                     .unwrap()
                     .to_rfc3339(),
             },
@@ -359,6 +367,19 @@ pub async fn create_rule(
         });
     }
 
+    let target = if req.scope == RateLimitScope::IpAddress {
+        req.target
+            .parse::<IpAddr>()
+            .map_err(|_| HttpError {
+                status: StatusCode::BAD_REQUEST,
+                code: "VALIDATION_ERROR",
+                message: "target must be an IPv4 or IPv6 address".to_string(),
+            })?
+            .to_string()
+    } else {
+        req.target
+    };
+
     // Generate ID
     let id = format!(
         "rl_{}_{}",
@@ -373,7 +394,7 @@ pub async fn create_rule(
     let rule = RateLimitRule {
         id: id.clone(),
         scope: req.scope,
-        target: req.target,
+        target,
         requests_per_minute: req.requests_per_minute,
         requests_per_day: req.requests_per_day,
         tokens_per_minute: None,
@@ -545,6 +566,10 @@ mod tests {
             .unwrap();
         assert_eq!(status.status.current_minute_count, 2);
         assert_eq!(status.status.current_day_count, 2);
+        assert_eq!(
+            status.status.reset_at,
+            (start + chrono::Duration::minutes(1)).to_rfc3339()
+        );
 
         let next_minute = start + chrono::Duration::minutes(1);
         assert!(
@@ -568,6 +593,24 @@ mod tests {
             .unwrap();
         assert_eq!(status.status.current_minute_count, 1);
         assert_eq!(status.status.current_day_count, 3);
+        assert_eq!(status.status.remaining_day, 0);
+        assert_eq!(
+            status.status.reset_at,
+            chrono::DateTime::from_timestamp(daily_denial.reset_unix as i64, 0)
+                .unwrap()
+                .to_rfc3339()
+        );
+        // A minute rollover cannot clear a daily exhaustion.
+        let later = store
+            .status(
+                RateLimitScope::ApiKey,
+                "key-1",
+                next_minute + chrono::Duration::minutes(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(later.status.current_minute_count, 0);
+        assert_eq!(later.status.reset_at, status.status.reset_at);
 
         let tomorrow = start + chrono::Duration::days(1);
         assert!(
@@ -582,6 +625,10 @@ mod tests {
             .unwrap();
         assert_eq!(status.status.current_minute_count, 1);
         assert_eq!(status.status.current_day_count, 1);
+        assert_eq!(
+            status.status.reset_at,
+            (tomorrow + chrono::Duration::minutes(1)).to_rfc3339()
+        );
     }
 
     #[tokio::test]
@@ -795,6 +842,67 @@ mod tests {
         {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
             Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ip_targets_are_validated_canonicalized_and_enforced_over_http() {
+        use axum::{
+            body::{to_bytes, Body},
+            http::Request,
+            routing::post,
+            Router,
+        };
+        use tower::ServiceExt;
+
+        let store = RateLimitRuleStore::new();
+        let app = Router::new()
+            .route("/rules", post(create_rule))
+            .with_state(store.clone());
+        for (target, expected) in [
+            ("not-an-ip", StatusCode::BAD_REQUEST),
+            ("192.0.2.1:80", StatusCode::BAD_REQUEST),
+            ("192.0.2.0/24", StatusCode::BAD_REQUEST),
+            (
+                "2001:0DB8:0000:0000:0000:0000:0000:0001",
+                StatusCode::CREATED,
+            ),
+            ("2001:db8::1", StatusCode::CONFLICT),
+            ("192.0.2.1", StatusCode::CREATED),
+        ] {
+            let response = app.clone().oneshot(Request::builder().method("POST").uri("/rules")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"scope":"ip-address", "target":target, "requests_per_minute":1}).to_string())).unwrap()).await.unwrap();
+            assert_eq!(response.status(), expected, "{target}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            if expected == StatusCode::BAD_REQUEST {
+                assert_eq!(body["code"], "VALIDATION_ERROR");
+            } else if expected == StatusCode::CONFLICT {
+                assert_eq!(body["code"], "DUPLICATE_RULE");
+            } else {
+                assert_eq!(
+                    body["target"],
+                    target.parse::<IpAddr>().unwrap().to_string()
+                );
+            }
+        }
+        assert_eq!(store.list().len(), 2);
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+        for ip in ["2001:db8::1", "192.0.2.1"] {
+            let ip = ip.parse::<IpAddr>().unwrap();
+            assert!(store.check_request(None, Some(ip), now).await.allowed);
+            assert!(!store.check_request(None, Some(ip), now).await.allowed);
+            assert_eq!(
+                store
+                    .status(RateLimitScope::IpAddress, &ip.to_string(), now)
+                    .await
+                    .unwrap()
+                    .status
+                    .current_minute_count,
+                1
+            );
         }
     }
 
