@@ -128,7 +128,11 @@ pub fn router(
 
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
-        router = router.merge(rate_limits_routes(store));
+        router = router.merge(rate_limits_routes(store.clone()));
+        router = router.layer(middleware::from_fn_with_state(
+            store,
+            admin_rate_limit_middleware,
+        ));
     }
 
     router
@@ -162,6 +166,76 @@ pub fn router(
             csrf_guard,
             csrf_guard::csrf_guard_middleware,
         ))
+}
+
+/// Applies administrator-defined request limits only to authenticated CLIENT_API ingress.
+pub async fn admin_rate_limit_middleware(
+    State(store): State<handlers::rate_limits::RateLimitRuleStore>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    let path = request.uri().path();
+    let headers = request.headers();
+    if !path.starts_with("/v1/")
+        || headers
+            .get("x-authz-route-class")
+            .and_then(|v| v.to_str().ok())
+            != Some("CLIENT_API")
+    {
+        return next.run(request).await;
+    }
+    let auth_kind = headers
+        .get("x-authz-auth-kind")
+        .and_then(|v| v.to_str().ok());
+    let api_key_id = if auth_kind == Some("api_key") {
+        headers.get("x-authz-auth-id").and_then(|v| v.to_str().ok())
+    } else {
+        None
+    };
+    let decision = store.check_request(
+        api_key_id,
+        Some(extract_client_ip(&request)),
+        chrono::Utc::now(),
+    );
+    if decision.allowed {
+        let mut response = next.run(request).await;
+        set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        response
+    } else {
+        let body = serde_json::json!({
+            "error": "rate_limit_exceeded",
+            "message": "Administrative request rate limit exceeded.",
+            "code": "RATE_LIMITED",
+            "retry_after": decision.retry_after_secs,
+        });
+        let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            axum::http::HeaderValue::from(decision.retry_after_secs),
+        );
+        set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        response
+    }
+}
+
+fn set_admin_rate_limit_headers(
+    headers: &mut HeaderMap,
+    decision: &handlers::rate_limits::RateLimitDecision,
+) {
+    // Keep the admin-policy metadata distinct from the built-in authz tier
+    // limiter, whose standard x-ratelimit-* headers are stamped outside this layer.
+    headers.insert(
+        "x-admin-ratelimit-limit",
+        axum::http::HeaderValue::from(decision.limit),
+    );
+    headers.insert(
+        "x-admin-ratelimit-remaining",
+        axum::http::HeaderValue::from(decision.remaining),
+    );
+    headers.insert(
+        "x-admin-ratelimit-reset",
+        axum::http::HeaderValue::from(decision.reset_unix),
+    );
 }
 
 /// Login rate limiter middleware — applies to POST /login only
@@ -1128,6 +1202,11 @@ fn cache_routes(usecases: Usecases) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use shared_kernel::{RateLimitRule, RateLimitScope};
+    use std::collections::HashMap;
+    use tower::ServiceExt;
 
     fn headers_with(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -1135,6 +1214,54 @@ mod tests {
             headers.append("x-rook-combo", v.parse().unwrap());
         }
         headers
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
+        // The API key config is read only to build this isolated authz stack.
+        std::env::set_var("CLIENT_API_KEYS", "admin-rate-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        std::env::remove_var("CLIENT_API_KEYS");
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        store.insert(RateLimitRule {
+            id: "rl-test".into(),
+            scope: RateLimitScope::ApiKey,
+            target: "key_1".into(),
+            requests_per_minute: 1,
+            requests_per_day: None,
+            tokens_per_minute: None,
+            burst: None,
+            provider_limits: HashMap::new(),
+        });
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer admin-rate-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["x-admin-ratelimit-limit"], "1");
+
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
+        assert_eq!(second.headers()["x-admin-ratelimit-limit"], "1");
+        assert_eq!(second.headers()["x-admin-ratelimit-remaining"], "0");
+        let body = second.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("RATE_LIMITED"));
     }
 
     #[test]

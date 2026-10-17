@@ -132,7 +132,7 @@ fn build_rate_limit_store(
     config: &RookConfig,
 ) -> Option<transport_axum::handlers::rate_limits::RateLimitRuleStore> {
     if config.rate_limiting.enabled {
-        Some(Arc::new(dashmap::DashMap::new()))
+        Some(transport_axum::handlers::rate_limits::RateLimitRuleStore::new())
     } else {
         None
     }

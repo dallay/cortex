@@ -8,12 +8,254 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use shared_kernel::{RateLimitRule, RateLimitScope, RateLimitStatus};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{Arc, Mutex},
+};
 
 use crate::HttpError;
 
-/// In-memory rate limit rule store (DashMap-backed)
-pub type RateLimitRuleStore = Arc<dashmap::DashMap<String, RateLimitRule>>;
+const MAX_COUNTERS: usize = 100_000;
+
+#[derive(Clone, Default)]
+pub struct RateLimitRuleStore(Arc<Mutex<StoreState>>);
+
+#[derive(Default)]
+struct StoreState {
+    rules: HashMap<String, RateLimitRule>,
+    counters: HashMap<String, Counter>,
+}
+
+#[derive(Clone, Default)]
+struct Counter {
+    minute_start: i64,
+    minute_count: u64,
+    day_start: i64,
+    day_count: u64,
+    last_seen: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RateLimitDecision {
+    pub allowed: bool,
+    pub limit: u32,
+    pub remaining: u64,
+    pub reset_unix: u64,
+    pub retry_after_secs: u64,
+}
+
+impl RateLimitRuleStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, rule: RateLimitRule) {
+        self.0.lock().unwrap().rules.insert(rule.id.clone(), rule);
+    }
+
+    pub fn list(&self) -> Vec<RateLimitRule> {
+        self.0.lock().unwrap().rules.values().cloned().collect()
+    }
+
+    pub fn get(&self, id: &str) -> Option<RateLimitRule> {
+        self.0.lock().unwrap().rules.get(id).cloned()
+    }
+
+    pub fn update(
+        &self,
+        id: &str,
+        update: impl FnOnce(&mut RateLimitRule),
+    ) -> Option<RateLimitRule> {
+        let mut state = self.0.lock().unwrap();
+        let rule = state.rules.get_mut(id)?;
+        update(rule);
+        Some(rule.clone())
+    }
+
+    pub fn remove(&self, id: &str) -> Option<RateLimitRule> {
+        self.0.lock().unwrap().rules.remove(id)
+    }
+
+    pub fn check_request(
+        &self,
+        api_key: Option<&str>,
+        ip: Option<IpAddr>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> RateLimitDecision {
+        let now_sec = now.timestamp();
+        let minute_start = now_sec.div_euclid(60) * 60;
+        let day_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let mut state = self.0.lock().unwrap();
+        let matching: Vec<_> = state
+            .rules
+            .values()
+            .filter(|rule| match rule.scope {
+                RateLimitScope::Global => rule.target == "global",
+                RateLimitScope::ApiKey => api_key == Some(rule.target.as_str()),
+                RateLimitScope::IpAddress => {
+                    ip.map(|value| value.to_string()) == Some(rule.target.clone())
+                }
+            })
+            .cloned()
+            .collect();
+        let effective_limit = matching
+            .iter()
+            .map(|r| r.requests_per_minute)
+            .min()
+            .unwrap_or(u32::MAX);
+        if matching.is_empty() {
+            return RateLimitDecision {
+                allowed: true,
+                limit: u32::MAX,
+                remaining: u64::MAX,
+                reset_unix: minute_start as u64 + 60,
+                retry_after_secs: 0,
+            };
+        }
+        let mut allowed = true;
+        let mut retry_after = 1;
+        let mut reset_unix = minute_start as u64 + 60;
+        let mut remaining = u64::from(effective_limit);
+        for rule in &matching {
+            let counter = state.counters.get(&rule.id).cloned().unwrap_or_default();
+            let minute_count = if counter.minute_start == minute_start {
+                counter.minute_count
+            } else {
+                0
+            };
+            let day_count = if counter.day_start == day_start {
+                counter.day_count
+            } else {
+                0
+            };
+            remaining =
+                remaining.min(u64::from(rule.requests_per_minute).saturating_sub(minute_count));
+            if minute_count >= u64::from(rule.requests_per_minute) {
+                allowed = false;
+                let minute_reset = minute_start + 60;
+                retry_after = retry_after.max((minute_reset - now_sec).max(1) as u64);
+                reset_unix = reset_unix.max(minute_reset as u64);
+            }
+            if rule
+                .requests_per_day
+                .is_some_and(|limit| day_count >= u64::from(limit))
+            {
+                allowed = false;
+                let day_reset = day_start + 86_400;
+                retry_after = retry_after.max((day_reset - now_sec).max(1) as u64);
+                reset_unix = reset_unix.max(day_reset as u64);
+            }
+        }
+        if allowed {
+            for rule in matching {
+                let counter = state.counters.entry(rule.id).or_insert_with(|| Counter {
+                    minute_start,
+                    day_start,
+                    ..Counter::default()
+                });
+                if counter.minute_start != minute_start {
+                    counter.minute_start = minute_start;
+                    counter.minute_count = 0;
+                }
+                if counter.day_start != day_start {
+                    counter.day_start = day_start;
+                    counter.day_count = 0;
+                }
+                counter.minute_count += 1;
+                counter.day_count += 1;
+                counter.last_seen = now_sec;
+                remaining = remaining
+                    .min(u64::from(rule.requests_per_minute).saturating_sub(counter.minute_count));
+            }
+        }
+        if state.counters.len() > MAX_COUNTERS {
+            let cutoff = now_sec - 86_400;
+            state
+                .counters
+                .retain(|_, counter| counter.last_seen >= cutoff);
+            while state.counters.len() > MAX_COUNTERS {
+                if let Some(oldest) = state
+                    .counters
+                    .iter()
+                    .min_by_key(|(_, c)| c.last_seen)
+                    .map(|(id, _)| id.clone())
+                {
+                    state.counters.remove(&oldest);
+                }
+            }
+        }
+        RateLimitDecision {
+            allowed,
+            limit: effective_limit,
+            remaining,
+            reset_unix,
+            retry_after_secs: if allowed { 0 } else { retry_after },
+        }
+    }
+
+    pub fn status(
+        &self,
+        scope: RateLimitScope,
+        target: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<RateLimitStatusWithLimits> {
+        let state = self.0.lock().unwrap();
+        let rule = state
+            .rules
+            .values()
+            .find(|r| r.scope == scope && r.target == target)?;
+        let counter = state.counters.get(&rule.id).cloned().unwrap_or_default();
+        let now_sec = now.timestamp();
+        let minute_start = now_sec.div_euclid(60) * 60;
+        let day_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let minute = if counter.minute_start == minute_start {
+            counter.minute_count
+        } else {
+            0
+        };
+        let day = if counter.day_start == day_start {
+            counter.day_count
+        } else {
+            0
+        };
+        Some(RateLimitStatusWithLimits {
+            status: RateLimitStatus {
+                scope,
+                target: target.to_owned(),
+                current_minute_count: minute,
+                current_day_count: day,
+                remaining_minute: u64::from(rule.requests_per_minute).saturating_sub(minute),
+                remaining_day: rule
+                    .requests_per_day
+                    .map_or(u64::MAX, |limit| u64::from(limit).saturating_sub(day)),
+                reset_at: chrono::DateTime::from_timestamp(minute_start + 60, 0)
+                    .unwrap()
+                    .to_rfc3339(),
+            },
+            active_requests_per_minute: rule.requests_per_minute,
+            active_requests_per_day: rule.requests_per_day,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RateLimitStatusWithLimits {
+    #[serde(flatten)]
+    status: RateLimitStatus,
+    active_requests_per_minute: u32,
+    active_requests_per_day: Option<u32>,
+}
 
 /// Request DTO for creating a rate limit rule
 #[derive(Debug, Deserialize)]
@@ -62,8 +304,9 @@ pub async fn list_rules(
     State(store): State<RateLimitRuleStore>,
 ) -> Result<impl IntoResponse, HttpError> {
     let rules: Vec<RateLimitRuleResponse> = store
+        .list()
         .iter()
-        .map(|entry| RateLimitRuleResponse::from(entry.value()))
+        .map(RateLimitRuleResponse::from)
         .collect();
     Ok(Json(rules))
 }
@@ -73,6 +316,9 @@ pub async fn create_rule(
     State(store): State<RateLimitRuleStore>,
     Json(req): Json<CreateRateLimitRuleRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
+    if req.tokens_per_minute.is_some() {
+        return Err(HttpError { status: StatusCode::BAD_REQUEST, code: "UNSUPPORTED_LIMIT", message: "tokens_per_minute is unsupported; only requests_per_minute and requests_per_day are enforced".to_string() });
+    }
     // Validate request
     if req.target.is_empty() {
         return Err(HttpError {
@@ -113,12 +359,12 @@ pub async fn create_rule(
         target: req.target,
         requests_per_minute: req.requests_per_minute,
         requests_per_day: req.requests_per_day,
-        tokens_per_minute: req.tokens_per_minute,
+        tokens_per_minute: None,
         burst: None,
         provider_limits: Default::default(),
     };
 
-    store.insert(id.clone(), rule.clone());
+    store.insert(rule.clone());
 
     Ok((
         StatusCode::CREATED,
@@ -132,30 +378,31 @@ pub async fn update_rule(
     Path(id): Path<String>,
     Json(req): Json<UpdateRateLimitRuleRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let mut entry = store.get_mut(&id).ok_or_else(|| HttpError {
-        status: StatusCode::NOT_FOUND,
-        code: "NOT_FOUND",
-        message: format!("Rate limit rule {} not found", id),
-    })?;
-
-    if let Some(rpm) = req.requests_per_minute {
-        if rpm == 0 {
-            return Err(HttpError {
-                status: StatusCode::BAD_REQUEST,
-                code: "VALIDATION_ERROR",
-                message: "requests_per_minute must be greater than 0".to_string(),
-            });
-        }
-        entry.requests_per_minute = rpm;
+    if req.tokens_per_minute.is_some() {
+        return Err(HttpError { status: StatusCode::BAD_REQUEST, code: "UNSUPPORTED_LIMIT", message: "tokens_per_minute is unsupported; only requests_per_minute and requests_per_day are enforced".to_string() });
     }
-    if let Some(rpd) = req.requests_per_day {
-        entry.requests_per_day = Some(rpd);
+    if req.requests_per_minute == Some(0) {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "VALIDATION_ERROR",
+            message: "requests_per_minute must be greater than 0".to_string(),
+        });
     }
-    if let Some(tpm) = req.tokens_per_minute {
-        entry.tokens_per_minute = Some(tpm);
-    }
-
-    let response = RateLimitRuleResponse::from(entry.value());
+    let updated = store
+        .update(&id, |entry| {
+            if let Some(rpm) = req.requests_per_minute {
+                entry.requests_per_minute = rpm;
+            }
+            if let Some(rpd) = req.requests_per_day {
+                entry.requests_per_day = Some(rpd);
+            }
+        })
+        .ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND",
+            message: format!("Rate limit rule {} not found", id),
+        })?;
+    let response = RateLimitRuleResponse::from(&updated);
     Ok(Json(response))
 }
 
@@ -175,6 +422,7 @@ pub async fn delete_rule(
 
 /// GET /api/rate-limits/:scope/:target/status — get current rate limit status
 pub async fn get_status(
+    State(store): State<RateLimitRuleStore>,
     Path((scope_str, target)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, HttpError> {
     let scope = match scope_str.as_str() {
@@ -190,17 +438,13 @@ pub async fn get_status(
         }
     };
 
-    // For MVP, we return stub data since we don't have a persistence layer yet
-    // In production, this would query the actual rate limit state from the limiters
-    let status = RateLimitStatus {
-        scope,
-        target: target.clone(),
-        current_minute_count: 0,
-        current_day_count: 0,
-        remaining_minute: 100,
-        remaining_day: 1000,
-        reset_at: chrono::Utc::now().to_rfc3339(),
-    };
+    let status = store
+        .status(scope, &target, chrono::Utc::now())
+        .ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND",
+            message: format!("No rate limit rule for {scope_str}:{target}"),
+        })?;
 
     Ok(Json(status))
 }
@@ -208,11 +452,85 @@ pub async fn get_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashmap::DashMap;
+    use chrono::{TimeZone, Utc};
+    use std::net::IpAddr;
+
+    fn rule(scope: RateLimitScope, target: &str, rpm: u32, rpd: Option<u32>) -> RateLimitRule {
+        RateLimitRule {
+            id: format!("{scope:?}-{target}"),
+            scope,
+            target: target.to_owned(),
+            requests_per_minute: rpm,
+            requests_per_day: rpd,
+            tokens_per_minute: None,
+            burst: None,
+            provider_limits: Default::default(),
+        }
+    }
+
+    #[test]
+    fn rule_store_counts_matching_global_key_and_ip_rules_and_uses_lowest_limit() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::Global, "global", 8, None));
+        store.insert(rule(RateLimitScope::ApiKey, "key-1", 3, None));
+        store.insert(rule(RateLimitScope::IpAddress, "127.0.0.1", 5, None));
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+
+        let first = store.check_request(Some("key-1"), Some(IpAddr::from([127, 0, 0, 1])), now);
+        assert!(first.allowed);
+        assert_eq!(first.limit, 3);
+        assert_eq!(first.remaining, 2);
+    }
+
+    #[test]
+    fn rule_store_denies_minute_and_daily_limits_and_reports_real_status() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::ApiKey, "key-1", 2, Some(3)));
+        let start = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap();
+
+        for _ in 0..2 {
+            assert!(store.check_request(Some("key-1"), None, start).allowed);
+        }
+        assert!(!store.check_request(Some("key-1"), None, start).allowed);
+        let status = store
+            .status(RateLimitScope::ApiKey, "key-1", start)
+            .unwrap();
+        assert_eq!(status.status.current_minute_count, 2);
+        assert_eq!(status.status.current_day_count, 2);
+
+        let next_minute = start + chrono::Duration::minutes(1);
+        assert!(
+            store
+                .check_request(Some("key-1"), None, next_minute)
+                .allowed
+        );
+        let daily_denial = store.check_request(Some("key-1"), None, next_minute);
+        assert!(!daily_denial.allowed);
+        let day_start = next_minute
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() as u64;
+        assert_eq!(daily_denial.reset_unix, day_start + 86_400);
+        let status = store
+            .status(RateLimitScope::ApiKey, "key-1", next_minute)
+            .unwrap();
+        assert_eq!(status.status.current_minute_count, 1);
+        assert_eq!(status.status.current_day_count, 3);
+
+        let tomorrow = start + chrono::Duration::days(1);
+        assert!(store.check_request(Some("key-1"), None, tomorrow).allowed);
+        let status = store
+            .status(RateLimitScope::ApiKey, "key-1", tomorrow)
+            .unwrap();
+        assert_eq!(status.status.current_minute_count, 1);
+        assert_eq!(status.status.current_day_count, 1);
+    }
 
     #[tokio::test]
     async fn test_rate_limits_handlers() {
-        let store: RateLimitRuleStore = Arc::new(DashMap::new());
+        let store = RateLimitRuleStore::new();
 
         // 1. List empty
         let res = list_rules(State(store.clone())).await;
@@ -229,16 +547,34 @@ mod tests {
         let res = create_rule(State(store.clone()), Json(create_req)).await;
         assert!(res.is_ok());
 
+        let unsupported_tpm = create_rule(
+            State(store.clone()),
+            Json(CreateRateLimitRuleRequest {
+                scope: RateLimitScope::ApiKey,
+                target: "key_tpm".to_string(),
+                requests_per_minute: 10,
+                requests_per_day: None,
+                tokens_per_minute: Some(1000),
+            }),
+        )
+        .await;
+        let unsupported_tpm = match unsupported_tpm {
+            Err(error) => error,
+            Ok(_) => panic!("expected unsupported token limit error"),
+        };
+        assert_eq!(unsupported_tpm.status, StatusCode::BAD_REQUEST);
+        assert_eq!(unsupported_tpm.code, "UNSUPPORTED_LIMIT");
+
         // 3. List contains 1 rule and rule payload matches
         let rules_res = list_rules(State(store.clone())).await;
         assert!(rules_res.is_ok());
-        assert_eq!(store.len(), 1);
+        assert_eq!(store.list().len(), 1);
         {
-            let stored_rule = store.iter().next().unwrap();
-            assert_eq!(stored_rule.value().scope, RateLimitScope::ApiKey);
-            assert_eq!(stored_rule.value().target, "key_abc");
-            assert_eq!(stored_rule.value().requests_per_minute, 100);
-            assert_eq!(stored_rule.value().requests_per_day, Some(10000));
+            let stored_rule = store.list().remove(0);
+            assert_eq!(stored_rule.scope, RateLimitScope::ApiKey);
+            assert_eq!(stored_rule.target, "key_abc");
+            assert_eq!(stored_rule.requests_per_minute, 100);
+            assert_eq!(stored_rule.requests_per_day, Some(10000));
         }
 
         // 4. Create invalid rules
@@ -279,7 +615,7 @@ mod tests {
         }
 
         // 5. Update rule
-        let rule_id = store.iter().next().unwrap().key().clone();
+        let rule_id = store.list()[0].id.clone();
 
         let zero_rpm_update = UpdateRateLimitRuleRequest {
             requests_per_minute: Some(0),
@@ -300,7 +636,7 @@ mod tests {
         let valid_update = UpdateRateLimitRuleRequest {
             requests_per_minute: Some(200),
             requests_per_day: Some(20000),
-            tokens_per_minute: Some(50000),
+            tokens_per_minute: None,
         };
         let updated = update_rule(
             State(store.clone()),
@@ -309,6 +645,22 @@ mod tests {
         )
         .await;
         assert!(updated.is_ok());
+
+        let unsupported_update = update_rule(
+            State(store.clone()),
+            Path(rule_id.clone()),
+            Json(UpdateRateLimitRuleRequest {
+                requests_per_minute: None,
+                requests_per_day: None,
+                tokens_per_minute: Some(1000),
+            }),
+        )
+        .await;
+        let unsupported_update = match unsupported_update {
+            Err(error) => error,
+            Ok(_) => panic!("expected unsupported token limit error"),
+        };
+        assert_eq!(unsupported_update.code, "UNSUPPORTED_LIMIT");
 
         match update_rule(
             State(store.clone()),
@@ -335,16 +687,33 @@ mod tests {
         }
 
         // 7. Get status
-        let status_ok = get_status(Path(("api_key".to_string(), "key_123".to_string()))).await;
-        assert!(status_ok.is_ok());
+        let status_ok = get_status(
+            State(store.clone()),
+            Path(("api_key".to_string(), "key_abc".to_string())),
+        )
+        .await;
+        assert_eq!(status_ok.err().unwrap().status, StatusCode::NOT_FOUND); // Deleted rule has no status.
 
-        let status_ip = get_status(Path(("ip_address".to_string(), "127.0.0.1".to_string()))).await;
-        assert!(status_ip.is_ok());
+        let status_ip = get_status(
+            State(store.clone()),
+            Path(("ip_address".to_string(), "127.0.0.1".to_string())),
+        )
+        .await;
+        assert_eq!(status_ip.err().unwrap().status, StatusCode::NOT_FOUND);
 
-        let status_global = get_status(Path(("global".to_string(), "global".to_string()))).await;
-        assert!(status_global.is_ok());
+        let status_global = get_status(
+            State(store.clone()),
+            Path(("global".to_string(), "global".to_string())),
+        )
+        .await;
+        assert_eq!(status_global.err().unwrap().status, StatusCode::NOT_FOUND);
 
-        match get_status(Path(("invalid_scope".to_string(), "target".to_string()))).await {
+        match get_status(
+            State(store.clone()),
+            Path(("invalid_scope".to_string(), "target".to_string())),
+        )
+        .await
+        {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
             Ok(_) => panic!("expected error"),
         }

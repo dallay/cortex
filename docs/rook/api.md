@@ -558,7 +558,7 @@ Each incoming request is assigned a `rook-{uuid}` ID for tracing. Audit entries 
 
 ## Rate Limit Admin API
 
-When `[rate_limiting].enabled = true`, admin users can manage custom rate limit rules via `/api/rate-limits` endpoints.
+When `[rate_limiting].enabled = true`, admin users can manage custom request-ingress rate limit rules via `/api/rate-limits` endpoints. Active global, API-key, and IP-address rules are enforced for authenticated `CLIENT_API` requests to `/v1/*`; the most restrictive matching rule applies. The admin API itself is excluded from these rules to prevent administrative lockout. This endpoint enforces requests per minute and requests per day only; token-per-minute limits are unsupported here because request token usage is not coupled to this ingress limiter. Provider-aware token limits belong to provider routing and usage accounting.
 
 All endpoints require admin session authentication.
 
@@ -575,8 +575,7 @@ List all rate limit rules.
     "scope": "api-key",
     "target": "key_abc123",
     "requests_per_minute": 120,
-    "requests_per_day": 5000,
-    "tokens_per_minute": 50000
+    "requests_per_day": 5000
   }
 ]
 ```
@@ -592,8 +591,7 @@ Create a new rate limit rule.
   "scope": "api-key",
   "target": "key_abc123",
   "requests_per_minute": 120,
-  "requests_per_day": 5000,
-  "tokens_per_minute": 50000
+  "requests_per_day": 5000
 }
 ```
 
@@ -603,7 +601,7 @@ Create a new rate limit rule.
 | `target`               | string | Yes      | API key ID, IP address, or `"global"`            |
 | `requests_per_minute`  | u32    | Yes      | Maximum requests per minute (must be > 0)        |
 | `requests_per_day`     | u32    | No       | Maximum requests per day                         |
-| `tokens_per_minute`    | u32    | No       | Maximum tokens per minute                        |
+| `tokens_per_minute`    | u32    | No       | Unsupported; non-null values are rejected with `UNSUPPORTED_LIMIT` |
 
 **Response:** `201 Created` with the created rule including generated `id`.
 
@@ -611,6 +609,7 @@ Create a new rate limit rule.
 - `target` cannot be empty
 - `scope: "global"` must have `target: "global"`
 - `requests_per_minute` must be greater than 0
+- Non-null `tokens_per_minute` is rejected with `400 Bad Request` and code `UNSUPPORTED_LIMIT`.
 
 ### PUT /api/rate-limits/:id
 
@@ -621,8 +620,7 @@ Update an existing rate limit rule.
 ```json
 {
   "requests_per_minute": 200,
-  "requests_per_day": 10000,
-  "tokens_per_minute": 100000
+  "requests_per_day": 10000
 }
 ```
 
@@ -636,7 +634,7 @@ Delete a rate limit rule.
 
 ### GET /api/rate-limits/:scope/:target/status
 
-Get current rate limit status for a specific target.
+Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule.
 
 **Example:** `GET /api/rate-limits/api_key/key_abc123/status`
 
@@ -650,6 +648,8 @@ Get current rate limit status for a specific target.
   "current_day_count": 2300,
   "remaining_minute": 55,
   "remaining_day": 2700,
+  "active_requests_per_minute": 120,
+  "active_requests_per_day": 5000,
   "reset_at": "2026-06-03T13:04:00Z"
 }
 ```
@@ -665,6 +665,8 @@ All API responses include rate limit metadata headers:
 | `X-RateLimit-Limit`     | Maximum requests in current window             |
 | `X-RateLimit-Remaining` | Remaining requests in current window           |
 | `X-RateLimit-Reset`     | Unix timestamp when limit resets               |
+
+When an administrator-defined ingress rule is active, responses also include `X-Admin-RateLimit-Limit`, `X-Admin-RateLimit-Remaining`, and `X-Admin-RateLimit-Reset`. These separate headers preserve the built-in authz tier limiter metadata.
 
 When rate limited (HTTP 429):
 
