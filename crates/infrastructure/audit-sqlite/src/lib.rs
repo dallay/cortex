@@ -315,7 +315,8 @@ impl UsageRecorderPort for SqliteUsageRepository {
     }
 
     async fn cost_breakdown(&self, filters: UsageFilters) -> CortexResult<CostBreakdown> {
-        let total_cost_usd = query_total_cost(&self.conn, &filters).await?;
+        let (total_cost_usd, known_cost_entries, unknown_cost_entries) =
+            query_cost_completeness(&self.conn, &filters).await?;
         let by_provider =
             query_cost_group(&self.conn, &filters, "provider", ProviderId::new).await?;
         let by_model = query_cost_group(&self.conn, &filters, "model", ModelId::new).await?;
@@ -323,6 +324,8 @@ impl UsageRecorderPort for SqliteUsageRepository {
             query_cost_group(&self.conn, &filters, "api_key_id", ApiKeyId::new).await?;
         Ok(CostBreakdown {
             total_cost_usd,
+            known_cost_entries,
+            unknown_cost_entries,
             by_provider,
             by_model,
             by_api_key,
@@ -425,12 +428,16 @@ fn row_to_usage_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageEntry> {
     })
 }
 
-async fn query_total_cost(conn: &Mutex<Connection>, filters: &UsageFilters) -> CortexResult<f64> {
+async fn query_cost_completeness(
+    conn: &Mutex<Connection>,
+    filters: &UsageFilters,
+) -> CortexResult<(f64, u64, u64)> {
     let conn = conn.lock().await;
     let params = filter_params(filters);
     conn.query_row(
         &format!(
-            "SELECT COALESCE(SUM(cost_usd), 0) FROM usage_history {}",
+            "SELECT COALESCE(SUM(cost_usd), 0), COUNT(cost_usd), COUNT(*) - COUNT(cost_usd)
+             FROM usage_history {}",
             usage_filter_where_sql()
         ),
         params![
@@ -442,9 +449,15 @@ async fn query_total_cost(conn: &Mutex<Connection>, filters: &UsageFilters) -> C
             params.end,
             params.status,
         ],
-        |row| row.get(0),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+            ))
+        },
     )
-    .map_err(|e| CortexError::provider(format!("sqlite usage cost total failed: {e}")))
+    .map_err(|e| CortexError::provider(format!("sqlite usage cost completeness failed: {e}")))
 }
 
 async fn query_cost_group<K, F>(
@@ -720,6 +733,8 @@ mod usage_tests {
 
             let CostBreakdown {
                 total_cost_usd,
+                known_cost_entries,
+                unknown_cost_entries,
                 by_provider,
                 by_model,
                 by_api_key,
@@ -729,6 +744,8 @@ mod usage_tests {
                 .expect("cost");
 
             assert_eq!(total_cost_usd, 0.60);
+            assert_eq!(known_cost_entries, 3);
+            assert_eq!(unknown_cost_entries, 1);
             assert_float_eq(
                 *by_provider.get(&ProviderId::new("openai")).expect("openai"),
                 0.30,
@@ -756,6 +773,53 @@ mod usage_tests {
                 0.30,
             );
             assert!(!by_api_key.contains_key(&ApiKeyId::new("")));
+        });
+    }
+
+    #[test]
+    fn cost_breakdown_completeness_respects_connection_and_time_filters() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let first_connection = ConnectionId::new();
+            let second_connection = ConnectionId::new();
+
+            let mut known_zero = entry("openai", "gpt-4o", 1, Some(0.0));
+            known_zero.connection_id = Some(first_connection);
+            repo.record(known_zero).await.expect("known zero");
+
+            let mut unknown = entry("openai", "gpt-4o", 2, None);
+            unknown.connection_id = Some(first_connection);
+            repo.record(unknown).await.expect("unknown");
+
+            let mut outside_connection = entry("openai", "gpt-4o", 3, Some(0.5));
+            outside_connection.connection_id = Some(second_connection);
+            repo.record(outside_connection)
+                .await
+                .expect("outside connection");
+
+            let filtered = repo
+                .cost_breakdown(UsageFilters {
+                    connection_id: Some(first_connection),
+                    start: Some(timestamp(1)),
+                    end: Some(timestamp(2)),
+                    ..UsageFilters::default()
+                })
+                .await
+                .expect("filtered cost");
+            assert_eq!(filtered.total_cost_usd, 0.0);
+            assert_eq!(filtered.known_cost_entries, 1);
+            assert_eq!(filtered.unknown_cost_entries, 1);
+
+            let empty = repo
+                .cost_breakdown(UsageFilters {
+                    start: Some(timestamp(5)),
+                    ..UsageFilters::default()
+                })
+                .await
+                .expect("empty cost");
+            assert_eq!(empty.total_cost_usd, 0.0);
+            assert_eq!(empty.known_cost_entries, 0);
+            assert_eq!(empty.unknown_cost_entries, 0);
         });
     }
 

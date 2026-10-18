@@ -560,6 +560,10 @@ pub struct UsageSummary {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CostBreakdown {
     pub total_cost_usd: f64,
+    /// Number of matching usage records with a known estimated cost.
+    pub known_cost_entries: u64,
+    /// Number of matching usage records without a known estimated cost.
+    pub unknown_cost_entries: u64,
     pub by_provider: HashMap<ProviderId, f64>,
     pub by_model: HashMap<ModelId, f64>,
     pub by_api_key: HashMap<ApiKeyId, f64>,
