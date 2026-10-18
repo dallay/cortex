@@ -9,6 +9,23 @@ use rook_core::{
     UsageFilters, UsageRecorderPort, UsageSummary,
 };
 use tower::ServiceExt;
+use transport_axum::provider_dto::CredentialsInput;
+
+#[test]
+fn provider_credentials_reject_mixed_api_key_and_oauth_fields() {
+    let mixed = serde_json::json!({
+        "apiKey": "sk-test",
+        "email": "ops@example.com",
+        "accessToken": "access",
+        "refreshToken": "refresh",
+        "expiresAt": 1772150400,
+        "scope": "cloud-platform",
+        "idToken": "id",
+        "projectId": "project"
+    });
+
+    assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
+}
 
 // Contract fixture: the URL and handler are the same as the mounted production route.
 // The remaining application services are supplied by the existing bootstrap fixture.

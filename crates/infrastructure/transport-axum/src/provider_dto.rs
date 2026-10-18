@@ -496,24 +496,3 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
         AuthType::OAuth => "oauth",
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::CredentialsInput;
-
-    #[test]
-    fn credentials_reject_mixed_api_key_and_oauth_fields() {
-        let mixed = serde_json::json!({
-            "apiKey": "sk-test",
-            "email": "ops@example.com",
-            "accessToken": "access",
-            "refreshToken": "refresh",
-            "expiresAt": 1772150400,
-            "scope": "cloud-platform",
-            "idToken": "id",
-            "projectId": "project"
-        });
-
-        assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
-    }
-}
