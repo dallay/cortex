@@ -20,8 +20,8 @@ use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
     ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, ModelCatalogPort,
     PasswordHasher, ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort,
-    ProviderRepositoryPort, QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort,
-    UsageRecorderPort,
+    ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort, RouterPort,
+    SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -830,7 +830,6 @@ fn build_provider_from_connection_with_recorder(
     models: Vec<ModelId>,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
-    let quota_recorder = quota_recorder.filter(|_| base_url_override.is_none());
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
@@ -932,6 +931,32 @@ fn build_provider_from_connection_with_recorder(
     Ok(provider)
 }
 
+/// Restores managed identity independently of the connection-scoped registry ID.
+struct ConnectionQuotaRecorder {
+    recorder: Arc<dyn QuotaObservationRecorderPort>,
+    provider_runtime_id: ProviderId,
+    connection_id: ConnectionId,
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
+    async fn record_observation(
+        &self,
+        mut observation: QuotaObservation,
+    ) -> shared_kernel::CortexResult<()> {
+        observation.provider = self.provider_runtime_id.clone();
+        observation.connection_id = Some(self.connection_id);
+        self.recorder.record_observation(observation).await
+    }
+
+    async fn list_observations(
+        &self,
+        provider: Option<ProviderId>,
+    ) -> shared_kernel::CortexResult<Vec<QuotaObservation>> {
+        self.recorder.list_observations(provider).await
+    }
+}
+
 #[derive(Clone)]
 struct DynamicProviderBuilder {
     catalog: Arc<dyn ModelCatalogPort>,
@@ -947,6 +972,23 @@ impl DynamicProviderBuilder {
             catalog,
             quota_observation_recorder,
         }
+    }
+
+    fn quota_recorder(
+        &self,
+        input: &ProviderBuildInput,
+    ) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
+        // Only canonical endpoints are eligible for provider-specific quota capture.
+        if input.base_url.is_some() {
+            return None;
+        }
+        self.quota_observation_recorder.as_ref().map(|recorder| {
+            Arc::new(ConnectionQuotaRecorder {
+                recorder: recorder.clone(),
+                provider_runtime_id: input.provider_runtime_id.clone(),
+                connection_id: input.connection_id,
+            }) as Arc<dyn QuotaObservationRecorderPort>
+        })
     }
 }
 
@@ -964,14 +1006,146 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             .map(|e| ModelId::new(e.model_id))
             .collect();
 
+        let quota_recorder = self.quota_recorder(&input);
         build_provider_from_connection_with_recorder(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
             input.base_url,
             models,
-            self.quota_observation_recorder.clone(),
+            quota_recorder,
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod quota_identity_tests {
+    use super::*;
+    use rook_core::{CompletionRequest, RequestMetadata};
+    use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn managed_quota_capture_persists_runtime_and_connection_identity() {
+        let db = tempfile::NamedTempFile::new().unwrap();
+        run_startup_migrations(db.path().to_str().unwrap()).unwrap();
+        let repository = Arc::new(SqliteUsageRepository::new(db.path()).unwrap());
+        let builder = DynamicProviderBuilder::new(
+            Arc::new(StaticModelCatalog::new()),
+            Some(repository.clone()),
+        );
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("x-ratelimit-limit-requests", "100")
+                    .insert_header("x-ratelimit-remaining-requests", "75")
+                    .insert_header("anthropic-ratelimit-requests-limit", "100")
+                    .insert_header("anthropic-ratelimit-requests-remaining", "75")
+                    .set_body_json(serde_json::json!({"error":{"message":"limited"}})),
+            )
+            .mount(&server)
+            .await;
+        let request = CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: ModelId::new("test-model"),
+            messages: vec![],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        };
+
+        for kind in [
+            ProviderKind::OpenAI,
+            ProviderKind::Anthropic,
+            ProviderKind::Groq,
+        ] {
+            let runtime_id = ProviderId::new(format!("{}-primary", kind.as_str()));
+            let mut connection_ids = Vec::new();
+            for _ in 0..2 {
+                let input = ProviderBuildInput {
+                    provider_kind: kind,
+                    connection_id: ConnectionId::new(),
+                    provider_runtime_id: runtime_id.clone(),
+                    decrypted_credentials: DecryptedCredentials::ApiKey {
+                        api_key: "test".into(),
+                    },
+                    base_url: None,
+                    default_model: None,
+                };
+                // Use production identity wiring for a canonical connection, then
+                // redirect only the HTTP transport to the local test server.
+                let recorder = builder.quota_recorder(&input).unwrap();
+                let provider: Arc<dyn ProviderPort> = if kind == ProviderKind::Groq {
+                    // The Groq DI branch always uses its canonical endpoint;
+                    // supply a local transport directly for this fixture.
+                    providers_groq::GroqProvider::new_with_quota_recorder(
+                        providers_groq::GroqProviderConfig {
+                            id: ProviderId::new(input.connection_id.to_string()),
+                            api_key: "test".into(),
+                            base_url: Some(server.uri()),
+                            models: vec![],
+                            timeout_secs: 10,
+                        },
+                        Some(recorder),
+                    )
+                    .unwrap()
+                } else {
+                    build_provider_from_connection_with_recorder(
+                        &input.connection_id,
+                        input.provider_kind,
+                        &input.decrypted_credentials,
+                        Some(server.uri()),
+                        vec![],
+                        Some(recorder),
+                    )
+                    .unwrap()
+                };
+                assert_eq!(provider.id().as_str(), input.connection_id.to_string());
+                let result = provider.complete(&request).await;
+                let error = result.unwrap_err();
+                assert!(error.is_rate_limited(), "{kind:?}: {error:?}");
+                assert!(repository
+                    .list_observations(Some(provider.id().clone()))
+                    .await
+                    .unwrap()
+                    .is_empty());
+                connection_ids.push(input.connection_id);
+
+                let overridden = ProviderBuildInput {
+                    base_url: Some(server.uri()),
+                    ..input
+                };
+                assert!(builder.quota_recorder(&overridden).is_none());
+            }
+            let rows = repository
+                .list_observations(Some(runtime_id.clone()))
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 2, "{kind:?}");
+            for connection_id in connection_ids {
+                let row = rows
+                    .iter()
+                    .find(|row| row.connection_id == Some(connection_id))
+                    .unwrap();
+                assert_eq!(row.provider_kind, kind);
+                assert_eq!(row.provider, runtime_id);
+                assert_eq!(row.metric, "requests");
+                assert_eq!(row.limit, Some(100.0));
+                assert_eq!(row.remaining, Some(75.0));
+            }
+        }
+        assert_eq!(repository.list_observations(None).await.unwrap().len(), 6);
     }
 }

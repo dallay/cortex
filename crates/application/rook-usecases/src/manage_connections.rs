@@ -236,6 +236,7 @@ impl ManageConnections {
         let build_input = ProviderBuildInput {
             provider_kind: ephemeral_conn.provider_kind,
             connection_id: ephemeral_conn.id,
+            provider_runtime_id: ephemeral_conn.provider_runtime_id.clone(),
             decrypted_credentials: self.decrypt_credentials(&ephemeral_conn.credentials)?,
             base_url: ephemeral_conn.config.base_url.clone(),
             default_model: ephemeral_conn.config.default_model.clone(),
@@ -361,6 +362,7 @@ impl ManageConnections {
             let input = ProviderBuildInput {
                 provider_kind: conn.provider_kind,
                 connection_id: conn.id,
+                provider_runtime_id: conn.provider_runtime_id.clone(),
                 decrypted_credentials: decrypted,
                 base_url: conn.config.base_url.clone(),
                 default_model: conn.config.default_model.clone(),
@@ -408,6 +410,7 @@ impl ManageConnections {
 pub struct ProviderBuildInput {
     pub provider_kind: ProviderKind,
     pub connection_id: ConnectionId,
+    pub provider_runtime_id: ProviderId,
     pub decrypted_credentials: DecryptedCredentials,
     pub base_url: Option<String>,
     pub default_model: Option<ModelId>,
@@ -1832,14 +1835,16 @@ mod tests {
 
     struct SuccessProviderBuilder {
         provider: Arc<dyn ProviderPort>,
+        inputs: std::sync::Mutex<Vec<ProviderBuildInput>>,
     }
 
     #[async_trait]
     impl ProviderBuilderPort for SuccessProviderBuilder {
         async fn build(
             &self,
-            _input: ProviderBuildInput,
+            input: ProviderBuildInput,
         ) -> ManageConnectionsResult<Arc<dyn ProviderPort>> {
+            self.inputs.lock().unwrap().push(input);
             Ok(self.provider.clone())
         }
     }
@@ -2244,6 +2249,8 @@ mod tests {
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                 };
+                let expected_connection_id = active_conn.id;
+                let expected_runtime_id = active_conn.provider_runtime_id.clone();
                 let repo = Arc::new(RepoWithConnections {
                     connections: vec![active_conn, inactive_conn],
                 });
@@ -2254,13 +2261,15 @@ mod tests {
                         latency_ms: 1,
                     },
                 });
+                let builder = Arc::new(SuccessProviderBuilder {
+                    provider: mock_provider,
+                    inputs: Mutex::default(),
+                });
                 let mc = ManageConnections::new(
                     repo,
                     Arc::new(MockRegistry::new()),
                     Arc::new(PlainKeyManager),
-                    Arc::new(SuccessProviderBuilder {
-                        provider: mock_provider,
-                    }),
+                    builder.clone(),
                 );
                 mc.refresh_registry()
                     .await
@@ -2268,6 +2277,10 @@ mod tests {
                 let providers = mc.registry.providers();
                 assert_eq!(providers.len(), 1);
                 assert_eq!(providers[0].as_str(), "openai-primary");
+                let inputs = builder.inputs.lock().unwrap();
+                assert_eq!(inputs.len(), 1);
+                assert_eq!(inputs[0].connection_id, expected_connection_id);
+                assert_eq!(inputs[0].provider_runtime_id, expected_runtime_id);
             });
     }
 
@@ -2320,6 +2333,7 @@ mod tests {
                     Arc::new(PlainKeyManager),
                     Arc::new(SuccessProviderBuilder {
                         provider: mock_provider,
+                        inputs: Mutex::default(),
                     }),
                 );
                 mc.refresh_registry()
@@ -2406,6 +2420,7 @@ mod tests {
                     Arc::new(FailDecryptKeyManager),
                     Arc::new(SuccessProviderBuilder {
                         provider: mock_provider,
+                        inputs: Mutex::default(),
                     }),
                 );
                 mc.refresh_registry()
