@@ -206,40 +206,70 @@ pub struct ProviderQuotaSummaryResponse {
     pub provider_kind: String,
     pub connection_count: u32,
     pub active_connection_count: u32,
-    pub warning_threshold: Option<f32>,
-    pub error_threshold: Option<f32>,
-    pub support: String,
-    pub note: String,
+    pub coverage: &'static str,
+    pub usage_availability: &'static str,
+    pub account_quota: ProviderAccountQuotaResponse,
+    pub local_thresholds: Vec<ProviderQuotaThresholdResponse>,
+    pub rate_limit_observation: ProviderRateLimitObservationResponse,
+    pub local_warning_level: &'static str,
     pub all_time: ProviderQuotaWindowResponse,
     pub last_24h: ProviderQuotaWindowResponse,
     pub last_7d: ProviderQuotaWindowResponse,
-    pub observed_rate_limited_ratio: f32,
-    pub warning_level: String,
     pub trend: Vec<ProviderQuotaTrendPointResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAccountQuotaResponse {
+    pub availability: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderQuotaThresholdResponse {
+    pub warning: f32,
+    pub error: f32,
+    pub connection_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitObservationResponse {
+    pub source: &'static str,
+    pub availability: &'static str,
+    pub window: &'static str,
+    pub rate_limited_requests: Option<u64>,
+    pub requests: Option<u64>,
+    pub ratio: Option<f32>,
 }
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderQuotaWindowResponse {
-    pub requests: u64,
-    pub rate_limited_requests: u64,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub cache_read_tokens: u64,
-    pub cache_creation_tokens: u64,
-    pub reasoning_tokens: u64,
-    pub total_tokens: u64,
-    pub cost_usd: f64,
+    pub availability: &'static str,
+    pub rate_limit_availability: &'static str,
+    pub requests: Option<u64>,
+    pub rate_limited_requests: Option<u64>,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub cost_availability: &'static str,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderQuotaTrendPointResponse {
     pub date: String,
-    pub requests: u64,
-    pub rate_limited_requests: u64,
-    pub total_tokens: u64,
-    pub cost_usd: f64,
+    pub usage_availability: &'static str,
+    pub requests: Option<u64>,
+    pub rate_limited_requests: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub cost_availability: &'static str,
 }
 
 impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
@@ -464,26 +494,5 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
     match auth_type {
         AuthType::ApiKey => "apiKey",
         AuthType::OAuth => "oauth",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CredentialsInput;
-
-    #[test]
-    fn credentials_reject_mixed_api_key_and_oauth_fields() {
-        let mixed = serde_json::json!({
-            "apiKey": "sk-test",
-            "email": "ops@example.com",
-            "accessToken": "access",
-            "refreshToken": "refresh",
-            "expiresAt": 1772150400,
-            "scope": "cloud-platform",
-            "idToken": "id",
-            "projectId": "project"
-        });
-
-        assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
     }
 }

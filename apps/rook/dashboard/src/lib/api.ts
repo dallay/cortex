@@ -209,39 +209,56 @@ export interface ConnectionConfigResponse {
   baseUrl: string | null;
 }
 
+export type UsageAvailability = "available" | "no_data" | "unavailable";
+export type CostAvailability = "complete" | "partial" | "unknown" | "no_data" | "unavailable";
+export type AccountQuotaAvailability = "not_provided" | "not_applicable";
+export type LocalWarningLevel = "ok" | "warning" | "critical" | "unknown" | "not_configured";
+
 export interface ProviderQuotaWindowResponse {
-  requests: number;
-  rateLimitedRequests: number;
-  promptTokens: number;
-  completionTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  costUsd: number;
+  availability: UsageAvailability;
+  rateLimitAvailability: "available" | "unavailable";
+  requests: number | null;
+  rateLimitedRequests: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
+  costAvailability: CostAvailability;
 }
 
 export interface ProviderQuotaTrendPointResponse {
   date: string;
-  requests: number;
-  rateLimitedRequests: number;
-  totalTokens: number;
-  costUsd: number;
+  usageAvailability: UsageAvailability;
+  requests: number | null;
+  rateLimitedRequests: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
+  costAvailability: CostAvailability;
 }
 
 export interface ProviderQuotaSummaryResponse {
   providerKind: ProviderKind;
   connectionCount: number;
   activeConnectionCount: number;
-  warningThreshold: number | null;
-  errorThreshold: number | null;
-  support: string;
-  note: string;
+  coverage: "cortex_routed";
+  usageAvailability: UsageAvailability;
+  accountQuota: {availability: AccountQuotaAvailability};
+  localThresholds: Array<{warning: number; error: number; connectionCount: number}>;
+  rateLimitObservation: {
+    source: "recorded_routed_request_status";
+    availability: "available" | "unavailable";
+    window: "last_7d";
+    rateLimitedRequests: number | null;
+    requests: number | null;
+    ratio: number | null;
+  };
+  localWarningLevel: LocalWarningLevel;
   allTime: ProviderQuotaWindowResponse;
   last24h: ProviderQuotaWindowResponse;
   last7d: ProviderQuotaWindowResponse;
-  observedRateLimitedRatio: number;
-  warningLevel: "ok" | "warning" | "critical" | "not_configured";
   trend: ProviderQuotaTrendPointResponse[];
 }
 
