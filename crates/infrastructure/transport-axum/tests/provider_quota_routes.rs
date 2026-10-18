@@ -20,6 +20,7 @@ struct FakeUsageRecorder {
     fail_count: bool,
     fail_cost: bool,
     fail_summary_on_call: Option<usize>,
+    costs_by_connection: std::collections::HashMap<shared_kernel::ConnectionId, CostBreakdown>,
     summary_calls: Arc<AtomicUsize>,
     rate_limited_requests: u64,
 }
@@ -49,11 +50,14 @@ impl UsageRecorderPort for FakeUsageRecorder {
             Ok(self.summary.clone())
         }
     }
-    async fn cost_breakdown(&self, _: UsageFilters) -> CortexResult<CostBreakdown> {
+    async fn cost_breakdown(&self, filters: UsageFilters) -> CortexResult<CostBreakdown> {
         if self.fail_cost {
             Err(rook_core::CortexError::provider("cost failure"))
         } else {
-            Ok(self.cost.clone())
+            Ok(filters
+                .connection_id
+                .and_then(|id| self.costs_by_connection.get(&id).cloned())
+                .unwrap_or_else(|| self.cost.clone()))
         }
     }
 }
@@ -139,6 +143,32 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
         api_key_connection(ProviderKind::OpenAI, "second"),
         api_key_connection(ProviderKind::Anthropic, "anthropic"),
     ]);
+    let connections = usecases
+        .manage_connections
+        .as_ref()
+        .unwrap()
+        .list()
+        .await
+        .unwrap();
+    let mut costs_by_connection = std::collections::HashMap::new();
+    costs_by_connection.insert(
+        connections[0].id,
+        CostBreakdown {
+            total_cost_usd: 1.25,
+            known_cost_entries: 1,
+            unknown_cost_entries: 0,
+            ..CostBreakdown::default()
+        },
+    );
+    costs_by_connection.insert(
+        connections[1].id,
+        CostBreakdown {
+            total_cost_usd: 0.0,
+            known_cost_entries: 0,
+            unknown_cost_entries: 1,
+            ..CostBreakdown::default()
+        },
+    );
     let recorder = FakeUsageRecorder {
         summary: UsageSummary {
             total_requests: 7,
@@ -146,12 +176,7 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
             total_completion_tokens: 13,
             ..UsageSummary::default()
         },
-        cost: CostBreakdown {
-            total_cost_usd: 1.25,
-            known_cost_entries: 1,
-            unknown_cost_entries: 2,
-            ..CostBreakdown::default()
-        },
+        costs_by_connection,
         ..FakeUsageRecorder::default()
     };
     Arc::get_mut(&mut usecases).unwrap().usage_recorder = Some(Arc::new(recorder));
@@ -167,6 +192,8 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
     assert_eq!(openai["allTime"]["requests"], 14);
     assert_eq!(openai["allTime"]["costAvailability"], "partial");
     assert!(openai["allTime"]["costUsd"].is_null());
+    assert_eq!(openai["last24h"]["costAvailability"], "partial");
+    assert!(openai["last24h"]["costUsd"].is_null());
     assert_eq!(
         openai["rateLimitObservation"]["source"],
         "recorded_routed_request_status"

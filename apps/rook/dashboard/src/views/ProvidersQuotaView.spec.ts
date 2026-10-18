@@ -13,10 +13,9 @@ const quotaItem = {
   localWarningLevel: "ok",
   allTime: {availability: "available", rateLimitAvailability: "available", requests: 10, rateLimitedRequests: 1, promptTokens: 10, completionTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0, reasoningTokens: 0, totalTokens: 20, costUsd: null as number | null, costAvailability: "unknown"},
   last24h: {availability: "no_data", rateLimitAvailability: "available", requests: 0, rateLimitedRequests: 0, promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, reasoningTokens: 0, totalTokens: 0, costUsd: null, costAvailability: "no_data"},
-  last7d: {availability: "available", rateLimitAvailability: "available", requests: 10, rateLimitedRequests: 1, promptTokens: 10, completionTokens: 10, cacheReadTokens: 0, reasoningTokens: 0, totalTokens: 20, costUsd: null as number | null, costAvailability: "unknown"},
-  trend: Array.from({length: 7}, (_, index) => ({date: `2026-01-0${index + 1}`, usageAvailability: "available", requests: 10 + index, rateLimitedRequests: 1, totalTokens: 20 + index, costUsd: index === 0 ? 0.25 : null as number | null, costAvailability: index === 0 ? "available" : "unknown"})),
+  last7d: {availability: "available", rateLimitAvailability: "available", requests: 10, rateLimitedRequests: 1, promptTokens: 10, completionTokens: 10, cacheReadTokens: 0, reasoningTokens: 0, totalTokens: 20, costUsd: 1.25 as number | null, costAvailability: "complete"},
+  trend: Array.from({length: 7}, (_, index) => ({date: `2026-01-0${index + 1}`, usageAvailability: "available", requests: 10 + index, rateLimitedRequests: 1, totalTokens: 20 + index, costUsd: 0.25, costAvailability: "complete"})),
 };
-vi.mock("@/components/ui/chart/ChartContainer.vue", () => ({default: {template: "<div><slot /></div>"}}));
 vi.mock("@/composables/useProvidersQuota", () => ({useProvidersQuota: () => ({items: {value: [quotaItem]}, generatedAt: {value: "2026-01-01T00:00:00Z"}, loading: {value: false}, error: {value: null}, stale: {value: false}, fetch})}));
 vi.mock("vue-i18n", () => ({useI18n: () => ({t: (key: string) => {
   const keys = key.split(".");
@@ -28,16 +27,17 @@ const passthrough = defineComponent({template: "<div><slot /></div>"});
 
 describe("ProvidersQuotaView", () => {
   afterEach(() => {
-    quotaItem.last7d.costUsd = null;
-    quotaItem.last7d.costAvailability = "unknown";
+    quotaItem.last7d.costUsd = 1.25;
+    quotaItem.last7d.costAvailability = "complete";
   });
   afterEach(() => vi.clearAllMocks());
   it("labels partial cost as unknown without showing a numeric subtotal", () => {
-    quotaItem.last7d.costUsd = null;
+    quotaItem.last7d.costUsd = 1.25;
     quotaItem.last7d.costAvailability = "partial";
     const wrapper = mount(ProvidersQuotaView, {global: {stubs: {Button: passthrough, Table: passthrough, TableBody: passthrough, TableHeader: passthrough, TableRow: passthrough, TableCell: passthrough, TableHead: passthrough, Badge: passthrough, Alert: passthrough, AlertTitle: passthrough, AlertDescription: passthrough, Fuel: passthrough, RefreshCw: passthrough}}});
     expect(wrapper.text()).toContain("Partial cost; total unknown");
-    expect(wrapper.text()).not.toContain("$1.25");
+    expect(wrapper.text()).toContain("Unknown");
+    expect(wrapper.findAll("[data-testid=quota-row-openai] > div")[3].text()).not.toContain("$1.25");
     wrapper.unmount();
   });
   it("renders seven days of trend usage with cost when available", () => {

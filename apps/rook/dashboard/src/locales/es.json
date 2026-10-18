@@ -206,7 +206,7 @@
 			"last24hTokens": "Tokens 24 h",
 			"last7dCost": "Costo estimado 7 d",
 			"estimatedCost": "Estimado según precios configurados",
-			"partialCost": "Coste parcial; total desconocido",
+			"partialCost": "Costo parcial; total desconocido",
 			"unknownCost": "Desconocido",
 			"unavailable": "No disponible",
 			"usageUnavailable": "Algunas mediciones de uso no están disponibles; revisa la disponibilidad de cada período.",
@@ -222,7 +222,7 @@
 			"trendLabel": "Tendencia de siete días del uso enrutado por Cortex para {provider}",
 			"requests": "solicitudes",
 			"tokens": "tokens",
-			"trendCost": "Costo",
+			"trendCost": "Coste",
 			"empty": "No hay datos de uso de proveedores disponibles.",
 			"availability": {"available": "Disponible", "no_data": "Sin uso en este período", "unavailable": "No disponible"},
 			"level": {

@@ -33,10 +33,13 @@ pub async fn list_provider_quota(
             code: "PROVIDER_MANAGEMENT_UNAVAILABLE",
             message: "Provider management is not available".to_string(),
         })?;
-    let connections = manage_connections.list().await.map_err(|_| HttpError {
-        status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        code: "INTERNAL_ERROR",
-        message: "internal server error".to_string(),
+    let connections = manage_connections.list().await.map_err(|error| {
+        tracing::warn!(%error, "failed to list provider connections for quota summary");
+        HttpError {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR",
+            message: "internal server error".to_string(),
+        }
     })?;
     let generated_at = Utc::now();
     let last_24h_start = Some(generated_at - Duration::hours(24));
@@ -137,59 +140,6 @@ pub async fn list_provider_quota(
     }))
 }
 
-#[cfg(test)]
-fn unavailable_provider_rows() -> Vec<ProviderQuotaSummaryResponse> {
-    all_provider_kinds()
-        .into_iter()
-        .map(|kind| ProviderQuotaSummaryResponse {
-            provider_kind: kind.as_str().to_string(),
-            connection_count: 0,
-            active_connection_count: 0,
-            coverage: "cortex_routed",
-            usage_availability: "unavailable",
-            account_quota: ProviderAccountQuotaResponse {
-                availability: if kind == ProviderKind::Ollama {
-                    "not_applicable"
-                } else {
-                    "not_provided"
-                },
-            },
-            local_thresholds: vec![],
-            rate_limit_observation: ProviderRateLimitObservationResponse {
-                source: "recorded_routed_request_status",
-                availability: "unavailable",
-                window: "last_7d",
-                rate_limited_requests: None,
-                requests: None,
-                ratio: None,
-            },
-            local_warning_level: "unknown",
-            all_time: unavailable_window(),
-            last_24h: unavailable_window(),
-            last_7d: unavailable_window(),
-            trend: vec![],
-        })
-        .collect()
-}
-
-#[cfg(test)]
-fn unavailable_window() -> ProviderQuotaWindowResponse {
-    ProviderQuotaWindowResponse {
-        availability: "unavailable",
-        rate_limit_availability: "unavailable",
-        requests: None,
-        rate_limited_requests: None,
-        prompt_tokens: None,
-        completion_tokens: None,
-        cache_read_tokens: None,
-        cache_creation_tokens: None,
-        reasoning_tokens: None,
-        total_tokens: None,
-        cost_usd: None,
-        cost_availability: "unavailable",
-    }
-}
-
 async fn summarize_window(
     recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
     ids: &[ConnectionId],
@@ -216,7 +166,6 @@ async fn summarize_window(
         let request_count = recorder.count(filters.clone()).await;
         let cost = recorder.cost_breakdown(filters).await;
 
-        let mut cost_availability = "no_data";
         match summary {
             Ok(summary) => {
                 let w = window_from_parts(summary, 0, 0.0, 0, 0);
@@ -232,7 +181,8 @@ async fn summarize_window(
                 total.reasoning_tokens = add_optional(total.reasoning_tokens, w.reasoning_tokens);
                 total.total_tokens = add_optional(total.total_tokens, w.total_tokens);
             }
-            Err(_) => {
+            Err(error) => {
+                tracing::warn!(%error, connection_id = %id, "failed to summarize provider usage");
                 total.availability = "unavailable";
                 total.requests = None;
                 total.prompt_tokens = None;
@@ -249,7 +199,13 @@ async fn summarize_window(
                 total.rate_limited_requests =
                     add_optional(total.rate_limited_requests, Some(limited));
             }
-            _ => {
+            (request_count, rate_count) => {
+                if let Err(error) = request_count.as_ref() {
+                    tracing::warn!(%error, connection_id = %id, "failed to count provider requests");
+                }
+                if let Err(error) = rate_count.as_ref() {
+                    tracing::warn!(%error, connection_id = %id, "failed to count rate-limited provider requests");
+                }
                 total.rate_limit_availability = "unavailable";
                 total.rate_limited_requests = None;
             }
@@ -267,18 +223,18 @@ async fn summarize_window(
                     } else {
                         "complete"
                     };
-                cost_availability =
-                    combine_cost_availability(cost_availability, window_availability);
+                total.cost_availability =
+                    combine_cost_availability(total.cost_availability, window_availability);
                 if window_availability == "complete" || window_availability == "partial" {
                     cost_sum += cost.total_cost_usd;
                 }
             }
-            Err(_) => {
+            Err(error) => {
+                tracing::warn!(%error, connection_id = %id, "failed to retrieve provider cost breakdown");
                 cost_unavailable = true;
-                cost_availability = "unavailable";
+                total.cost_availability = "unavailable";
             }
         }
-        total.cost_availability = cost_availability;
     }
     total.cost_usd = aggregate_cost_result(total.cost_availability, cost_sum, cost_unavailable);
     if total.availability == "unavailable" {
@@ -315,6 +271,15 @@ async fn connection_rate_limit_ratios(
                 ..filters
             })
             .await;
+        match (&requests, &limited) {
+            (Err(error), _) => {
+                tracing::warn!(%error, connection_id = %connection.id, "failed to count provider requests for rate-limit ratio")
+            }
+            (_, Err(error)) => {
+                tracing::warn!(%error, connection_id = %connection.id, "failed to count rate-limited provider requests for rate-limit ratio")
+            }
+            _ => {}
+        }
         ratios.push(match (limited, requests) {
             (Ok(limited), Ok(requests)) if requests > 0 && limited <= requests => {
                 Some(limited as f32 / requests as f32)
@@ -458,8 +423,10 @@ fn combine_cost_availability(a: &str, b: &str) -> &'static str {
         ("partial", _) | (_, "partial") => "partial",
         ("unknown", "complete") | ("complete", "unknown") => "partial",
         ("unknown", "unknown") => "unknown",
-        ("complete", _) | (_, "complete") => "complete",
-        _ => "no_data",
+        ("unknown", "no_data") | ("no_data", "unknown") => "unknown",
+        ("no_data", "no_data") => "no_data",
+        ("complete", "complete") => "complete",
+        _ => "partial",
     }
 }
 
@@ -644,19 +611,5 @@ mod tests {
         let groups = grouped_thresholds(&[&a, &b, &c]);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups.iter().map(|x| x.connection_count).sum::<u32>(), 3);
-    }
-    #[test]
-    fn account_quota_rows_are_explicitly_unavailable() {
-        let rows = unavailable_provider_rows();
-        assert_eq!(rows.len(), 7);
-        assert!(rows.iter().all(|r| r.usage_availability == "unavailable"));
-        assert_eq!(
-            rows.iter()
-                .find(|r| r.provider_kind == "ollama")
-                .unwrap()
-                .account_quota
-                .availability,
-            "not_applicable"
-        );
     }
 }
