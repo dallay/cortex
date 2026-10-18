@@ -326,7 +326,7 @@ fn empty_window() -> ProviderQuotaWindowResponse {
         cache_creation_tokens: Some(0),
         reasoning_tokens: Some(0),
         total_tokens: Some(0),
-        cost_usd: Some(0.0),
+        cost_usd: None,
         cost_availability: "no_data",
     }
 }
@@ -423,6 +423,7 @@ fn combine_cost_availability(a: &str, b: &str) -> &'static str {
         ("partial", _) | (_, "partial") => "partial",
         ("unknown", "complete") | ("complete", "unknown") => "partial",
         ("unknown", "unknown") => "unknown",
+        ("complete", "no_data") | ("no_data", "complete") => "complete",
         ("unknown", "no_data") | ("no_data", "unknown") => "unknown",
         ("no_data", "no_data") => "no_data",
         ("complete", "complete") => "complete",
