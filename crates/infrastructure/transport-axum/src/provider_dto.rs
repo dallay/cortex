@@ -272,63 +272,6 @@ pub struct ProviderQuotaTrendPointResponse {
     pub cost_availability: &'static str,
 }
 
-#[cfg(test)]
-mod provider_quota_contract_tests {
-    use super::*;
-
-    #[test]
-    fn provider_usage_contract_serializes_camel_case_and_null_cost() {
-        let payload = serde_json::to_value(ProvidersQuotaResponse {
-            generated_at: DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            items: vec![ProviderQuotaSummaryResponse {
-                provider_kind: "openai".into(),
-                connection_count: 1,
-                active_connection_count: 1,
-                coverage: "cortex_routed",
-                usage_availability: "available",
-                account_quota: ProviderAccountQuotaResponse {
-                    availability: "not_provided",
-                },
-                local_thresholds: vec![],
-                rate_limit_observation: ProviderRateLimitObservationResponse {
-                    source: "recorded_routed_request_status",
-                    availability: "available",
-                    window: "last_7d",
-                    rate_limited_requests: Some(1),
-                    requests: Some(10),
-                    ratio: Some(0.1),
-                },
-                local_warning_level: "ok",
-                all_time: ProviderQuotaWindowResponse {
-                    availability: "available",
-                    rate_limit_availability: "available",
-                    requests: Some(1),
-                    rate_limited_requests: Some(0),
-                    prompt_tokens: Some(3),
-                    completion_tokens: Some(2),
-                    cache_read_tokens: Some(0),
-                    cache_creation_tokens: Some(0),
-                    reasoning_tokens: Some(0),
-                    total_tokens: Some(5),
-                    cost_usd: None,
-                    cost_availability: "unknown",
-                },
-                last_24h: ProviderQuotaWindowResponse::default(),
-                last_7d: ProviderQuotaWindowResponse::default(),
-                trend: vec![],
-            }],
-        })
-        .unwrap();
-        let item = &payload["items"][0];
-        assert_eq!(item["coverage"], "cortex_routed");
-        assert_eq!(item["accountQuota"]["availability"], "not_provided");
-        assert_eq!(item["allTime"]["costUsd"], serde_json::Value::Null);
-        assert_eq!(item["rateLimitObservation"]["rateLimitedRequests"], 1);
-    }
-}
-
 impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
     type Error = String;
 

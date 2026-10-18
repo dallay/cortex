@@ -205,6 +205,104 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
 }
 
 #[tokio::test]
+async fn get_provider_quota_marks_ollama_account_quota_not_applicable() {
+    let mut usecases = test_usecases(vec![api_key_connection(ProviderKind::Ollama, "ollama")]);
+    Arc::get_mut(&mut usecases).unwrap().usage_recorder =
+        Some(Arc::new(FakeUsageRecorder::default()));
+    let json = quota_json(usecases).await;
+    let ollama = provider_item(&json, ProviderKind::Ollama);
+    assert_eq!(ollama["accountQuota"]["availability"], "not_applicable");
+}
+
+#[tokio::test]
+async fn get_provider_quota_reports_unknown_cost_when_all_entries_have_unknown_prices() {
+    let connection = api_key_connection(ProviderKind::OpenAI, "unknown-cost");
+    let id = connection.id;
+    let mut usecases = test_usecases(vec![connection]);
+    Arc::get_mut(&mut usecases).unwrap().usage_recorder = Some(Arc::new(FakeUsageRecorder {
+        summary: UsageSummary {
+            total_requests: 1,
+            ..UsageSummary::default()
+        },
+        cost: CostBreakdown {
+            unknown_cost_entries: 1,
+            ..CostBreakdown::default()
+        },
+        costs_by_connection: std::collections::HashMap::from([(
+            id,
+            CostBreakdown {
+                unknown_cost_entries: 1,
+                ..CostBreakdown::default()
+            },
+        )]),
+        ..FakeUsageRecorder::default()
+    }));
+
+    let json = quota_json(usecases).await;
+    let openai = provider_item(&json, ProviderKind::OpenAI);
+    assert_eq!(openai["allTime"]["costAvailability"], "unknown");
+    assert!(openai["allTime"]["costUsd"].is_null());
+    assert_eq!(openai["last24h"]["costAvailability"], "unknown");
+    assert!(openai["last24h"]["costUsd"].is_null());
+}
+
+#[tokio::test]
+async fn aggregate_cost_availability_is_partial_for_two_connections_in_either_order() {
+    for costs in [
+        [
+            CostBreakdown {
+                known_cost_entries: 1,
+                total_cost_usd: 1.25,
+                ..CostBreakdown::default()
+            },
+            CostBreakdown {
+                known_cost_entries: 1,
+                unknown_cost_entries: 1,
+                total_cost_usd: 0.75,
+                ..CostBreakdown::default()
+            },
+        ],
+        [
+            CostBreakdown {
+                known_cost_entries: 1,
+                unknown_cost_entries: 1,
+                total_cost_usd: 0.75,
+                ..CostBreakdown::default()
+            },
+            CostBreakdown {
+                known_cost_entries: 1,
+                total_cost_usd: 1.25,
+                ..CostBreakdown::default()
+            },
+        ],
+    ] {
+        let connections = vec![
+            api_key_connection(ProviderKind::OpenAI, "cost-a"),
+            api_key_connection(ProviderKind::OpenAI, "cost-b"),
+        ];
+        let costs_by_connection = connections
+            .iter()
+            .zip(costs)
+            .map(|(connection, cost)| (connection.id, cost))
+            .collect();
+        let mut usecases = test_usecases(connections);
+        Arc::get_mut(&mut usecases).unwrap().usage_recorder = Some(Arc::new(FakeUsageRecorder {
+            summary: UsageSummary {
+                total_requests: 1,
+                ..UsageSummary::default()
+            },
+            costs_by_connection,
+            ..FakeUsageRecorder::default()
+        }));
+
+        let json = quota_json(usecases).await;
+        let openai = provider_item(&json, ProviderKind::OpenAI);
+        assert_eq!(openai["allTime"]["costAvailability"], "partial");
+        assert!(openai["allTime"]["costUsd"].is_null());
+    }
+}
+
+#[tokio::test]
 async fn get_provider_quota_returns_service_unavailable_without_usage_recorder() {
     let response = Router::new()
         .route(
