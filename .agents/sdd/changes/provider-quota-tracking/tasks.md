@@ -39,7 +39,7 @@ El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack c
 
 - [x] 2.1 Extraer clasificador puro por conexión en `crates/infrastructure/transport-axum/src/handlers/provider_quota.rs`; test-first para límites warning/error y entradas no disponibles.
 - [x] 2.2 Reemplazar DTO legacy en `crates/infrastructure/transport-axum/src/provider_dto.rs`: cobertura, disponibilidad, completitud de coste, `accountQuota`, umbrales agrupados, observación rate-limit, nivel de alerta, períodos y tendencias; preservar ruta y camelCase.
-- [x] 2.3 En `provider_quota.rs`, construir filas de los seis tipos de proveedor desde conexiones; exponer cobertura solo Cortex, configuración, umbrales y disponibilidad correcta de Ollama local/Cloud.
+- [x] 2.3 En `provider_quota.rs`, construir filas de los siete tipos de proveedor desde conexiones; exponer cobertura solo Cortex, configuración, umbrales y disponibilidad correcta de Ollama local/Cloud.
 - [x] 2.4 Mapear datos all-time/24 h/7 días y siete buckets UTC a estados explícitos; aislar fallos del recorder por medida/ventana y mantener coste desconocido como null.
 - [x] 2.5 Añadir tests de ruta en `crates/infrastructure/transport-axum/tests/` con recorder falso configurable y `ManageConnections`: cobertura de respuesta JSON/procedencia, recorder ausente, fallo de una consulta de resumen conservando ventanas exitosas, coste parcial representado como `null` y agregación por proveedor/conexiones. Verificado con `cargo test -p transport-axum --test provider_quota_routes` (4 tests).
 
@@ -58,4 +58,4 @@ El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack c
 
 ## Orden de implementación
 
-Consolidar todas las fases en la misma PR ordinaria, en orden de dependencia: agregados SQLite, contrato/endpoint backend, dashboard/localización y verificación integrada. No omitir criterios técnicos al consolidar. Resolver antes de aplicar la aprobación explícita de excepción de tamaño requerida para una PR única con riesgo alto.
+Consolidar todas las fases en la misma PR ordinaria, en orden de dependencia: agregados SQLite, contrato/endpoint backend, dashboard/localización y verificación integrada. No omitir criterios técnicos al consolidar. La excepción explícita de tamaño para esta PR única está aprobada, como se indica en la autorización registrada arriba.

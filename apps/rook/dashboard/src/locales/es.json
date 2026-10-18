@@ -222,7 +222,7 @@
 			"trendLabel": "Tendencia de siete días del uso enrutado por Cortex para {provider}",
 			"requests": "solicitudes",
 			"tokens": "tokens",
-			"trendCost": "Coste",
+			"trendCost": "Costo",
 			"empty": "No hay datos de uso de proveedores disponibles.",
 			"availability": {"available": "Disponible", "no_data": "Sin uso en este período", "unavailable": "No disponible"},
 			"level": {
