@@ -1123,8 +1123,8 @@ struct ConnectionQuotaRecorder {
 
 /// Test/CRUD seam for the canonical-URL quota gate plus identity wrapping.
 ///
-/// Kept `pub` so integration tests exercise the same production decision that
-/// [`DynamicProviderBuilder`] applies, without reaching into private state.
+/// Kept `pub` so integration tests exercise the production canonical-URL
+/// decision without reaching into private state.
 pub fn quota_recorder_for_connection(
     kind: ProviderKind,
     base_url_override: Option<&str>,
