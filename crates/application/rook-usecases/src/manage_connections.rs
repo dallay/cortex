@@ -1122,6 +1122,8 @@ impl ManageConnections {
         let mut active_connection_ids = std::collections::HashSet::new();
 
         for conn in connections.iter().filter(|c| c.is_active) {
+            active_connection_ids.insert(conn.id);
+            let runtime_id = ProviderId::new(conn.id.to_string());
             if let Err(error) = validate_provider_config(conn.provider_kind, &conn.config) {
                 tracing::warn!(
                     connection_id = %conn.id,
@@ -1129,6 +1131,9 @@ impl ManageConnections {
                     "invalid stored provider configuration, skipping provider"
                 );
                 errors.push(format!("{}: invalid config - {}", conn.id, error));
+                if let Some(provider) = self.registry.get(&runtime_id) {
+                    providers.push(provider);
+                }
                 continue;
             }
 
@@ -1141,6 +1146,9 @@ impl ManageConnections {
                         "failed to decrypt credentials, skipping provider"
                     );
                     errors.push(format!("{}: decrypt failed - {}", conn.id, e));
+                    if let Some(provider) = self.registry.get(&runtime_id) {
+                        providers.push(provider);
+                    }
                     continue;
                 }
             };
@@ -1178,6 +1186,9 @@ impl ManageConnections {
                         "failed to build provider"
                     );
                     errors.push(format!("{}: build failed - {}", conn.id, e));
+                    if let Some(provider) = self.registry.get(&runtime_id) {
+                        providers.push(provider);
+                    }
                 }
             }
         }
@@ -3851,6 +3862,188 @@ mod tests {
                 let providers = registry.providers();
                 assert_eq!(providers.len(), 1);
                 assert_eq!(providers[0].as_str(), "openai-primary");
+            });
+    }
+
+    // Failed validation and provider construction retain the prior runtime for active connections.
+    #[test]
+    fn refresh_registry_preserves_previous_provider_when_active_connection_fails_validation() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let mut connection = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::AzureOpenAI,
+                    provider_runtime_id: ProviderId::new("azure-primary"),
+                    name: "azure-primary".into(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::OAuth,
+                    credentials: Credentials::OAuth {
+                        email: EncryptedBlob("enc:v1:user@example.com".into()),
+                        access_token: EncryptedBlob("enc:v1:token".into()),
+                        refresh_token: EncryptedBlob("enc:v1:refresh".into()),
+                        expires_at: Utc::now().timestamp() + 3600,
+                        scope: EncryptedBlob("enc:v1:scope".into()),
+                        id_token: EncryptedBlob("enc:v1:id".into()),
+                        project_id: EncryptedBlob("enc:v1:project".into()),
+                        oauth_client_id: "azure-client".into(),
+                        oauth_client_secret: None,
+                        oauth_tenant_id: None,
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                connection.config.default_model = Some(ModelId::new("deployment"));
+                let provider_id = ProviderId::new(connection.id.to_string());
+                let registry = Arc::new(MockRegistry::new());
+                registry
+                    .replace_all(vec![Arc::new(MockProvider {
+                        provider_id: provider_id.clone(),
+                        health_status: HealthStatus::Unknown {
+                            provider: provider_id.clone(),
+                            reason: "previous".into(),
+                        },
+                    })])
+                    .unwrap();
+                let manager = ManageConnections::new(
+                    Arc::new(RepoWithConnections {
+                        connections: vec![connection],
+                    }),
+                    registry.clone(),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                manager.refresh_registry().await.unwrap();
+
+                assert_eq!(registry.providers(), vec![provider_id.clone()]);
+                assert!(registry.get(&provider_id).is_some());
+            });
+    }
+
+    #[test]
+    fn refresh_registry_preserves_previous_provider_when_active_connection_build_fails() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let connection = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "openai-primary".into(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:token".into()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let provider_id = ProviderId::new(connection.id.to_string());
+                let registry = Arc::new(MockRegistry::new());
+                registry
+                    .replace_all(vec![Arc::new(MockProvider {
+                        provider_id: provider_id.clone(),
+                        health_status: HealthStatus::Unknown {
+                            provider: provider_id.clone(),
+                            reason: "previous".into(),
+                        },
+                    })])
+                    .unwrap();
+                let manager = ManageConnections::new(
+                    Arc::new(RepoWithConnections {
+                        connections: vec![connection],
+                    }),
+                    registry.clone(),
+                    Arc::new(PlainKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                manager.refresh_registry().await.unwrap();
+
+                assert_eq!(registry.providers(), vec![provider_id.clone()]);
+                assert!(registry.get(&provider_id).is_some());
+            });
+    }
+
+    // A failed rebuild of an active connection keeps its previously published provider.
+    #[test]
+    fn refresh_registry_preserves_previous_provider_when_active_connection_fails_to_decrypt() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let connection = ProviderConnection {
+                    id: ConnectionId::new(),
+                    provider_kind: ProviderKind::OpenAI,
+                    provider_runtime_id: ProviderId::new("openai-primary"),
+                    name: "primary".into(),
+                    priority: 1,
+                    is_active: true,
+                    auth_type: AuthType::ApiKey,
+                    credentials: Credentials::ApiKey {
+                        api_key: EncryptedBlob("enc:v1:sk-test".into()),
+                    },
+                    config: ConnectionConfig {
+                        max_concurrent: 1,
+                        quota_window_thresholds: QuotaWindowThresholds {
+                            warning: 0.7,
+                            error: 0.9,
+                        },
+                        default_model: None,
+                        base_url: None,
+                    },
+                    test_status: TestStatus::NeverTested,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+                let provider_id = ProviderId::new(connection.id.to_string());
+                let previous_provider = Arc::new(MockProvider {
+                    provider_id: provider_id.clone(),
+                    health_status: HealthStatus::Healthy {
+                        provider: provider_id.clone(),
+                        latency_ms: 1,
+                    },
+                });
+                let registry = Arc::new(MockRegistry::new());
+                registry.replace_all(vec![previous_provider]).unwrap();
+                let manager = ManageConnections::new(
+                    Arc::new(RepoWithConnections {
+                        connections: vec![connection],
+                    }),
+                    registry.clone(),
+                    Arc::new(FailDecryptKeyManager),
+                    Arc::new(NoopProviderBuilder),
+                );
+
+                manager.refresh_registry().await.unwrap();
+
+                assert_eq!(registry.providers(), vec![provider_id.clone()]);
+                assert!(registry.get(&provider_id).is_some());
             });
     }
 
