@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
 use rook::di::{
     build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
-    build_provider_from_connection_with_oauth, build_rate_limiter_config,
+    build_provider_from_connection_with_recorder, build_rate_limiter_config, is_canonical_base_url,
 };
 use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
@@ -479,7 +479,7 @@ fn build_manage_connections_disabled_returns_none() {
     let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
     let model_catalog: Arc<dyn rook_core::ModelCatalogPort> = Arc::new(FakeModelCatalog);
 
-    let result = build_manage_connections(&config, &provider_repo, &registry, &model_catalog);
+    let result = build_manage_connections(&config, &provider_repo, &registry, &model_catalog, None);
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
@@ -711,6 +711,126 @@ fn build_provider_from_connection_empty_models_list() {
     );
 }
 
+// T1 — P1 canonical URLs: default (None) retains quota capture.
+#[test]
+fn canonical_base_url_default_none_retains_recorder() {
+    assert!(
+        is_canonical_base_url(ProviderKind::OpenAI, None),
+        "OpenAI default (None) must retain quota capture"
+    );
+    assert!(
+        is_canonical_base_url(ProviderKind::Anthropic, None),
+        "Anthropic default (None) must retain quota capture"
+    );
+}
+
+// T1 — P1 canonical URLs: explicit canonical retains quota capture.
+#[test]
+fn canonical_base_url_explicit_canonical_retains_recorder() {
+    // OpenAI accepts with and without /v1 (UI sends /v1, backend default omits it).
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com/v1")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://api.anthropic.com")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/openai/v1")
+    ));
+}
+
+// T1 — P1 canonical URLs: custom URLs disable quota capture.
+#[test]
+fn canonical_base_url_custom_rejects_recorder() {
+    assert!(
+        !is_canonical_base_url(
+            ProviderKind::OpenAI,
+            Some("https://custom.openai.example.com/v1")
+        ),
+        "custom OpenAI proxy must disable quota capture"
+    );
+    assert!(
+        !is_canonical_base_url(ProviderKind::Anthropic, Some("https://proxy.example.com")),
+        "custom Anthropic proxy must disable quota capture"
+    );
+    assert!(
+        !is_canonical_base_url(
+            ProviderKind::Groq,
+            Some("https://custom.groq.example.com/openai/v1")
+        ),
+        "custom Groq proxy must disable quota capture"
+    );
+    // Mock servers are http + port => always custom.
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("http://127.0.0.1:8080")
+    ));
+}
+
+// T1 — P1 canonical URLs: Groq default (None) retains quota capture.
+#[test]
+fn canonical_base_url_groq_none_retains_recorder() {
+    assert!(
+        is_canonical_base_url(ProviderKind::Groq, None),
+        "Groq default (None) must retain quota capture"
+    );
+}
+
+// T1 — normalization: trim, trailing slash, case-insensitive host, /v1 tolerance.
+#[test]
+fn canonical_base_url_normalization() {
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("  https://api.openai.com/v1/  ")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://API.OPENAI.COM/V1")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com/")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://API.ANTHROPIC.COM")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/openai/v1/")
+    ));
+    // Anthropic must NOT tolerate /v1; Groq requires the full /openai/v1 path.
+    assert!(!is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://api.anthropic.com/v1")
+    ));
+    assert!(!is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com")
+    ));
+    assert!(!is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/v1")
+    ));
+    // Scheme must be https; empty and schemeless values are custom.
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("http://api.openai.com/v1")
+    ));
+    assert!(!is_canonical_base_url(ProviderKind::OpenAI, Some("")));
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("api.openai.com/v1")
+    ));
+}
+
 struct StubTokenPort;
 
 #[async_trait::async_trait]
@@ -737,12 +857,13 @@ fn oauth_creds() -> DecryptedCredentials {
 
 #[test]
 fn openai_builds_oauth_backed_provider_with_token_port() {
-    let provider = build_provider_from_connection_with_oauth(
+    let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
         ProviderKind::OpenAI,
         &oauth_creds(),
         None,
         vec![ModelId::new("gpt-4o")],
+        None,
         Some(Arc::new(StubTokenPort)),
     )
     .expect("OpenAI OAuth provider should build");
@@ -751,12 +872,13 @@ fn openai_builds_oauth_backed_provider_with_token_port() {
 
 #[test]
 fn gemini_builds_oauth_backed_provider_with_token_port() {
-    let provider = build_provider_from_connection_with_oauth(
+    let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
         ProviderKind::Gemini,
         &oauth_creds(),
         None,
         vec![ModelId::new("gemini-2.0-flash")],
+        None,
         Some(Arc::new(StubTokenPort)),
     )
     .expect("Gemini OAuth provider should build");
@@ -765,12 +887,13 @@ fn gemini_builds_oauth_backed_provider_with_token_port() {
 
 #[test]
 fn gemini_without_token_port_uses_access_token_as_api_key() {
-    let provider = build_provider_from_connection_with_oauth(
+    let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
         ProviderKind::Gemini,
         &oauth_creds(),
         None,
         vec![ModelId::new("gemini-2.0-flash")],
+        None,
         None,
     )
     .expect("Gemini provider should build without token port");
@@ -779,12 +902,13 @@ fn gemini_without_token_port_uses_access_token_as_api_key() {
 
 #[test]
 fn azure_builds_oauth_backed_provider_with_token_port() {
-    let provider = build_provider_from_connection_with_oauth(
+    let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
         ProviderKind::AzureOpenAI,
         &oauth_creds(),
         Some("https://example.openai.azure.com".to_string()),
         vec![ModelId::new("deployment-chat")],
+        None,
         Some(Arc::new(StubTokenPort)),
     )
     .expect("Azure OAuth provider should build");

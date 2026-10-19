@@ -56,3 +56,4 @@ dashmap = "6"
 tempfile = "3"
 chrono = { workspace = true }
 cortex-test-support = { path = "../../crates/test-support" }
+wiremock = "0.6"

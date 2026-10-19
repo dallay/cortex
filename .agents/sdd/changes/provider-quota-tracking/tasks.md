@@ -56,6 +56,32 @@ El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack c
 - [ ] 4.1 Contrastar ambas delta specs con suites focalizadas y ejecutar `just ci-local`; registrar resultados antes de cerrar esta tarea.
 - [x] 4.2 Confirmado por `git diff --name-only` y lectura de `routes.rs`: no cambian `V2__usage_history.sql`, adapters, routing, DI, autorización admin ni URL `/api/providers/quota`. Cambian deliberadamente el handler/DTO y dashboard para cumplir el contrato; el test de ruta invoca handler por Router de prueba y no revalida middleware admin existente.
 
+## Phase 5: Upstream Capture (U1–U3, absorbed from `per-provider-quota-integration`)
+
+Absorbed so a single change owns the whole capability. Contract in
+`specs/provider-quota-capture/spec.md`. The endpoint and dashboard phases above
+still do not read these observations; wiring them into the summary is U5.
+
+- [x] 5.1 Persistence: `QuotaObservation` model and `QuotaObservationRecorderPort` in `rook-core`; `provider_quota_observations` store with indexes on runtime, connection, and `observed_at`.
+- [x] 5.2 Migration: `V8__provider_quota_observations.sql`, versioned after the already-shipped `V6__oauth_client_credentials.sql` and `V7__combo_aliases.sql`.
+- [x] 5.3 Parsers: documented OpenAI, Anthropic Messages, and Groq rate-limit headers, covering valid, absent, malformed, and reset forms.
+- [x] 5.4 Adapters: capture headers on success and error responses before body consumption, best-effort, without altering provider outcomes.
+- [x] 5.5 Canonical gate: enable capture for default and explicit canonical endpoints, disable for custom/proxy/non-HTTPS/port/foreign-host endpoints.
+- [x] 5.6 Identity: restore managed runtime identity and originating connection through the recorder wrapper.
+- [x] 5.7 Bounded persistence: queue with capacity 1024, non-blocking enqueue, drop counter, dedicated writer thread, drain-and-join on shutdown.
+- [x] 5.8 Retention: bounded-batch deletion mirroring `usage_history` retention.
+- [x] 5.9 Scope: carry `anthropic-workspace-id` as request-scoped provenance when present.
+- [x] 5.10 Tests: field-level assertions for provider identity, metric, limit, remaining, and scope; canonical gate accepted/rejected matrices; identity wrapper round-trip through SQLite.
+- [x] 5.11 Remove the inline `#[cfg(test)]` module from `apps/rook/src/di.rs`; cover it from the `quota_identity_tests` integration target instead.
+- [ ] 5.12 Wire observations into the quota summary endpoint (U5). Until then the store is write-only by design and must be described that way.
+
+## Consolidation Note
+
+`per-provider-quota-integration` was retired. Its scope (U1–U3) is Phase 5 of
+this change; its design and exploration remain as reference under
+`reference/`. U5 (endpoint/DTO wiring) and U6 (dashboard reconciliation) remain
+pending and are the reason capture is currently write-only.
+
 ## Orden de implementación
 
 Consolidar todas las fases en la misma PR ordinaria, en orden de dependencia: agregados SQLite, contrato/endpoint backend, dashboard/localización y verificación integrada. No omitir criterios técnicos al consolidar. La excepción explícita de tamaño para esta PR única está aprobada, como se indica en la autorización registrada arriba.

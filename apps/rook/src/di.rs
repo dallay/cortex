@@ -20,8 +20,8 @@ use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboAliasRepositoryPort,
     ComboRepositoryPort, ComboStep, ComboStrategy, ConnectionId, DecryptedCredentials,
     ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderId, ProviderKind,
-    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, RouterPort, SessionRepositoryPort,
-    UsageRecorderPort,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaObservation,
+    QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -63,6 +63,9 @@ pub struct RookContainer {
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
     /// Concrete usage repository — used for retention sweep task.
     pub usage_repository: Arc<SqliteUsageRepository>,
+    /// Upstream quota observation recorder — kept distinct from local usage history.
+    #[allow(dead_code)] // Consumed by the response-capture work unit in the feature chain.
+    pub quota_observation_recorder: Arc<dyn QuotaObservationRecorderPort>,
     /// Usage config — retention_days and sweep_interval_hours for retention sweep.
     pub usage_config: crate::config::UsageConfig,
 }
@@ -108,6 +111,7 @@ pub fn build_manage_connections(
     provider_repo: &Arc<dyn ProviderRepositoryPort>,
     registry: &Arc<dyn ProviderRegistryPort>,
     model_catalog: &Arc<dyn ModelCatalogPort>,
+    quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 ) -> anyhow::Result<Option<ManageConnections>> {
     if !config.provider_crud.enabled {
         return Ok(None);
@@ -118,8 +122,10 @@ pub fn build_manage_connections(
         AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
             .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
     );
-    let builder: Arc<dyn ProviderBuilderPort> =
-        Arc::new(DynamicProviderBuilder::new(model_catalog.clone()));
+    let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(
+        model_catalog.clone(),
+        quota_observation_recorder,
+    ));
     Ok(Some(ManageConnections::new(
         provider_repo.clone(),
         registry.clone(),
@@ -151,6 +157,11 @@ fn resolve_setup_token_value(is_initialized: bool) -> Option<String> {
 }
 
 impl RookContainer {
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        self.usage_repository.shutdown().await?;
+        Ok(())
+    }
+
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
         // Run startup migrations once before constructing any repositories
         run_startup_migrations(&config.database.db_path)?;
@@ -208,16 +219,23 @@ impl RookContainer {
                 None
             };
 
-        // 7a. ManageConnections (provider CRUD) — uses shared provider_repo
-        let manage_connections =
-            build_manage_connections(config, &provider_repo, &registry, &model_catalog)?;
-
-        // 7b. Usage repository — concrete SqliteUsageRepository stored on container for retention
+        // 7a. Usage repository — concrete SqliteUsageRepository stored on container for retention
         let sqlite_usage: Arc<SqliteUsageRepository> = Arc::new(
             SqliteUsageRepository::new(Path::new(&config.database.db_path))
                 .map_err(|e| anyhow::anyhow!("failed to create usage repository: {e}"))?,
         );
         let usage_recorder: Option<Arc<dyn UsageRecorderPort>> = Some(sqlite_usage.clone());
+        let quota_observation_recorder: Arc<dyn QuotaObservationRecorderPort> =
+            sqlite_usage.clone();
+
+        // 7b. ManageConnections (provider CRUD) — shares the recorder with provider adapters.
+        let manage_connections = build_manage_connections(
+            config,
+            &provider_repo,
+            &registry,
+            &model_catalog,
+            Some(quota_observation_recorder.clone()),
+        )?;
 
         // 7c. Combo repository — SQLite-backed combo storage.
         // The same SQLite file backs combo aliases (V7 table); a second
@@ -387,6 +405,7 @@ impl RookContainer {
             rate_limit_store,
             format_registry,
             usage_repository: sqlite_usage,
+            quota_observation_recorder,
             usage_config: config.usage.clone(),
         })
     }
@@ -867,24 +886,90 @@ pub fn build_provider_from_connection(
     base_url_override: Option<String>,
     models: Vec<ModelId>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
-    build_provider_from_connection_with_oauth(
+    build_provider_from_connection_with_recorder(
         connection_id,
         kind,
         credentials,
         base_url_override,
         models,
         None,
+        None,
     )
 }
 
-pub fn build_provider_from_connection_with_oauth(
+/// T1 — P1 canonical URLs: decide whether upstream quota capture stays enabled.
+///
+/// `None` (backend default) always retains the recorder. An explicit override
+/// retains it only when it normalizes to the provider's canonical endpoint:
+/// - OpenAI: `https://api.openai.com` with or without `/v1`
+/// - Anthropic: `https://api.anthropic.com`
+/// - Groq: `https://api.groq.com/openai/v1`
+///
+/// Anything else (custom proxy / mock / non-https) disables capture so
+/// third-party rate-limit headers are never attributed to the canonical
+/// provider.
+///
+/// Normalization: trim surrounding whitespace, case-insensitive scheme and
+/// host, ignore trailing slashes, tolerate `/v1` for OpenAI.
+pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>) -> bool {
+    let Some(raw) = base_url_override else {
+        return true;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    // Canonical URLs never carry userinfo, query, or fragment.
+    if rest.contains(['@', '?', '#']) {
+        return false;
+    }
+    let (host, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    if host.is_empty() || host.contains(':') {
+        // Empty host or explicit port suffix => custom.
+        return false;
+    }
+    let host = host.to_ascii_lowercase();
+    // Strip trailing slashes: "/" -> "", "/v1/" -> "/v1".
+    let mut norm_path = path;
+    while norm_path.len() > 1 && norm_path.ends_with('/') {
+        norm_path = &norm_path[..norm_path.len() - 1];
+    }
+    if norm_path == "/" {
+        norm_path = "";
+    }
+    let norm_path = norm_path.to_ascii_lowercase();
+    match kind {
+        ProviderKind::OpenAI => {
+            host == "api.openai.com" && (norm_path.is_empty() || norm_path == "/v1")
+        }
+        ProviderKind::Anthropic => host == "api.anthropic.com" && norm_path.is_empty(),
+        ProviderKind::Groq => host == "api.groq.com" && norm_path == "/openai/v1",
+        // Ollama / OllamaCloud / Gemini never carry quota capture; no explicit
+        // URL is canonical (the recorder is ignored downstream anyway).
+        _ => false,
+    }
+}
+
+pub fn build_provider_from_connection_with_recorder(
     connection_id: &ConnectionId,
     kind: ProviderKind,
     credentials: &DecryptedCredentials,
     base_url_override: Option<String>,
     models: Vec<ModelId>,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    let quota_recorder =
+        quota_recorder.filter(|_| is_canonical_base_url(kind, base_url_override.as_deref()));
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
@@ -907,13 +992,17 @@ pub fn build_provider_from_connection_with_oauth(
             };
             let provider = match (&oauth_token_port, credentials) {
                 (Some(token_port), DecryptedCredentials::OAuth { .. }) => {
-                    providers_openai::OpenAIProvider::new_with_oauth(
+                    providers_openai::OpenAIProvider::new_with_oauth_and_quota_recorder(
                         config,
                         *connection_id,
                         token_port.clone(),
+                        quota_recorder.clone(),
                     )
                 }
-                _ => providers_openai::OpenAIProvider::new(config),
+                _ => providers_openai::OpenAIProvider::new_with_quota_recorder(
+                    config,
+                    quota_recorder.clone(),
+                ),
             }
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
             Arc::new(provider) as Arc<dyn ProviderPort>
@@ -927,8 +1016,11 @@ pub fn build_provider_from_connection_with_oauth(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            providers_anthropic::AnthropicProvider::new(config)
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+            providers_anthropic::AnthropicProvider::new_with_quota_recorder(
+                config,
+                quota_recorder.clone(),
+            )
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
         ProviderKind::Ollama => {
             let base_url = base_url_override.ok_or(ProviderBuildError::OllamaRequiresBaseUrl)?;
@@ -991,7 +1083,7 @@ pub fn build_provider_from_connection_with_oauth(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            providers_groq::GroqProvider::new(config)
+            providers_groq::GroqProvider::new_with_quota_recorder(config, quota_recorder.clone())
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
         ProviderKind::AzureOpenAI => {
@@ -1027,14 +1119,94 @@ pub fn build_provider_from_connection_with_oauth(
     Ok(provider)
 }
 
+/// Restores managed identity independently of the connection-scoped registry ID.
+struct ConnectionQuotaRecorder {
+    recorder: Arc<dyn QuotaObservationRecorderPort>,
+    provider_runtime_id: ProviderId,
+    connection_id: ConnectionId,
+}
+
+/// Test/CRUD seam for the canonical-URL quota gate plus identity wrapping.
+///
+/// Kept `pub` so integration tests exercise the production canonical-URL
+/// decision without reaching into private state.
+pub fn quota_recorder_for_connection(
+    kind: ProviderKind,
+    base_url_override: Option<&str>,
+    connection_id: ConnectionId,
+    provider_runtime_id: ProviderId,
+    recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
+    if !is_canonical_base_url(kind, base_url_override) {
+        return None;
+    }
+    recorder.map(|recorder| {
+        Arc::new(ConnectionQuotaRecorder {
+            recorder,
+            provider_runtime_id,
+            connection_id,
+        }) as Arc<dyn QuotaObservationRecorderPort>
+    })
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
+    async fn record_observation(
+        &self,
+        observation: QuotaObservation,
+    ) -> shared_kernel::CortexResult<()> {
+        self.record_observations(vec![observation]).await
+    }
+
+    async fn record_observations(
+        &self,
+        mut observations: Vec<QuotaObservation>,
+    ) -> shared_kernel::CortexResult<()> {
+        for observation in &mut observations {
+            observation.provider = self.provider_runtime_id.clone();
+            observation.connection_id = Some(self.connection_id);
+        }
+        self.recorder.record_observations(observations).await
+    }
+
+    async fn list_observations(
+        &self,
+        provider: Option<ProviderId>,
+    ) -> shared_kernel::CortexResult<Vec<QuotaObservation>> {
+        self.recorder.list_observations(provider).await
+    }
+}
+
 #[derive(Clone)]
 struct DynamicProviderBuilder {
     catalog: Arc<dyn ModelCatalogPort>,
+    quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 impl DynamicProviderBuilder {
-    fn new(catalog: Arc<dyn ModelCatalogPort>) -> Self {
-        Self { catalog }
+    fn new(
+        catalog: Arc<dyn ModelCatalogPort>,
+        quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> Self {
+        Self {
+            catalog,
+            quota_observation_recorder,
+        }
+    }
+
+    fn quota_recorder(
+        &self,
+        input: &ProviderBuildInput,
+    ) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
+        // Default endpoints and explicit canonical URLs both qualify; custom
+        // endpoints must not have third-party headers attributed to the provider.
+        quota_recorder_for_connection(
+            input.provider_kind,
+            input.base_url.as_deref(),
+            input.connection_id,
+            input.provider_runtime_id.clone(),
+            self.quota_observation_recorder.clone(),
+        )
     }
 }
 
@@ -1057,12 +1229,14 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             catalog_models
         };
 
-        build_provider_from_connection_with_oauth(
+        let quota_recorder = self.quota_recorder(&input);
+        build_provider_from_connection_with_recorder(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
             input.base_url,
             models,
+            quota_recorder,
             Some(input.oauth_token_port),
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))

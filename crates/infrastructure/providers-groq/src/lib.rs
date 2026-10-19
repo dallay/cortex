@@ -2,16 +2,60 @@
 
 use async_trait::async_trait;
 use futures::{Stream, TryStreamExt};
-use providers_core::{parse_event_text, role_to_string, sanitize_body, SseEvent};
+use providers_core::{
+    parse_event_text, parse_reset_milliseconds, role_to_string, sanitize_body, SseEvent,
+};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage,
+    ProviderPort, QuotaObservationRecorderPort, StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
 use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::sync::Arc;
+
+pub fn parse_groq_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    [
+        ("requests", "requests", "day"),
+        ("tokens", "tokens", "minute"),
+    ]
+    .into_iter()
+    .filter_map(|(metric, suffix, window)| {
+        let limit = groq_header_number(headers, &format!("x-ratelimit-limit-{suffix}"))?;
+        let remaining = groq_header_number(headers, &format!("x-ratelimit-remaining-{suffix}"))?;
+        let reset_after_milliseconds = headers
+            .get(format!("x-ratelimit-reset-{suffix}"))
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_reset_milliseconds);
+        Some(QuotaObservation {
+            provider_kind: ProviderKind::Groq,
+            provider: provider.clone(),
+            connection_id: None,
+            metric: metric.to_string(),
+            source: "response_headers".to_string(),
+            scope: Some("organization".to_string()),
+            window: Some(window.to_string()),
+            limit: Some(limit),
+            remaining: Some(remaining),
+            reset_at: None,
+            reset_after_milliseconds,
+            observed_at,
+        })
+    })
+    .collect()
+}
+
+fn groq_header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = headers.get(name)?.to_str().ok()?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
 
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
@@ -116,15 +160,38 @@ async fn map_groq_http_error(provider_id: &ProviderId, resp: reqwest::Response) 
 pub struct GroqProvider {
     config: GroqProviderConfig,
     client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }
 
 impl GroqProvider {
     pub fn new(config: GroqProviderConfig) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: GroqProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            quota_recorder,
+        }))
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_groq_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        if let Err(error) = recorder.record_observations(observations).await {
+            tracing::warn!(%error, "failed to record Groq quota observations");
+        }
     }
 
     fn build_stream_request(req: &CompletionRequest) -> GroqRequest {
@@ -367,6 +434,8 @@ impl ProviderPort for GroqProvider {
             .send()
             .await
             .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_groq_http_error(&self.config.id, resp).await);

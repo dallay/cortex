@@ -5,16 +5,74 @@ use futures::{Stream, StreamExt};
 use reqwest::Client;
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, FinishReason, HealthStatus, ModelId,
-    ProviderPort, StreamChunk, TokenUsage, ToolCallDelta, ToolCallFunctionDelta,
+    ProviderPort, QuotaObservationRecorderPort, StreamChunk, TokenUsage, ToolCallDelta,
+    ToolCallFunctionDelta,
 };
 
-use providers_core::sanitize_body;
+use providers_core::{parse_reset_milliseconds, sanitize_body};
 use shared_kernel::ConnectionId;
 use shared_kernel::{CortexError, CortexResult, ProviderId, RequestId};
 use sse_stream::SseBuffer;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+
+pub fn parse_openai_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::{ProviderKind, QuotaObservation};
+
+    let mut observations = Vec::new();
+    for (metric, scope, prefix) in [
+        ("requests", None, "x-ratelimit-"),
+        ("tokens", None, "x-ratelimit-"),
+        ("tokens", Some("project"), "x-ratelimit-"),
+    ] {
+        let names = match (metric, scope.is_some()) {
+            ("requests", _) => ("limit-requests", "remaining-requests", "reset-requests"),
+            ("tokens", true) => (
+                "limit-project-tokens",
+                "remaining-project-tokens",
+                "reset-project-tokens",
+            ),
+            ("tokens", false) => ("limit-tokens", "remaining-tokens", "reset-tokens"),
+            _ => continue,
+        };
+        let (Some(limit), Some(remaining)) = (
+            header_number(headers, &format!("{prefix}{}", names.0)),
+            header_number(headers, &format!("{prefix}{}", names.1)),
+        ) else {
+            continue;
+        };
+        observations.push(QuotaObservation {
+            provider_kind: ProviderKind::OpenAI,
+            provider: provider.clone(),
+            connection_id: None,
+            metric: metric.to_string(),
+            source: "response_headers".to_string(),
+            scope: scope.map(str::to_string),
+            window: None,
+            limit: Some(limit),
+            remaining: Some(remaining),
+            reset_at: None,
+            reset_after_milliseconds: header_value(headers, &format!("{prefix}{}", names.2))
+                .and_then(parse_reset_milliseconds),
+            observed_at,
+        });
+    }
+    observations
+}
+
+fn header_value<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name)?.to_str().ok()
+}
+
+fn header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
+    let value = header_value(headers, name)?.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
 
 const MAX_TOOL_CALLS_PER_STREAM: usize = 64;
 const MAX_TOTAL_TOOL_CALL_ARGUMENT_BYTES: usize = 1_048_576;
@@ -68,12 +126,20 @@ pub struct OpenAIProviderConfig {
 pub struct OpenAIProvider {
     pub(crate) config: OpenAIProviderConfig,
     pub(crate) client: Client,
+    quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
     connection_id: Option<ConnectionId>,
 }
 
 impl OpenAIProvider {
     pub fn new(config: OpenAIProviderConfig) -> anyhow::Result<Self> {
+        Self::new_with_quota_recorder(config, None)
+    }
+
+    pub fn new_with_quota_recorder(
+        config: OpenAIProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
@@ -81,6 +147,7 @@ impl OpenAIProvider {
         Ok(Self {
             config,
             client,
+            quota_recorder,
             oauth_token_port: None,
             connection_id: None,
         })
@@ -92,6 +159,18 @@ impl OpenAIProvider {
         oauth_token_port: Arc<dyn rook_core::OAuthTokenPort>,
     ) -> anyhow::Result<Self> {
         let mut provider = Self::new(config)?;
+        provider.oauth_token_port = Some(oauth_token_port);
+        provider.connection_id = Some(connection_id);
+        Ok(provider)
+    }
+
+    pub fn new_with_oauth_and_quota_recorder(
+        config: OpenAIProviderConfig,
+        connection_id: ConnectionId,
+        oauth_token_port: Arc<dyn rook_core::OAuthTokenPort>,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> anyhow::Result<Self> {
+        let mut provider = Self::new_with_quota_recorder(config, quota_recorder)?;
         provider.oauth_token_port = Some(oauth_token_port);
         provider.connection_id = Some(connection_id);
         Ok(provider)
@@ -148,6 +227,17 @@ impl OpenAIProvider {
             }
         }
         unreachable!("retry loop always returns a response")
+    }
+
+    async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(recorder) = self.quota_recorder.as_ref() else {
+            return;
+        };
+        let observations =
+            parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        if let Err(error) = recorder.record_observations(observations).await {
+            tracing::warn!(%error, "failed to record OpenAI quota observations");
+        }
     }
 
     fn message_to_openai(
@@ -684,6 +774,8 @@ impl ProviderPort for OpenAIProvider {
 
         let start = std::time::Instant::now();
         let resp = self.send_chat_request(&body).await?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             return Err(map_openai_http_error(&self.config.id, resp).await);

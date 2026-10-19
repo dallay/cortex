@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use shared_kernel::{CacheKey, ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
 
-use crate::ApiKeyId;
+use crate::{ApiKeyId, ProviderKind};
 
 // ============================================================================
 // User — admin user for MANAGEMENT routes
@@ -505,6 +505,27 @@ pub struct UsageEntry {
     pub latency_ms: u64,
     pub cost_usd: Option<f64>,
     pub timestamp: DateTime<Utc>,
+}
+
+/// A quota/rate-limit value actually reported by an upstream provider.
+/// This is deliberately separate from locally measured [`UsageEntry`] data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuotaObservation {
+    /// Provider family and runtime instance are both retained: multiple configured
+    /// runtimes of one family may report different limits.
+    pub provider_kind: ProviderKind,
+    pub provider: ProviderId,
+    pub connection_id: Option<ConnectionId>,
+    pub metric: String,
+    pub source: String,
+    pub scope: Option<String>,
+    pub window: Option<String>,
+    pub limit: Option<f64>,
+    pub remaining: Option<f64>,
+    pub reset_at: Option<DateTime<Utc>>,
+    /// Documented relative reset duration in milliseconds, anchored to `observed_at`.
+    pub reset_after_milliseconds: Option<u64>,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

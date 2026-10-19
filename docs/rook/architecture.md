@@ -266,9 +266,9 @@ RookUsecases { route_request, manage_providers, health_check, authenticate_clien
 transport_axum::router(usecases, authz_config)  ← axum Router with routes + state
 ```
 
-## Provider CRUD Limitation
+## Provider Registry Lifecycle
 
-Provider CRUD is an administrative storage and health-test surface in v1. SQLite provider connections are not hot-registered into the request router; TOML providers continue to serve completion traffic.
+`ManageConnections::refresh_registry()` builds active SQLite provider connections and atomically replaces the runtime registry. It runs at startup and after connection create/update/delete when `provider_crud.enabled` is true; the registry starts empty.
 
 ## Observability
 
