@@ -57,4 +57,54 @@ describe("auth router guard", () => {
 
     expect(result).toBe(true);
   });
+
+  it("allows access to routes that do not require auth or guestOnly", async () => {
+    const {getAuthRedirect} = await import("./index");
+
+    const result = getAuthRedirect(
+      {
+        name: "Public",
+        meta: {},
+        matched: [{meta: {}}],
+      } as unknown as RouteLocationNormalizedLoaded,
+      false,
+      false,
+    );
+
+    expect(result).toBe(true);
+  });
+
+  it("validates providerKind param in route beforeEnter", async () => {
+    const routerModule = await import("./index");
+    const router = routerModule.default;
+
+    const providerDetailsRoute = router
+      .getRoutes()
+      .find((r) => r.name === "Provider Details");
+
+    expect(providerDetailsRoute).toBeDefined();
+    expect(providerDetailsRoute?.beforeEnter).toBeDefined();
+
+    const beforeEnter = providerDetailsRoute?.beforeEnter as (
+      to: Partial<RouteLocationNormalizedLoaded>,
+    ) => unknown;
+
+    // Valid provider kind
+    const validResult = beforeEnter({
+      params: {providerKind: "openai"},
+    });
+    expect(validResult).toBeUndefined();
+
+    // Invalid provider kind
+    const invalidResult = beforeEnter({
+      params: {providerKind: "invalid-provider-kind"},
+    });
+    expect(invalidResult).toEqual({name: "Providers"});
+
+    // Non-string or missing provider kind
+    const missingResult = beforeEnter({
+      params: {},
+    });
+    expect(missingResult).toEqual({name: "Providers"});
+  });
 });

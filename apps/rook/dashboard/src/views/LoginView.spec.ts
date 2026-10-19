@@ -1,4 +1,4 @@
-import {mount} from "@vue/test-utils";
+import {flushPromises, mount} from "@vue/test-utils";
 import {createPinia, setActivePinia} from "pinia";
 import {describe, expect, it, vi} from "vitest";
 import {defineComponent, h} from "vue";
@@ -33,8 +33,15 @@ vi.mock("@/components/ui/input", () => ({
       required: Boolean,
     },
     emits: ["update:modelValue"],
-    setup(props) {
-      return () => h("input", {id: props.id, type: props.type ?? "text"});
+    setup(props, {emit}) {
+      return () =>
+        h("input", {
+          id: props.id,
+          type: props.type ?? "text",
+          value: props.modelValue,
+          onInput: (e: Event) =>
+            emit("update:modelValue", (e.target as HTMLInputElement).value),
+        });
     },
   }),
 }));
@@ -113,6 +120,92 @@ describe("LoginView", () => {
     expect(wrapper.text()).toContain("Sign in with the admin password");
     expect(wrapper.get("input#login-password").attributes("type")).toBe(
       "password",
+    );
+  });
+
+  it("displays login error when auth.login fails", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.bootstrapRequired = false;
+    auth.error = null;
+    vi.spyOn(auth, "login").mockImplementationOnce(async () => {
+      auth.error = "Invalid password entered";
+      throw new Error("Invalid password entered");
+    });
+
+    const wrapper = mount(LoginView, {
+      global: {plugins: [pinia, router, i18n]},
+    });
+
+    const form = wrapper.get("form");
+    await form.trigger("submit.prevent");
+    await flushPromises();
+
+    expect(auth.login).toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Invalid password entered");
+  });
+
+  it("submits login form and calls auth.login", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.bootstrapRequired = false;
+    vi.spyOn(auth, "login").mockResolvedValueOnce(undefined);
+
+    const wrapper = mount(LoginView, {
+      global: {plugins: [pinia, router, i18n]},
+    });
+
+    const form = wrapper.get("form");
+    await form.trigger("submit.prevent");
+    await flushPromises();
+
+    expect(auth.login).toHaveBeenCalled();
+    expect(router.currentRoute.value.name).toBe("Home");
+  });
+
+  it("shows setup error when password is too short", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.bootstrapRequired = true;
+
+    const wrapper = mount(LoginView, {
+      global: {plugins: [pinia, router, i18n]},
+    });
+
+    // Passwords match but too short (< 12 chars)
+    await wrapper.find("input#setup-password").setValue("short");
+    await wrapper.find("input#setup-confirm").setValue("short");
+
+    const form = wrapper.get("form");
+    await form.trigger("submit.prevent");
+
+    expect(wrapper.text()).toContain("Password must be at least 12 characters");
+  });
+
+  it("submits setup form with valid data and calls auth.setupAdminPassword", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.bootstrapRequired = true;
+    vi.spyOn(auth, "setupAdminPassword").mockResolvedValueOnce(undefined);
+
+    const wrapper = mount(LoginView, {
+      global: {plugins: [pinia, router, i18n]},
+    });
+
+    await wrapper.find("input#setup-token").setValue("setup-token-123");
+    await wrapper.find("input#setup-password").setValue("valid-secure-password-123");
+    await wrapper.find("input#setup-confirm").setValue("valid-secure-password-123");
+
+    const form = wrapper.get("form");
+    await form.trigger("submit.prevent");
+
+    expect(auth.setupAdminPassword).toHaveBeenCalledWith(
+      "setup-token-123",
+      "valid-secure-password-123",
     );
   });
 });
