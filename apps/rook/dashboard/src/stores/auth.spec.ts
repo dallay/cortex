@@ -100,4 +100,90 @@ describe("auth store", () => {
     expect(apiMock.setupBootstrap).not.toHaveBeenCalled();
     expect(store.error).toBe("Setup token is missing");
   });
+
+  it("restores existing session from cookie when system is initialized", async () => {
+    apiMock.getBootstrapStatus.mockResolvedValueOnce({
+      isInitialized: true,
+      adminUserExists: true,
+    });
+    apiMock.getMe.mockResolvedValueOnce({
+      username: "admin",
+      displayName: "Rook Admin",
+    });
+
+    const {useAuthStore} = await import("./auth");
+    const store = useAuthStore();
+
+    await store.loadBootstrapStatus();
+
+    expect(store.isAuthenticated).toBe(true);
+    expect(store.currentUser?.username).toBe("admin");
+    expect(store.currentUser?.displayName).toBe("Rook Admin");
+  });
+
+  it("handles loadBootstrapStatus error gracefully", async () => {
+    apiMock.getBootstrapStatus.mockRejectedValueOnce(
+      new Error("Network connection error"),
+    );
+
+    const {useAuthStore} = await import("./auth");
+    const store = useAuthStore();
+
+    await expect(store.loadBootstrapStatus()).rejects.toThrow(
+      "Network connection error",
+    );
+
+    expect(store.initialized).toBe(true);
+    expect(store.error).toBe("Network connection error");
+  });
+
+  it("handles login failure and sets error state", async () => {
+    apiMock.login.mockRejectedValueOnce(new Error("Invalid credentials"));
+
+    const {useAuthStore} = await import("./auth");
+    const store = useAuthStore();
+
+    await expect(store.login("wrong-password")).rejects.toThrow(
+      "Invalid credentials",
+    );
+
+    expect(store.isAuthenticated).toBe(false);
+    expect(store.error).toBe("Invalid credentials");
+  });
+
+  it("handles setupAdminPassword failure and clears user state", async () => {
+    apiMock.setupBootstrap.mockRejectedValueOnce(new Error("Invalid setup token"));
+
+    const {useAuthStore} = await import("./auth");
+    const store = useAuthStore();
+
+    await expect(
+      store.setupAdminPassword("bad-token", "password123"),
+    ).rejects.toThrow("Invalid setup token");
+
+    expect(store.isAuthenticated).toBe(false);
+    expect(store.error).toBe("Invalid setup token");
+  });
+
+  it("logs out and clears session state", async () => {
+    apiMock.logout.mockResolvedValueOnce(undefined);
+
+    const {useAuthStore} = await import("./auth");
+    const store = useAuthStore();
+
+    // Set initial session
+    store.currentUser = {
+      username: "admin",
+      displayName: "Rook Admin",
+      email: "admin@rook.local",
+    };
+    store.initialApiKey = "rk-test";
+
+    await store.logout();
+
+    expect(apiMock.logout).toHaveBeenCalled();
+    expect(store.currentUser).toBeNull();
+    expect(store.initialApiKey).toBeNull();
+    expect(store.isAuthenticated).toBe(false);
+  });
 });

@@ -344,3 +344,112 @@ fn internal_error() -> HttpError {
         message: "internal server error".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rook_core::ApiKeyRecord;
+
+    fn make_test_record() -> ApiKeyRecord {
+        ApiKeyRecord {
+            id: ApiKeyId::new("key-123"),
+            label: "Test Key".to_string(),
+            key_hash: "hash".to_string(),
+            key_prefix: "rk-test".to_string(),
+            scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+            tier: ApiKeyTier::Pro,
+            is_active: true,
+            revoked_at: None,
+            expires_at: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            allowed_models: vec![ModelId::new("gpt-4o")],
+            allowed_providers: vec![ProviderId::new("openai")],
+        }
+    }
+
+    #[test]
+    fn test_api_key_record_response_dto_from() {
+        let record = make_test_record();
+        let dto = ApiKeyRecordResponseDto::from(&record);
+
+        assert_eq!(dto.id, "key-123");
+        assert_eq!(dto.label, "Test Key");
+        assert_eq!(dto.key_prefix, "rk-test");
+        assert_eq!(dto.scopes, vec!["chat:read"]);
+        assert_eq!(dto.tier, "pro");
+        assert!(dto.is_active);
+        assert_eq!(dto.allowed_models, vec!["gpt-4o"]);
+        assert_eq!(dto.allowed_providers, vec!["openai"]);
+    }
+
+    #[test]
+    fn test_pagination_params_default() {
+        assert_eq!(default_limit(), 20);
+    }
+
+    #[test]
+    fn test_double_option_deserialization() {
+        #[derive(Debug, Deserialize)]
+        struct TestStruct {
+            #[serde(default, deserialize_with = "double_option")]
+            val: Option<Option<String>>,
+        }
+
+        // Absent field
+        let json_absent = serde_json::json!({});
+        let s1: TestStruct = serde_json::from_value(json_absent).unwrap();
+        assert_eq!(s1.val, None);
+
+        // Explicit null
+        let json_null = serde_json::json!({ "val": null });
+        let s2: TestStruct = serde_json::from_value(json_null).unwrap();
+        assert_eq!(s2.val, Some(None));
+
+        // Concrete string
+        let json_val = serde_json::json!({ "val": "2026-10-15T00:00:00Z" });
+        let s3: TestStruct = serde_json::from_value(json_val).unwrap();
+        assert_eq!(s3.val, Some(Some("2026-10-15T00:00:00Z".to_string())));
+    }
+
+    #[test]
+    fn test_map_error_handling() {
+        let err_not_found = map_error(rook_usecases::ManageApiKeysError::NotFound(ApiKeyId::new(
+            "missing",
+        )));
+        assert_eq!(err_not_found.status, StatusCode::NOT_FOUND);
+        assert_eq!(err_not_found.code, "NOT_FOUND");
+
+        let err_revoked = map_error(rook_usecases::ManageApiKeysError::Revoked(ApiKeyId::new(
+            "revoked",
+        )));
+        assert_eq!(err_revoked.status, StatusCode::CONFLICT);
+        assert_eq!(err_revoked.code, "KEY_REVOKED");
+
+        let err_validation = map_error(rook_usecases::ManageApiKeysError::Validation(
+            "invalid scope".to_string(),
+        ));
+        assert_eq!(err_validation.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err_validation.code, "VALIDATION_ERROR");
+
+        let err_duplicate = map_error(rook_usecases::ManageApiKeysError::Repository(
+            rook_core::ApiKeyRepositoryError::DuplicateHash,
+        ));
+        assert_eq!(err_duplicate.status, StatusCode::CONFLICT);
+        assert_eq!(err_duplicate.code, "CONFLICT");
+
+        let err_repo_not_found = map_error(rook_usecases::ManageApiKeysError::Repository(
+            rook_core::ApiKeyRepositoryError::NotFound(ApiKeyId::new("missing-repo")),
+        ));
+        assert_eq!(err_repo_not_found.status, StatusCode::NOT_FOUND);
+        assert_eq!(err_repo_not_found.code, "NOT_FOUND");
+
+        let err_db = map_error(rook_usecases::ManageApiKeysError::Repository(
+            rook_core::ApiKeyRepositoryError::Database("sensitive sqlite stacktrace".to_string()),
+        ));
+        assert_eq!(err_db.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err_db.code, "INTERNAL_ERROR");
+        assert_eq!(err_db.message, "internal server error");
+        assert!(!err_db.message.contains("sqlite"));
+    }
+}

@@ -13,8 +13,11 @@ import ProviderDetailsView from "./ProviderDetailsView.vue";
 
 const mockFetchProviders = vi.fn().mockResolvedValue(undefined);
 const mockRefreshOAuth = vi.fn().mockResolvedValue(true);
+const mockTestConnection = vi.fn().mockResolvedValue({valid: true, status: "ok"});
+const mockRemoveConnection = vi.fn().mockResolvedValue(true);
+const mockUpdateConnection = vi.fn().mockResolvedValue(undefined);
 const mockProvidersState: {
-  value: Array<{id: string; providerKind: string}>;
+  value: Array<{id: string; providerKind: string; updatedAt?: string}>;
 } = {value: []};
 
 vi.mock("@/composables/useProviders", () => ({
@@ -23,9 +26,9 @@ vi.mock("@/composables/useProviders", () => ({
     loading: {value: false},
     error: {value: null},
     fetch: mockFetchProviders,
-    test: vi.fn().mockResolvedValue({ok: true, valid: true}),
-    update: vi.fn().mockResolvedValue(undefined),
-    remove: vi.fn().mockResolvedValue(undefined),
+    test: mockTestConnection,
+    update: mockUpdateConnection,
+    remove: mockRemoveConnection,
     refreshOAuth: mockRefreshOAuth,
   }),
 }));
@@ -53,9 +56,14 @@ vi.mock("@/components/AddProviderDialog.vue", () => ({
 vi.mock("@/components/ConnectionListItem.vue", () => ({
   default: defineComponent({
     props: ["connection", "models", "testing", "busy"],
-    emits: ["refresh"],
+    emits: ["refresh", "test", "edit", "delete", "toggle"],
     template:
-      '<div data-testid="connection-item"><button data-testid="refresh-button" @click="$emit(\'refresh\', connection?.id ?? \'conn-1\')" /></div>',
+      '<div data-testid="connection-item">' +
+      '<button data-testid="refresh-button" @click="$emit(\'refresh\', connection?.id ?? \'conn-1\')" />' +
+      '<button data-testid="test-button" @click="$emit(\'test\', connection?.id ?? \'conn-1\')" />' +
+      '<button data-testid="delete-button" @click="$emit(\'delete\', connection?.id ?? \'conn-1\')" />' +
+      '<button data-testid="toggle-button" @click="$emit(\'toggle\', {id: connection?.id ?? \'conn-1\', enabled: false})" />' +
+      '</div>',
   }),
 }));
 vi.mock("@/components/LoadingState.vue", () => ({
@@ -179,5 +187,44 @@ describe("ProviderDetailsView", () => {
 
     expect(mockRefreshOAuth).toHaveBeenCalledWith("openai", "conn-1");
     expect(mockFetchProviders).toHaveBeenCalled();
+  });
+
+  it("tests the connection when list item emits test", async () => {
+    mockProvidersState.value = [{id: "conn-1", providerKind: "openai"}];
+    const {wrapper} = await mountView("/providers/openai");
+
+    await wrapper.find('[data-testid="test-button"]').trigger("click");
+    await flushPromises();
+
+    expect(mockTestConnection).toHaveBeenCalledWith("conn-1");
+    expect(mockFetchProviders).toHaveBeenCalled();
+  });
+
+  it("deletes the connection after user confirms deletion", async () => {
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValueOnce(true);
+    try {
+      mockProvidersState.value = [{id: "conn-1", providerKind: "openai"}];
+      const {wrapper} = await mountView("/providers/openai");
+
+      await wrapper.find('[data-testid="delete-button"]').trigger("click");
+      await flushPromises();
+
+      expect(mockRemoveConnection).toHaveBeenCalledWith("conn-1");
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("toggles the connection status when list item emits toggle", async () => {
+    mockProvidersState.value = [{id: "conn-1", providerKind: "openai", updatedAt: "2026-01-01T00:00:00Z"}];
+    const {wrapper} = await mountView("/providers/openai");
+
+    await wrapper.find('[data-testid="toggle-button"]').trigger("click");
+    await flushPromises();
+
+    expect(mockUpdateConnection).toHaveBeenCalledWith("conn-1", {
+      expectedUpdatedAt: "2026-01-01T00:00:00Z",
+      isActive: false,
+    });
   });
 });
