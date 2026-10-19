@@ -1,8 +1,7 @@
-//! Managed-connection quota capture: the canonical-endpoint gate and the
-//! runtime/connection identity wrapping, exercised through the same production
-//! wiring that `DynamicProviderBuilder` uses.
+//! Managed-connection quota capture: canonical-endpoint gating and runtime / connection
+//! identity wrapping for the managed provider-construction path.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rook::di::quota_recorder_for_connection;
 use rook_core::{
@@ -10,11 +9,19 @@ use rook_core::{
 };
 use shared_kernel::CortexResult;
 
-struct NullRecorder;
+#[derive(Default)]
+struct NullRecorder {
+    batches: Mutex<Vec<Vec<QuotaObservation>>>,
+}
 
 #[async_trait::async_trait]
 impl QuotaObservationRecorderPort for NullRecorder {
-    async fn record_observation(&self, _observation: QuotaObservation) -> CortexResult<()> {
+    async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()> {
+        self.record_observations(vec![observation]).await
+    }
+
+    async fn record_observations(&self, observations: Vec<QuotaObservation>) -> CortexResult<()> {
+        self.batches.lock().unwrap().push(observations);
         Ok(())
     }
 
@@ -22,7 +29,14 @@ impl QuotaObservationRecorderPort for NullRecorder {
         &self,
         _provider: Option<ProviderId>,
     ) -> CortexResult<Vec<QuotaObservation>> {
-        Ok(Vec::new())
+        Ok(self
+            .batches
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .cloned()
+            .collect())
     }
 }
 
@@ -33,7 +47,7 @@ fn capture_enabled(kind: ProviderKind, base_url: Option<&str>) -> bool {
         base_url,
         ConnectionId::new(),
         ProviderId::new("probe"),
-        Some(Arc::new(NullRecorder)),
+        Some(Arc::new(NullRecorder::default())),
     )
     .is_some()
 }
@@ -131,8 +145,9 @@ async fn identity_wrapper_restores_runtime_and_connection() {
     let repository = Arc::new(audit_sqlite::SqliteUsageRepository::new(db.path()).unwrap());
 
     let runtime_id = ProviderId::new("openai-primary");
-    for _ in 0..2 {
-        let connection_id = ConnectionId::new();
+    let mut expected_connections = Vec::new();
+    for connection_id in [ConnectionId::new(), ConnectionId::new()] {
+        expected_connections.push(connection_id);
         let recorder = quota_recorder_for_connection(
             ProviderKind::OpenAI,
             None,
@@ -169,15 +184,64 @@ async fn identity_wrapper_restores_runtime_and_connection() {
         2,
         "both connections must persist under the runtime"
     );
+    let expected_connections: std::collections::HashSet<_> =
+        expected_connections.into_iter().collect();
+    let observed_connections: std::collections::HashSet<_> = rows
+        .iter()
+        .map(|row| row.connection_id.expect("connection identity must persist"))
+        .collect();
+    assert_eq!(observed_connections, expected_connections);
     for row in rows {
         assert_eq!(row.provider, runtime_id);
         assert_eq!(row.provider_kind, ProviderKind::OpenAI);
         assert_eq!(row.metric, "requests");
         assert_eq!(row.limit, Some(100.0));
         assert_eq!(row.remaining, Some(75.0));
-        assert!(
-            row.connection_id.is_some(),
-            "the wrapper must restore the connection identity"
-        );
+    }
+}
+
+#[tokio::test]
+async fn identity_wrapper_preserves_batch_boundary_and_stamps_every_observation() {
+    let inner = Arc::new(NullRecorder::default());
+    let connection_id = ConnectionId::new();
+    let observations: Vec<_> = ["requests", "tokens"]
+        .into_iter()
+        .map(|metric| QuotaObservation {
+            provider_kind: ProviderKind::OpenAI,
+            provider: ProviderId::new("connection-scoped-id"),
+            connection_id: None,
+            metric: metric.into(),
+            source: "header".into(),
+            scope: None,
+            window: None,
+            limit: Some(100.0),
+            remaining: Some(75.0),
+            reset_at: None,
+            reset_after_milliseconds: None,
+            observed_at: chrono::Utc::now(),
+        })
+        .collect();
+
+    let recorder = quota_recorder_for_connection(
+        ProviderKind::OpenAI,
+        None,
+        connection_id,
+        ProviderId::new("openai-primary"),
+        Some(inner.clone() as Arc<dyn QuotaObservationRecorderPort>),
+    )
+    .unwrap();
+    recorder.record_observations(observations).await.unwrap();
+
+    let batches = inner.batches.lock().unwrap();
+    assert_eq!(
+        batches.len(),
+        1,
+        "one provider response must remain one batch"
+    );
+    assert_eq!(batches[0].len(), 2);
+    for (observation, metric) in batches[0].iter().zip(["requests", "tokens"]) {
+        assert_eq!(observation.provider, ProviderId::new("openai-primary"));
+        assert_eq!(observation.connection_id, Some(connection_id));
+        assert_eq!(observation.metric, metric);
     }
 }

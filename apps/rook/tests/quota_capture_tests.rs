@@ -196,7 +196,7 @@ async fn groq_captures_success_before_body_consumption() {
 }
 
 #[tokio::test]
-async fn di_builder_keeps_recorder_for_canonical_urls_and_filters_custom_urls() {
+async fn di_builder_filters_recorder_for_custom_urls() {
     assert!(is_canonical_base_url(
         ProviderKind::OpenAI,
         Some("https://api.openai.com/v1")
@@ -209,22 +209,6 @@ async fn di_builder_keeps_recorder_for_canonical_urls_and_filters_custom_urls() 
         api_key: "key".into(),
     };
     let connection_id = ConnectionId::default();
-    let canonical_recorder = Arc::new(Recorder::default());
-    let canonical_provider = build_provider_from_connection_with_recorder(
-        &connection_id,
-        ProviderKind::OpenAI,
-        &credentials,
-        Some("https://api.openai.com/v1".into()),
-        vec![],
-        Some(canonical_recorder.clone()),
-        None,
-    )
-    .expect("DI builder constructs provider for canonical URL");
-
-    // The builder uses the canonical endpoint with its recorder; keep the
-    // provider uncalled here to avoid a real upstream request.
-    assert!(canonical_provider.supported_models().is_empty());
-
     let server = mock_response(429, serde_json::json!({"error":{"message":"limited"}})).await;
     let custom_recorder = Arc::new(Recorder::default());
     let custom_provider = build_provider_from_connection_with_recorder(
@@ -240,5 +224,4 @@ async fn di_builder_keeps_recorder_for_canonical_urls_and_filters_custom_urls() 
 
     assert!(custom_provider.complete(&request()).await.is_err());
     assert_eq!(*custom_recorder.calls.lock().unwrap(), 0);
-    assert_eq!(*canonical_recorder.calls.lock().unwrap(), 0);
 }

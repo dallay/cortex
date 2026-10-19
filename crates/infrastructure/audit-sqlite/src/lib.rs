@@ -838,7 +838,7 @@ mod usage_tests {
                 std::time::Instant::now() < deadline,
                 "quota writer did not drain"
             );
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
 

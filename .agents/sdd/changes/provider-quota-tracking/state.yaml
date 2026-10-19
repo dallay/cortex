@@ -7,12 +7,12 @@ completed:
   - spec
   - design
   - tasks
-  - apply (phases 1-3: cost completeness, backend summary, dashboard)
-  - apply (phase 5.1-5.11: upstream capture U1-U3, absorbed from per-provider-quota-integration)
-next: apply (phase 5.12: wire observations into the quota summary endpoint, U5)
+  - "apply (phases 1-3: cost completeness, backend summary, dashboard)"
+  - "apply (phase 5.1-5.11: upstream capture U1-U3, absorbed from per-provider-quota-integration)"
+next: "apply (phase 5.12: wire observations into the quota summary endpoint, U5)"
 absorbed:
-  - per-provider-quota-integration (U1-U3 as phase 5; design/exploration kept under reference/)
+  - "per-provider-quota-integration (U1-U3 as phase 5; design/exploration kept under reference/)"
 pending:
-  - U5: endpoint/DTO wiring for upstream observations
-  - U6: dashboard reconciliation for the upstream series
+  - "U5: endpoint/DTO wiring for upstream observations"
+  - "U6: dashboard reconciliation for the upstream series"
 updated: "2026-10-19"

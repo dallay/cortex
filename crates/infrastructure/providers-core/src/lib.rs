@@ -5,12 +5,14 @@
 // - Non-inline functions (used by multiple providers)
 // - All role strings are &'static str (no allocation)
 
+pub mod rate_limit;
 pub mod request;
 pub mod role;
 pub mod sanitize;
 pub mod sse;
 pub mod validation;
 
+pub use rate_limit::parse_reset_milliseconds;
 pub use role::{role_to_string, Role, RoleExt};
 pub use sanitize::{char_safe_truncate, sanitize_body};
 pub use sse::{parse_event_text, process_bytes, SseEvent};

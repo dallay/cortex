@@ -1148,11 +1148,20 @@ pub fn quota_recorder_for_connection(
 impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
     async fn record_observation(
         &self,
-        mut observation: QuotaObservation,
+        observation: QuotaObservation,
     ) -> shared_kernel::CortexResult<()> {
-        observation.provider = self.provider_runtime_id.clone();
-        observation.connection_id = Some(self.connection_id);
-        self.recorder.record_observation(observation).await
+        self.record_observations(vec![observation]).await
+    }
+
+    async fn record_observations(
+        &self,
+        mut observations: Vec<QuotaObservation>,
+    ) -> shared_kernel::CortexResult<()> {
+        for observation in &mut observations {
+            observation.provider = self.provider_runtime_id.clone();
+            observation.connection_id = Some(self.connection_id);
+        }
+        self.recorder.record_observations(observations).await
     }
 
     async fn list_observations(
