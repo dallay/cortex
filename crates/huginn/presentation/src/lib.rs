@@ -1,8 +1,17 @@
 //! Replaceable presentation capability. Terminal APIs stay inside this crate.
 pub mod approval;
+pub mod completion;
 pub mod contributions;
+pub mod files;
+#[cfg(unix)]
+mod input;
+#[cfg(all(unix, feature = "test-driver"))]
+#[doc(hidden)]
+pub use input::test_support as input_test_support;
+pub mod providers;
 pub mod state;
 mod terminal;
+mod workflow;
 
 use async_trait::async_trait;
 use contributions::Contributions;
@@ -10,13 +19,12 @@ use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     ApprovalPrompt, CancellationToken, EventSink, Result, Session,
 };
+pub use huginn_plugin_api::v1::contributions_id;
+use huginn_plugin_api::v1::UiService;
 use std::sync::Arc;
 
 pub fn presentation_id() -> ServiceId {
     ServiceId::new("agent:presentation", 1)
-}
-pub fn contributions_id() -> ServiceId {
-    ServiceId::new("agent:ui-contributions", 1)
 }
 
 /// Host-only interaction seam for user input; permission policy stays with the host.
@@ -75,9 +83,31 @@ impl Drop for Connection {
     }
 }
 
-#[derive(Default)]
 pub struct RatatuiPlugin {
     lifecycle: Option<CancellationToken>,
+    model_configured: bool,
+    readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+}
+impl Default for RatatuiPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+impl RatatuiPlugin {
+    pub const fn new(model_configured: bool) -> Self {
+        Self {
+            lifecycle: None,
+            model_configured,
+            readiness: None,
+        }
+    }
+    pub fn with_readiness(readiness: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        Self {
+            lifecycle: None,
+            model_configured: false,
+            readiness: Some(readiness),
+        }
+    }
 }
 #[async_trait]
 impl Plugin for RatatuiPlugin {
@@ -113,13 +143,15 @@ impl Plugin for RatatuiPlugin {
             }
         }));
         self.lifecycle = Some(ctx.cancellation.clone());
-        ctx.provide(contributions_id(), contributions.clone())?;
+        ctx.provide(contributions_id(), UiService(contributions.clone()))?;
         ctx.provide(
             presentation_id(),
             PresentationService(Arc::new(terminal::Ratatui {
                 contributions,
                 lifecycle: ctx.cancellation.clone(),
                 drivers,
+                model_configured: self.model_configured,
+                readiness: self.readiness.clone(),
             })),
         )
     }

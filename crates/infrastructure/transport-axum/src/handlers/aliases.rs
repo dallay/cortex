@@ -90,6 +90,16 @@ pub async fn create_alias(
         });
     }
 
+    // `rook/` is reserved for virtual combo aliases (`rook/* -> combo`) and
+    // must never shadow the ModelAlias table (`alias -> canonical model`).
+    if is_reserved_model_alias(&req.alias) {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_ALIAS",
+            message: "alias prefix 'rook/' is reserved for virtual models".to_string(),
+        });
+    }
+
     // Check if canonical is itself an alias (cycle prevention)
     let canonical_model_id = ModelId::new(req.canonical.clone());
     let provider_scope = req.provider_id.as_ref().map(ProviderId::new);
@@ -173,4 +183,11 @@ pub async fn delete_alias(
             message: format!("Failed to delete alias: {}", e),
         }),
     }
+}
+
+/// `rook/` prefix is reserved for virtual combo aliases (`rook/* -> combo`).
+/// A `ModelAlias` (`alias -> canonical model`) must never shadow it:
+/// case-insensitive, surrounding whitespace ignored.
+pub fn is_reserved_model_alias(alias: &str) -> bool {
+    alias.trim().to_ascii_lowercase().starts_with("rook/")
 }

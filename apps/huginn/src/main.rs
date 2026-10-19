@@ -3,7 +3,7 @@ mod terminal;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use config::Config;
+use config::{Config, ModelReadiness};
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
 use huginn_runtime::{
@@ -57,31 +57,59 @@ enum Commands {
     Doctor,
 }
 
+fn prepare_config(cli: &Cli) -> anyhow::Result<Config> {
+    let mut config = Config::load(cli.config.as_deref())?;
+    if let Some(provider) = &cli.provider {
+        config.provider = provider.clone();
+        config.provider_explicit = true;
+    }
+    if let Some(base_url) = &cli.base_url {
+        config.base_url = Some(base_url.clone());
+    }
+    if let Some(model) = &cli.model {
+        config.model = Some(model.clone());
+    }
+    if let Some(db) = &cli.db {
+        config.db = db.clone();
+    }
+    let sessions_only = matches!(cli.command, Some(Commands::Sessions));
+    if !sessions_only {
+        config.fill_from_env();
+        config.validate_common()?;
+    }
+    // Reject an invalid explicit winner before opening any database, but give
+    // an unconfigured invocation a chance to recover its durable selection.
+    if !sessions_only && config.model_readiness() == ModelReadiness::Invalid {
+        config.require_model()?;
+    }
+    Ok(config)
+}
+
+fn doctor_report(
+    config: &Config,
+    session: &Session,
+    services: impl serde::Serialize,
+    model_readiness: &str,
+) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "workspace": session.workspace,
+        "database": config.db,
+        "provider": config.provider,
+        "base_url": config.base_url,
+        "model": config.model,
+        "api_key_env": config.api_key_env,
+        "api_key_resolved": config.resolve_api_key()?.is_some(),
+        "mcp_servers": config.mcp.iter().map(|server| &server.name).collect::<Vec<_>>(),
+        "services": services,
+        "model_readiness": model_readiness,
+        "rook_compatibility": "unsupported",
+    }))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let mut config = Config::load(cli.config.as_deref())?;
-    if let Some(value) = cli.provider {
-        config.provider = value;
-    }
-    if let Some(value) = cli.base_url {
-        config.base_url = Some(value);
-    }
-    if let Some(value) = cli.model {
-        config.model = Some(value);
-    }
-    if let Some(value) = cli.db {
-        config.db = value;
-    }
-    if !matches!(cli.command, Some(Commands::Sessions)) {
-        // Resolve HUGINN_* / AGENT_* env vars before validating so doctor
-        // and one-shot modes have the same precedence as chat/run.
-        config.fill_from_env();
-    }
-    // The sessions subcommand only reads the database and must work without model settings.
-    if !matches!(cli.command, Some(Commands::Sessions)) {
-        config.validate()?;
-    }
+    let config = prepare_config(&cli)?;
     let sessions = Arc::new(SqliteSessions::open(&config.db)?);
     if matches!(cli.command, Some(Commands::Sessions)) {
         for session in sessions.list().await? {
@@ -155,48 +183,124 @@ async fn main() -> anyhow::Result<()> {
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
     let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
     let output = Output { json: cli.json };
-    let model = config.create_model()?;
+    let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
+        Arc::new(huginn_runtime::model::UnconfiguredModelProvider)
+            as Arc<dyn huginn_core::ModelProvider>
+    } else {
+        config.create_model()?
+    };
     let registry = Registry::default();
     let startup = CancellationToken::new();
-    let mut supervisor = composition::build_native(
+    let loop_config = LoopConfig {
+        max_iterations: config.max_iterations,
+        context_tokens: config.context_tokens,
+        max_output_tokens: config.max_output_tokens,
+    };
+    let access = huginn_application::connections::ConnectionAccess::new(Arc::new(
+        huginn_runtime::connections::HostSecrets::default(),
+    ));
+    let mut supervisor = composition::build_native_with_connections(
         model.clone(),
+        access.clone(),
         registry.clone(),
         sessions.clone(),
-        LoopConfig {
-            max_iterations: config.max_iterations,
-            context_tokens: config.context_tokens,
-            max_output_tokens: config.max_output_tokens,
-        },
+        loop_config,
         config.tool_timeout_secs,
     )
     .await?;
+    // Explicit headless configurations need neither durable metadata nor its
+    // global writer lease. TUI always needs management for deliberate UI changes.
+    let mut connection_management = false;
+    if tui || config.model_readiness() == ModelReadiness::Unconfigured {
+        let result: anyhow::Result<bool> = async {
+            use huginn_application::{
+                connections::{ConnectionManager, ConnectionsPlugin},
+                providers::{catalog_id, providers_id},
+            };
+            use huginn_core::{
+                connections::ConnectionStore,
+                providers::{ProviderAction, ProviderCatalogService, ProvidersService},
+            };
+            supervisor.register(Box::new(
+                huginn_runtime::providers::BuiltinInferencePlugin {
+                    timeout_secs: config.timeout_secs,
+                },
+            ))?;
+            supervisor.start().await?;
+            let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
+            let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
+            let explicit_selection = if config.model_readiness() == ModelReadiness::Ready {
+                providers.0.diagnostic()?.selection
+            } else {
+                None
+            };
+            let store = match huginn_runtime::connections::SqliteConnections::open(
+                &config.db.with_extension("providers.db"),
+            ) {
+                Ok(store) => Arc::new(store) as Arc<dyn ConnectionStore>,
+                Err(huginn_core::connections::ConnectionError::Conflict) if tui || is_doctor => {
+                    // Another process owns durable connection management. Keep
+                    // the TUI/doctor available; management is optional here.
+                    return Ok(false);
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let manager = Arc::new(
+                ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
+                    .await?,
+            );
+            // Explicit configuration still wins at startup; UI choices are deliberate
+            // runtime changes. Never combine stored credentials with legacy settings.
+            if let Some(selection) = explicit_selection {
+                providers
+                    .0
+                    .execute(ProviderAction::Select(selection), CancellationToken::new())
+                    .await?;
+            }
+            supervisor.register(Box::new(ConnectionsPlugin(manager)))?;
+            supervisor.start().await?;
+            Ok(true)
+        }
+        .await;
+        match result {
+            Ok(enabled) => connection_management = enabled,
+            Err(error) => {
+                supervisor.shutdown().await;
+                return Err(error);
+            }
+        }
+    }
+    let router = supervisor
+        .resolve::<huginn_core::ModelService>(&composition::model_id())?
+        .0
+        .clone();
     if is_doctor {
-        // Surface legacy env-var warnings even when the user only ran
-        // `huginn doctor`. resolve_api_key is the single place that knows
-        // the canonical->legacy fallback order.
-        let resolved_key = config.resolve_api_key()?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "workspace": session.workspace,
-                "database": config.db,
-                "provider": config.provider,
-                "base_url": config.base_url,
-                "model": config.model,
-                "api_key_env": config.api_key_env,
-                "api_key_resolved": resolved_key.is_some(),
-                "mcp_servers": config.mcp.iter().map(|c| &c.name).collect::<Vec<_>>(),
-                "services": supervisor.diagnostics(),
-                "rook_compatibility": "unsupported",
-            }))?
-        );
+        let readiness = if router.is_configured() {
+            "ready"
+        } else {
+            "unconfigured"
+        };
+        let report = doctor_report(&config, &session, supervisor.diagnostics(), readiness)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
         supervisor.shutdown().await;
         return Ok(());
     }
     if tui {
-        let result = tui_chat(&config, &mut session, &mut supervisor, allowed).await;
+        let result = tui_chat(
+            &config,
+            &mut session,
+            &mut supervisor,
+            allowed,
+            router,
+            connection_management,
+        )
+        .await;
         supervisor.shutdown().await;
         return result;
+    }
+    if prompt.is_some() && !router.is_configured() {
+        supervisor.shutdown().await;
+        config.require_model()?;
     }
     if let Err(error) = mcp::register_plugins(
         &mut supervisor,
@@ -249,6 +353,10 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             if line.is_empty() {
+                continue;
+            }
+            if !router.is_configured() {
+                eprintln!("\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.");
                 continue;
             }
             // `/compact` and `/summarize` (alias) run the same real-model
@@ -339,12 +447,22 @@ async fn tui_chat(
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
+    router: Arc<dyn huginn_core::ModelProvider>,
+    connection_management: bool,
 ) -> anyhow::Result<()> {
     use huginn_presentation::{
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
-    supervisor.register(Box::new(RatatuiPlugin::default()))?;
-    supervisor.register(Box::new(ConversationPlugin::default()))?;
+    let readiness = router.clone();
+    supervisor.register(Box::new(RatatuiPlugin::with_readiness(Arc::new(
+        move || readiness.is_configured(),
+    ))))?;
+    supervisor.register(Box::new(ConversationPlugin))?;
+    if connection_management {
+        supervisor.register(Box::new(huginn_presentation::providers::ProvidersUiPlugin))?;
+    }
+    #[cfg(feature = "reference-extension")]
+    supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
     let connection = presentation.0.open(session).await?;
@@ -358,6 +476,11 @@ async fn tui_chat(
         ui.synchronize(session);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
+            if !router.is_configured() {
+                ui.notice("No model configured. Use /login to connect a provider, then /model. No restart needed.".into());
+                ui.synchronize(session);
+                continue;
+            }
             let cancel = CancellationToken::new();
             ui.begin(cancel.clone());
             let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {

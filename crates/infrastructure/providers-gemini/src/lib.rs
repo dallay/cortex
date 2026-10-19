@@ -7,7 +7,7 @@ use rook_core::{
     StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
-use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
 fn map_gemini_finish_reason(reason: &str) -> Option<rook_core::FinishReason> {
@@ -73,14 +73,43 @@ pub struct GeminiProviderConfig {
 pub struct GeminiProvider {
     config: GeminiProviderConfig,
     client: Client,
+    oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
+    connection_id: Option<ConnectionId>,
+    project_id: Option<String>,
 }
 
 impl GeminiProvider {
     pub fn new(config: GeminiProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            oauth_token_port: None,
+            connection_id: None,
+            project_id: None,
+        }))
+    }
+
+    pub fn new_with_oauth(
+        config: GeminiProviderConfig,
+        connection_id: ConnectionId,
+        project_id: String,
+        oauth_token_port: Arc<dyn rook_core::OAuthTokenPort>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Arc::new(Self {
+            config,
+            client,
+            oauth_token_port: Some(oauth_token_port),
+            connection_id: Some(connection_id),
+            project_id: Some(project_id),
+        }))
     }
 
     fn base_url(&self) -> String {
@@ -88,6 +117,76 @@ impl GeminiProvider {
             .base_url
             .clone()
             .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string())
+    }
+
+    async fn access_token(&self, force_refresh: bool) -> Result<String, String> {
+        match (&self.oauth_token_port, &self.connection_id) {
+            (Some(port), Some(connection_id)) => port
+                .access_token(connection_id, force_refresh)
+                .await
+                .map_err(|error| error.to_string()),
+            _ => Ok(self.config.api_key.clone()),
+        }
+    }
+
+    async fn send_models_request(&self, url: &str) -> Result<reqwest::Response, String> {
+        for attempt in 0..=1 {
+            let token = self.access_token(attempt == 1).await?;
+            let mut request = self.client.get(url);
+            if self.oauth_token_port.is_some() {
+                request = request.header("Authorization", format!("Bearer {token}"));
+                if let Some(project_id) = &self.project_id {
+                    request = request.header("x-goog-user-project", project_id);
+                }
+            } else {
+                request = request.header("x-goog-api-key", token);
+            }
+            let response = request.send().await.map_err(|error| error.to_string())?;
+            if response.status() != reqwest::StatusCode::UNAUTHORIZED
+                || self.oauth_token_port.is_none()
+                || attempt == 1
+            {
+                return Ok(response);
+            }
+        }
+        unreachable!("retry loop always returns a response")
+    }
+
+    async fn send_generate_request(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> CortexResult<reqwest::Response> {
+        for attempt in 0..=1 {
+            let token = self
+                .access_token(attempt == 1)
+                .await
+                .map_err(|_| CortexError::auth_failed("Gemini OAuth token unavailable"))?;
+            let mut request = self
+                .client
+                .post(url)
+                .header("content-type", "application/json");
+            if self.oauth_token_port.is_some() {
+                request = request.header("Authorization", format!("Bearer {token}"));
+                if let Some(project_id) = &self.project_id {
+                    request = request.header("x-goog-user-project", project_id);
+                }
+            } else {
+                request = request.header("x-goog-api-key", token);
+            }
+            let response = request
+                .json(body)
+                .send()
+                .await
+                .map_err(|error| CortexError::provider(format!("request failed: {error}")))?;
+            if response.status() != reqwest::StatusCode::UNAUTHORIZED
+                || self.oauth_token_port.is_none()
+                || attempt == 1
+            {
+                return Ok(response);
+            }
+        }
+        unreachable!("retry loop always returns a response")
     }
 }
 
@@ -103,13 +202,13 @@ impl ProviderPort for GeminiProvider {
         ApiFormat::OpenAI
     }
     fn is_available(&self) -> bool {
-        !self.config.api_key.is_empty()
+        self.oauth_token_port.is_some() || !self.config.api_key.is_empty()
     }
 
     async fn health_check(&self) -> HealthStatus {
         // No API key configured — surface as a yellow warning so the
         // user can still Save and add a key later via Edit.
-        if self.config.api_key.is_empty() {
+        if !self.is_available() {
             return HealthStatus::Warning {
                 provider: self.config.id.clone(),
                 latency_ms: 0,
@@ -119,13 +218,7 @@ impl ProviderPort for GeminiProvider {
 
         let start = std::time::Instant::now();
         let probe_url = format!("{}/v1beta/models", self.base_url());
-        match self
-            .client
-            .get(&probe_url)
-            .header("x-goog-api-key", &self.config.api_key)
-            .send()
-            .await
-        {
+        match self.send_models_request(&probe_url).await {
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 let status = resp.status();
@@ -222,15 +315,7 @@ impl ProviderPort for GeminiProvider {
             model
         );
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("x-goog-api-key", &self.config.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+        let resp = self.send_generate_request(&url, &body).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -311,5 +396,206 @@ impl ProviderPort for GeminiProvider {
                 "Gemini streaming adapter not yet implemented",
             ))
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[test]
+    fn test_map_gemini_finish_reason() {
+        assert_eq!(
+            map_gemini_finish_reason("STOP"),
+            Some(rook_core::FinishReason::Stop)
+        );
+        assert_eq!(
+            map_gemini_finish_reason("MAX_TOKENS"),
+            Some(rook_core::FinishReason::Length)
+        );
+        assert_eq!(
+            map_gemini_finish_reason("SAFETY"),
+            Some(rook_core::FinishReason::ContentFilter)
+        );
+        assert_eq!(
+            map_gemini_finish_reason("RECITATION"),
+            Some(rook_core::FinishReason::ContentFilter)
+        );
+        assert_eq!(map_gemini_finish_reason("OTHER"), None);
+        assert_eq!(map_gemini_finish_reason("UNKNOWN"), None);
+    }
+
+    #[tokio::test]
+    async fn test_gemini_provider_basic_methods() {
+        let config = GeminiProviderConfig {
+            id: ProviderId::new("gemini-1"),
+            api_key: "".to_string(),
+            base_url: None,
+            models: vec![KModelId::new("gemini-1.5-pro")],
+            timeout_secs: 5,
+        };
+
+        let provider = GeminiProvider::new(config).unwrap();
+
+        assert_eq!(provider.id().as_str(), "gemini-1");
+        assert_eq!(
+            provider.supported_models(),
+            &[KModelId::new("gemini-1.5-pro")]
+        );
+        assert_eq!(provider.api_format(), ApiFormat::OpenAI);
+        assert!(!provider.is_available());
+
+        // health check with empty key
+        let health = provider.health_check().await;
+        match health {
+            HealthStatus::Warning { reason, .. } => {
+                assert!(reason.contains("No API key configured"));
+            }
+            _ => panic!("expected HealthStatus::Warning"),
+        }
+
+        // stream returns unimplemented error
+        let req = CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: ModelId::new("gemini-1.5-pro"),
+            messages: vec![rook_core::Message {
+                role: rook_core::Role::User,
+                content: rook_core::MessageContent::Text("Hello".to_string()),
+                tool_calls: vec![],
+            }],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".to_string(),
+                cacheable: false,
+                priority: 1,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        };
+
+        let stream_res = provider.stream(&req).await;
+        assert!(stream_res.is_ok());
+        let mut st = stream_res.unwrap();
+        let chunk = st.next().await;
+        assert!(chunk.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_gemini_provider_with_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        let config = GeminiProviderConfig {
+            id: ProviderId::new("gemini-test"),
+            api_key: "test-key-123".to_string(),
+            base_url: Some(mock_server.uri()),
+            models: vec![KModelId::new("gemini-1.5-pro")],
+            timeout_secs: 5,
+        };
+
+        let provider = GeminiProvider::new(config).unwrap();
+        assert!(provider.is_available());
+
+        // Mock health check (GET /v1beta/models)
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .and(header("x-goog-api-key", "test-key-123"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let health = provider.health_check().await;
+        match health {
+            HealthStatus::Healthy { provider, .. } => {
+                assert_eq!(provider.as_str(), "gemini-test");
+            }
+            _ => panic!("expected HealthStatus::Healthy"),
+        }
+
+        // Mock generateContent
+        let response_body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{ "text": "Hello from Gemini!" }]
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5,
+                "totalTokenCount": 15
+            }
+        });
+
+        let expected_body = serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": "Hi" }]
+                }
+            ],
+            "systemInstruction": {
+                "parts": [{ "text": "You are a helpful assistant." }]
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+            .and(header("x-goog-api-key", "test-key-123"))
+            .and(wiremock::matchers::body_json(expected_body))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&mock_server)
+            .await;
+
+        let req = CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: ModelId::new("gemini-1.5-pro"),
+            messages: vec![
+                rook_core::Message {
+                    role: rook_core::Role::System,
+                    content: rook_core::MessageContent::Text(
+                        "You are a helpful assistant.".to_string(),
+                    ),
+                    tool_calls: vec![],
+                },
+                rook_core::Message {
+                    role: rook_core::Role::User,
+                    content: rook_core::MessageContent::Text("Hi".to_string()),
+                    tool_calls: vec![],
+                },
+            ],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".to_string(),
+                cacheable: false,
+                priority: 1,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        };
+
+        let resp = provider.complete(&req).await.unwrap();
+        assert_eq!(resp.content, "Hello from Gemini!");
+        assert_eq!(resp.usage.prompt_tokens, 10);
+        assert_eq!(resp.usage.completion_tokens, 5);
+        assert_eq!(resp.usage.total_tokens, 15);
+        assert_eq!(resp.finish_reason, Some(rook_core::FinishReason::Stop));
     }
 }

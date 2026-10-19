@@ -6,7 +6,7 @@ import {
   Loader2,
   Trash2,
 } from "@lucide/vue";
-import {computed, ref, watch} from "vue";
+import {computed, onUnmounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
 import PasswordInput from "@/components/PasswordInput.vue";
 import {
@@ -46,12 +46,14 @@ import {
   PROVIDER_KINDS,
   type ProviderKind,
 } from "@/config/providerCatalog";
-import type {
-  CreateProviderRequest,
-  ProviderConnectionResponse,
-  TestConnectionResponse,
-  UpdateProviderRequest,
-  WireAuthType,
+import {
+  OAUTH_FLOW_TYPES,
+  type CreateProviderRequest,
+  type OAuthFlowType,
+  type ProviderConnectionResponse,
+  type TestConnectionResponse,
+  type UpdateProviderRequest,
+  type WireAuthType,
 } from "@/lib/api";
 
 type DialogMode = "create" | "edit";
@@ -77,7 +79,7 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n();
-const {create, update, remove, testCredentials, fetch, providerById} =
+const {create, update, remove, testCredentials, fetch, providerById, startOAuthFlow, getOAuthStatus} =
   useProviders();
 
 // ---------------------------------------------------------------------------
@@ -96,6 +98,11 @@ interface FormState {
   priority: number;
   models: string;
   enabled: boolean;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthTenantId: string;
+  oauthProjectId: string;
+  oauthFlowType: OAuthFlowType;
 }
 
 function blankForm(): FormState {
@@ -106,6 +113,11 @@ function blankForm(): FormState {
     priority: 50,
     models: "",
     enabled: true,
+    oauthClientId: "",
+    oauthClientSecret: "",
+    oauthTenantId: "",
+    oauthProjectId: "",
+    oauthFlowType: OAUTH_FLOW_TYPES.AUTHORIZATION_CODE,
   };
 }
 
@@ -115,6 +127,13 @@ const saving = ref(false);
 const deleting = ref(false);
 const testResult = ref<TestConnectionResponse | null>(null);
 const showDeleteConfirm = ref(false);
+const oauthFlowId = ref<string | null>(null);
+const oauthUserCode = ref<string | null>(null);
+const oauthVerificationUri = ref<string | null>(null);
+const oauthAuthorizationUrl = ref<string | null>(null);
+const oauthMessage = ref<string | null>(null);
+const oauthBusy = ref(false);
+let oauthPollTimer: number | undefined;
 
 // ---------------------------------------------------------------------------
 // Derived state
@@ -126,6 +145,22 @@ const catalogEntry = computed(() => findCatalogEntry(kind.value));
 const isApikey = computed(() => authType.value === "apikey");
 const supportsOAuth = computed(() =>
   catalogEntry.value.authTypes.includes("oauth"),
+);
+const isOAuth = computed(() => authType.value === "oauth");
+const canStartOAuth = computed(
+  () =>
+    !oauthBusy.value &&
+    !saving.value &&
+    isOAuth.value &&
+    form.value.displayName.trim() !== "" &&
+    form.value.oauthClientId.trim() !== "" &&
+    (kind.value !== "azure-openai" || form.value.baseUrl.startsWith("https://")) &&
+    (kind.value !== "azure-openai" || firstModel() !== null) &&
+    (kind.value !== "gemini" ||
+      isEditMode.value ||
+      form.value.oauthProjectId.trim() !== "") &&
+    (kind.value === "azure-openai" ||
+      form.value.oauthFlowType !== OAUTH_FLOW_TYPES.DEVICE_CODE),
 );
 // Managed-cloud providers (e.g. Ollama Cloud) ship with a vendor-fixed
 // base URL — we still send it to the backend, but the user has no reason
@@ -254,12 +289,24 @@ function loadFromConnection(conn: ProviderConnectionResponse) {
   form.value.models = conn.config.defaultModel ?? "";
   form.value.enabled = conn.isActive;
   form.value.apiKey = ""; // never re-expose stored secret
+  form.value.oauthClientId = conn.oauthClientId ?? "";
+  form.value.oauthTenantId = conn.oauthTenantId ?? "";
+  form.value.oauthProjectId = ""; // project IDs are kept out of connection DTOs
   testResult.value = null;
 }
 
 function resetForm() {
+  stopOAuthPolling();
+  oauthFlowId.value = null;
+  oauthUserCode.value = null;
+  oauthVerificationUri.value = null;
+  oauthAuthorizationUrl.value = null;
+  oauthMessage.value = null;
+  oauthBusy.value = false;
   kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
-  authType.value = "apikey";
+  authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+    ? "apikey"
+    : "oauth";
   form.value = blankForm();
   testResult.value = null;
   showDeleteConfirm.value = false;
@@ -283,6 +330,9 @@ watch(
     } else {
       // Create mode — seed from current kind.
       if (props.providerKind) kind.value = props.providerKind;
+      authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+        ? "apikey"
+        : "oauth";
       form.value = blankForm();
       testResult.value = null;
     }
@@ -295,6 +345,9 @@ watch(
 watch(kind, (newKind) => {
   if (!isEditMode.value) {
     form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
+    if (!findCatalogEntry(newKind).authTypes.includes(authType.value)) {
+      authType.value = findCatalogEntry(newKind).authTypes[0] ?? "oauth";
+    }
   }
 });
 
@@ -335,6 +388,100 @@ async function handleTest() {
     };
   } finally {
     testing.value = false;
+  }
+}
+
+function stopOAuthPolling() {
+  if (oauthPollTimer !== undefined) {
+    globalThis.clearInterval(oauthPollTimer);
+    oauthPollTimer = undefined;
+  }
+}
+
+async function handleOAuthConnect() {
+  if (!canStartOAuth.value) return;
+  oauthBusy.value = true;
+  oauthMessage.value = t("providers.oauth.starting");
+  const authWindow =
+    form.value.oauthFlowType === OAUTH_FLOW_TYPES.AUTHORIZATION_CODE
+      ? globalThis.open("about:blank", "_blank")
+      : null;
+  const existing =
+    isEditMode.value && props.connectionId
+      ? providerById.value.get(props.connectionId)
+      : undefined;
+  const runtimeId =
+    existing?.providerRuntimeId ??
+    `${kind.value}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const redirectUri = new URL(
+    "/api/oauth/callback",
+    globalThis.location.origin,
+  ).toString();
+  const started = await startOAuthFlow(kind.value, {
+    flowType: form.value.oauthFlowType,
+    connectionId: existing?.id,
+    providerRuntimeId: runtimeId,
+    name: form.value.displayName.trim(),
+    priority: form.value.priority,
+    isActive: form.value.enabled,
+    config: {
+      maxConcurrent: 10,
+      quotaWindowThresholds: {warning: 0.8, error: 0.95},
+      defaultModel: firstModel() ?? undefined,
+      baseUrl: form.value.baseUrl.trim() || undefined,
+    },
+    clientId: form.value.oauthClientId.trim(),
+    clientSecret: form.value.oauthClientSecret.trim() || undefined,
+    tenantId: form.value.oauthTenantId.trim() || undefined,
+    redirectUri,
+    projectId: form.value.oauthProjectId.trim() || undefined,
+  });
+  if (!started) {
+    authWindow?.close();
+    oauthBusy.value = false;
+    oauthMessage.value = t("providers.oauth.startFailed");
+    return;
+  }
+
+  oauthFlowId.value = started.flowId;
+  oauthUserCode.value = started.userCode;
+  oauthVerificationUri.value = started.verificationUri;
+  oauthAuthorizationUrl.value = started.authorizationUrl;
+  oauthMessage.value = started.message ?? t("providers.oauth.waiting");
+  if (started.authorizationUrl) {
+    if (authWindow) {
+      authWindow.opener = null;
+      authWindow.location.href = started.authorizationUrl;
+    } else {
+      oauthMessage.value = t("providers.oauth.openAuthorizationLink");
+    }
+  }
+  oauthPollTimer = globalThis.setInterval(
+    () => void pollOAuthStatus(),
+    Math.max((started.intervalSecs ?? 2) * 1000, 2000),
+  );
+  await pollOAuthStatus();
+}
+
+async function pollOAuthStatus() {
+  if (!oauthFlowId.value) return;
+  const status = await getOAuthStatus(kind.value, {flowId: oauthFlowId.value});
+  if (!status) return;
+  oauthMessage.value = status.message ?? t("providers.oauth.waiting");
+  if (status.status === "connected" && status.connectionId) {
+    stopOAuthPolling();
+    await fetch();
+    const connection = providerById.value.get(status.connectionId);
+    if (connection) {
+      emit("saved", connection);
+      emit("update:open", false);
+    } else {
+      oauthMessage.value = t("providers.oauth.connectionNotFound");
+    }
+    oauthBusy.value = false;
+  } else if (status.status === "failed" || status.status === "expired") {
+    stopOAuthPolling();
+    oauthBusy.value = false;
   }
 }
 
@@ -390,6 +537,8 @@ async function handleDelete() {
     deleting.value = false;
   }
 }
+
+onUnmounted(stopOAuthPolling);
 </script>
 
 <template>
@@ -496,6 +645,98 @@ async function handleDelete() {
           />
         </div>
 
+        <div v-if="isOAuth" class="space-y-4 rounded-md border p-3">
+          <div class="space-y-2">
+            <Label for="oauthClientId">{{ t('providers.oauth.clientId') }}</Label>
+            <Input
+              id="oauthClientId"
+              v-model="form.oauthClientId"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              :disabled="oauthBusy"
+              data-testid="oauth-client-id"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="oauthClientSecret">{{ t('providers.oauth.clientSecret') }}</Label>
+            <PasswordInput
+              id="oauthClientSecret"
+              v-model="form.oauthClientSecret"
+              :disabled="oauthBusy"
+              data-testid="oauth-client-secret"
+            />
+          </div>
+          <div v-if="kind === 'azure-openai'" class="space-y-2">
+            <Label for="oauthTenantId">{{ t('providers.oauth.tenantId') }}</Label>
+            <Input
+              id="oauthTenantId"
+              v-model="form.oauthTenantId"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              :disabled="oauthBusy"
+              data-testid="oauth-tenant-id"
+            />
+            <Label id="oauthFlowTypeLabel" for="oauthFlowType">
+              {{ t('providers.oauth.flowType') }}
+            </Label>
+            <Select
+              v-model="form.oauthFlowType"
+              :disabled="oauthBusy"
+            >
+              <SelectTrigger id="oauthFlowType" aria-labelledby="oauthFlowTypeLabel">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="OAUTH_FLOW_TYPES.AUTHORIZATION_CODE">
+                  {{ t('providers.oauth.authorizationCode') }}
+                </SelectItem>
+                <SelectItem :value="OAUTH_FLOW_TYPES.DEVICE_CODE">
+                  {{ t('providers.oauth.deviceCode') }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div v-if="kind === 'gemini'" class="space-y-2">
+            <Label for="oauthProjectId">{{ t('providers.oauth.googleProjectId') }}</Label>
+            <Input
+              id="oauthProjectId"
+              v-model="form.oauthProjectId"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              :disabled="oauthBusy"
+              required
+              data-testid="oauth-project-id"
+            />
+          </div>
+          <output v-if="oauthMessage" class="space-y-2" aria-live="polite">
+            <p class="text-sm">{{ oauthMessage }}</p>
+            <p v-if="oauthUserCode" class="font-mono text-lg font-semibold">
+              {{ oauthUserCode }}
+            </p>
+            <a
+              v-if="oauthVerificationUri"
+              :href="oauthVerificationUri"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-sm underline underline-offset-4"
+            >
+              {{ t('providers.oauth.openVerificationPage') }}
+            </a>
+            <a
+              v-if="oauthAuthorizationUrl && !oauthUserCode"
+              :href="oauthAuthorizationUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-sm underline underline-offset-4"
+            >
+              {{ t('providers.oauth.openAuthorizationPage') }}
+            </a>
+          </output>
+        </div>
+
         <!-- Base URL (hidden for managed-cloud providers where the
              endpoint is vendor-fixed, e.g. Ollama Cloud) -->
         <div v-if="baseUrlEditable" class="space-y-2">
@@ -534,12 +775,20 @@ async function handleDelete() {
           <Input
             id="models"
             v-model="form.models"
-            :placeholder="t('providers.form.modelsPlaceholder')"
+            :placeholder="
+              kind === 'azure-openai'
+                ? t('providers.oauth.azureDeploymentPlaceholder')
+                : t('providers.form.modelsPlaceholder')
+            "
             :disabled="saving"
             data-testid="input-models"
           />
           <p class="text-xs text-muted-foreground">
-            {{ t('providers.form.modelsHelp') }}
+            {{
+              kind === 'azure-openai'
+                ? t('providers.oauth.azureDeploymentHelp')
+                : t('providers.form.modelsHelp')
+            }}
           </p>
         </div>
 
@@ -614,6 +863,7 @@ async function handleDelete() {
       <DialogFooter class="flex-col sm:flex-row gap-2">
         <div class="flex gap-2">
           <Button
+            v-if="!isOAuth"
             variant="outline"
             :disabled="!canTest"
             data-testid="test-button"
@@ -627,12 +877,22 @@ async function handleDelete() {
             }}
           </Button>
           <Button
+            v-if="!isOAuth"
             :disabled="!canSave"
             data-testid="save-button"
             @click="handleSave"
           >
             <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin" />
             {{ t('providers.form.save') }}
+          </Button>
+          <Button
+            v-if="isOAuth"
+            :disabled="!canStartOAuth || oauthBusy"
+            data-testid="oauth-connect-button"
+            @click="handleOAuthConnect"
+          >
+            <Loader2 v-if="oauthBusy" class="h-4 w-4 mr-2 animate-spin" />
+            {{ oauthBusy ? t('providers.oauth.waiting') : t('providers.oauth.connect') }}
           </Button>
         </div>
         <Button

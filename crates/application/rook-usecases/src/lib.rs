@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 pub mod auth;
 pub mod cost_estimation;
 pub mod route_request;
+pub mod route_selection;
 pub mod router_impl;
 
 pub use auth::{
@@ -31,6 +32,7 @@ pub use manage_connections::{
 pub use manage_providers::ManageProviders;
 pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort, UsageRecorderPort};
 pub use route_request::RouteRequest;
+pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 
 pub mod authenticate_client_api;
@@ -38,6 +40,8 @@ pub mod health_check;
 pub mod manage_api_keys;
 pub mod manage_connections;
 pub mod manage_providers;
+pub mod oauth_tokens;
+mod provider_concurrency;
 
 /// All use cases assembled into one struct for easy passing to transports.
 pub struct RookUsecases {

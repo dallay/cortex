@@ -63,8 +63,14 @@ fn canonical_gate_rejects_custom_and_non_capturing_endpoints() {
         (ProviderKind::OpenAI, Some("https://proxy.internal/v1")),
         (ProviderKind::OpenAI, Some("http://api.openai.com")),
         (ProviderKind::OpenAI, Some("https://api.openai.com:8443")),
-        (ProviderKind::OpenAI, Some("https://api.openai.com.evil.test")),
-        (ProviderKind::Anthropic, Some("https://api.anthropic.com/v1")),
+        (
+            ProviderKind::OpenAI,
+            Some("https://api.openai.com.evil.test"),
+        ),
+        (
+            ProviderKind::Anthropic,
+            Some("https://api.anthropic.com/v1"),
+        ),
         (ProviderKind::Groq, Some("https://api.groq.com/v1")),
         (ProviderKind::Ollama, Some("http://localhost:11434")),
         (
@@ -119,7 +125,8 @@ async fn wait_for_observations(
 }
 
 #[tokio::test]
-async fn identity_wrapper_restores_runtime_and_connection() {    let db = tempfile::NamedTempFile::new().unwrap();
+async fn identity_wrapper_restores_runtime_and_connection() {
+    let db = tempfile::NamedTempFile::new().unwrap();
     db_migration::run_migrations(db.path().to_str().unwrap()).unwrap();
     let repository = Arc::new(audit_sqlite::SqliteUsageRepository::new(db.path()).unwrap());
 
@@ -157,7 +164,11 @@ async fn identity_wrapper_restores_runtime_and_connection() {    let db = tempfi
     }
 
     let rows = wait_for_observations(&repository, &runtime_id, 2).await;
-    assert_eq!(rows.len(), 2, "both connections must persist under the runtime");
+    assert_eq!(
+        rows.len(),
+        2,
+        "both connections must persist under the runtime"
+    );
     for row in rows {
         assert_eq!(row.provider, runtime_id);
         assert_eq!(row.provider_kind, ProviderKind::OpenAI);

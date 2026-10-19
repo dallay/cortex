@@ -217,6 +217,7 @@ async fn di_builder_keeps_recorder_for_canonical_urls_and_filters_custom_urls() 
         Some("https://api.openai.com/v1".into()),
         vec![],
         Some(canonical_recorder.clone()),
+        None,
     )
     .expect("DI builder constructs provider for canonical URL");
 
@@ -233,6 +234,7 @@ async fn di_builder_keeps_recorder_for_canonical_urls_and_filters_custom_urls() 
         Some(server.uri()),
         vec![],
         Some(custom_recorder.clone()),
+        None,
     )
     .expect("DI builder constructs provider for custom URL");
 

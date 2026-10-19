@@ -17,11 +17,11 @@ use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
 use rook_core::{
-    ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboRepositoryPort, ComboStep,
-    ComboStrategy, ConnectionId, DecryptedCredentials, ModelAliasRepositoryPort, ModelCatalogPort,
-    PasswordHasher, ProviderId, ProviderKind, ProviderPort, ProviderRegistryPort,
-    ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort, RouterPort,
-    SessionRepositoryPort, UsageRecorderPort,
+    ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboAliasRepositoryPort,
+    ComboRepositoryPort, ComboStep, ComboStrategy, ConnectionId, DecryptedCredentials,
+    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderId, ProviderKind,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaObservation,
+    QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
@@ -138,7 +138,7 @@ fn build_rate_limit_store(
     config: &RookConfig,
 ) -> Option<transport_axum::handlers::rate_limits::RateLimitRuleStore> {
     if config.rate_limiting.enabled {
-        Some(Arc::new(dashmap::DashMap::new()))
+        Some(transport_axum::handlers::rate_limits::RateLimitRuleStore::new())
     } else {
         None
     }
@@ -232,8 +232,13 @@ impl RookContainer {
             Some(quota_observation_recorder.clone()),
         )?;
 
-        // 7c. Combo repository — SQLite-backed combo storage
+        // 7c. Combo repository — SQLite-backed combo storage.
+        // The same SQLite file backs combo aliases (V7 table); a second
+        // connection serves the alias port (each repo owns its connection
+        // with FK enforcement, same as provider/alias repos above).
         let combo_repo: Arc<dyn ComboRepositoryPort> =
+            Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
+        let combo_alias_repo: Arc<dyn ComboAliasRepositoryPort> =
             Arc::new(ComboSqliteRepository::new(&config.database.db_path)?);
 
         // 7d. Model alias repository — SQLite-backed alias storage
@@ -280,6 +285,9 @@ impl RookContainer {
 
         if let Err(e) = refresh_result {
             tracing::warn!(error = %e, "initial registry refresh failed, starting with empty registry");
+        }
+        if let Some(ref manage_connections) = manage_connections {
+            manage_connections.start_oauth_refresh_task();
         }
 
         let admin =
@@ -335,7 +343,8 @@ impl RookContainer {
                     alias_repo.clone(), // model_alias_repository - wired in Phase 3
                     config.model_aliases.clone().into(),
                     telemetry_tracker, // telemetry tracker from config
-                ),
+                )
+                .with_combo_alias_repository(combo_alias_repo.clone()),
                 ManageProviders::new(router.clone()),
                 health_check,
                 authenticate_client_api.clone(),
@@ -518,6 +527,21 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     }
 
     if secret_path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::metadata(&secret_path)
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to inspect api_key_secret.key permissions: {e}")
+                })?
+                .permissions();
+            if permissions.mode() & 0o077 != 0 {
+                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to restrict api_key_secret.key permissions: {e}")
+                    })?;
+            }
+        }
         let s = std::fs::read_to_string(&secret_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
         let s = s.trim().to_string();
@@ -533,6 +557,22 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             anyhow::anyhow!("failed to create data dir for api_key_secret.key: {e}")
         })?;
     }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&secret_path)
+            .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
+        file.write_all(secret.as_bytes())
+            .and_then(|()| file.set_permissions(std::fs::Permissions::from_mode(0o600)))
+            .map_err(|e| anyhow::anyhow!("failed to secure api_key_secret.key: {e}"))?;
+    }
+    #[cfg(not(unix))]
     std::fs::write(&secret_path, &secret)
         .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
 
@@ -776,6 +816,8 @@ impl CachePort for NoOpCache {
 pub enum ProviderBuildError {
     /// Ollama requires a base_url but none was provided.
     OllamaRequiresBaseUrl,
+    AzureOpenAIRequiresValidEndpoint,
+    AzureOpenAIRequiresOAuth,
     /// Provider construction failed (e.g., invalid credentials, network error).
     ConstructionFailed(String),
 }
@@ -789,9 +831,36 @@ impl std::fmt::Display for ProviderBuildError {
                     "ollama provider requires a base_url but none was provided"
                 )
             }
+            Self::AzureOpenAIRequiresValidEndpoint => {
+                write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
+            }
+            Self::AzureOpenAIRequiresOAuth => {
+                write!(
+                    f,
+                    "Azure OpenAI provider connections require OAuth credentials"
+                )
+            }
             Self::ConstructionFailed(msg) => write!(f, "provider construction failed: {msg}"),
         }
     }
+}
+
+fn validate_azure_openai_endpoint(value: &str) -> Option<String> {
+    let endpoint = reqwest::Url::parse(value).ok()?;
+    let host = endpoint.host_str()?;
+    let azure_host =
+        host.ends_with(".openai.azure.com") || host.ends_with(".services.ai.azure.com");
+    if endpoint.scheme() != "https"
+        || !azure_host
+        || endpoint.username() != ""
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !matches!(endpoint.path(), "" | "/")
+    {
+        return None;
+    }
+    Some(endpoint.as_str().trim_end_matches('/').to_string())
 }
 
 impl std::error::Error for ProviderBuildError {}
@@ -818,6 +887,7 @@ pub fn build_provider_from_connection(
         credentials,
         base_url_override,
         models,
+        None,
         None,
     )
 }
@@ -884,9 +954,6 @@ pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>
     }
 }
 
-/// Test/CRUD entry point for the canonical-URL quota filter (T6 coverage).
-/// `pub` so integration tests can exercise the filter end-to-end; production
-/// callers go through [`ProviderBuilderPort`] / [`build_provider_from_connection`].
 pub fn build_provider_from_connection_with_recorder(
     connection_id: &ConnectionId,
     kind: ProviderKind,
@@ -894,17 +961,19 @@ pub fn build_provider_from_connection_with_recorder(
     base_url_override: Option<String>,
     models: Vec<ModelId>,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
     let quota_recorder =
         quota_recorder.filter(|_| is_canonical_base_url(kind, base_url_override.as_deref()));
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
-        DecryptedCredentials::OAuth { access_token, .. } => {
+        DecryptedCredentials::OAuth { access_token, .. } if oauth_token_port.is_none() => {
             // OAuth access tokens can be used as API keys for providers that accept them.
             // For providers that don't support OAuth natively, this returns an error below.
             access_token.clone()
         }
+        DecryptedCredentials::OAuth { .. } => String::new(),
     };
 
     let provider = match kind {
@@ -916,13 +985,22 @@ pub fn build_provider_from_connection_with_recorder(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            Arc::new(
-                providers_openai::OpenAIProvider::new_with_quota_recorder(
+            let provider = match (&oauth_token_port, credentials) {
+                (Some(token_port), DecryptedCredentials::OAuth { .. }) => {
+                    providers_openai::OpenAIProvider::new_with_oauth_and_quota_recorder(
+                        config,
+                        *connection_id,
+                        token_port.clone(),
+                        quota_recorder.clone(),
+                    )
+                }
+                _ => providers_openai::OpenAIProvider::new_with_quota_recorder(
                     config,
                     quota_recorder.clone(),
-                )
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
-            ) as Arc<dyn ProviderPort>
+                ),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
+            Arc::new(provider) as Arc<dyn ProviderPort>
         }
         ProviderKind::Anthropic => {
             let config = providers_anthropic::AnthropicProviderConfig {
@@ -979,8 +1057,18 @@ pub fn build_provider_from_connection_with_recorder(
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            providers_gemini::GeminiProvider::new(config)
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+            match (oauth_token_port, credentials) {
+                (Some(token_port), DecryptedCredentials::OAuth { project_id, .. }) => {
+                    providers_gemini::GeminiProvider::new_with_oauth(
+                        config,
+                        *connection_id,
+                        project_id.clone(),
+                        token_port,
+                    )
+                }
+                _ => providers_gemini::GeminiProvider::new(config),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
         ProviderKind::Groq => {
             let config = providers_groq::GroqProviderConfig {
@@ -992,6 +1080,34 @@ pub fn build_provider_from_connection_with_recorder(
             };
             providers_groq::GroqProvider::new_with_quota_recorder(config, quota_recorder.clone())
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+        }
+        ProviderKind::AzureOpenAI => {
+            if !matches!(credentials, DecryptedCredentials::OAuth { .. }) {
+                return Err(ProviderBuildError::AzureOpenAIRequiresOAuth);
+            }
+            let endpoint = base_url_override
+                .as_deref()
+                .and_then(validate_azure_openai_endpoint)
+                .ok_or(ProviderBuildError::AzureOpenAIRequiresValidEndpoint)?;
+            let config = providers_openai::OpenAIProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                base_url: format!("{endpoint}/openai/v1"),
+                models: models.clone(),
+                timeout_secs: 60,
+            };
+            let provider = match oauth_token_port {
+                Some(token_port) if matches!(credentials, DecryptedCredentials::OAuth { .. }) => {
+                    providers_openai::OpenAIProvider::new_with_oauth(
+                        config,
+                        *connection_id,
+                        token_port,
+                    )
+                }
+                _ => providers_openai::OpenAIProvider::new(config),
+            }
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
+            Arc::new(provider) as Arc<dyn ProviderPort>
         }
     };
 
@@ -1088,11 +1204,16 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
         // Query model catalog for models matching this provider kind
         let catalog_entries = self.catalog.list().await;
-        let models: Vec<ModelId> = catalog_entries
+        let catalog_models: Vec<ModelId> = catalog_entries
             .into_iter()
             .filter(|e| e.provider_kind == input.provider_kind)
             .map(|e| ModelId::new(e.model_id))
             .collect();
+        let models = if input.provider_kind == ProviderKind::AzureOpenAI {
+            input.default_model.clone().into_iter().collect()
+        } else {
+            catalog_models
+        };
 
         let quota_recorder = self.quota_recorder(&input);
         build_provider_from_connection_with_recorder(
@@ -1102,6 +1223,7 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             input.base_url,
             models,
             quota_recorder,
+            Some(input.oauth_token_port),
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
     }

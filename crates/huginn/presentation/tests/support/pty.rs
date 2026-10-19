@@ -11,14 +11,23 @@ pub struct Pty {
     child: Box<dyn Child + Send + Sync>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<Mutex<String>>,
+    screen: Arc<Mutex<Screen>>,
     reader: Option<std::thread::JoinHandle<()>>,
 }
 impl Pty {
-    pub fn start(mut command: CommandBuilder, answer_cursor: bool) -> Self {
+    pub fn start(command: CommandBuilder, answer_cursor: bool) -> Self {
+        Self::start_sized(command, answer_cursor, 30, 100)
+    }
+    pub fn start_sized(
+        mut command: CommandBuilder,
+        answer_cursor: bool,
+        rows: u16,
+        cols: u16,
+    ) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
-                rows: 30,
-                cols: 100,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -30,6 +39,11 @@ impl Pty {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let output = Arc::new(Mutex::new(String::new()));
         let captured = output.clone();
+        let screen = Arc::new(Mutex::new(Screen::new(
+            usize::from(rows),
+            usize::from(cols),
+        )));
+        let painted = screen.clone();
         let reply = writer.clone();
         let thread = std::thread::spawn(move || {
             let mut bytes = [0; 4096];
@@ -41,6 +55,7 @@ impl Pty {
                 let queries = {
                     let mut output = captured.lock().unwrap();
                     output.push_str(&String::from_utf8_lossy(&bytes[..count]));
+                    painted.lock().unwrap().feed(&bytes[..count]);
                     output.matches("\x1b[6n").count()
                 };
                 if answer_cursor && queries > seen {
@@ -59,6 +74,7 @@ impl Pty {
             child,
             writer,
             output,
+            screen,
             reader: Some(thread),
         }
     }
@@ -70,13 +86,27 @@ impl Pty {
     pub fn output(&self) -> String {
         self.output.lock().unwrap().clone()
     }
+    fn screen_text(&self) -> String {
+        self.screen.lock().unwrap().text()
+    }
     pub fn wait_for(&self, needle: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !self.output().contains(needle) {
+        while !self.screen_text().contains(needle) {
             assert!(
                 Instant::now() < deadline,
-                "missing {needle:?}: {}",
-                self.output()
+                "missing {needle:?} on screen:\n{}",
+                self.screen_text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pub fn wait_until_screen_not_contains(&self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.screen_text().contains(needle) {
+            assert!(
+                Instant::now() < deadline,
+                "screen still contains {needle:?} after timeout:\n{}",
+                self.screen_text()
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -107,8 +137,206 @@ impl Pty {
         self.output()
     }
 }
+
+/// Minimal screen model for visibility assertions. The PTY captures the terminal
+/// protocol, not pixels: Ratatui rewrites only changed cells, so a label split
+/// across diff frames never appears contiguously in raw bytes. This tracks
+/// cursor-addressed writes into a fixed grid; assertions search the grid.
+/// Stale cells are possible (no scrollback model), so only wait for text that
+/// has not appeared before in the same session.
+struct Screen {
+    cells: Vec<Vec<char>>,
+    rows: usize,
+    cols: usize,
+    row: usize,
+    col: usize,
+    pending: Vec<u8>,
+}
+impl Screen {
+    fn new(rows: usize, cols: usize) -> Self {
+        Self {
+            cells: vec![vec![' '; cols]; rows],
+            rows,
+            cols,
+            row: 0,
+            col: 0,
+            pending: Vec::new(),
+        }
+    }
+    fn text(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    fn put(&mut self, character: char) {
+        if self.row < self.rows && self.col < self.cols {
+            self.cells[self.row][self.col] = character;
+            self.col = (self.col + 1).min(self.cols - 1);
+        }
+    }
+    fn feed(&mut self, bytes: &[u8]) {
+        // Reads can split a multibyte character or a CSI sequence: buffer
+        // everything, parse only complete units, and keep the incomplete tail.
+        self.pending.extend_from_slice(bytes);
+        let complete = match std::str::from_utf8(&self.pending) {
+            Ok(_) => self.pending.len(),
+            Err(error) => match error.error_len() {
+                None => error.valid_up_to(),
+                Some(_) => self.pending.len(),
+            },
+        };
+        let text = String::from_utf8_lossy(&self.pending[..complete]).into_owned();
+        // Hold back a trailing ESC or an unfinished CSI (all-ASCII tail).
+        let hold = Self::csi_tail_len(&text);
+        let chunk: String = text[..text.len() - hold].chars().collect();
+        self.pending.drain(..complete - hold);
+        self.apply(&chunk);
+    }
+    fn apply(&mut self, text: &str) {
+        let chars: Vec<char> = text.chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            let character = chars[index];
+            index += 1;
+            if character == '\x1b' && chars.get(index) == Some(&'[') {
+                index += 1;
+                let mut params = String::new();
+                let mut final_byte = ' ';
+                for candidate in chars.iter().skip(index) {
+                    index += 1;
+                    if ('@'..='~').contains(candidate) {
+                        final_byte = *candidate;
+                        break;
+                    }
+                    params.push(*candidate);
+                }
+                self.apply_csi(final_byte, &params);
+                continue;
+            }
+            match character {
+                '\n' => {
+                    self.row = (self.row + 1).min(self.rows - 1);
+                    self.col = 0;
+                }
+                '\r' => self.col = 0,
+                _ if character.is_control() => {}
+                _ => self.put(character),
+            }
+        }
+    }
+    /// Byte length of a trailing incomplete escape sequence (ESC or unfinished
+    /// CSI), or 0 when the text ends on a complete unit. The tail is pure ASCII,
+    /// so its char length equals its byte length.
+    fn csi_tail_len(text: &str) -> usize {
+        let Some(start) = text.rfind('\x1b') else {
+            return 0;
+        };
+        let tail = &text[start..];
+        if tail == "\x1b" {
+            return 1;
+        }
+        if let Some(sequence) = tail.strip_prefix("\x1b[") {
+            if sequence.chars().all(|ch| {
+                ch.is_ascii_digit() || matches!(ch, ';' | ':' | '?' | ' ' | '#' | '$' | '\'')
+            }) && !sequence.chars().any(|ch| ('@'..='~').contains(&ch))
+            {
+                return tail.len();
+            }
+        }
+        0
+    }
+    fn numbers(params: &str) -> Vec<usize> {
+        params
+            .trim_matches(|ch| ch == '?' || ch == '=')
+            .split(';')
+            .map(|part| part.parse().unwrap_or(0))
+            .collect()
+    }
+    fn apply_csi(&mut self, final_byte: char, params: &str) {
+        let numbers = Self::numbers(params);
+        let first = numbers.first().copied().unwrap_or(0);
+        let second = numbers.get(1).copied().unwrap_or(0);
+        let saturating = |value: usize| value.min(10_000);
+        match final_byte {
+            'H' | 'f' => {
+                self.row = first.saturating_sub(1).min(self.rows - 1);
+                self.col = second.saturating_sub(1).min(self.cols - 1);
+            }
+            'A' => self.row = self.row.saturating_sub(saturating(first.max(1))),
+            'B' | 'E' => {
+                self.row = (self.row + saturating(first.max(1))).min(self.rows - 1);
+                if final_byte == 'E' {
+                    self.col = 0;
+                }
+            }
+            'C' => self.col = (self.col + saturating(first.max(1))).min(self.cols - 1),
+            'D' => self.col = self.col.saturating_sub(saturating(first.max(1))),
+            'G' => self.col = first.saturating_sub(1).min(self.cols - 1),
+            'd' => self.row = first.saturating_sub(1).min(self.rows - 1),
+            'J' => {
+                if first == 2 {
+                    for row in &mut self.cells {
+                        row.fill(' ');
+                    }
+                } else {
+                    for row in self.row..self.rows {
+                        let from = if row == self.row { self.col } else { 0 };
+                        for cell in self.cells[row].iter_mut().skip(from) {
+                            *cell = ' ';
+                        }
+                    }
+                }
+            }
+            'K' if self.row < self.rows => {
+                let (from, to) = match first {
+                    1 => (0, (self.col + 1).min(self.cols)),
+                    2 => (0, self.cols),
+                    _ => (self.col.min(self.cols), self.cols),
+                };
+                for cell in self.cells[self.row].iter_mut().take(to).skip(from) {
+                    *cell = ' ';
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Drop for Pty {
     fn drop(&mut self) {
         let _ = self.child.kill();
     }
+}
+
+#[test]
+fn screen_buffers_split_csi_sequences_across_reads() {
+    let mut screen = Screen::new(30, 100);
+    screen.feed(b"\x1b[12;");
+    // Nothing painted yet: the unfinished sequence stays buffered.
+    assert!(!screen.text().contains('['));
+    screen.feed(b"5HX");
+    let row: String = screen.text().lines().nth(11).unwrap().into();
+    assert_eq!(row.chars().nth(4), Some('X'));
+    assert!(!screen.text().contains("[12;"));
+}
+
+#[test]
+fn screen_buffers_split_multibyte_characters_across_reads() {
+    let mut screen = Screen::new(30, 100);
+    // Em dash (U+2014) is three bytes; feed it in two reads.
+    screen.feed(&[0xE2, 0x80]);
+    assert!(!screen.text().contains('�'));
+    screen.feed(&[0x94]);
+    assert!(screen.text().contains('—'));
+    assert!(!screen.text().contains('�'));
+}
+
+#[test]
+fn screen_applies_complete_sequences_normally() {
+    let mut screen = Screen::new(30, 100);
+    screen.feed(b"\x1b[2;3HAB\x1b[0m");
+    let row: String = screen.text().lines().nth(1).unwrap().into();
+    assert_eq!(&row[2..4], "AB");
 }

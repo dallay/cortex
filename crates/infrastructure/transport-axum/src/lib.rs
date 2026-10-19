@@ -14,6 +14,7 @@ pub mod format_registry;
 pub mod handlers;
 pub mod middleware;
 pub mod models_routes;
+pub mod oauth_routes;
 pub mod openai_adapter;
 pub mod provider_dto;
 pub mod provider_routes;

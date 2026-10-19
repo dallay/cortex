@@ -208,6 +208,7 @@ impl GroqProvider {
     ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Arc::new(Self {
             config,
@@ -482,7 +483,7 @@ impl ProviderPort for GroqProvider {
         let choice = groq_resp
             .choices
             .first()
-            .ok_or_else(|| CortexError::not_found("no choices in response"))?;
+            .ok_or_else(|| CortexError::provider("no choices in response"))?;
 
         Ok(CompletionResponse {
             id: req.id.clone(),

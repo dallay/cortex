@@ -221,6 +221,24 @@ clean:
     cargo clean
     cargo llvm-cov clean --workspace
 
+push *args:
+    git push "$@" && just clean
+
+# === Build artifact diagnostics ===
+
+# Show the largest top-level Cargo artifact directories before cleaning.
+target-size:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! -d target ]]; then
+      echo "target/ does not exist — no local Cargo artifacts to measure"
+      exit 0
+    fi
+    shopt -s nullglob
+    paths=(target target/*)
+    printf 'Cargo target size by directory (GiB):\n'
+    du -sk "${paths[@]}" | sort -n | tail -20 | awk '{ printf "%7.2f GiB  %s\n", $1 / 1048576, $2 }'
+
 # === Full CI (local) ===
 # Each ci-* recipe is independent and can be run standalone.
 # ci-local chains them sequentially — stops on first failure with a clear banner.
@@ -403,6 +421,7 @@ help:
     @echo "  just build        - Build release (all targets)"
     @echo "  just build-app    - Build rook binary"
     @echo "  just build-targets - Cross-compile for all platforms"
+    @echo "  just target-size  - Show Cargo artifact sizes before cleaning"
     @echo ""
     @echo "Dev:"
     @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
@@ -410,6 +429,7 @@ help:
     @echo "  just run             - Run rook backend"
     @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
     @echo "  just dashboard-install - Install dashboard npm dependencies"
+    @echo "  just push [args...]   - Push and clean Cargo artifacts on success"
     @echo ""
     @echo "DB:"
     @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"

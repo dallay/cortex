@@ -57,6 +57,17 @@ pub trait ProviderPort: Send + Sync + 'static {
     ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
 }
 
+/// Supplies an OAuth access token for a provider connection.
+/// `force_refresh` is used only after the upstream rejects a request with 401.
+#[async_trait]
+pub trait OAuthTokenPort: Send + Sync {
+    async fn access_token(
+        &self,
+        connection_id: &ConnectionId,
+        force_refresh: bool,
+    ) -> CortexResult<String>;
+}
+
 // ---------------------------------------------------------------------------
 // FormatTranslatorPort — explicit domain-pivot format routing
 // ---------------------------------------------------------------------------
@@ -648,4 +659,44 @@ pub trait ModelAliasRepositoryPort: Send + Sync {
 
     /// Seed aliases idempotently. Returns count of new aliases inserted.
     async fn seed(&self, aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// ComboAliasRepositoryPort — persistence for virtual combo (rook/*) mappings
+// ---------------------------------------------------------------------------
+
+use crate::ComboAlias;
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ComboAliasRepositoryError {
+    #[error("combo alias not found: {0}")]
+    NotFound(ModelId),
+    #[error("combo alias already exists: {0}")]
+    AlreadyExists(ModelId),
+    #[error("invalid combo alias: {0}")]
+    InvalidAlias(String),
+    #[error("combo not found for alias: {0}")]
+    ComboNotFound(ComboId),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ComboAliasRepositoryPort: Send + Sync {
+    /// Resolve virtual model to combo alias. Returns None if not found.
+    /// Exact match only; `rook/` prefix is required by validation, not by lookup.
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+    ) -> Result<Option<ComboAlias>, ComboAliasRepositoryError>;
+
+    /// List all combo aliases ordered by alias name.
+    async fn list(&self) -> Result<Vec<ComboAlias>, ComboAliasRepositoryError>;
+
+    /// Create new alias. Validates `rook/*` shape; returns AlreadyExists on
+    /// duplicate, ComboNotFound if the combo does not exist.
+    async fn create(&self, alias: ComboAlias) -> Result<(), ComboAliasRepositoryError>;
+
+    /// Delete alias by name. Returns true if deleted, false if not found.
+    async fn delete(&self, alias: &ModelId) -> Result<bool, ComboAliasRepositoryError>;
 }

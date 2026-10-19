@@ -5,7 +5,10 @@ use serde::Serialize;
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::task::JoinHandle;
@@ -40,16 +43,40 @@ pub struct Diagnostic {
 }
 type Services = BTreeMap<ServiceId, Arc<dyn Any + Send + Sync>>;
 
+/// Revocable generation identity. Effects are invisible until activation commits.
+#[derive(Clone)]
+pub struct Activation {
+    generation: u64,
+    published: Arc<AtomicBool>,
+    cancellation: CancellationToken,
+}
+impl Activation {
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn is_active(&self) -> bool {
+        self.published.load(Ordering::Acquire) && !self.cancellation.is_cancelled()
+    }
+}
+
 pub struct PluginContext {
     generation: u64,
     services: Services,
     staged: Services,
     pub cancellation: CancellationToken,
     tasks: Vec<JoinHandle<()>>,
+    published: Arc<AtomicBool>,
     resources: Vec<Box<dyn Any + Send + Sync>>,
     commits: Vec<Box<dyn FnOnce() + Send + Sync>>,
 }
 impl PluginContext {
+    pub fn activation(&self) -> Activation {
+        Activation {
+            generation: self.generation,
+            published: self.published.clone(),
+            cancellation: self.cancellation.clone(),
+        }
+    }
     /// Supervisor-assigned identity for generation-owned registrations.
     pub const fn generation(&self) -> u64 {
         self.generation
@@ -166,10 +193,10 @@ impl Supervisor {
         let mut owners = BTreeMap::new();
         for (id, entry) in &self.plugins {
             for service in &entry.diagnostic.manifest.provides {
-                if owners.insert(service.clone(), id.clone()).is_some() {
+                if let Some(previous) = owners.insert(service.clone(), id.clone()) {
                     return Err(AgentError::Composition(format!(
-                        "ambiguous provider for {}",
-                        service.0
+                        "ambiguous provider for {}: {} and {}",
+                        service.0, previous, id
                     )));
                 }
             }
@@ -228,6 +255,7 @@ impl Supervisor {
                 self.generation += 1;
                 let e = self.plugins.get_mut(&id).expect("registered plugin");
                 e.diagnostic.generation = self.generation;
+                e.diagnostic.last_error = None;
                 let mut ctx = PluginContext {
                     generation: self.generation,
                     services: self
@@ -239,6 +267,7 @@ impl Supervisor {
                     staged: BTreeMap::new(),
                     cancellation: CancellationToken::new(),
                     tasks: vec![],
+                    published: Arc::new(AtomicBool::new(false)),
                     resources: vec![],
                     commits: vec![],
                 };
@@ -260,6 +289,7 @@ impl Supervisor {
                             publish();
                         }
                         self.services.extend(ctx.staged.clone());
+                        ctx.published.store(true, Ordering::Release);
                         e.context = Some(ctx);
                         e.diagnostic.state = State::Active;
                         self.order.push(id);
@@ -287,6 +317,22 @@ impl Supervisor {
         for e in self.plugins.values_mut() {
             if e.diagnostic.state != State::Active && e.diagnostic.state != State::Failed {
                 e.diagnostic.state = State::Blocked;
+                let missing: Vec<_> = e
+                    .diagnostic
+                    .manifest
+                    .requires
+                    .iter()
+                    .filter(|requirement| !self.services.contains_key(*requirement))
+                    .map(|requirement| requirement.0.clone())
+                    .collect();
+                e.diagnostic.last_error = Some(if missing.is_empty() {
+                    "blocked: dependencies could not be activated".into()
+                } else {
+                    format!(
+                        "blocked: missing required service(s): {}",
+                        missing.join(", ")
+                    )
+                });
             }
         }
         Ok(())

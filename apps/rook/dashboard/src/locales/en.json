@@ -142,6 +142,10 @@
 				"name": "Google Gemini",
 				"description": "Google's Gemini models with multimodal support."
 			},
+			"azureOpenai": {
+				"name": "Azure OpenAI",
+				"description": "Azure-hosted OpenAI models authenticated with Microsoft Entra ID."
+			},
 			"groq": {
 				"name": "Groq",
 				"description": "Groq's fast LPU inference for open-source models."
@@ -194,26 +198,40 @@
 		},
 		"quota": {
 			"unknownProvider": "Unknown provider",
-			"title": "Provider quota",
-			"subtitle": "Track observed usage, rate limits, and spend trends across your providers.",
+			"title": "Provider usage",
+			"subtitle": "Usage recorded for requests routed through Cortex; this is not account-wide provider usage.",
+			"coverage": "Metrics cover Cortex-routed requests only, not activity outside Cortex.",
+			"coverageHeading": "Coverage and limits",
 			"generatedAt": "Updated {date}",
-			"support": "Quota source",
 			"last24hTokens": "24h tokens",
-			"last7dCost": "7d cost",
-			"rateLimited": "7d rate-limited",
+			"last7dCost": "7d estimated cost",
+			"estimatedCost": "Estimated from configured pricing",
+			"partialCost": "Partial cost; total unknown",
+			"unknownCost": "Unknown",
+			"unavailable": "Unavailable",
+			"usageUnavailable": "Some usage measurements are unavailable; see each period's availability.",
+			"rateLimited": "Observed 7d rate limits",
+			"observedRateLimits": "Observed routed requests, not account quota",
 			"connections": "{configured} configured · {active} active",
+			"refresh": "Refresh",
+			"stale": "Showing previous data",
+			"staleDescription": "The latest refresh failed. Values below are from the last successful response.",
+			"accountNotProvided": "Provider account quota is not provided by this integration.",
+			"accountNotApplicable": "Account quota does not apply to self-hosted Ollama.",
+			"localThreshold": "Local warning {warning}, error {error} ({count} connections)",
+			"trendLabel": "Seven-day Cortex-routed usage trend for {provider}",
+			"requests": "requests",
+			"tokens": "tokens",
+			"trendCost": "Cost",
+			"empty": "No provider usage data is available.",
+			"availability": {"available": "Available", "no_data": "No usage in this period", "unavailable": "Unavailable"},
 			"level": {
-				"ok": "Healthy",
-				"warning": "Warning",
-				"critical": "Critical",
-				"not_configured": "Not configured"
-			},
-			"supportValue": {
-				"usage_only": "Usage-based",
-				"local_or_header_based": "Local / observed",
-				"not_configured": "No connections"
-			},
-			"noData": "Quota data is not yet available for {providerName}."
+				"ok": "No local threshold crossed",
+				"warning": "Local warning threshold crossed",
+				"critical": "Local error threshold crossed",
+				"unknown": "Status unavailable",
+				"not_configured": "No connections configured"
+			}
 		},
 		"form": {
 			"createTitle": "Add {providerName} connection",
@@ -244,6 +262,32 @@
 			"cancel": "Cancel",
 			"delete": "Delete",
 			"oauthComingSoon": "OAuth authentication is not yet supported in this release."
+		},
+		"oauth": {
+			"clientId": "OAuth client ID",
+			"clientSecret": "OAuth client secret (optional for public clients)",
+			"tenantId": "Microsoft Entra tenant ID",
+			"azureDeploymentPlaceholder": "my-gpt-4o-deployment",
+			"azureDeploymentHelp": "Enter the Azure deployment name. Rook sends it as the model value.",
+			"googleProjectId": "Google Cloud project ID",
+			"flowType": "Authorization flow",
+			"authorizationCode": "Browser authorization",
+			"deviceCode": "Device code (headless)",
+			"connect": "Connect account",
+			"starting": "Starting secure authorization…",
+			"startFailed": "Could not start authorization. Check the OAuth client settings.",
+			"waiting": "Waiting for provider authorization…",
+			"openVerificationPage": "Open the verification page",
+			"openAuthorizationPage": "Open the authorization page",
+			"openAuthorizationLink": "Allow pop-ups or use the link below to continue.",
+			"refresh": "Refresh OAuth token",
+			"connectionNotFound": "Connection not found. Refresh the list and try again.",
+			"expiresAt": "Token expires {date}",
+			"status": {
+				"connected": "OAuth connected",
+				"expired": "OAuth token expired",
+				"reauthentication_required": "Reauthorization required"
+			}
 		}
 	},
 	"combos": {

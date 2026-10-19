@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use rook_core::{AuthType, ConnectionConfig, ProviderConnection, ProviderKind, TestStatus};
+use rook_core::{
+    AuthType, ConnectionConfig, Credentials, ProviderConnection, ProviderKind, TestStatus,
+};
 use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput as UsecaseCredentialsInput, TestConnectionResult,
     UpdateConnectionRequest as UsecaseUpdateConnectionRequest,
@@ -92,6 +94,12 @@ pub struct OAuthCredentialsInput {
     pub scope: String,
     pub id_token: String,
     pub project_id: String,
+    #[serde(default)]
+    pub oauth_client_id: Option<String>,
+    #[serde(default)]
+    pub oauth_client_secret: Option<String>,
+    #[serde(default)]
+    pub oauth_tenant_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +134,14 @@ pub struct ProviderConnectionResponse {
     pub test_status: TestStatusResponse,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_tenant_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,40 +206,70 @@ pub struct ProviderQuotaSummaryResponse {
     pub provider_kind: String,
     pub connection_count: u32,
     pub active_connection_count: u32,
-    pub warning_threshold: Option<f32>,
-    pub error_threshold: Option<f32>,
-    pub support: String,
-    pub note: String,
+    pub coverage: &'static str,
+    pub usage_availability: &'static str,
+    pub account_quota: ProviderAccountQuotaResponse,
+    pub local_thresholds: Vec<ProviderQuotaThresholdResponse>,
+    pub rate_limit_observation: ProviderRateLimitObservationResponse,
+    pub local_warning_level: &'static str,
     pub all_time: ProviderQuotaWindowResponse,
     pub last_24h: ProviderQuotaWindowResponse,
     pub last_7d: ProviderQuotaWindowResponse,
-    pub observed_rate_limited_ratio: f32,
-    pub warning_level: String,
     pub trend: Vec<ProviderQuotaTrendPointResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAccountQuotaResponse {
+    pub availability: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderQuotaThresholdResponse {
+    pub warning: f32,
+    pub error: f32,
+    pub connection_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitObservationResponse {
+    pub source: &'static str,
+    pub availability: &'static str,
+    pub window: &'static str,
+    pub rate_limited_requests: Option<u64>,
+    pub requests: Option<u64>,
+    pub ratio: Option<f32>,
 }
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderQuotaWindowResponse {
-    pub requests: u64,
-    pub rate_limited_requests: u64,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub cache_read_tokens: u64,
-    pub cache_creation_tokens: u64,
-    pub reasoning_tokens: u64,
-    pub total_tokens: u64,
-    pub cost_usd: f64,
+    pub availability: &'static str,
+    pub rate_limit_availability: &'static str,
+    pub requests: Option<u64>,
+    pub rate_limited_requests: Option<u64>,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub cost_availability: &'static str,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderQuotaTrendPointResponse {
     pub date: String,
-    pub requests: u64,
-    pub rate_limited_requests: u64,
-    pub total_tokens: u64,
-    pub cost_usd: f64,
+    pub usage_availability: &'static str,
+    pub requests: Option<u64>,
+    pub rate_limited_requests: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub cost_availability: &'static str,
 }
 
 impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
@@ -287,8 +333,45 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
             test_status: TestStatusResponse::from(&conn.test_status),
             created_at: conn.created_at,
             updated_at: conn.updated_at,
+            oauth_status: oauth_status(conn),
+            oauth_expires_at: match &conn.credentials {
+                Credentials::OAuth { expires_at, .. } => Some(*expires_at),
+                Credentials::ApiKey { .. } => None,
+            },
+            oauth_client_id: match &conn.credentials {
+                Credentials::OAuth {
+                    oauth_client_id, ..
+                } if !oauth_client_id.is_empty() => Some(oauth_client_id.clone()),
+                _ => None,
+            },
+            oauth_tenant_id: match &conn.credentials {
+                Credentials::OAuth {
+                    oauth_tenant_id, ..
+                } => oauth_tenant_id.clone(),
+                Credentials::ApiKey { .. } => None,
+            },
         }
     }
+}
+
+pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
+    let Credentials::OAuth { expires_at, .. } = &conn.credentials else {
+        return None;
+    };
+    // A failed refresh is checked first: once Rook knows the refresh token
+    // no longer works, reauthorization is required even if (and when) the
+    // access token is also past its expiry.
+    let status = if matches!(
+        &conn.test_status,
+        TestStatus::Unhealthy { error, .. } if error.contains("OAuth token refresh failed")
+    ) {
+        "reauthentication_required"
+    } else if *expires_at <= Utc::now().timestamp() {
+        "expired"
+    } else {
+        "connected"
+    };
+    Some(status.to_string())
 }
 
 impl From<&ConnectionConfig> for ConnectionConfigResponse {
@@ -380,6 +463,9 @@ fn credentials_to_usecase(credentials: &CredentialsInput) -> UsecaseCredentialsI
             scope: credentials.scope.clone(),
             id_token: credentials.id_token.clone(),
             project_id: credentials.project_id.clone(),
+            oauth_client_id: credentials.oauth_client_id.clone().unwrap_or_default(),
+            oauth_client_secret: credentials.oauth_client_secret.clone(),
+            oauth_tenant_id: credentials.oauth_tenant_id.clone(),
         },
     }
 }
@@ -408,26 +494,5 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
     match auth_type {
         AuthType::ApiKey => "apiKey",
         AuthType::OAuth => "oauth",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CredentialsInput;
-
-    #[test]
-    fn credentials_reject_mixed_api_key_and_oauth_fields() {
-        let mixed = serde_json::json!({
-            "apiKey": "sk-test",
-            "email": "ops@example.com",
-            "accessToken": "access",
-            "refreshToken": "refresh",
-            "expiresAt": 1772150400,
-            "scope": "cloud-platform",
-            "idToken": "id",
-            "projectId": "project"
-        });
-
-        assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
     }
 }

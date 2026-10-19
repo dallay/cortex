@@ -29,10 +29,12 @@ members = [
     "crates/huginn/application",
     "crates/huginn/runtime",
     "crates/huginn/presentation",
+    "crates/huginn/plugin-api",
+    "crates/huginn/reference-extension",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["cortex team"]
 rust-version = "1.81"

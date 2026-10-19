@@ -491,6 +491,110 @@ async fn setup_succeeds_with_correct_token_and_returns_api_key() {
     let api_key = json["api_key"].as_str().expect("api_key must be present");
     assert!(
         api_key.starts_with("rk-"),
-        "api_key should start with 'rk-', got: {api_key}"
+        "api_key should start with 'rk-'"
     );
+}
+
+#[tokio::test]
+async fn get_login_reuses_valid_incoming_csrf_cookie() {
+    // Regression for WebKit delayed Set-Cookie race (issue #82): repeated
+    // GET /login must not rotate a well-formed token out from under the jar.
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+
+    let valid_token = "A".repeat(43);
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/login")
+        .header("cookie", format!("csrf_token={valid_token}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = response
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let json = body_json(response).await;
+    assert_eq!(json["csrf_token"], valid_token);
+    assert!(set_cookie.contains(&valid_token));
+
+    // Invalid cookie values must still rotate to a fresh well-formed token.
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/login")
+        .header("cookie", "csrf_token=not-a-valid-token")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let json = body_json(response).await;
+    let rotated = json["csrf_token"].as_str().unwrap();
+    assert_ne!(rotated, "not-a-valid-token");
+    assert_eq!(rotated.len(), 43);
+}
+
+#[tokio::test]
+async fn health_check_http_get_returns_app_name_and_version() {
+    let user_repo = Arc::new(FakeUserRepo::fresh());
+    let password_hasher = Arc::new(FakePasswordHasher);
+    let api_key_repo = Arc::new(cortex_test_support::FakeApiKeyRepository::default());
+    let bootstrap_status = rook_usecases::BootstrapStatus::new(user_repo.clone());
+    let set_admin_password =
+        rook_usecases::SetAdminPassword::new(user_repo.clone(), password_hasher.clone());
+
+    let usecases = make_test_bootstrap_usecases(
+        user_repo,
+        password_hasher,
+        api_key_repo,
+        bootstrap_status,
+        set_admin_password,
+        None,
+    );
+
+    let app = transport_axum::router(
+        usecases,
+        AuthzConfig::from_env(),
+        Arc::new(LoginRateLimiter::new()),
+        Arc::new(IpRateLimiter::new()),
+        Arc::new(ApiKeyRateLimiter::new()),
+        Arc::new(CsrfGuard::new()),
+        None,
+    );
+
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/health")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(json["app_name"], "Rook");
+    assert_eq!(json["version"], "0.0.1");
+    assert_eq!(json["status"], "no_providers_configured");
 }

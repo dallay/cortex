@@ -28,6 +28,9 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted |
 | [ADR-0011](0011-huginn-product-naming.md) | Huginn product naming and identity | Accepted |
 | [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) | Hexagonal application and lifecycle-owned capabilities | Accepted |
+| [ADR-0013](0013-authorable-plugin-contract-and-loading.md) | Authorable plugin contract and future loading strategy | Accepted |
+| [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Providers integrados y enrutamiento del modelo por turno | Accepted |
+| [ADR-0015](../0015-separate-product-releases-from-cargo-publishing.md) | Separar releases de producto de publicación Cargo | Accepted |
 
 ## Record format
 
@@ -68,6 +71,7 @@ alternatives are preserved as research history.
   are preserved unchanged.
 - Supported real endpoint combinations and Rook compatibility.
 - Release tags and public distribution after personal MVP acceptance.
+- Runtime loading strategy for extensions — deferred by [ADR-0013](0013-authorable-plugin-contract-and-loading.md).
 
 Concrete contracts and limits are in the [implementation specification](../implementation-specification.md).
 ADR-0009 records the storage and configuration choices made for implementation.

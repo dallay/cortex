@@ -39,6 +39,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   test: [id: string];
+  refresh: [id: string];
   edit: [id: string];
   delete: [id: string];
   toggle: [payload: { id: string; enabled: boolean }];
@@ -60,6 +61,12 @@ const overflowCount = computed(() =>
 );
 
 const enabled = computed(() => props.connection.isActive);
+const oauthExpiry = computed(() => {
+  const timestamp = props.connection.oauthExpiresAt;
+  return timestamp === undefined
+    ? null
+    : new Date(timestamp * 1000).toLocaleString();
+});
 </script>
 
 <template>
@@ -85,6 +92,14 @@ const enabled = computed(() => props.connection.isActive);
             {{ connection.testStatus.latencyMs }}ms
           </span>
         </div>
+        <div v-if="connection.oauthStatus" class="space-y-1 text-xs">
+          <p :class="connection.oauthStatus === 'connected' ? 'text-green-600' : 'text-destructive'">
+            {{ t(`providers.oauth.status.${connection.oauthStatus}`) }}
+          </p>
+          <p v-if="oauthExpiry" class="text-muted-foreground">
+            {{ t('providers.oauth.expiresAt', {date: oauthExpiry}) }}
+          </p>
+        </div>
         <p
           v-if="connection.testStatus.error"
           class="text-xs text-destructive truncate max-w-[400px]"
@@ -94,6 +109,18 @@ const enabled = computed(() => props.connection.isActive);
       </div>
       <div class="flex items-center gap-1 shrink-0">
         <Button
+          v-if="connection.authType === 'oauth'"
+          variant="ghost"
+          size="sm"
+          :disabled="busy || testing"
+          :aria-label="t('providers.oauth.refresh')"
+          :data-testid="`connection-oauth-refresh-${connection.id}`"
+          @click="emit('refresh', connection.id)"
+        >
+          <RefreshCw class="h-4 w-4" />
+        </Button>
+        <Button
+          v-else
           variant="ghost"
           size="sm"
           :disabled="busy || testing"

@@ -18,6 +18,11 @@ From the checkout, use `just huginn-run` or `cargo run -p huginn --` followed
 by the same arguments. `mock` is an offline diagnostic provider with a
 read-only `list files` example; it does not perform real coding reasoning.
 
+En la TUI, usa `/login`, `/providers`, `/model` y `/logout` para
+[gestionar conexiones con formularios secretos del host](providers-ui.md),
+sin editar configuración ni reiniciar. La verificación de esta UI usa dobles;
+no acredita aceptación de proveedores reales ni onboarding.
+
 For a model, set `HUGINN_BASE_URL` (including `/v1`), `HUGINN_MODEL`, and
 `HUGINN_API_KEY` in the invoking shell, then run:
 
@@ -27,17 +32,41 @@ huginn --workspace /path/to/repository --json run "Explain the project"
 huginn sessions
 huginn resume SESSION_UUID
 huginn resume SESSION_UUID --prompt "Continue the task"
-huginn doctor
 ```
 
 Interactive `chat` (or no subcommand) uses the Ratatui TUI when attached to a
 terminal. `--line-mode` selects the line-oriented recovery adapter; `--json`
 emits machine-readable events instead.
 
-`doctor` validates configuration and reports services without contacting the
-model or launching MCP. It currently requires configured credentials to be
-present. `--db` selects another session database; `--config` selects a
-TOML file.
+### Chat suggestions
+
+- Type `/` to open the active command catalog with descriptions.
+  Search accepts prefixes and gapped characters, for example `/exinfo`.
+- Type `@` at a token start to search workspace filenames.
+  Paths with spaces are inserted as `@"docs/my guide.md"`.
+  The reference is **text only**: it never reads or attaches file contents.
+- Use ↑/↓ to select, Tab to complete without running, and Esc to close.
+  Enter runs the selected command; for files and arguments it only completes.
+  A later Enter sends the draft. Alt/Shift+Enter and Ctrl+J insert a newline.
+- Plugins can declare descriptions, argument values, and paths through
+  `CommandMetadata` and `Contributions::register_command`. Existing commands
+  without metadata keep working; undeclared arguments are never inferred.
+  Summary commands are suggested only with a configured model.
+- The filename index is built in the background once per chat connection,
+  with a 20,000-entry walk limit. Restart the chat to refresh it.
+  It excludes `.git`, `target`, `node_modules`, `.pnpm-store`, `.cache`, and
+  symbolic links; it does not interpret `.gitignore`. It reports a partial
+  index or failure. It is not a security boundary against concurrent
+  filesystem changes.
+- Approvals and dialogs take priority over suggestions. Completing text
+  never grants permissions; a revoked plugin selection never runs its replacement.
+
+`doctor` valida configuración y muestra servicios sin contactar al modelo ni
+iniciar MCP. Sin configuración explícita ni selección persistida utilizable,
+informa `model_readiness: "unconfigured"`. Una selección recuperada solo indica
+preparación local: no verifica disponibilidad remota. `run` y `resume --prompt`
+necesitan un modelo y las credenciales que requiera el proveedor. `--db` elige
+otra base de sesiones; `--config` elige un archivo TOML.
 
 ## Configuration and permissions
 
@@ -52,6 +81,16 @@ file. CLI options override the file; environment variables provide
 defaults for the endpoint and model. API keys are loaded from a named
 environment variable. Set `api_key_env = ""` for a local endpoint
 without authentication.
+
+HTTPS endpoints use validated certificates. Plain HTTP requires
+`allow_loopback_http = true` and a literal loopback IP (`127.0.0.1` or `[::1]`);
+private/LAN addresses and DNS names are not a local exception. Existing local
+HTTP configurations must explicitly enable this setting. Redirects are rejected.
+Para los adaptadores integrados y los modelos Ollama probados anteriormente,
+consulta [adaptadores y verificación local](inference-adapters.md). El
+catálogo remoto no se consulta desde los formularios: la UI admite un modelo
+candidato cuando no hay modelos estáticos. La aceptación automatizada del flujo
+completo con adaptadores reales sigue siendo una entrega de integración separada.
 
 Reads are limited to resolved paths within the workspace. Edits show their
 complete diff and require approval; changed files require a new diff.

@@ -182,4 +182,4 @@ Las skills respetan esta estructura y layering.
 ## Fuentes
 
 - [rust-skills](https://github.com/leonardomso/rust-skills) — Original collection
-- [Our Rust code quality guide](docs/architecture.md) — Arquitectura Cortex
+- [Our Rust code quality guide](docs/rook/architecture.md) — Arquitectura Cortex

@@ -129,6 +129,24 @@ fn active_connection_with_catalog_match_is_returned() {
 }
 
 #[test]
+fn azure_openai_connection_exposes_configured_deployment_without_static_catalog() {
+    let mut connection = make_connection(
+        "c2",
+        "Azure production",
+        ProviderKind::AzureOpenAI,
+        "azure-prod",
+        true,
+    );
+    connection.config.default_model = Some(shared_kernel::ModelId::new("gpt-prod-deployment"));
+
+    let groups = compute_models_by_provider(&[connection], &[]);
+
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].provider_kind, "azure-openai");
+    assert_eq!(groups[0].models, vec!["gpt-prod-deployment"]);
+}
+
+#[test]
 fn active_connection_with_no_catalog_match_is_filtered_out() {
     let conns = vec![make_connection(
         "c1",

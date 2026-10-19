@@ -1,0 +1,16 @@
+[package]
+name = "huginn-reference-extension"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+huginn-plugin-api = { path = "../plugin-api" }
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

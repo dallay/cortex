@@ -1,5 +1,5 @@
 use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, KeyInit, OsRng},
+    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
@@ -53,17 +53,15 @@ impl AesGcmKeyManager {
 
         let cipher =
             Aes256Gcm::new_from_slice(&self.key).map_err(|_| EncryptionError::CipherError)?;
-        let mut nonce_bytes = [0_u8; NONCE_BYTES];
-        OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|_| EncryptionError::CipherError)?;
 
         Ok(format!(
             "{}{}:{}",
             VERSION_PREFIX,
-            URL_SAFE_NO_PAD.encode(nonce_bytes),
+            URL_SAFE_NO_PAD.encode(nonce.as_slice()),
             URL_SAFE_NO_PAD.encode(ciphertext)
         ))
     }

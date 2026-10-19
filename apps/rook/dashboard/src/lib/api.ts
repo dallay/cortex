@@ -130,6 +130,8 @@ export interface UpdateApiKeyRequest {
 
 export interface HealthResponse {
   status: "healthy" | "degraded" | "no_providers_configured";
+  app_name?: string;
+  version?: string;
   providers: ProviderHealth[];
 }
 
@@ -152,6 +154,52 @@ export interface ProviderConnectionResponse {
   testStatus: TestStatusResponse;
   createdAt: string;
   updatedAt: string;
+  oauthStatus?: "connected" | "expired" | "reauthentication_required";
+  oauthExpiresAt?: number;
+  oauthClientId?: string;
+  oauthTenantId?: string | null;
+}
+
+export const OAUTH_FLOW_TYPES = {
+  AUTHORIZATION_CODE: "authorizationCode",
+  DEVICE_CODE: "deviceCode",
+} as const;
+
+export type OAuthFlowType = (typeof OAUTH_FLOW_TYPES)[keyof typeof OAUTH_FLOW_TYPES];
+
+export interface OAuthFlowStartRequest {
+  flowType: OAuthFlowType;
+  connectionId?: string;
+  providerRuntimeId: string;
+  name: string;
+  priority: number;
+  isActive: boolean;
+  config: ConnectionConfigInput;
+  clientId: string;
+  clientSecret?: string;
+  tenantId?: string;
+  redirectUri: string;
+  projectId?: string;
+}
+
+export interface OAuthFlowStartResponse {
+  flowId: string;
+  authorizationUrl: string | null;
+  userCode: string | null;
+  verificationUri: string | null;
+  message: string | null;
+  intervalSecs: number | null;
+  expiresInSecs: number;
+}
+
+export interface OAuthStatusResponse {
+  flowId?: string;
+  connectionId?: string;
+  providerKind?: ProviderKind;
+  status: string;
+  message?: string | null;
+  expiresAt?: number;
+  updatedAt?: string;
 }
 
 export interface ConnectionConfigResponse {
@@ -161,39 +209,56 @@ export interface ConnectionConfigResponse {
   baseUrl: string | null;
 }
 
+export type UsageAvailability = "available" | "no_data" | "unavailable";
+export type CostAvailability = "complete" | "partial" | "unknown" | "no_data" | "unavailable";
+export type AccountQuotaAvailability = "not_provided" | "not_applicable";
+export type LocalWarningLevel = "ok" | "warning" | "critical" | "unknown" | "not_configured";
+
 export interface ProviderQuotaWindowResponse {
-  requests: number;
-  rateLimitedRequests: number;
-  promptTokens: number;
-  completionTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  costUsd: number;
+  availability: UsageAvailability;
+  rateLimitAvailability: "available" | "unavailable";
+  requests: number | null;
+  rateLimitedRequests: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
+  costAvailability: CostAvailability;
 }
 
 export interface ProviderQuotaTrendPointResponse {
   date: string;
-  requests: number;
-  rateLimitedRequests: number;
-  totalTokens: number;
-  costUsd: number;
+  usageAvailability: UsageAvailability;
+  requests: number | null;
+  rateLimitedRequests: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
+  costAvailability: CostAvailability;
 }
 
 export interface ProviderQuotaSummaryResponse {
   providerKind: ProviderKind;
   connectionCount: number;
   activeConnectionCount: number;
-  warningThreshold: number | null;
-  errorThreshold: number | null;
-  support: string;
-  note: string;
+  coverage: "cortex_routed";
+  usageAvailability: UsageAvailability;
+  accountQuota: {availability: AccountQuotaAvailability};
+  localThresholds: Array<{warning: number; error: number; connectionCount: number}>;
+  rateLimitObservation: {
+    source: "recorded_routed_request_status";
+    availability: "available" | "unavailable";
+    window: "last_7d";
+    rateLimitedRequests: number | null;
+    requests: number | null;
+    ratio: number | null;
+  };
+  localWarningLevel: LocalWarningLevel;
   allTime: ProviderQuotaWindowResponse;
   last24h: ProviderQuotaWindowResponse;
   last7d: ProviderQuotaWindowResponse;
-  observedRateLimitedRatio: number;
-  warningLevel: "ok" | "warning" | "critical" | "not_configured";
   trend: ProviderQuotaTrendPointResponse[];
 }
 
@@ -273,7 +338,7 @@ function getBaseUrl(): string {
     return globalScope.__ROOK_API_BASE__;
   }
   const stored =
-    typeof globalThis.localStorage !== "undefined"
+    globalThis.localStorage !== undefined
       ? globalThis.localStorage.getItem(STORAGE_KEY)
       : null;
   if (stored) return stored;
@@ -356,29 +421,33 @@ function createApiClient() {
       credentials: "include", // Include cookies for session auth
     });
 
-    // Retry once on CSRF failure: the cached token may be stale (server
-    // rotation) or the cookie may not have landed in the jar yet (WebKit
-    // race described in issue #82). On a real authz error (e.g. 403 from a
-    // route's permission check) the body will not mention csrf_missing or
-    // csrf_mismatch, so we leave the response alone and let it throw below.
-    if (isStateChanging && response.status === 403) {
+    // Retry on CSRF failure with backoff: the cached token may be stale or
+    // the cookie may not have landed in the jar yet (WebKit delayed
+    // Set-Cookie described in issue #82). GET /login now reuses a valid
+    // incoming cookie, so waiting briefly before refetching lets the jar
+    // sync and avoids rotating to a new token. On a real authz error
+    // (e.g. 403 from a route's permission check) the body will not mention
+    // csrf_missing or csrf_mismatch, so we leave the response alone.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!isStateChanging || response.status !== 403) break;
       const probe = await response
         .clone()
         .text()
         .catch(() => "");
-      if (probe.includes("csrf_missing") || probe.includes("csrf_mismatch")) {
-        cachedCsrfToken = null;
-        try {
-          headers["X-CSRF-Token"] = await getCsrfToken();
-          response = await fetch(url, {
-            ...options,
-            headers,
-            credentials: "include",
-          });
-        } catch (err) {
-          console.warn("[Rook API] CSRF token refresh failed:", err);
-          // Fall through to the error path with the 403 response
-        }
+      if (!probe.includes("csrf_missing") && !probe.includes("csrf_mismatch")) break;
+      cachedCsrfToken = null;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+        headers["X-CSRF-Token"] = await getCsrfToken();
+        response = await fetch(url, {
+          ...options,
+          headers,
+          credentials: "include",
+        });
+      } catch (err) {
+        console.warn("[Rook API] CSRF token refresh failed:", err);
+        // Fall through to the error path with the 403 response
+        break;
       }
     }
 
@@ -549,6 +618,42 @@ function createApiClient() {
       );
     },
 
+    async startOAuthFlow(
+      provider: ProviderKind,
+      data: OAuthFlowStartRequest,
+    ): Promise<OAuthFlowStartResponse> {
+      return request<OAuthFlowStartResponse>(`/api/oauth/${provider}/authorize`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    },
+
+    async getOAuthStatus(
+      provider: ProviderKind,
+      params: {flowId?: string; connectionId?: string},
+    ): Promise<OAuthStatusResponse> {
+      const query = new URLSearchParams();
+      if (params.flowId) query.set("flowId", params.flowId);
+      if (params.connectionId) query.set("connectionId", params.connectionId);
+      return request<OAuthStatusResponse>(
+        `/api/oauth/${provider}/status?${query.toString()}`,
+      );
+    },
+
+    async refreshOAuth(provider: ProviderKind, connectionId: string): Promise<void> {
+      return request<void>(`/api/oauth/${provider}/refresh`, {
+        method: "POST",
+        body: JSON.stringify({connectionId}),
+      });
+    },
+
+    async disconnectOAuth(provider: ProviderKind, connectionId: string): Promise<void> {
+      return request<void>(`/api/oauth/${provider}`, {
+        method: "DELETE",
+        body: JSON.stringify({connectionId}),
+      });
+    },
+
     async getProvidersQuota(): Promise<ProvidersQuotaResponse> {
       return request<ProvidersQuotaResponse>("/api/providers/quota");
     },
@@ -641,6 +746,9 @@ export interface OAuthCredentialsInput {
   scope: string;
   idToken: string;
   projectId: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthTenantId?: string;
 }
 
 export interface ConnectionConfigInput {

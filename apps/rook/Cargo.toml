@@ -30,6 +30,7 @@ alias-sqlite = { path = "../../crates/infrastructure/alias-sqlite" }
 db-migration = { path = "../../crates/infrastructure/db-migration" }
 models-catalog = { path = "../../crates/infrastructure/models-catalog" }
 tokio = { version = "1", features = ["full"] }
+reqwest = { workspace = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"

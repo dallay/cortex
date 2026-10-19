@@ -8,8 +8,9 @@ use rook_core::{
 
 use crate::{
     provider_dto::{
-        ProviderQuotaSummaryResponse, ProviderQuotaTrendPointResponse, ProviderQuotaWindowResponse,
-        ProvidersQuotaResponse,
+        ProviderAccountQuotaResponse, ProviderQuotaSummaryResponse, ProviderQuotaThresholdResponse,
+        ProviderQuotaTrendPointResponse, ProviderQuotaWindowResponse,
+        ProviderRateLimitObservationResponse, ProvidersQuotaResponse,
     },
     HttpError,
 };
@@ -19,83 +20,120 @@ type Usecases = Arc<rook_usecases::RookUsecases>;
 pub async fn list_provider_quota(
     State(usecases): State<Usecases>,
 ) -> Result<Json<ProvidersQuotaResponse>, HttpError> {
-    let usage_recorder = usecases.usage_recorder.as_ref().ok_or_else(|| HttpError {
+    let recorder = usecases.usage_recorder.as_ref().ok_or_else(|| HttpError {
         status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
         code: "USAGE_RECORDER_UNAVAILABLE",
         message: "Usage recording is not available".to_string(),
     })?;
-
-    let connections = usecases
+    let manage_connections = usecases
         .manage_connections
         .as_ref()
         .ok_or_else(|| HttpError {
             status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
             code: "PROVIDER_MANAGEMENT_UNAVAILABLE",
             message: "Provider management is not available".to_string(),
-        })?
-        .list()
-        .await
-        .map_err(|_| HttpError {
+        })?;
+    let connections = manage_connections.list().await.map_err(|error| {
+        tracing::warn!(%error, "failed to list provider connections for quota summary");
+        HttpError {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR",
             message: "internal server error".to_string(),
-        })?;
-
+        }
+    })?;
     let generated_at = Utc::now();
     let last_24h_start = Some(generated_at - Duration::hours(24));
     let last_7d_start = Some(generated_at - Duration::days(7));
-
     let mut items = Vec::new();
+
     for kind in all_provider_kinds() {
-        let kind_connections = connections
+        let provider_connections = connections
             .iter()
-            .filter(|connection| connection.provider_kind == kind)
+            .filter(|c| c.provider_kind == kind)
             .collect::<Vec<_>>();
-        let connection_ids = kind_connections
+        let ids = provider_connections
             .iter()
-            .map(|connection| connection.id)
-            .collect::<Vec<ConnectionId>>();
-
-        let all_time = summarize_window(usage_recorder, &connection_ids, None, None).await?;
-        let last_24h =
-            summarize_window(usage_recorder, &connection_ids, last_24h_start, None).await?;
-        let last_7d =
-            summarize_window(usage_recorder, &connection_ids, last_7d_start, None).await?;
-
-        let trend = build_trend(usage_recorder, &connection_ids, generated_at).await?;
-
-        let connection_count = kind_connections.len() as u32;
-        let active_connection_count = kind_connections
-            .iter()
-            .filter(|conn| conn.is_active)
-            .count() as u32;
-        let (warning_threshold, error_threshold) = aggregate_thresholds(&kind_connections);
-        let observed_ratio = rate_limited_ratio(&last_7d);
-        let warning_level = classify_warning_level(
-            observed_ratio,
-            warning_threshold,
-            error_threshold,
-            connection_count,
-        );
-        let (support, note) = support_note(kind, connection_count);
-
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+        let all_time = if ids.is_empty() {
+            empty_window()
+        } else {
+            summarize_window(recorder, &ids, None, None).await
+        };
+        let last_24h = if ids.is_empty() {
+            empty_window()
+        } else {
+            summarize_window(recorder, &ids, last_24h_start, None).await
+        };
+        let last_7d = if ids.is_empty() {
+            empty_window()
+        } else {
+            summarize_window(recorder, &ids, last_7d_start, None).await
+        };
+        let trend = if ids.is_empty() {
+            Ok(empty_trend(generated_at))
+        } else {
+            build_trend(recorder, &ids, generated_at).await
+        };
+        let connection_count = provider_connections.len() as u32;
+        let active_connection_count =
+            provider_connections.iter().filter(|c| c.is_active).count() as u32;
+        let ratio = if last_7d.rate_limit_availability == "available"
+            && last_7d.availability != "unavailable"
+        {
+            rate_limited_ratio(&last_7d)
+        } else {
+            None
+        };
+        let connection_ratios = if last_7d.rate_limit_availability == "available"
+            && last_7d.availability != "unavailable"
+        {
+            connection_rate_limit_ratios(recorder, &provider_connections, last_7d_start).await
+        } else {
+            vec![None; provider_connections.len()]
+        };
+        let local_warning_level = classify_warning_level(&provider_connections, &connection_ratios);
         items.push(ProviderQuotaSummaryResponse {
             provider_kind: kind.as_str().to_string(),
             connection_count,
             active_connection_count,
-            warning_threshold,
-            error_threshold,
-            support: support.to_string(),
-            note: note.to_string(),
+            coverage: "cortex_routed",
+            usage_availability: all_time.availability,
+            account_quota: ProviderAccountQuotaResponse {
+                availability: if kind == ProviderKind::Ollama {
+                    "not_applicable"
+                } else {
+                    "not_provided"
+                },
+            },
+            local_thresholds: grouped_thresholds(&provider_connections),
+            rate_limit_observation: ProviderRateLimitObservationResponse {
+                source: "recorded_routed_request_status",
+                availability: if ratio.is_some() {
+                    "available"
+                } else {
+                    "unavailable"
+                },
+                window: "last_7d",
+                rate_limited_requests: if ratio.is_some() {
+                    last_7d.rate_limited_requests
+                } else {
+                    None
+                },
+                requests: if ratio.is_some() {
+                    last_7d.requests
+                } else {
+                    None
+                },
+                ratio,
+            },
+            local_warning_level,
             all_time,
             last_24h,
             last_7d,
-            observed_rate_limited_ratio: observed_ratio,
-            warning_level: warning_level.to_string(),
-            trend,
+            trend: trend.unwrap_or_default(),
         });
     }
-
     Ok(Json(ProvidersQuotaResponse {
         generated_at,
         items,
@@ -103,203 +141,349 @@ pub async fn list_provider_quota(
 }
 
 async fn summarize_window(
-    usage_recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
-    connection_ids: &[ConnectionId],
+    recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
+    ids: &[ConnectionId],
     start: Option<chrono::DateTime<Utc>>,
     end: Option<chrono::DateTime<Utc>>,
-) -> Result<ProviderQuotaWindowResponse, HttpError> {
-    let mut total = ProviderQuotaWindowResponse::default();
-
-    for connection_id in connection_ids {
+) -> ProviderQuotaWindowResponse {
+    let mut total = empty_window();
+    let mut cost_sum = 0.0;
+    let mut cost_unavailable = false;
+    for id in ids {
         let filters = UsageFilters {
-            connection_id: Some(*connection_id),
+            connection_id: Some(*id),
             start,
             end,
             ..UsageFilters::default()
         };
-        let summary = usage_recorder
-            .summary(filters.clone())
-            .await
-            .map_err(internal_error)?;
-        let rate_limited_requests = usage_recorder
+        let summary = recorder.summary(filters.clone()).await;
+        let rate_count = recorder
             .count(UsageFilters {
                 status: Some(RequestStatus::RateLimited),
                 ..filters.clone()
             })
-            .await
-            .map_err(internal_error)?;
-        let cost_breakdown = usage_recorder
-            .cost_breakdown(filters)
-            .await
-            .map_err(internal_error)?;
-        let window = window_from_parts(
-            summary,
-            rate_limited_requests,
-            cost_breakdown.total_cost_usd,
-        );
+            .await;
+        let request_count = recorder.count(filters.clone()).await;
+        let cost = recorder.cost_breakdown(filters).await;
 
-        total.requests += window.requests;
-        total.rate_limited_requests += window.rate_limited_requests;
-        total.prompt_tokens += window.prompt_tokens;
-        total.completion_tokens += window.completion_tokens;
-        total.cache_read_tokens += window.cache_read_tokens;
-        total.cache_creation_tokens += window.cache_creation_tokens;
-        total.reasoning_tokens += window.reasoning_tokens;
-        total.total_tokens += window.total_tokens;
-        total.cost_usd += window.cost_usd;
+        match summary {
+            Ok(summary) => {
+                let w = window_from_parts(summary, 0, 0.0, 0, 0);
+                total.availability = merge_usage_availability(total.availability, w.availability);
+                total.requests = add_optional(total.requests, w.requests);
+                total.prompt_tokens = add_optional(total.prompt_tokens, w.prompt_tokens);
+                total.completion_tokens =
+                    add_optional(total.completion_tokens, w.completion_tokens);
+                total.cache_read_tokens =
+                    add_optional(total.cache_read_tokens, w.cache_read_tokens);
+                total.cache_creation_tokens =
+                    add_optional(total.cache_creation_tokens, w.cache_creation_tokens);
+                total.reasoning_tokens = add_optional(total.reasoning_tokens, w.reasoning_tokens);
+                total.total_tokens = add_optional(total.total_tokens, w.total_tokens);
+            }
+            Err(error) => {
+                tracing::warn!(%error, connection_id = %id, "failed to summarize provider usage");
+                total.availability = "unavailable";
+                total.requests = None;
+                total.prompt_tokens = None;
+                total.completion_tokens = None;
+                total.cache_read_tokens = None;
+                total.cache_creation_tokens = None;
+                total.reasoning_tokens = None;
+                total.total_tokens = None;
+            }
+        }
+
+        match (request_count, rate_count) {
+            (Ok(requests), Ok(limited)) if limited <= requests => {
+                total.rate_limited_requests =
+                    add_optional(total.rate_limited_requests, Some(limited));
+            }
+            (request_count, rate_count) => {
+                if let Err(error) = request_count.as_ref() {
+                    tracing::warn!(%error, connection_id = %id, "failed to count provider requests");
+                }
+                if let Err(error) = rate_count.as_ref() {
+                    tracing::warn!(%error, connection_id = %id, "failed to count rate-limited provider requests");
+                }
+                total.rate_limit_availability = "unavailable";
+                total.rate_limited_requests = None;
+            }
+        }
+
+        match cost {
+            Ok(cost) => {
+                let window_availability =
+                    if cost.known_cost_entries + cost.unknown_cost_entries == 0 {
+                        "no_data"
+                    } else if cost.known_cost_entries == 0 {
+                        "unknown"
+                    } else if cost.unknown_cost_entries > 0 {
+                        "partial"
+                    } else {
+                        "complete"
+                    };
+                total.cost_availability =
+                    combine_cost_availability(total.cost_availability, window_availability);
+                if window_availability == "complete" || window_availability == "partial" {
+                    cost_sum += cost.total_cost_usd;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, connection_id = %id, "failed to retrieve provider cost breakdown");
+                cost_unavailable = true;
+                total.cost_availability = "unavailable";
+            }
+        }
     }
+    total.cost_usd = aggregate_cost_result(total.cost_availability, cost_sum, cost_unavailable);
+    if total.availability == "unavailable" {
+        total.requests = None;
+        total.prompt_tokens = None;
+        total.completion_tokens = None;
+        total.cache_read_tokens = None;
+        total.cache_creation_tokens = None;
+        total.reasoning_tokens = None;
+        total.total_tokens = None;
+    }
+    if total.rate_limit_availability == "unavailable" {
+        total.rate_limited_requests = None;
+    }
+    total
+}
 
-    Ok(total)
+async fn connection_rate_limit_ratios(
+    recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
+    connections: &[&ProviderConnection],
+    start: Option<chrono::DateTime<Utc>>,
+) -> Vec<Option<f32>> {
+    let mut ratios = Vec::with_capacity(connections.len());
+    for connection in connections {
+        let filters = UsageFilters {
+            connection_id: Some(connection.id),
+            start,
+            ..UsageFilters::default()
+        };
+        let requests = recorder.count(filters.clone()).await;
+        let limited = recorder
+            .count(UsageFilters {
+                status: Some(RequestStatus::RateLimited),
+                ..filters
+            })
+            .await;
+        match (&requests, &limited) {
+            (Err(error), _) => {
+                tracing::warn!(%error, connection_id = %connection.id, "failed to count provider requests for rate-limit ratio")
+            }
+            (_, Err(error)) => {
+                tracing::warn!(%error, connection_id = %connection.id, "failed to count rate-limited provider requests for rate-limit ratio")
+            }
+            _ => {}
+        }
+        ratios.push(match (limited, requests) {
+            (Ok(limited), Ok(requests)) if requests > 0 && limited <= requests => {
+                Some(limited as f32 / requests as f32)
+            }
+            _ => None,
+        });
+    }
+    ratios
+}
+
+fn aggregate_cost_result(availability: &str, cost_sum: f64, lookup_failed: bool) -> Option<f64> {
+    if lookup_failed {
+        None
+    } else {
+        cost_for_availability(availability, cost_sum)
+    }
+}
+
+fn cost_for_availability(availability: &str, cost_sum: f64) -> Option<f64> {
+    (availability == "complete").then_some(cost_sum)
+}
+
+fn add_optional(current: Option<u64>, next: Option<u64>) -> Option<u64> {
+    current.zip(next).map(|(left, right)| left + right)
+}
+
+fn merge_usage_availability(current: &'static str, next: &'static str) -> &'static str {
+    match (current, next) {
+        ("unavailable", _) | (_, "unavailable") => "unavailable",
+        ("available", _) | (_, "available") => "available",
+        _ => "no_data",
+    }
+}
+
+fn empty_window() -> ProviderQuotaWindowResponse {
+    ProviderQuotaWindowResponse {
+        availability: "no_data",
+        rate_limit_availability: "available",
+        requests: Some(0),
+        rate_limited_requests: Some(0),
+        prompt_tokens: Some(0),
+        completion_tokens: Some(0),
+        cache_read_tokens: Some(0),
+        cache_creation_tokens: Some(0),
+        reasoning_tokens: Some(0),
+        total_tokens: Some(0),
+        cost_usd: None,
+        cost_availability: "no_data",
+    }
+}
+
+fn empty_trend(generated_at: chrono::DateTime<Utc>) -> Vec<ProviderQuotaTrendPointResponse> {
+    (0..7)
+        .rev()
+        .map(|days_ago| {
+            let date = (generated_at - Duration::days(days_ago)).date_naive();
+            ProviderQuotaTrendPointResponse {
+                date: date.format("%Y-%m-%d").to_string(),
+                usage_availability: "no_data",
+                requests: Some(0),
+                rate_limited_requests: Some(0),
+                total_tokens: Some(0),
+                cost_usd: None,
+                cost_availability: "no_data",
+            }
+        })
+        .collect()
 }
 
 async fn build_trend(
-    usage_recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
-    connection_ids: &[ConnectionId],
-    generated_at: chrono::DateTime<Utc>,
+    recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
+    ids: &[ConnectionId],
+    generated: chrono::DateTime<Utc>,
 ) -> Result<Vec<ProviderQuotaTrendPointResponse>, HttpError> {
-    let mut trend = Vec::new();
-
-    for days_ago in (0..7).rev() {
-        let day_start = (generated_at - Duration::days(days_ago)).date_naive();
-        let start = day_start
+    let mut points = Vec::new();
+    for ago in (0..7).rev() {
+        let day = (generated - Duration::days(ago)).date_naive();
+        let start = day.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
+        let end = (day + Duration::days(1))
             .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| HttpError {
-                status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                code: "INTERNAL_ERROR",
-                message: "invalid time".to_string(),
-            })?
+            .expect("midnight")
             .and_utc();
-        let end = (day_start + Duration::days(1))
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| HttpError {
-                status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                code: "INTERNAL_ERROR",
-                message: "invalid time".to_string(),
-            })?
-            .and_utc();
-        let window =
-            summarize_window(usage_recorder, connection_ids, Some(start), Some(end)).await?;
-        trend.push(ProviderQuotaTrendPointResponse {
-            date: day_start.format("%Y-%m-%d").to_string(),
-            requests: window.requests,
-            rate_limited_requests: window.rate_limited_requests,
-            total_tokens: window.total_tokens,
-            cost_usd: window.cost_usd,
+        let w = summarize_window(recorder, ids, Some(start), Some(end)).await;
+        points.push(ProviderQuotaTrendPointResponse {
+            date: day.format("%Y-%m-%d").to_string(),
+            usage_availability: w.availability,
+            requests: w.requests,
+            rate_limited_requests: w.rate_limited_requests,
+            total_tokens: w.total_tokens,
+            cost_usd: w.cost_usd,
+            cost_availability: w.cost_availability,
         });
     }
-
-    Ok(trend)
+    Ok(points)
 }
 
 fn window_from_parts(
     summary: UsageSummary,
-    rate_limited_requests: u64,
-    cost_usd: f64,
+    rate_limited: u64,
+    cost: f64,
+    known: u64,
+    unknown: u64,
 ) -> ProviderQuotaWindowResponse {
-    let total_tokens = summary.total_prompt_tokens
+    let tokens = summary.total_prompt_tokens
         + summary.total_completion_tokens
         + summary.total_cache_read_tokens
         + summary.total_cache_creation_tokens
         + summary.total_reasoning_tokens;
-
-    ProviderQuotaWindowResponse {
-        requests: summary.total_requests,
-        rate_limited_requests,
-        prompt_tokens: summary.total_prompt_tokens,
-        completion_tokens: summary.total_completion_tokens,
-        cache_read_tokens: summary.total_cache_read_tokens,
-        cache_creation_tokens: summary.total_cache_creation_tokens,
-        reasoning_tokens: summary.total_reasoning_tokens,
-        total_tokens,
-        cost_usd,
-    }
-}
-
-fn aggregate_thresholds(connections: &[&ProviderConnection]) -> (Option<f32>, Option<f32>) {
-    if connections.is_empty() {
-        return (None, None);
-    }
-
-    let warning = connections
-        .iter()
-        .map(|conn| conn.config.quota_window_thresholds.warning)
-        .sum::<f32>()
-        / connections.len() as f32;
-    let error = connections
-        .iter()
-        .map(|conn| conn.config.quota_window_thresholds.error)
-        .sum::<f32>()
-        / connections.len() as f32;
-
-    (Some(warning), Some(error))
-}
-
-fn rate_limited_ratio(window: &ProviderQuotaWindowResponse) -> f32 {
-    if window.requests == 0 {
-        0.0
+    let cost_availability = if summary.total_requests == 0 {
+        "no_data"
+    } else if known == 0 {
+        "unknown"
+    } else if unknown > 0 {
+        "partial"
     } else {
-        window.rate_limited_requests as f32 / window.requests as f32
+        "complete"
+    };
+    ProviderQuotaWindowResponse {
+        availability: if summary.total_requests == 0 {
+            "no_data"
+        } else {
+            "available"
+        },
+        rate_limit_availability: "available",
+        requests: Some(summary.total_requests),
+        rate_limited_requests: Some(rate_limited),
+        prompt_tokens: Some(summary.total_prompt_tokens),
+        completion_tokens: Some(summary.total_completion_tokens),
+        cache_read_tokens: Some(summary.total_cache_read_tokens),
+        cache_creation_tokens: Some(summary.total_cache_creation_tokens),
+        reasoning_tokens: Some(summary.total_reasoning_tokens),
+        total_tokens: Some(tokens),
+        cost_usd: (cost_availability == "complete").then_some(cost),
+        cost_availability,
     }
 }
 
-fn classify_warning_level(
-    observed_ratio: f32,
-    warning_threshold: Option<f32>,
-    error_threshold: Option<f32>,
-    connection_count: u32,
-) -> &'static str {
-    if connection_count == 0 {
+fn combine_cost_availability(a: &str, b: &str) -> &'static str {
+    match (a, b) {
+        ("unavailable", _) | (_, "unavailable") => "unavailable",
+        ("partial", _) | (_, "partial") => "partial",
+        ("unknown", "complete") | ("complete", "unknown") => "partial",
+        ("unknown", "unknown") => "unknown",
+        ("complete", "no_data") | ("no_data", "complete") => "complete",
+        ("unknown", "no_data") | ("no_data", "unknown") => "unknown",
+        ("no_data", "no_data") => "no_data",
+        ("complete", "complete") => "complete",
+        _ => "partial",
+    }
+}
+
+fn rate_limited_ratio(w: &ProviderQuotaWindowResponse) -> Option<f32> {
+    match (w.rate_limited_requests, w.requests) {
+        (Some(limited), Some(requests)) if requests > 0 => Some(limited as f32 / requests as f32),
+        _ => None,
+    }
+}
+fn grouped_thresholds(conns: &[&ProviderConnection]) -> Vec<ProviderQuotaThresholdResponse> {
+    let mut out: Vec<ProviderQuotaThresholdResponse> = vec![];
+    for c in conns {
+        let t = &c.config.quota_window_thresholds;
+        if let Some(x) = out
+            .iter_mut()
+            .find(|x| x.warning == t.warning && x.error == t.error)
+        {
+            x.connection_count += 1
+        } else {
+            out.push(ProviderQuotaThresholdResponse {
+                warning: t.warning,
+                error: t.error,
+                connection_count: 1,
+            })
+        }
+    }
+    out
+}
+fn classify_warning_level(conns: &[&ProviderConnection], ratios: &[Option<f32>]) -> &'static str {
+    if conns.is_empty() {
         return "not_configured";
     }
-
-    match (warning_threshold, error_threshold) {
-        (Some(_), Some(error)) if observed_ratio >= error => "critical",
-        (Some(warning), _) if observed_ratio >= warning => "warning",
-        _ => "ok",
+    let mut result = "ok";
+    let mut observed = false;
+    let mut missing = false;
+    for (connection, ratio) in conns.iter().zip(ratios) {
+        let Some(ratio) = ratio else {
+            missing = true;
+            continue;
+        };
+        observed = true;
+        let thresholds = &connection.config.quota_window_thresholds;
+        if *ratio >= thresholds.error {
+            return "critical";
+        }
+        if *ratio >= thresholds.warning {
+            result = "warning";
+        }
+    }
+    if !observed || missing && result == "ok" {
+        "unknown"
+    } else {
+        result
     }
 }
-
-fn support_note(kind: ProviderKind, connection_count: u32) -> (&'static str, &'static str) {
-    if connection_count == 0 {
-        return (
-            "not_configured",
-            "No configured connections for this provider.",
-        );
-    }
-
-    match kind {
-        ProviderKind::OpenAI => (
-            "usage_only",
-            "Usage and trends come from recorded requests. OpenAI does not expose a public quota API here, so limits are inferred from local thresholds and observed usage.",
-        ),
-        ProviderKind::Anthropic => (
-            "usage_only",
-            "Usage comes from recorded requests. Anthropic workspace limits are not available through a public API in this integration.",
-        ),
-        ProviderKind::Gemini => (
-            "usage_only",
-            "Usage comes from recorded token metadata. Gemini returns token counts per request, but this integration does not have account-level remaining quota data.",
-        ),
-        ProviderKind::Groq => (
-            "usage_only",
-            "Usage comes from recorded requests and rate-limited responses. Remaining request/token quotas are not persisted yet, so this view highlights observed saturation instead.",
-        ),
-        ProviderKind::Ollama | ProviderKind::OllamaCloud => (
-            "local_or_header_based",
-            "Self-hosted Ollama does not expose a quota. For Ollama Cloud, this view shows observed usage and rate-limited responses when present.",
-        ),
-    }
-}
-
-fn internal_error(_error: shared_kernel::CortexError) -> HttpError {
-    HttpError {
-        status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        code: "INTERNAL_ERROR",
-        message: "internal server error".to_string(),
-    }
-}
-
-fn all_provider_kinds() -> [ProviderKind; 6] {
+fn all_provider_kinds() -> [ProviderKind; 7] {
     [
         ProviderKind::OpenAI,
         ProviderKind::Anthropic,
@@ -307,5 +491,6 @@ fn all_provider_kinds() -> [ProviderKind; 6] {
         ProviderKind::Groq,
         ProviderKind::Ollama,
         ProviderKind::OllamaCloud,
+        ProviderKind::AzureOpenAI,
     ]
 }

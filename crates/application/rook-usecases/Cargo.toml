@@ -1,6 +1,6 @@
 [package]
 name = "rook-usecases"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -12,6 +12,7 @@ observability = { path = "../../infrastructure/observability" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 futures = "0.3"
+reqwest = { workspace = true }
 async-stream = "0.3"
 uuid = { version = "1", features = ["v4"] }
 
@@ -54,3 +55,5 @@ hex = "0.4"
 
 [dev-dependencies]
 cortex-test-support = { path = "../../test-support" }
+wiremock = "0.6"
+serde_json = "1"

@@ -32,6 +32,61 @@ async fn health_check_returns_unknown_when_not_supported() {
 }
 
 #[tokio::test]
+async fn complete_does_not_follow_redirects() {
+    let target = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&target)
+        .await;
+    let source = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("Location", format!("{}/target", target.uri())),
+        )
+        .mount(&source)
+        .await;
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-redirect-test"),
+        api_key: "sk-test".to_string(),
+        base_url: source.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let request = CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("claude-3-5-sonnet"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: MessageContent::Text("hello".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(10),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: ApiKeyRestrictions::default(),
+    };
+
+    let result = provider.complete(&request).await;
+
+    assert!(result.is_err(), "a redirect response must fail the request");
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn complete_returns_valid_response_from_mock_server() {
     // T-05 AC: complete() returns Ok(CompletionResponse) with matching content and token counts.
     let mock_server = MockServer::start().await;
@@ -663,4 +718,261 @@ async fn stream_maps_pause_turn_to_stop_finish_reason() {
 
     let final_chunk = chunks.last().unwrap();
     assert_eq!(final_chunk.finish_reason, Some(FinishReason::Stop));
+}
+
+// ---------------------------------------------------------------------------
+// R3: structured tool-calling (RED first)
+// ---------------------------------------------------------------------------
+
+fn tool_test_request() -> CompletionRequest {
+    CompletionRequest {
+        id: RequestId::new(),
+        model: ModelId::new("claude-3-5-sonnet"),
+        messages: vec![rook_core::Message {
+            tool_calls: vec![],
+            role: Role::User,
+            content: MessageContent::Text("Weather in Paris?".to_string()),
+        }],
+        stream: false,
+        max_tokens: Some(100),
+        temperature: None,
+        tools: Some(serde_json::json!([{
+            "name": "get_weather",
+            "description": "Get weather",
+            "input_schema": {"type": "object"}
+        }])),
+        tool_choice: None,
+        metadata: RequestMetadata {
+            origin: "test".to_string(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: ApiKeyRestrictions::default(),
+    }
+}
+
+fn test_provider(server: &MockServer) -> std::sync::Arc<AnthropicProvider> {
+    AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn complete_preserves_single_tool_use() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_tool1",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me check."},
+                {"type": "tool_use", "id": "toolu_123", "name": "get_weather",
+                 "input": {"city": "Paris"}}
+            ],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 20, "output_tokens": 15}
+        })))
+        .mount(&server)
+        .await;
+
+    let resp = test_provider(&server)
+        .complete(&tool_test_request())
+        .await
+        .expect("complete with tool_use succeeds");
+    assert_eq!(resp.finish_reason, Some(FinishReason::ToolCalls));
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].id.as_deref(), Some("toolu_123"));
+    assert_eq!(resp.tool_calls[0].name, "get_weather");
+    assert_eq!(
+        resp.tool_calls[0].arguments,
+        serde_json::json!({"city": "Paris"})
+    );
+    assert!(resp.content_blocks.iter().any(|b| matches!(
+        b, MessageContent::ToolUse { id, .. } if id == "toolu_123"
+    )));
+}
+
+#[tokio::test]
+async fn complete_preserves_multiple_tool_use() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_toolN",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "get_weather",
+                 "input": {"city": "Paris"}},
+                {"type": "tool_use", "id": "toolu_2", "name": "get_time",
+                 "input": {"zone": "CET"}}
+            ],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 30, "output_tokens": 20}
+        })))
+        .mount(&server)
+        .await;
+
+    let resp = test_provider(&server)
+        .complete(&tool_test_request())
+        .await
+        .expect("complete with N tool_use succeeds");
+    assert_eq!(resp.finish_reason, Some(FinishReason::ToolCalls));
+    assert_eq!(resp.tool_calls.len(), 2);
+    assert_eq!(resp.tool_calls[0].name, "get_weather");
+    assert_eq!(resp.tool_calls[1].name, "get_time");
+    assert_eq!(resp.tool_calls[1].id.as_deref(), Some("toolu_2"));
+}
+
+#[tokio::test]
+async fn complete_sends_structured_tool_history() {
+    let server = MockServer::start().await;
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let captured_clone = captured.clone();
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(move |req: &wiremock::Request| {
+            *captured_clone.lock().unwrap() =
+                Some(std::str::from_utf8(&req.body).unwrap().to_string());
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_ok", "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": "Sunny."}],
+                "model": "claude-3-5-sonnet", "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "usage": {"input_tokens": 40, "output_tokens": 5}
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let mut req = tool_test_request();
+    req.messages.push(rook_core::Message {
+        tool_calls: vec![rook_core::MessageToolCall {
+            id: Some("toolu_123".to_string()),
+            name: "get_weather".to_string(),
+            arguments: serde_json::json!({"city": "Paris"}),
+        }],
+        role: Role::Assistant,
+        content: MessageContent::Text(String::new()),
+    });
+    req.messages.push(rook_core::Message {
+        tool_calls: vec![],
+        role: Role::User,
+        content: MessageContent::ToolResult {
+            tool_use_id: "toolu_123".to_string(),
+            content: vec![MessageContent::Text("sunny".to_string())],
+        },
+    });
+
+    test_provider(&server)
+        .complete(&req)
+        .await
+        .expect("complete sends tools");
+    let body = captured.lock().unwrap().clone().expect("request captured");
+    let v: serde_json::Value = serde_json::from_str(&body).expect("valid json");
+    let msgs = v["messages"].as_array().expect("messages array");
+    let asst = msgs
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("assistant msg");
+    let blocks = asst["content"]
+        .as_array()
+        .expect("structured content blocks");
+    assert!(
+        blocks.iter().any(|b| b["type"] == "tool_use"
+            && b["id"] == "toolu_123"
+            && b["name"] == "get_weather"),
+        "assistant tool_calls must serialize as tool_use blocks: {body}"
+    );
+    let user = msgs
+        .iter()
+        .find(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "tool_result"))
+        })
+        .expect("user msg with tool_result");
+    let user_blocks = user["content"].as_array().expect("user blocks");
+    assert!(
+        user_blocks
+            .iter()
+            .any(|b| b["type"] == "tool_result" && b["tool_use_id"] == "toolu_123"),
+        "tool results must serialize as tool_result blocks: {body}"
+    );
+}
+
+#[tokio::test]
+async fn stream_emits_tool_call_fragments() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n\
+             data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_123\",\"name\":\"get_weather\"}}\n\n\
+             data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}\n\n\
+             data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\" \\\"Paris\\\"}\"}}\n\n\
+             data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+             data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":20,\"input_tokens\":15}}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let mut req = tool_test_request();
+    req.stream = true;
+    let chunks = test_provider(&server)
+        .stream(&req)
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    let start = chunks
+        .iter()
+        .find(|c| {
+            c.tool_calls
+                .iter()
+                .any(|t| t.id.as_deref() == Some("toolu_123"))
+        })
+        .expect("start chunk carries tool id");
+    assert_eq!(
+        start.tool_calls[0].function.name.as_deref(),
+        Some("get_weather")
+    );
+    let partials: String = chunks
+        .iter()
+        .flat_map(|c| c.tool_calls.iter())
+        .filter_map(|t| t.function.arguments.clone())
+        .collect();
+    assert!(
+        partials.contains("Paris"),
+        "input_json_delta fragments must flow through, got: {partials}"
+    );
+    let final_chunk = chunks.last().unwrap();
+    assert_eq!(final_chunk.finish_reason, Some(FinishReason::ToolCalls));
+    assert!(
+        final_chunk
+            .tool_calls
+            .iter()
+            .any(|t| t.id.as_deref() == Some("toolu_123")),
+        "final chunk carries tool summary for SSE stops"
+    );
 }

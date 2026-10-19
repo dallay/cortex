@@ -41,6 +41,7 @@ export type ProviderKind =
 	| "ollama"
 	| "ollama-cloud"
 	| "gemini"
+	| "azure-openai"
 	| "groq";
 
 /** Backend `AuthType` enum (2 values, stable for v1 — OAuth is gated). */
@@ -147,6 +148,7 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 	{
 		kind: "gemini",
 		...API_KEY_DEFAULTS,
+		authTypes: ["apikey", "oauth"] as const,
 		displayNameKey: "providers.kind.gemini.name",
 		defaultBaseUrl: "https://generativelanguage.googleapis.com",
 		iconFile: "gemini.svg",
@@ -158,6 +160,17 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 			"gemini-1.5-pro",
 			"gemini-1.5-flash",
 		],
+	},
+	{
+		kind: "azure-openai",
+		category: "oauth",
+		defaultBaseUrl: "",
+		authTypes: ["oauth"],
+		displayNameKey: "providers.kind.azureOpenai.name",
+		brandUrl: "https://azure.microsoft.com/products/ai-services/openai-service",
+		descriptionKey: "providers.kind.azureOpenai.description",
+		docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/",
+		defaultModels: [],
 	},
 	{
 		kind: "groq",

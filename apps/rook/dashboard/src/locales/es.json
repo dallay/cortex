@@ -142,6 +142,10 @@
 				"name": "Google Gemini",
 				"description": "Modelos Gemini de Google con soporte multimodal."
 			},
+			"azureOpenai": {
+				"name": "Azure OpenAI",
+				"description": "Modelos OpenAI alojados en Azure con autenticación Microsoft Entra ID."
+			},
 			"groq": {
 				"name": "Groq",
 				"description": "Inferencia rápida en LPU de Groq para modelos de código abierto."
@@ -194,26 +198,40 @@
 		},
 		"quota": {
 			"unknownProvider": "Proveedor desconocido",
-			"title": "Cuota de proveedores",
-			"subtitle": "Monitorea uso observado, rate limits y tendencias de costo en tus proveedores.",
+			"title": "Uso de proveedores",
+			"subtitle": "Uso registrado de solicitudes enrutadas por Cortex; no representa el uso total de la cuenta del proveedor.",
+			"coverage": "Las métricas cubren solo solicitudes enrutadas por Cortex, no la actividad fuera de Cortex.",
+			"coverageHeading": "Cobertura y límites",
 			"generatedAt": "Actualizado {date}",
-			"support": "Fuente de cuota",
-			"last24hTokens": "Tokens 24h",
-			"last7dCost": "Costo 7d",
-			"rateLimited": "Rate-limited 7d",
+			"last24hTokens": "Tokens 24 h",
+			"last7dCost": "Costo estimado 7 d",
+			"estimatedCost": "Estimado según precios configurados",
+			"partialCost": "Costo parcial; total desconocido",
+			"unknownCost": "Desconocido",
+			"unavailable": "No disponible",
+			"usageUnavailable": "Algunas mediciones de uso no están disponibles; revisa la disponibilidad de cada período.",
+			"rateLimited": "Rate limits observados 7 d",
+			"observedRateLimits": "Solicitudes enrutadas observadas, no cuota de cuenta",
 			"connections": "{configured} configuradas · {active} activas",
+			"refresh": "Actualizar",
+			"stale": "Se muestran datos anteriores",
+			"staleDescription": "Falló la última actualización. Los valores son de la última respuesta correcta.",
+			"accountNotProvided": "Esta integración no proporciona la cuota de la cuenta del proveedor.",
+			"accountNotApplicable": "La cuota de cuenta no aplica a Ollama autohospedado.",
+			"localThreshold": "Advertencia local {warning}, error {error} ({count} conexiones)",
+			"trendLabel": "Tendencia de siete días del uso enrutado por Cortex para {provider}",
+			"requests": "solicitudes",
+			"tokens": "tokens",
+			"trendCost": "Costo",
+			"empty": "No hay datos de uso de proveedores disponibles.",
+			"availability": {"available": "Disponible", "no_data": "Sin uso en este período", "unavailable": "No disponible"},
 			"level": {
-				"ok": "Saludable",
-				"warning": "Advertencia",
-				"critical": "Crítico",
-				"not_configured": "Sin configurar"
-			},
-			"supportValue": {
-				"usage_only": "Basado en uso",
-				"local_or_header_based": "Local / observado",
-				"not_configured": "Sin conexiones"
-			},
-			"noData": "Aún no hay datos de cuota para {providerName}."
+				"ok": "No se superó el umbral local",
+				"warning": "Se superó el umbral local de advertencia",
+				"critical": "Se superó el umbral local de error",
+				"unknown": "Estado no disponible",
+				"not_configured": "No hay conexiones configuradas"
+			}
 		},
 		"form": {
 			"createTitle": "Agregar conexión de {providerName}",
@@ -244,6 +262,32 @@
 			"cancel": "Cancelar",
 			"delete": "Eliminar",
 			"oauthComingSoon": "La autenticación OAuth aún no está soportada en esta versión."
+		},
+		"oauth": {
+			"clientId": "ID del cliente OAuth",
+			"clientSecret": "Secreto del cliente OAuth (opcional para clientes públicos)",
+			"tenantId": "ID del tenant de Microsoft Entra",
+			"azureDeploymentPlaceholder": "mi-deployment-gpt-4o",
+			"azureDeploymentHelp": "Escribe el nombre del deployment de Azure. Rook lo enviará como model.",
+			"googleProjectId": "ID del proyecto de Google Cloud",
+			"flowType": "Flujo de autorización",
+			"authorizationCode": "Autorización en el navegador",
+			"deviceCode": "Código de dispositivo (sin navegador)",
+			"connect": "Conectar cuenta",
+			"starting": "Iniciando autorización segura…",
+			"startFailed": "No se pudo iniciar la autorización. Revisa la configuración OAuth.",
+			"waiting": "Esperando la autorización del proveedor…",
+			"openVerificationPage": "Abrir la página de verificación",
+			"openAuthorizationPage": "Abrir la página de autorización",
+			"openAuthorizationLink": "Permite las ventanas emergentes o usa el enlace para continuar.",
+			"refresh": "Renovar token OAuth",
+			"connectionNotFound": "Conexión no encontrada. Actualiza la lista e inténtalo de nuevo.",
+			"expiresAt": "El token vence {date}",
+			"status": {
+				"connected": "OAuth conectado",
+				"expired": "El token OAuth venció",
+				"reauthentication_required": "Se requiere volver a autorizar"
+			}
 		}
 	},
 	"combos": {

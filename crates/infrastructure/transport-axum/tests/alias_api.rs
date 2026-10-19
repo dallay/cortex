@@ -211,6 +211,25 @@ async fn test_create_alias_success() {
 }
 
 #[tokio::test]
+async fn test_create_alias_rejects_reserved_rook_prefix_case_insensitively() {
+    for alias in ["rook/evil", "  rook/evil  ", "ROOK/evil", "Rook/Coding"] {
+        let error = assert_create_error(
+            test_app(),
+            json!({
+                "alias": alias,
+                "canonical": "gpt-4o"
+            }),
+            "INVALID_ALIAS",
+        )
+        .await;
+        assert!(error["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("reserved"));
+    }
+}
+
+#[tokio::test]
 async fn test_create_alias_duplicate() {
     let app = test_app_with_seeded().await;
 

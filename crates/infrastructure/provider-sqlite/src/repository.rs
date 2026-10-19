@@ -185,7 +185,8 @@ const SELECT_PROVIDER_CONNECTIONS: &str = "
            refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
            max_concurrent, quota_warning, quota_error, default_model, base_url,
            test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
-           created_at, updated_at
+            oauth_client_id, oauth_client_secret_ct, oauth_tenant_id,
+            created_at, updated_at
     FROM provider_connections";
 
 const ORDER_PROVIDER_CONNECTIONS: &str = " ORDER BY priority ASC, created_at DESC";
@@ -198,10 +199,11 @@ const INSERT_PROVIDER_CONNECTION: &str = "
         refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
         max_concurrent, quota_warning, quota_error, default_model, base_url,
         test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
-        created_at, updated_at
+        oauth_client_id, oauth_client_secret_ct, oauth_tenant_id, created_at, updated_at
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
+        ?26, ?27, ?28, ?29, ?30
     )";
 
 const UPDATE_PROVIDER_CONNECTION: &str = "
@@ -230,8 +232,11 @@ const UPDATE_PROVIDER_CONNECTION: &str = "
         test_error = ?23,
         test_expires_at = ?24,
         last_test_at = ?25,
-        updated_at = ?27
-    WHERE id = ?1 AND updated_at = ?28";
+        oauth_client_id = ?26,
+        oauth_client_secret_ct = ?27,
+        oauth_tenant_id = ?28,
+        updated_at = ?30
+    WHERE id = ?1 AND updated_at = ?31";
 
 fn provider_params(
     conn: &ProviderConnection,
@@ -286,6 +291,9 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
             .expires_at()
             .map_or(rusqlite::types::Value::Null, Into::into),
         optional_string(conn.test_status.last_test_at().map(|dt| dt.to_rfc3339())),
+        optional_string(oauth_client_id(&conn.credentials)),
+        optional_string(oauth_client_secret_ct(&conn.credentials)),
+        optional_string(oauth_tenant_id(&conn.credentials)),
     ]
 }
 
@@ -307,7 +315,7 @@ fn validate_credential_shape(conn: &ProviderConnection) -> Result<(), Repository
                 scope,
                 id_token,
                 project_id,
-                expires_at: _,
+                ..
             },
         ) if [
             email.as_str(),
@@ -351,6 +359,13 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             scope: EncryptedBlob(required_string(row, "scope_ct")?),
             id_token: EncryptedBlob(required_string(row, "id_token_ct")?),
             project_id: EncryptedBlob(required_string(row, "project_id_ct")?),
+            oauth_client_id: row
+                .get::<_, Option<String>>("oauth_client_id")?
+                .unwrap_or_default(),
+            oauth_client_secret: row
+                .get::<_, Option<String>>("oauth_client_secret_ct")?
+                .map(EncryptedBlob),
+            oauth_tenant_id: row.get::<_, Option<String>>("oauth_tenant_id")?,
         },
     };
 
@@ -514,6 +529,36 @@ fn id_token_ct(creds: &Credentials) -> Option<String> {
 fn project_id_ct(creds: &Credentials) -> Option<String> {
     match creds {
         Credentials::OAuth { project_id, .. } => Some(project_id.as_str().to_string()),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
+fn oauth_client_id(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_client_id, ..
+        } => Some(oauth_client_id.clone()),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
+fn oauth_client_secret_ct(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_client_secret,
+            ..
+        } => oauth_client_secret
+            .as_ref()
+            .map(|secret| secret.as_str().to_string()),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
+fn oauth_tenant_id(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_tenant_id, ..
+        } => oauth_tenant_id.clone(),
         Credentials::ApiKey { .. } => None,
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "transport-axum"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -48,9 +48,11 @@ dashmap = "6"
 
 [dev-dependencies]
 axum-test = "21"
+http-body-util = "0.1"
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
 providers-openai = { path = "../providers-openai" }
 providers-ollama = { path = "../providers-ollama" }
+providers-anthropic = { path = "../providers-anthropic" }
 wiremock = "0.6"
 cortex-test-support = { path = "../../test-support" }

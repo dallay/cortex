@@ -26,10 +26,8 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
     for (index, message) in messages.iter().enumerate().skip(from) {
         match message.role {
             Role::User => last_user = Some(index),
-            Role::Assistant if message.tool_calls.is_empty() => {
-                if last_user.is_some() {
-                    ends.push(index + 1);
-                }
+            Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
+                ends.push(index + 1);
             }
             _ => {}
         }
@@ -161,10 +159,8 @@ mod tests {
         for (index, message) in messages.iter().enumerate() {
             match message.role {
                 Role::User => last_user = Some(index),
-                Role::Assistant if message.tool_calls.is_empty() => {
-                    if last_user.is_some() {
-                        expected.push(index + 1);
-                    }
+                Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
+                    expected.push(index + 1);
                 }
                 _ => {}
             }
@@ -244,6 +240,16 @@ pub struct StandardLoop {
     pub lifecycle: CancellationToken,
 }
 impl StandardLoop {
+    async fn pin_model(&self, cancel: CancellationToken) -> Result<Arc<dyn ModelProvider>> {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(AgentError::Cancelled),
+            _ = self.lifecycle.cancelled() => Err(AgentError::Cancelled),
+            result = self.model.pin_turn(cancel.clone()) => {
+                Ok(result?.unwrap_or_else(|| self.model.clone()))
+            }
+        }
+    }
     async fn record(
         &self,
         session: &mut Session,
@@ -257,6 +263,7 @@ impl StandardLoop {
     }
     async fn request(
         &self,
+        model: &dyn ModelProvider,
         request: ModelRequest,
         cancel: CancellationToken,
         mut on_delta: impl FnMut(&ModelDelta),
@@ -264,7 +271,7 @@ impl StandardLoop {
         let mut stream = tokio::select! {
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
-            result = self.model.stream(request, cancel.clone()) => result?,
+            result = model.stream(request, cancel.clone()) => result?,
         };
         let mut message = Message::text(Role::Assistant, "");
         let mut finished = false;
@@ -299,6 +306,7 @@ impl StandardLoop {
     }
     async fn context(
         &self,
+        model: &dyn ModelProvider,
         session: &mut Session,
         instructions: &str,
         tool_bytes: usize,
@@ -331,7 +339,8 @@ impl StandardLoop {
             .copied()
             .unwrap_or(session.summary_through);
         if through > session.summary_through {
-            self.summarize(session, through, cancel, sink).await?;
+            self.summarize(model, session, through, cancel, sink)
+                .await?;
             context = assemble(session);
         }
         if serde_json::to_vec(&context)?.len() + tool_bytes + self.config.max_output_tokens as usize
@@ -343,6 +352,7 @@ impl StandardLoop {
     }
     async fn summarize(
         &self,
+        model: &dyn ModelProvider,
         session: &mut Session,
         through: usize,
         cancel: CancellationToken,
@@ -373,7 +383,7 @@ impl StandardLoop {
                     .into(),
             ));
         }
-        let summary = self.request(summary_request, cancel, |_| {}).await?;
+        let summary = self.request(model, summary_request, cancel, |_| {}).await?;
         if summary.content.trim().is_empty() || !summary.tool_calls.is_empty() {
             return Err(AgentError::Model(
                 "compaction returned an invalid summary".into(),
@@ -403,6 +413,7 @@ impl StandardLoop {
     /// for the next model response. Approval denial also becomes a tool error result.
     async fn turn(
         &self,
+        model: Result<Arc<dyn ModelProvider>>,
         session: &mut Session,
         prompt: String,
         approvals: &dyn ApprovalPolicy,
@@ -412,6 +423,8 @@ impl StandardLoop {
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
+        // Preserve the attempted prompt and normal error events even if pinning failed.
+        let model = model?;
         for _ in 0..self.config.max_iterations {
             if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -425,9 +438,16 @@ impl StandardLoop {
             let tools = self.tools.definitions();
             let tool_bytes = serde_json::to_vec(&tools)?.len();
             let context = self
-                .context(session, &instructions, tool_bytes, cancel.clone(), sink)
+                .context(
+                    model.as_ref(),
+                    session,
+                    &instructions,
+                    tool_bytes,
+                    cancel.clone(),
+                    sink,
+                )
                 .await?;
-            let model_request = self.model.stream(
+            let model_request = model.stream(
                 ModelRequest {
                     messages: context,
                     tools,
@@ -641,7 +661,9 @@ impl AgentLoop for StandardLoop {
                 "no complete turns available to summarize".into(),
             ));
         }
-        self.summarize(session, through, cancellation, events).await
+        let model = self.pin_model(cancellation.clone()).await?;
+        self.summarize(model.as_ref(), session, through, cancellation, events)
+            .await
     }
 
     async fn run(
@@ -652,6 +674,8 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        // Pin before instruction/session I/O; every request in this turn reuses it.
+        let model = self.pin_model(cancellation.clone()).await;
         session.interrupted = true;
         self.record(
             session,
@@ -662,7 +686,7 @@ impl AgentLoop for StandardLoop {
         )
         .await?;
         let result = self
-            .turn(session, prompt, approvals, events, cancellation)
+            .turn(model, session, prompt, approvals, events, cancellation)
             .await;
         match &result {
             Ok(()) => {
