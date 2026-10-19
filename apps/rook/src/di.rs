@@ -157,6 +157,11 @@ fn resolve_setup_token_value(is_initialized: bool) -> Option<String> {
 }
 
 impl RookContainer {
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        self.usage_repository.shutdown().await?;
+        Ok(())
+    }
+
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
         // Run startup migrations once before constructing any repositories
         run_startup_migrations(&config.database.db_path)?;

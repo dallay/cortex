@@ -11,6 +11,7 @@ use rusqlite::{params, Connection};
 use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId, ProviderId, RequestId};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::{mpsc, Mutex};
 
 const QUOTA_OBSERVATION_QUEUE_CAPACITY: usize = 1024;
@@ -114,8 +115,9 @@ impl AuditPort for SqliteAudit {
 /// SQLite-backed usage history repository.
 pub struct SqliteUsageRepository {
     conn: Mutex<Connection>,
-    quota_observation_sender: Option<mpsc::Sender<Vec<QuotaObservation>>>,
-    quota_observation_worker: Option<std::thread::JoinHandle<usize>>,
+    quota_observation_sender: StdMutex<Option<mpsc::Sender<Vec<QuotaObservation>>>>,
+    quota_observation_worker: StdMutex<Option<std::thread::JoinHandle<usize>>>,
+    shutdown_lock: Mutex<()>,
 }
 
 impl SqliteUsageRepository {
@@ -140,8 +142,9 @@ impl SqliteUsageRepository {
             .map_err(|e| CortexError::provider(format!("sqlite quota worker spawn failed: {e}")))?;
         Ok(Self {
             conn: Mutex::new(conn),
-            quota_observation_sender: Some(quota_observation_sender),
-            quota_observation_worker: Some(quota_observation_worker),
+            quota_observation_sender: StdMutex::new(Some(quota_observation_sender)),
+            quota_observation_worker: StdMutex::new(Some(quota_observation_worker)),
+            shutdown_lock: Mutex::new(()),
         })
     }
 
@@ -257,10 +260,14 @@ impl QuotaObservationRecorderPort for SqliteUsageRepository {
         if observations.is_empty() {
             return Ok(());
         }
-        if let Some(sender) = &self.quota_observation_sender {
+        let sender = self
+            .quota_observation_sender
+            .lock()
+            .expect("quota sender mutex poisoned");
+        if let Some(sender) = sender.as_ref() {
             enqueue_quota_observation_batch(sender, observations);
         } else {
-            // Drop is closing the recorder. Preserve provider success semantics.
+            // Explicit shutdown has closed the recorder; preserve provider success semantics.
             metrics::counter!("quota_observation_dropped_total").increment(1);
             tracing::warn!("dropping quota observation batch because writer is shutting down");
         }
@@ -363,25 +370,38 @@ impl QuotaObservationRecorderPort for SqliteUsageRepository {
     }
 }
 
-impl Drop for SqliteUsageRepository {
-    fn drop(&mut self) {
-        // Closing the last sender lets the dedicated thread drain every accepted batch
-        // before exiting. Join it here so shutdown does not silently detach the writer.
-        // The queue is bounded (1024 batches); a slow SQLite writer can therefore make
-        // repository destruction wait for that bounded backlog to finish.
-        self.quota_observation_sender.take();
-        if let Some(worker) = self.quota_observation_worker.take() {
-            match worker.join() {
-                Ok(failed_batches) if failed_batches > 0 => {
-                    tracing::error!(
-                        failed_batches,
-                        "quota observation worker exited with write failures"
-                    );
-                }
-                Ok(_) => {}
-                Err(_) => tracing::error!("quota observation writer thread panicked"),
+impl SqliteUsageRepository {
+    /// Closes the quota writer, drains all accepted batches, and joins its thread.
+    ///
+    /// Call this during application shutdown, after stopping producers. Dropping the
+    /// repository without explicit shutdown detaches the worker rather than blocking
+    /// whichever thread releases the final repository reference.
+    pub async fn shutdown(&self) -> CortexResult<()> {
+        let _shutdown_guard = self.shutdown_lock.lock().await;
+        self.quota_observation_sender
+            .lock()
+            .expect("quota sender mutex poisoned")
+            .take();
+        let worker = self
+            .quota_observation_worker
+            .lock()
+            .expect("quota worker mutex poisoned")
+            .take();
+        if let Some(worker) = worker {
+            let failed_batches = tokio::task::spawn_blocking(move || worker.join())
+                .await
+                .map_err(|error| {
+                    CortexError::provider(format!("quota writer shutdown task failed: {error}"))
+                })?
+                .map_err(|_| CortexError::provider("quota observation writer thread panicked"))?;
+            if failed_batches > 0 {
+                tracing::error!(
+                    failed_batches,
+                    "quota observation worker exited with write failures"
+                );
             }
         }
+        Ok(())
     }
 }
 
@@ -1169,6 +1189,24 @@ mod usage_tests {
             reset_after_milliseconds: Some(7_660),
             observed_at: timestamp(2),
         }
+    }
+
+    #[test]
+    fn shutdown_drains_accepted_quota_batches_before_returning() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let observation = quota_observation("openai-runtime", None);
+            repo.record_observations(vec![observation.clone()])
+                .await
+                .expect("enqueue quota batch");
+
+            repo.shutdown().await.expect("shutdown quota writer");
+
+            let rows = repo.list_observations(None).await.expect("list quota");
+            assert_eq!(rows, vec![observation]);
+            assert!(repo.quota_observation_sender.lock().unwrap().is_none());
+            assert!(repo.quota_observation_worker.lock().unwrap().is_none());
+        });
     }
 
     #[test]

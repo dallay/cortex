@@ -111,7 +111,10 @@ async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
             let container = di::RookContainer::build(&config)
                 .await
                 .context("failed to build container")?;
-            let state = container.usecases.bootstrap_status.execute().await?;
+            let result = container.usecases.bootstrap_status.execute().await;
+            let shutdown_result = container.shutdown().await;
+            let state = result?;
+            shutdown_result?;
             println!("initialized: {}", state.is_initialized);
             println!("admin_user_exists: {}", state.admin_user_exists);
             Ok(())
@@ -139,15 +142,21 @@ async fn seed_admin(config_path: Option<PathBuf>, password: String) -> anyhow::R
         .await
         .context("failed to build container")?;
 
-    let input = SetAdminPasswordInput {
-        new_password: password,
-    };
-    container
-        .usecases
-        .set_admin_password
-        .execute(input)
-        .await
-        .context("failed to set admin password")?;
+    let result = async {
+        let input = SetAdminPasswordInput {
+            new_password: password,
+        };
+        container
+            .usecases
+            .set_admin_password
+            .execute(input)
+            .await
+            .context("failed to set admin password")
+    }
+    .await;
+    let shutdown_result = container.shutdown().await;
+    result?;
+    shutdown_result?;
 
     tracing::info!("admin password set successfully");
     Ok(())
@@ -163,7 +172,11 @@ async fn start_server() -> anyhow::Result<()> {
         .await
         .context("failed to build container")?;
 
-    announce_bootstrap_if_needed(&container).await?;
+    if let Err(error) = announce_bootstrap_if_needed(&container).await {
+        let shutdown_result = container.shutdown().await;
+        shutdown_result?;
+        return Err(error);
+    }
 
     tracing::info!("container built successfully");
     server::run(container, config.server).await

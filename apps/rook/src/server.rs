@@ -34,16 +34,13 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
         );
     }
 
-    // Spawn periodic retention sweep in the background.
-    let _periodic_sweep = spawn_periodic_usage_retention_sweep(
-        container.usage_repository.clone(),
-        container.usage_config.retention_days,
-        container.usage_config.sweep_interval_hours,
-    );
-
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .context("invalid address")?;
+    let addr: SocketAddr = match format!("{}:{}", config.host, config.port).parse() {
+        Ok(addr) => addr,
+        Err(error) => {
+            container.shutdown().await?;
+            return Err(anyhow::Error::new(error).context("invalid address"));
+        }
+    };
 
     let router = transport_axum::router(
         container.usecases.clone(),
@@ -65,11 +62,31 @@ pub async fn run(container: RookContainer, config: ServerConfig) -> anyhow::Resu
 
     info!(addr = %addr, "starting rook server");
 
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, make_service(router))
+    let listener = match TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            container.shutdown().await?;
+            return Err(error.into());
+        }
+    };
+    let periodic_sweep = spawn_periodic_usage_retention_sweep(
+        container.usage_repository.clone(),
+        container.usage_config.retention_days,
+        container.usage_config.sweep_interval_hours,
+    );
+    let server_result = axum::serve(listener, make_service(router))
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("server error")?;
+        .context("server error");
+
+    periodic_sweep.abort();
+    if let Err(error) = periodic_sweep.await {
+        if !error.is_cancelled() {
+            tracing::warn!(%error, "periodic usage retention task failed during shutdown");
+        }
+    }
+    container.shutdown().await?;
+    server_result?;
 
     Ok(())
 }
