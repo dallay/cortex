@@ -14,12 +14,26 @@ use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId, 
 use sse_stream::SseBuffer;
 use std::sync::Arc;
 
+/// Parse Anthropic rate-limit response headers into quota observations.
+///
+/// `scope` carries the `anthropic-workspace-id` response header when the
+/// upstream sends one, and stays `None` otherwise. That header identifies
+/// the workspace attached to the request — it is NOT a guaranteed statement
+/// about the level (account / workspace / key) at which the accompanying
+/// limit is enforced.
 pub fn parse_anthropic_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
     use rook_core::{ProviderKind, QuotaObservation};
+
+    let scope = headers
+        .get("anthropic-workspace-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
 
     let buckets = [
         ("requests", "anthropic-ratelimit-", "requests"),
@@ -55,7 +69,7 @@ pub fn parse_anthropic_rate_limit_headers(
                 connection_id: None,
                 metric: metric.to_string(),
                 source: "response_headers".to_string(),
-                scope: None,
+                scope: scope.clone(),
                 window: Some("minute".to_string()),
                 limit: Some(limit),
                 remaining: Some(remaining),
@@ -300,10 +314,8 @@ impl AnthropicProvider {
         };
         let observations =
             parse_anthropic_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
-        for observation in observations {
-            if let Err(error) = recorder.record_observation(observation).await {
-                tracing::warn!(%error, "failed to record Anthropic quota observation");
-            }
+        if let Err(error) = recorder.record_observations(observations).await {
+            tracing::warn!(%error, "failed to record Anthropic quota observations");
         }
     }
 

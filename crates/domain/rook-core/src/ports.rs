@@ -176,6 +176,15 @@ pub trait UsageRecorderPort: Send + Sync {
 pub trait QuotaObservationRecorderPort: Send + Sync {
     async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()>;
 
+    /// Record observations captured from one provider response as a batch.
+    /// Implementations may override this to preserve the response boundary.
+    async fn record_observations(&self, observations: Vec<QuotaObservation>) -> CortexResult<()> {
+        for observation in observations {
+            self.record_observation(observation).await?;
+        }
+        Ok(())
+    }
+
     async fn list_observations(
         &self,
         provider: Option<ProviderId>,

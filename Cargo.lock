@@ -220,6 +220,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "db-migration",
+ "metrics",
  "rook-core",
  "rusqlite",
  "serde",

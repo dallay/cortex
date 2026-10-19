@@ -822,7 +822,72 @@ pub fn build_provider_from_connection(
     )
 }
 
-fn build_provider_from_connection_with_recorder(
+/// T1 — P1 canonical URLs: decide whether upstream quota capture stays enabled.
+///
+/// `None` (backend default) always retains the recorder. An explicit override
+/// retains it only when it normalizes to the provider's canonical endpoint:
+/// - OpenAI: `https://api.openai.com` with or without `/v1`
+/// - Anthropic: `https://api.anthropic.com`
+/// - Groq: `https://api.groq.com/openai/v1`
+///
+/// Anything else (custom proxy / mock / non-https) disables capture so
+/// third-party rate-limit headers are never attributed to the canonical
+/// provider.
+///
+/// Normalization: trim surrounding whitespace, case-insensitive scheme and
+/// host, ignore trailing slashes, tolerate `/v1` for OpenAI.
+pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>) -> bool {
+    let Some(raw) = base_url_override else {
+        return true;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    // Canonical URLs never carry userinfo, query, or fragment.
+    if rest.contains(['@', '?', '#']) {
+        return false;
+    }
+    let (host, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    if host.is_empty() || host.contains(':') {
+        // Empty host or explicit port suffix => custom.
+        return false;
+    }
+    let host = host.to_ascii_lowercase();
+    // Strip trailing slashes: "/" -> "", "/v1/" -> "/v1".
+    let mut norm_path = path;
+    while norm_path.len() > 1 && norm_path.ends_with('/') {
+        norm_path = &norm_path[..norm_path.len() - 1];
+    }
+    if norm_path == "/" {
+        norm_path = "";
+    }
+    let norm_path = norm_path.to_ascii_lowercase();
+    match kind {
+        ProviderKind::OpenAI => {
+            host == "api.openai.com" && (norm_path.is_empty() || norm_path == "/v1")
+        }
+        ProviderKind::Anthropic => host == "api.anthropic.com" && norm_path.is_empty(),
+        ProviderKind::Groq => host == "api.groq.com" && norm_path == "/openai/v1",
+        // Ollama / OllamaCloud / Gemini never carry quota capture; no explicit
+        // URL is canonical (the recorder is ignored downstream anyway).
+        _ => false,
+    }
+}
+
+/// Test/CRUD entry point for the canonical-URL quota filter (T6 coverage).
+/// `pub` so integration tests can exercise the filter end-to-end; production
+/// callers go through [`ProviderBuilderPort`] / [`build_provider_from_connection`].
+pub fn build_provider_from_connection_with_recorder(
     connection_id: &ConnectionId,
     kind: ProviderKind,
     credentials: &DecryptedCredentials,
@@ -830,6 +895,8 @@ fn build_provider_from_connection_with_recorder(
     models: Vec<ModelId>,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    let quota_recorder =
+        quota_recorder.filter(|_| is_canonical_base_url(kind, base_url_override.as_deref()));
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
@@ -938,6 +1005,29 @@ struct ConnectionQuotaRecorder {
     connection_id: ConnectionId,
 }
 
+/// Test/CRUD seam for the canonical-URL quota gate plus identity wrapping.
+///
+/// Kept `pub` so integration tests exercise the same production decision that
+/// [`DynamicProviderBuilder`] applies, without reaching into private state.
+pub fn quota_recorder_for_connection(
+    kind: ProviderKind,
+    base_url_override: Option<&str>,
+    connection_id: ConnectionId,
+    provider_runtime_id: ProviderId,
+    recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
+    if !is_canonical_base_url(kind, base_url_override) {
+        return None;
+    }
+    recorder.map(|recorder| {
+        Arc::new(ConnectionQuotaRecorder {
+            recorder,
+            provider_runtime_id,
+            connection_id,
+        }) as Arc<dyn QuotaObservationRecorderPort>
+    })
+}
+
 #[async_trait]
 impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
     async fn record_observation(
@@ -978,17 +1068,15 @@ impl DynamicProviderBuilder {
         &self,
         input: &ProviderBuildInput,
     ) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
-        // Only canonical endpoints are eligible for provider-specific quota capture.
-        if input.base_url.is_some() {
-            return None;
-        }
-        self.quota_observation_recorder.as_ref().map(|recorder| {
-            Arc::new(ConnectionQuotaRecorder {
-                recorder: recorder.clone(),
-                provider_runtime_id: input.provider_runtime_id.clone(),
-                connection_id: input.connection_id,
-            }) as Arc<dyn QuotaObservationRecorderPort>
-        })
+        // Default endpoints and explicit canonical URLs both qualify; custom
+        // endpoints must not have third-party headers attributed to the provider.
+        quota_recorder_for_connection(
+            input.provider_kind,
+            input.base_url.as_deref(),
+            input.connection_id,
+            input.provider_runtime_id.clone(),
+            self.quota_observation_recorder.clone(),
+        )
     }
 }
 
@@ -1016,136 +1104,5 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             quota_recorder,
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
-    }
-}
-
-#[cfg(test)]
-mod quota_identity_tests {
-    use super::*;
-    use rook_core::{CompletionRequest, RequestMetadata};
-    use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    async fn managed_quota_capture_persists_runtime_and_connection_identity() {
-        let db = tempfile::NamedTempFile::new().unwrap();
-        run_startup_migrations(db.path().to_str().unwrap()).unwrap();
-        let repository = Arc::new(SqliteUsageRepository::new(db.path()).unwrap());
-        let builder = DynamicProviderBuilder::new(
-            Arc::new(StaticModelCatalog::new()),
-            Some(repository.clone()),
-        );
-        let server = MockServer::start().await;
-        Mock::given(matchers::method("POST"))
-            .respond_with(
-                ResponseTemplate::new(429)
-                    .insert_header("x-ratelimit-limit-requests", "100")
-                    .insert_header("x-ratelimit-remaining-requests", "75")
-                    .insert_header("anthropic-ratelimit-requests-limit", "100")
-                    .insert_header("anthropic-ratelimit-requests-remaining", "75")
-                    .set_body_json(serde_json::json!({"error":{"message":"limited"}})),
-            )
-            .mount(&server)
-            .await;
-        let request = CompletionRequest {
-            id: shared_kernel::RequestId::new(),
-            model: ModelId::new("test-model"),
-            messages: vec![],
-            stream: false,
-            max_tokens: None,
-            temperature: None,
-            tools: None,
-            tool_choice: None,
-            metadata: RequestMetadata {
-                origin: "test".into(),
-                cacheable: false,
-                priority: 0,
-                api_key_id: None,
-                requested_tier: None,
-                combo_id: None,
-            },
-            restrictions: Default::default(),
-        };
-
-        for kind in [
-            ProviderKind::OpenAI,
-            ProviderKind::Anthropic,
-            ProviderKind::Groq,
-        ] {
-            let runtime_id = ProviderId::new(format!("{}-primary", kind.as_str()));
-            let mut connection_ids = Vec::new();
-            for _ in 0..2 {
-                let input = ProviderBuildInput {
-                    provider_kind: kind,
-                    connection_id: ConnectionId::new(),
-                    provider_runtime_id: runtime_id.clone(),
-                    decrypted_credentials: DecryptedCredentials::ApiKey {
-                        api_key: "test".into(),
-                    },
-                    base_url: None,
-                    default_model: None,
-                };
-                // Use production identity wiring for a canonical connection, then
-                // redirect only the HTTP transport to the local test server.
-                let recorder = builder.quota_recorder(&input).unwrap();
-                let provider: Arc<dyn ProviderPort> = if kind == ProviderKind::Groq {
-                    // The Groq DI branch always uses its canonical endpoint;
-                    // supply a local transport directly for this fixture.
-                    providers_groq::GroqProvider::new_with_quota_recorder(
-                        providers_groq::GroqProviderConfig {
-                            id: ProviderId::new(input.connection_id.to_string()),
-                            api_key: "test".into(),
-                            base_url: Some(server.uri()),
-                            models: vec![],
-                            timeout_secs: 10,
-                        },
-                        Some(recorder),
-                    )
-                    .unwrap()
-                } else {
-                    build_provider_from_connection_with_recorder(
-                        &input.connection_id,
-                        input.provider_kind,
-                        &input.decrypted_credentials,
-                        Some(server.uri()),
-                        vec![],
-                        Some(recorder),
-                    )
-                    .unwrap()
-                };
-                assert_eq!(provider.id().as_str(), input.connection_id.to_string());
-                let result = provider.complete(&request).await;
-                let error = result.unwrap_err();
-                assert!(error.is_rate_limited(), "{kind:?}: {error:?}");
-                assert!(repository
-                    .list_observations(Some(provider.id().clone()))
-                    .await
-                    .unwrap()
-                    .is_empty());
-                connection_ids.push(input.connection_id);
-
-                let overridden = ProviderBuildInput {
-                    base_url: Some(server.uri()),
-                    ..input
-                };
-                assert!(builder.quota_recorder(&overridden).is_none());
-            }
-            let rows = repository
-                .list_observations(Some(runtime_id.clone()))
-                .await
-                .unwrap();
-            assert_eq!(rows.len(), 2, "{kind:?}");
-            for connection_id in connection_ids {
-                let row = rows
-                    .iter()
-                    .find(|row| row.connection_id == Some(connection_id))
-                    .unwrap();
-                assert_eq!(row.provider_kind, kind);
-                assert_eq!(row.provider, runtime_id);
-                assert_eq!(row.metric, "requests");
-                assert_eq!(row.limit, Some(100.0));
-                assert_eq!(row.remaining, Some(75.0));
-            }
-        }
-        assert_eq!(repository.list_observations(None).await.unwrap().len(), 6);
     }
 }

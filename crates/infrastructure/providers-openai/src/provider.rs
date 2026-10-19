@@ -196,10 +196,8 @@ impl OpenAIProvider {
         };
         let observations =
             parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
-        for observation in observations {
-            if let Err(error) = recorder.record_observation(observation).await {
-                tracing::warn!(%error, "failed to record OpenAI quota observation");
-            }
+        if let Err(error) = recorder.record_observations(observations).await {
+            tracing::warn!(%error, "failed to record OpenAI quota observations");
         }
     }
 

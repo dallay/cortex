@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
 use rook::di::{
     build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
-    build_rate_limiter_config,
+    build_rate_limiter_config, is_canonical_base_url,
 };
 use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
@@ -518,4 +518,124 @@ fn build_provider_from_connection_empty_models_list() {
         "expected empty supported_models for empty input, got {} models",
         supported.len()
     );
+}
+
+// T1 — P1 canonical URLs: default (None) retains quota capture.
+#[test]
+fn canonical_base_url_default_none_retains_recorder() {
+    assert!(
+        is_canonical_base_url(ProviderKind::OpenAI, None),
+        "OpenAI default (None) must retain quota capture"
+    );
+    assert!(
+        is_canonical_base_url(ProviderKind::Anthropic, None),
+        "Anthropic default (None) must retain quota capture"
+    );
+}
+
+// T1 — P1 canonical URLs: explicit canonical retains quota capture.
+#[test]
+fn canonical_base_url_explicit_canonical_retains_recorder() {
+    // OpenAI accepts with and without /v1 (UI sends /v1, backend default omits it).
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com/v1")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://api.anthropic.com")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/openai/v1")
+    ));
+}
+
+// T1 — P1 canonical URLs: custom URLs disable quota capture.
+#[test]
+fn canonical_base_url_custom_rejects_recorder() {
+    assert!(
+        !is_canonical_base_url(
+            ProviderKind::OpenAI,
+            Some("https://custom.openai.example.com/v1")
+        ),
+        "custom OpenAI proxy must disable quota capture"
+    );
+    assert!(
+        !is_canonical_base_url(ProviderKind::Anthropic, Some("https://proxy.example.com")),
+        "custom Anthropic proxy must disable quota capture"
+    );
+    assert!(
+        !is_canonical_base_url(
+            ProviderKind::Groq,
+            Some("https://custom.groq.example.com/openai/v1")
+        ),
+        "custom Groq proxy must disable quota capture"
+    );
+    // Mock servers are http + port => always custom.
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("http://127.0.0.1:8080")
+    ));
+}
+
+// T1 — P1 canonical URLs: Groq default (None) retains quota capture.
+#[test]
+fn canonical_base_url_groq_none_retains_recorder() {
+    assert!(
+        is_canonical_base_url(ProviderKind::Groq, None),
+        "Groq default (None) must retain quota capture"
+    );
+}
+
+// T1 — normalization: trim, trailing slash, case-insensitive host, /v1 tolerance.
+#[test]
+fn canonical_base_url_normalization() {
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("  https://api.openai.com/v1/  ")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://API.OPENAI.COM/V1")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("https://api.openai.com/")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://API.ANTHROPIC.COM")
+    ));
+    assert!(is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/openai/v1/")
+    ));
+    // Anthropic must NOT tolerate /v1; Groq requires the full /openai/v1 path.
+    assert!(!is_canonical_base_url(
+        ProviderKind::Anthropic,
+        Some("https://api.anthropic.com/v1")
+    ));
+    assert!(!is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com")
+    ));
+    assert!(!is_canonical_base_url(
+        ProviderKind::Groq,
+        Some("https://api.groq.com/v1")
+    ));
+    // Scheme must be https; empty and schemeless values are custom.
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("http://api.openai.com/v1")
+    ));
+    assert!(!is_canonical_base_url(ProviderKind::OpenAI, Some("")));
+    assert!(!is_canonical_base_url(
+        ProviderKind::OpenAI,
+        Some("api.openai.com/v1")
+    ));
 }
