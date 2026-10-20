@@ -229,11 +229,14 @@ Building with AI is fragile:
 git clone https://github.com/dallay/cortex.git
 cd cortex
 
-# Build Rook
+# Install dashboard dependencies
+pnpm install --dir apps/rook/dashboard
+
+# Build Rook (with embedded dashboard)
 cargo build --release -p rook
 
 # Run it
-cargo run --release -p rook
+ROOK_CONFIG=./rook.toml cargo run --release -p rook
 ```
 
 ### Configure Rook
@@ -245,23 +248,14 @@ cat > rook.toml << 'EOF'
 host = "127.0.0.1"
 port = 3773
 
-[[providers]]
-name = "openai"
-type = "openai"
-api_key = "sk-..."
-
-[[providers]]
-name = "anthropic"
-type = "anthropic"
-api_key = "sk-ant-..."
-
-[routing]
-strategy = "priority"
-combos = [
-  ["openai/gpt-4o", "anthropic/claude-3-5-sonnet"],
-]
+[cache]
+enabled = true
+ttl_secs = 3600
 EOF
 ```
+
+> **Note:** Providers are configured via the REST API at `/api/providers` after startup.
+> See [Configuration](docs/rook/configuration.md) for full configuration options.
 
 ### Test It
 
@@ -269,7 +263,7 @@ EOF
 # Health check
 curl http://localhost:3773/health
 
-# OpenAI-compatible chat completions
+# OpenAI-compatible chat completions (requires API key authentication)
 curl http://localhost:3773/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
@@ -277,6 +271,9 @@ curl http://localhost:3773/v1/chat/completions \
     "model": "gpt-4",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
+
+# Or disable auth for testing (development only):
+# Add to rook.toml: [auth] enabled = false
 ```
 
 ### Open Dashboard
@@ -375,9 +372,6 @@ cortex/
 ```bash
 # Install dependencies
 just setup
-
-# Verify tools
-just doctor
 ```
 
 ### Common Commands

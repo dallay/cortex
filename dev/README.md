@@ -214,7 +214,7 @@ docker compose -f docker-compose.test.yml down -v
 | `e2e/login.spec.ts` | Login flow, logout, session persistence |
 | `e2e/providers.spec.ts` | Provider CRUD, connection testing |
 | `e2e/api-keys.spec.ts` | API key creation, revocation, listing |
-| `e2e/dashboard.spec.ts` | Navigation, settings, audit logs |
+| `e2e/vue.spec.ts` | Navigation, settings, audit logs |
 
 ---
 
@@ -235,16 +235,16 @@ docker compose -f docker-compose.test.yml down -v
 
 ```bash
 # Build release binary
-just build-release
+just build
 
 # Run multi-distro tests
-just test-multi
+dev/e2e-test.sh test
 
 # Run only Ubuntu
-just test-ubuntu
+dev/e2e-test.sh test ubuntu
 
 # Run only Alpine
-just test-alpine
+dev/e2e-test.sh test alpine
 ```
 
 ---
@@ -261,8 +261,10 @@ just test-alpine
 | `just dev-clean` | Remove image + container |
 | `just test-e2e-build` | Build E2E Docker image |
 | `just test-e2e` | Run full E2E suite |
-| `just test-multi` | Multi-distro validation |
-| `just build-release` | Build release binary |
+| `just test-e2e-dev` | Start E2E env for manual testing |
+| `just test-e2e-cleanup` | Stop/remove E2E containers |
+| `just build` | Build release binary |
+| `just build-app` | Build rook binary only |
 
 Full list: `just --list`
 
@@ -296,8 +298,8 @@ TIMEOUT=60 just test-e2e
 # Kill process on port 8090
 lsof -ti:8090 | xargs kill -9
 
-# Or use different port
-export DEV_PORT=8091
+# The smoke workflow uses port 8090 on host → 3773 in container
+# See dev/run.sh and dev/docker-compose.dev.yml for details
 just dev-up
 ```
 

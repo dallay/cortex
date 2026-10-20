@@ -202,7 +202,7 @@ huginn --workspace /path/to/your/project run "Explain this codebase"
 | `huginn run "<prompt>"` | Single command, exit |
 | `huginn sessions` | List saved sessions |
 | `huginn resume <uuid>` | Continue a session |
-| `huginn --json run` | JSON output (for scripting) |
+| `huginn --json run "<prompt>"` | JSON output (for scripting) |
 
 ### Environment Variables
 
@@ -211,7 +211,6 @@ huginn --workspace /path/to/your/project run "Explain this codebase"
 | `HUGINN_BASE_URL` | Yes | API endpoint (include `/v1`) |
 | `HUGINN_MODEL` | Yes | Model name |
 | `HUGINN_API_KEY` | For auth-required providers | API key (optional for mock/Ollama) |
-| `HUGINN_WORKSPACE` | No | Default workspace path |
 
 ---
 
@@ -326,17 +325,24 @@ The mock provider responds with predefined examples and does not perform real LL
 
 ## 🔌 MCP Integration
 
-Connect Huginn to MCP servers for extended capabilities:
+Connect Huginn to MCP servers for extended capabilities via CLI configuration:
+
+```toml
+# huginn.toml (or pass via --config)
+[[mcp]]
+name = "filesystem"
+npx_command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem@0.6.1"]
+
+[[mcp]]
+name = "git"
+npx_command = "npx"
+args = ["-y", "@modelcontextprotocol/server-git@0.5.0"]
+```
 
 ```bash
-# Run with an MCP server (use pinned versions)
-huginn --mcp "npx -y @modelcontextprotocol/server-filesystem@0.6.1" chat
-
-# Multiple servers
-huginn \
-  --mcp "npx -y @modelcontextprotocol/server-filesystem@0.6.1" \
-  --mcp "npx -y @modelcontextprotocol/server-git@0.5.0" \
-  chat
+# Start chat with MCP servers
+huginn --config huginn.toml chat
 ```
 
 > ⚠️ **Security Notice:** MCP servers run with your OS permissions and are not sandboxed. Only connect to servers you trust.
@@ -395,11 +401,8 @@ huginn --workspace ./my-project --json run "Analyze the code and return metrics"
 ## 🧪 Testing
 
 ```bash
-# Run runtime tests
-cargo test -p huginn-runtime
-
-# Run integration tests
-cargo test -p huginn --test integration
+# Run all tests
+cargo test -p huginn
 
 # With coverage
 cargo tarpaulin -p huginn

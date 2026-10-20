@@ -119,7 +119,7 @@ apps/rook/dashboard/
 ├── src/
 │   ├── views/           # 📄 Page components
 │   │   ├── LoginView.vue
-│   │   ├── DashboardView.vue
+│   │   ├── HomeView.vue
 │   │   ├── ProvidersView.vue
 │   │   ├── ApiKeysView.vue
 │   │   └── SettingsView.vue
@@ -142,8 +142,8 @@ apps/rook/dashboard/
 │   │   ├── en.json
 │   │   └── es.json
 │   │
-│   ├── api/           # 🔌 Backend API client
-│   │   └── client.ts
+│   ├── lib/           # 🔌 Backend API client
+│   │   └── api.ts
 │   │
 │   └── App.vue        # Root component
 │
@@ -151,7 +151,7 @@ apps/rook/dashboard/
 │   ├── login.spec.ts
 │   ├── providers.spec.ts
 │   ├── api-keys.spec.ts
-│   └── dashboard.spec.ts
+│   └── vue.spec.ts
 │
 ├── vite.config.ts     # ⚡ Vite configuration
 ├── playwright.config.ts # 🎭 Playwright configuration
@@ -216,14 +216,10 @@ just ci-local
 
 ## 🎨 Development
 
-### Code Style
+### Type Check
 
 ```bash
-# Format
-pnpm format
-
-# Lint
-pnpm lint
+pnpm typecheck
 ```
 
 ### Adding a New View
