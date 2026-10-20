@@ -505,7 +505,7 @@ async fn tui_chat(
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
             if !router.is_configured() {
-                ui.notification("No model configured. Use /login to connect a provider, then /model. No restart needed.".into());
+                ui.notification("No model configured. Use /login, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
             }

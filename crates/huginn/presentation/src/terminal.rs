@@ -323,9 +323,10 @@ impl Presentation for Ratatui {
             .map_or(self.model_configured, |ready| ready())
         {
             ui.notification(if self.contributions.command("/login").is_some() {
-                "No model configured. Use /login to connect a provider, then /model to select a model. No restart needed.".into()
+                "No model configured. Use /login, then /model. No restart needed.".into()
             } else {
-                "No model configured. Configure a provider and restart Huginn to enable inference.".into()
+                "No model configured. Configure a provider and restart Huginn to enable inference."
+                    .into()
             });
         }
         let done = CancellationToken::new();
