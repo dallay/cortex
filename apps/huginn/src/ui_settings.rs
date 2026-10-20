@@ -96,44 +96,41 @@ fn atomic_write(text: &str, path: &Path) -> Result<()> {
     let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = target
         .parent()
+        .map(|parent| {
+            if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            }
+        })
         .ok_or_else(|| anyhow!("config path has no parent"))?;
     fs::create_dir_all(parent).with_context(|| format!("cannot mkdir {}", parent.display()))?;
     let existing = fs::metadata(&target).ok();
-    let tmp = target.with_extension("toml.tmp");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        // An existing file keeps its mode: the configuration can hold
-        // credentials. A new file uses a normal creation mode so the kernel
-        // applies the process umask.
-        let mode = existing
-            .as_ref()
-            .map(|metadata| metadata.permissions().mode())
-            .unwrap_or(0o666);
-        options.mode(mode);
+    // NamedTempFile creates an exclusive, private (0600 on Unix) file in the
+    // destination directory. RAII attempts cleanup on early errors; a failed
+    // persist explicitly closes the file and reports any cleanup failure.
+    let mut file = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("cannot create temporary file in {}", parent.display()))?;
+    file.write_all(text.as_bytes())?;
+    if let Some(metadata) = &existing {
+        file.as_file()
+            .set_permissions(metadata.permissions())
+            .with_context(|| format!("cannot set permissions on {}", file.path().display()))?;
     }
-    let mut file = options
-        .open(&tmp)
-        .with_context(|| format!("cannot write {}", tmp.display()))?;
-    let result = (|| -> Result<()> {
-        file.write_all(text.as_bytes())
-            .with_context(|| format!("cannot write {}", tmp.display()))?;
-        file.sync_all()
-            .with_context(|| format!("cannot sync {}", tmp.display()))?;
-        if let Some(metadata) = &existing {
-            fs::set_permissions(&tmp, metadata.permissions())
-                .with_context(|| format!("cannot set permissions on {}", tmp.display()))?;
-        }
-        fs::rename(&tmp, &target)
-            .with_context(|| format!("cannot rename {} -> {}", tmp.display(), target.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
+    file.as_file().sync_all()?;
+    file.persist(&target)
+        .map_err(|failure| {
+            let tempfile::PersistError { error, file } = failure;
+            // Do not retain the temporary file in the returned error.
+            match file.close() {
+                Ok(()) => anyhow::Error::from(error),
+                Err(cleanup_error) => anyhow::Error::from(error).context(format!(
+                    "cannot remove temporary configuration file: {cleanup_error}"
+                )),
+            }
+        })
+        .with_context(|| format!("cannot persist configuration to {}", target.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -146,6 +143,67 @@ mod tests {
         }
         let mut f = fs::File::create(path).unwrap();
         f.write_all(body.as_bytes()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_leaves_preexisting_temp_symlink_and_victim_intact() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.toml");
+        let victim = dir.path().join("victim.txt");
+        let tmp = target.with_extension("toml.tmp");
+        fs::write(&victim, "do not modify").unwrap();
+        symlink(&victim, &tmp).unwrap();
+        let ui = UiConfig::defaults();
+
+        persist_seeded(&ui, &target, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "do not modify");
+        assert_eq!(fs::read_link(&tmp).unwrap(), victim);
+        assert_eq!(crate::config::Config::load(Some(&target)).unwrap().ui, ui);
+    }
+
+    #[test]
+    fn persist_leaves_preexisting_regular_temp_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.toml");
+        let tmp = target.with_extension("toml.tmp");
+        fs::write(&tmp, "do not modify").unwrap();
+        let ui = UiConfig::defaults();
+
+        persist_seeded(&ui, &target, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&tmp).unwrap(), "do not modify");
+        assert_eq!(crate::config::Config::load(Some(&target)).unwrap().ui, ui);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_config_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.toml");
+        persist_seeded(&UiConfig::defaults(), &target, None).unwrap();
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode & 0o177, 0, "only the owner may read or write");
+    }
+
+    #[test]
+    fn failed_replace_preserves_destination_and_cleans_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.toml");
+        fs::create_dir(&target).unwrap();
+        let sentinel = target.join("sentinel");
+        fs::write(&sentinel, "do not modify").unwrap();
+
+        let error = atomic_write("new content", &target).unwrap_err();
+
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "do not modify");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(error.to_string().contains("cannot persist configuration"));
     }
 
     #[test]
@@ -262,12 +320,14 @@ custom_toast_key = 17
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         write_file(&path, "provider = \"openai\"\n");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        for expected in [0o400, 0o600, 0o640] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(expected)).unwrap();
 
-        persist_seeded(&UiConfig::defaults(), &path, None).unwrap();
+            persist_seeded(&UiConfig::defaults(), &path, None).unwrap();
 
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, expected);
+        }
     }
 
     #[cfg(unix)]
