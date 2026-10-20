@@ -28,9 +28,78 @@ pub struct Config {
     pub provider_explicit: bool,
 }
 
+/// Shared resolution order: readers and writers must agree on one file.
+fn resolve_with(explicit: Option<&Path>, primary: &Path, legacy: &Path) -> PathBuf {
+    if let Some(path) = explicit {
+        return path.to_path_buf();
+    }
+    if primary.exists() {
+        return primary.to_path_buf();
+    }
+    if legacy.exists() {
+        return legacy.to_path_buf();
+    }
+    primary.to_path_buf()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolution_prefers_explicit_then_primary_then_legacy() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("huginn/config.toml");
+        let legacy = root.path().join("agent/config.toml");
+        std::fs::create_dir_all(primary.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+
+        // No file exists: writers create the primary path.
+        assert_eq!(resolve_with(None, &primary, &legacy), primary);
+
+        // Only the legacy file exists: readers and writers use it.
+        std::fs::write(&legacy, "[provider]\n").unwrap();
+        assert_eq!(resolve_with(None, &primary, &legacy), legacy);
+
+        // The primary file wins once it exists.
+        std::fs::write(&primary, "[ui]\n").unwrap();
+        assert_eq!(resolve_with(None, &primary, &legacy), primary);
+
+        // An explicit path never falls back.
+        let explicit = root.path().join("elsewhere.toml");
+        assert_eq!(resolve_with(Some(&explicit), &primary, &legacy), explicit);
+    }
+
+    #[test]
+    fn legacy_config_seeds_the_primary_file_and_stays_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("huginn/config.toml");
+        let legacy = root.path().join("agent/config.toml");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(
+            &legacy,
+            "provider = \"openai\"\nmodel = \"gpt-4o\"\n\n[ui.theme]\nname = \"dracula\"\n",
+        )
+        .unwrap();
+        let legacy_bytes = std::fs::read_to_string(&legacy).unwrap();
+
+        // Mirrors `tui_chat`: read through the resolver, write to the primary,
+        // seed from whatever the process actually loaded.
+        let read_path = resolve_with(None, &primary, &legacy);
+        assert_eq!(read_path, legacy);
+        let loaded = Config::load(Some(&read_path)).unwrap();
+        crate::ui_settings::persist_seeded(&loaded.ui, &primary, Some(&read_path)).unwrap();
+
+        // The deprecated file is never modified.
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), legacy_bytes);
+        // The new file keeps the whole configuration, not only `[ui]`.
+        let reloaded = Config::load(Some(&primary)).unwrap();
+        assert_eq!(reloaded.provider, "openai");
+        assert_eq!(reloaded.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(reloaded.ui, loaded.ui);
+        // The next start reads the primary path and stops warning.
+        assert_eq!(resolve_with(None, &primary, &legacy), primary);
+    }
 
     #[test]
     fn ui_defaults_fill_absent_sections_and_partial_nested_tables() {
@@ -175,67 +244,69 @@ impl Config {
         None
     }
 
+    pub fn primary_config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("cortex/huginn/config.toml")
+    }
+
+    pub fn legacy_config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("cortex/agent/config.toml")
+    }
+
+    /// Resolve the configuration file that `load` reads.
+    ///
+    /// Persistence must derive its target from this: patching a path `load`
+    /// would not read creates a shadow file that hides an entire legacy
+    /// configuration. When this resolves to the legacy path, seed the primary
+    /// file from it instead of writing in place.
+    pub fn resolve_path(explicit: Option<&Path>) -> PathBuf {
+        resolve_with(
+            explicit,
+            &Self::primary_config_path(),
+            &Self::legacy_config_path(),
+        )
+    }
+
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
         // Resolution order, all read-only:
         // 1. Explicit --config (highest priority, never falls back).
         // 2. Platform config dir / cortex/huginn/config.toml.
         // 3. Legacy platform config dir / cortex/agent/config.toml — only when
         //    the new path is absent; never overwritten or deleted.
-        let primary_default = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/huginn/config.toml");
-        let legacy_default = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/agent/config.toml");
-        let explicit = path.is_some();
-        let primary_path = path.unwrap_or(&primary_default);
+        let resolved = Self::resolve_path(path);
+        if path.is_none() && resolved != Self::primary_config_path() {
+            eprintln!(
+                "warning: using legacy configuration {} — move the file to {} to silence this notice",
+                resolved.display(),
+                Self::primary_config_path().display()
+            );
+        }
         // The path comes from the explicit CLI option or fixed platform paths;
         // keep it as a PathBuf so it cannot be confused with shell input.
-        match std::fs::read_to_string(primary_path) {
-            Ok(text) => {
-                let provider_explicit = toml::from_str::<toml::Value>(&text)
-                    .ok()
-                    .and_then(|value| value.as_table().map(|table| table.contains_key("provider")))
-                    .unwrap_or(false);
-                toml::from_str::<Self>(&text)
-                    .map(|mut config| {
-                        config.provider_explicit = provider_explicit;
-                        config
-                    })
-                    .context("invalid Huginn TOML configuration")
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !explicit => {
-                if legacy_default != primary_default && legacy_default.exists() {
-                    eprintln!(
-                        "warning: using legacy configuration {} — move the file to {} to silence this notice",
-                        legacy_default.display(),
-                        primary_default.display()
-                    );
-                    let text = std::fs::read_to_string(&legacy_default).with_context(|| {
-                        format!(
-                            "cannot read legacy configuration {}",
-                            legacy_default.display()
-                        )
-                    })?;
-                    let provider_explicit = toml::from_str::<toml::Value>(&text)
-                        .ok()
-                        .and_then(|value| {
-                            value.as_table().map(|table| table.contains_key("provider"))
-                        })
-                        .unwrap_or(false);
-                    toml::from_str::<Self>(&text)
-                        .map(|mut config| {
-                            config.provider_explicit = provider_explicit;
-                            config
-                        })
-                        .context("invalid Huginn TOML configuration")
-                } else {
-                    Ok(Self::default())
-                }
+        match std::fs::read_to_string(&resolved) {
+            Ok(text) => Self::parse(&text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_none() => {
+                Ok(Self::default())
             }
             Err(error) => Err(error)
-                .with_context(|| format!("cannot read configuration {}", primary_path.display())),
+                .with_context(|| format!("cannot read configuration {}", resolved.display())),
         }
+    }
+
+    fn parse(text: &str) -> anyhow::Result<Self> {
+        let provider_explicit = toml::from_str::<toml::Value>(text)
+            .ok()
+            .and_then(|value| value.as_table().map(|table| table.contains_key("provider")))
+            .unwrap_or(false);
+        toml::from_str::<Self>(text)
+            .map(|mut config| {
+                config.provider_explicit = provider_explicit;
+                config
+            })
+            .context("invalid Huginn TOML configuration")
     }
     pub fn create_model(&self) -> anyhow::Result<std::sync::Arc<dyn huginn_core::ModelProvider>> {
         if self.model_readiness() == ModelReadiness::Unconfigured {

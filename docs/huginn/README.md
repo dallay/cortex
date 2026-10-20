@@ -293,6 +293,22 @@ inside settings never reaches the cancel-turn branch.
 
 ## 🔧 Configuration
 
+### Configuration file
+
+See [config.example.toml](../../apps/huginn/config.example.toml) for every
+setting. The default location follows the OS configuration directory: on
+macOS, `~/Library/Application Support/cortex/huginn/config.toml`; on Linux,
+`~/.config/cortex/huginn/config.toml` (or the XDG override). If a new
+install runs on a host that only has the legacy
+`~/.../cortex/agent/config.toml`, Huginn reads it and
+prints a warning suggesting the migration; it never overwrites the legacy
+file. Saving from `/settings` copies that file to the new location and
+patches `[ui]` there, so the provider, model, database and MCP settings
+survive the move. CLI options override the file; environment variables provide
+defaults for the endpoint and model. API keys are loaded from a named
+environment variable. Set `api_key_env = ""` for a local endpoint
+without authentication.
+
 ### AGENTS.md
 
 Place an `AGENTS.md` file in your repository root to scope Huginn's context:

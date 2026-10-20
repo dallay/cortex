@@ -460,19 +460,18 @@ async fn tui_chat(
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
     let readiness = router.clone();
-    // Resolve the config path the same way `Config::load` does so the
-    // settings dialog and `Config::load` agree on the file.
-    let config_path: PathBuf = cli_config
-        .map(|path| path.to_path_buf())
-        .unwrap_or_else(|| {
-            dirs::config_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("cortex/huginn/config.toml")
-        });
+    // Reading may fall back to the legacy layout; writing never does. The
+    // legacy file seeds the new one, so a save cannot hide provider, model or
+    // database settings and the deprecated file stays untouched.
+    let read_path = Config::resolve_path(cli_config);
+    let write_path = cli_config.map_or_else(Config::primary_config_path, |path| path.to_path_buf());
+    let seed_path = (read_path != write_path).then(|| read_path.clone());
     let ui_config = Arc::new(config.ui.clone());
-    let save_path = config_path.clone();
+    let save_path = write_path.clone();
     let save_ui_config: huginn_presentation::settings::SaveUiConfig =
-        Arc::new(move |ui: &UiConfig| ui_settings::persist(ui, &save_path));
+        Arc::new(move |ui: &UiConfig| {
+            ui_settings::persist_seeded(ui, &save_path, seed_path.as_deref())
+        });
     supervisor.register(Box::new(
         RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))
             .with_connection(

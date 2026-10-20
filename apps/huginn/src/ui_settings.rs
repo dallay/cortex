@@ -7,16 +7,26 @@
 use anyhow::{anyhow, Context, Result};
 use huginn_presentation::settings::UiConfig;
 use std::fs;
+use std::io::Write as _;
 use std::path::Path;
 use toml_edit::{value, Array, DocumentMut, Item, Table, Value};
 
-/// Upsert the `[ui]` section into `path`, preserving everything else.
+/// Persist `[ui]` into `target`, seeding the document from `seed` when the
+/// process read its configuration from a legacy file.
 ///
-/// Errors wrap with file context for the closure caller.
-pub fn persist(ui: &UiConfig, path: &Path) -> Result<()> {
-    let mut doc = load_or_init(path)?;
+/// The legacy file is never modified: its bytes become the base of the new
+/// file, so the user keeps provider, model and database settings while the
+/// loader stops seeing the deprecated path.
+pub fn persist_seeded(ui: &UiConfig, target: &Path, seed: Option<&Path>) -> Result<()> {
+    let mut doc = if target.exists() {
+        load_or_init(target)?
+    } else if let Some(seed) = seed.filter(|seed| seed.exists()) {
+        load_or_init(seed)?
+    } else {
+        DocumentMut::new()
+    };
     write_ui(&mut doc, ui);
-    atomic_write(&doc.to_string(), path)
+    atomic_write(&doc.to_string(), target)
 }
 
 fn load_or_init(path: &Path) -> Result<DocumentMut> {
@@ -54,37 +64,81 @@ fn write_ui(doc: &mut DocumentMut, ui: &UiConfig) {
 }
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
-    let need = doc.get(key).is_none_or(|item| !item.is_table());
-    if need {
-        doc[key] = Item::Table(Table::new());
+    if !doc.get(key).is_some_and(|item| item.is_table()) {
+        let mut table = Table::new();
+        // A hand-written inline table (`ui = { ... }`) holds the same keys;
+        // migrate them instead of discarding the user's values.
+        if let Some(Item::Value(Value::InlineTable(inline))) = doc.get(key) {
+            for (name, item) in inline.iter() {
+                table.insert(name, Item::Value(item.clone()));
+            }
+        }
+        doc[key] = Item::Table(table);
     }
     doc[key].as_table_mut().expect("just inserted")
 }
 
 fn ensure_sub_table<'a>(parent: &'a mut Table, key: &str) -> &'a mut Table {
-    let need = parent.get(key).is_none_or(|item| !item.is_table());
-    if need {
-        parent[key] = Item::Table(Table::new());
+    if !parent.get(key).is_some_and(|item| item.is_table()) {
+        let mut table = Table::new();
+        if let Some(Item::Value(Value::InlineTable(inline))) = parent.get(key) {
+            for (name, item) in inline.iter() {
+                table.insert(name, Item::Value(item.clone()));
+            }
+        }
+        parent[key] = Item::Table(table);
     }
     parent[key].as_table_mut().expect("just inserted")
 }
 
 fn atomic_write(text: &str, path: &Path) -> Result<()> {
-    let parent = path
+    // Follow a symlinked configuration (dotfiles) so the link survives.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let parent = target
         .parent()
         .ok_or_else(|| anyhow!("config path has no parent"))?;
     fs::create_dir_all(parent).with_context(|| format!("cannot mkdir {}", parent.display()))?;
-    let tmp = path.with_extension("toml.tmp");
-    fs::write(&tmp, text).with_context(|| format!("cannot write {}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .with_context(|| format!("cannot rename {} -> {}", tmp.display(), path.display()))?;
-    Ok(())
+    let existing = fs::metadata(&target).ok();
+    let tmp = target.with_extension("toml.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // An existing file keeps its mode: the configuration can hold
+        // credentials. A new file uses a normal creation mode so the kernel
+        // applies the process umask.
+        let mode = existing
+            .as_ref()
+            .map(|metadata| metadata.permissions().mode())
+            .unwrap_or(0o666);
+        options.mode(mode);
+    }
+    let mut file = options
+        .open(&tmp)
+        .with_context(|| format!("cannot write {}", tmp.display()))?;
+    let result = (|| -> Result<()> {
+        file.write_all(text.as_bytes())
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("cannot sync {}", tmp.display()))?;
+        if let Some(metadata) = &existing {
+            fs::set_permissions(&tmp, metadata.permissions())
+                .with_context(|| format!("cannot set permissions on {}", tmp.display()))?;
+        }
+        fs::rename(&tmp, &target)
+            .with_context(|| format!("cannot rename {} -> {}", tmp.display(), target.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     fn write_file(path: &Path, body: &str) {
         if let Some(parent) = path.parent() {
@@ -99,7 +153,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/config.toml");
         let ui = UiConfig::defaults();
-        persist(&ui, &path).unwrap();
+        persist_seeded(&ui, &path, None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("[ui.theme]"));
         assert!(text.contains("name = \"one-dark\""));
@@ -125,7 +179,7 @@ default = "gpt-4o"
         write_file(&path, body);
         let mut ui = UiConfig::defaults();
         ui.theme.name = "catppuccin".into();
-        persist(&ui, &path).unwrap();
+        persist_seeded(&ui, &path, None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         // Outside [ui]: untouched.
         assert!(text.contains("# user comment"));
@@ -154,7 +208,7 @@ custom_toast_key = 17
 "#;
         write_file(&path, body);
         let ui = UiConfig::defaults();
-        persist(&ui, &path).unwrap();
+        persist_seeded(&ui, &path, None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("unknown_user_key = true"));
         // Theme flipped to default yet the unknown key remains.
@@ -175,7 +229,7 @@ custom_toast_key = 17
         ui.toasts.duration_secs = 10;
         ui.indicators.scrollbar = false;
         ui.indicators.line_numbers = false;
-        persist(&ui, &path).unwrap();
+        persist_seeded(&ui, &path, None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("name = \"nord\""));
         assert!(text.contains("bell = true"));
@@ -184,5 +238,54 @@ custom_toast_key = 17
         assert!(text.contains("scrollbar = false"));
         assert!(text.contains("line_numbers = false"));
         assert_eq!(crate::config::Config::load(Some(&path)).unwrap().ui, ui);
+    }
+
+    #[test]
+    fn migrates_inline_ui_table_without_losing_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_file(
+            &path,
+            "ui = { unknown_user_key = true, theme = { name = \"nord\" } }\n",
+        );
+        persist_seeded(&UiConfig::defaults(), &path, None).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("unknown_user_key = true"), "{text}");
+        assert!(text.contains("[ui.theme]"), "{text}");
+        assert!(text.contains("name = \"one-dark\""), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_file(&path, "provider = \"openai\"\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        persist_seeded(&UiConfig::defaults(), &path, None).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_through_a_symlinked_config() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/huginn.toml");
+        write_file(&real, "provider = \"openai\"\n");
+        let link = dir.path().join("config.toml");
+        symlink(&real, &link).unwrap();
+
+        persist_seeded(&UiConfig::defaults(), &link, None).unwrap();
+
+        let metadata = fs::symlink_metadata(&link).unwrap();
+        assert!(metadata.file_type().is_symlink(), "the link must survive");
+        let text = fs::read_to_string(&real).unwrap();
+        assert!(text.contains("provider = \"openai\""));
+        assert!(text.contains("[ui.theme]"));
     }
 }
