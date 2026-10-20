@@ -208,8 +208,8 @@ huginn --workspace /path/to/your/project run "Explain this codebase"
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `HUGINN_BASE_URL` | Yes | API endpoint (include `/v1`) |
-| `HUGINN_MODEL` | Yes | Model name |
+| `HUGINN_BASE_URL` | For non-mock providers | API endpoint (include `/v1`) |
+| `HUGINN_MODEL` | For non-mock providers | Model name |
 | `HUGINN_API_KEY` | For auth-required providers | API key (optional for mock/Ollama) |
 
 ---

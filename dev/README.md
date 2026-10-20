@@ -261,7 +261,7 @@ dev/e2e-test.sh test alpine
 | `just dev-clean` | Remove image + container |
 | `just test-e2e-build` | Build E2E Docker image |
 | `just test-e2e` | Run full E2E suite |
-| `just test-e2e-dev` | Start E2E env for manual testing |
+| `just test-e2e-dev` | Development mode with manual testing |
 | `just test-e2e-cleanup` | Stop/remove E2E containers |
 | `just build` | Build release binary |
 | `just build-app` | Build rook binary only |
