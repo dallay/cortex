@@ -4,12 +4,12 @@ Los ADRs documentan decisiones significativas de arquitectura para el proyecto C
 
 ## ADRs generales
 
-> Los ADRs específicos de Huginn están en [docs/huginn/adr/](huginn/adr/README.md).
+> Los ADRs específicos de Huginn están en [docs/huginn/adr/](../huginn/adr/README.md).
 
 Por ahora no hay ADRs generales pendientes. Los ADRs de productos y arquitectura
 específicos de cada componente viven en sus respectivos directorios:
 
-- [ADRs de Huginn](huginn/adr/) — Decisiones sobre el agente de coding
+- [ADRs de Huginn](../huginn/adr/) — Decisiones sobre el agente de coding
 - [ADR-0015: Separación de releases de producto y publicación Cargo](../huginn/adr/0015-separate-product-releases-from-cargo-publishing.md) — Política de distribución
 
 ## Formato de ADR
