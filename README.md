@@ -273,7 +273,9 @@ curl http://localhost:3773/v1/chat/completions \
   }'
 
 # Or disable auth for testing (development only):
-# Add to rook.toml: [auth] enabled = false
+# Add to rook.toml:
+# [auth.api_keys]
+# enabled = false
 ```
 
 ### Open Dashboard

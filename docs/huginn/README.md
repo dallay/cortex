@@ -331,18 +331,18 @@ Connect Huginn to MCP servers for extended capabilities via CLI configuration:
 # huginn.toml (or pass via --config)
 [[mcp]]
 name = "filesystem"
-npx_command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem@0.6.1"]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem@0.6.3", "."]
 
 [[mcp]]
 name = "git"
-npx_command = "npx"
+command = "npx"
 args = ["-y", "@modelcontextprotocol/server-git@0.5.0"]
 ```
 
 ```bash
-# Start chat with MCP servers
-huginn --config huginn.toml chat
+# From the Cortex repository root; "." allows filesystem access to this workspace
+huginn --workspace . --config huginn.toml chat
 ```
 
 > ⚠️ **Security Notice:** MCP servers run with your OS permissions and are not sandboxed. Only connect to servers you trust.
@@ -351,7 +351,7 @@ huginn --config huginn.toml chat
 
 | Server | Version | Purpose |
 |--------|---------|---------|
-| `@modelcontextprotocol/server-filesystem` | 0.6.1 | File operations |
+| `@modelcontextprotocol/server-filesystem` | 0.6.3 | File operations |
 | `@modelcontextprotocol/server-git` | 0.5.0 | Git operations |
 | `@modelcontextprotocol/server-brave` | latest | Web search |
 | `@modelcontextprotocol/server-slack` | latest | Slack integration |
