@@ -149,9 +149,14 @@ pub struct SettingsSnapshot<'a> {
 }
 
 /// Working-copy of the theme tab: a selected name among `THEME_NAMES`.
+///
+/// `touched` distinguishes "the user picked a row" from "the dialog started
+/// on this row": an untouched tab keeps the persisted name verbatim, so a
+/// name outside `THEME_NAMES` is not silently rewritten on save.
 #[derive(Debug, Clone)]
 pub struct ThemeWorking {
     pub name_index: usize,
+    pub touched: bool,
 }
 
 /// Working-copy of the indicators tab: three booleans.
@@ -175,12 +180,19 @@ pub struct ToastsWorking {
     pub level: usize,
     /// Index into `TOAST_DURATIONS`.
     pub duration: usize,
+    /// Set when the user changes the level; otherwise the persisted value wins.
+    pub level_touched: bool,
+    /// Set when the user changes the duration; otherwise the persisted value
+    /// wins.
+    pub duration_touched: bool,
 }
 
 /// Working-copy of the integrations tab. v1 is read-only except for
-/// the `(+) Add provider…` action row.
+/// the `(+) Add provider…` action row; `entries` round-trips untouched.
 #[derive(Debug, Clone, Default)]
-pub struct IntegrationsWorking {}
+pub struct IntegrationsWorking {
+    pub entries: Vec<String>,
+}
 
 /// Working copy of all five tabs.
 #[derive(Debug, Clone)]
@@ -205,6 +217,13 @@ pub struct SettingsDialog {
     pub selections: [TabSelection; 5],
     pub working: WorkingCopy,
     pub last_error: Option<String>,
+    /// Values loaded when the dialog opened. Untouched fields project from
+    /// here, so an out-of-set value survives a save the user never intended
+    /// to change.
+    baseline: UiConfig,
+    baseline_theme: usize,
+    baseline_level: usize,
+    baseline_duration: usize,
 }
 
 #[derive(Error, Debug)]
@@ -228,7 +247,10 @@ impl SettingsDialog {
             .iter()
             .position(|(secs, _)| *secs == current.toasts.duration_secs)
             .unwrap_or(0);
-        let theme = ThemeWorking { name_index };
+        let theme = ThemeWorking {
+            name_index,
+            touched: false,
+        };
         let indicators = IndicatorsWorking {
             scrollbar: current.indicators.scrollbar,
             breadcrumbs: current.indicators.breadcrumbs,
@@ -237,8 +259,15 @@ impl SettingsDialog {
         let sound = SoundWorking {
             bell: current.sound.bell,
         };
-        let toasts = ToastsWorking { level, duration };
-        let integrations = IntegrationsWorking {};
+        let toasts = ToastsWorking {
+            level,
+            duration,
+            level_touched: false,
+            duration_touched: false,
+        };
+        let integrations = IntegrationsWorking {
+            entries: current.integrations.entries.clone(),
+        };
         let selections = [
             TabSelection { selected: 0 },
             TabSelection { selected: 0 },
@@ -257,6 +286,10 @@ impl SettingsDialog {
                 integrations,
             },
             last_error: None,
+            baseline: current.clone(),
+            baseline_theme: name_index,
+            baseline_level: level,
+            baseline_duration: duration,
         }
     }
 
@@ -304,6 +337,7 @@ impl SettingsDialog {
         match self.active_tab {
             TAB_THEME => {
                 self.working.theme.name_index = selected;
+                self.working.theme.touched = true;
             }
             TAB_INDICATORS => match selected {
                 0 => self.working.indicators.scrollbar = !self.working.indicators.scrollbar,
@@ -320,10 +354,12 @@ impl SettingsDialog {
                 0 => {
                     let n = TOAST_LEVELS.len();
                     self.working.toasts.level = (self.working.toasts.level + 1) % n;
+                    self.working.toasts.level_touched = true;
                 }
                 1 => {
                     let n = TOAST_DURATIONS.len();
                     self.working.toasts.duration = (self.working.toasts.duration + 1) % n;
+                    self.working.toasts.duration_touched = true;
                 }
                 _ => {}
             },
@@ -335,16 +371,34 @@ impl SettingsDialog {
     /// Build a `UiConfig` that mirrors the current working copy. The
     /// caller uses this for the persistence projection.
     pub fn projected_ui_config(&self) -> UiConfig {
-        let (duration_secs, _) = TOAST_DURATIONS[self.working.toasts.duration];
+        let theme_index = self.working.theme.name_index;
+        let theme = if self.working.theme.touched || theme_index != self.baseline_theme {
+            UiTheme {
+                name: THEME_NAMES[theme_index].into(),
+            }
+        } else {
+            self.baseline.theme.clone()
+        };
+        let level_index = self.working.toasts.level;
+        let level = if self.working.toasts.level_touched || level_index != self.baseline_level {
+            TOAST_LEVELS[level_index].into()
+        } else {
+            self.baseline.toasts.level.clone()
+        };
+        let duration_index = self.working.toasts.duration;
+        let duration_secs =
+            if self.working.toasts.duration_touched || duration_index != self.baseline_duration {
+                TOAST_DURATIONS[duration_index].0
+            } else {
+                self.baseline.toasts.duration_secs
+            };
         UiConfig {
-            theme: UiTheme {
-                name: THEME_NAMES[self.working.theme.name_index].into(),
-            },
+            theme,
             sound: UiSound {
                 bell: self.working.sound.bell,
             },
             toasts: UiToasts {
-                level: TOAST_LEVELS[self.working.toasts.level].into(),
+                level,
                 duration_secs,
             },
             indicators: UiIndicators {
@@ -353,7 +407,7 @@ impl SettingsDialog {
                 line_numbers: self.working.indicators.line_numbers,
             },
             integrations: UiIntegrations {
-                entries: Vec::new(),
+                entries: self.working.integrations.entries.clone(),
             },
         }
     }
@@ -614,6 +668,42 @@ mod tests {
         assert!(!d.handle_add_provider());
         d.active_tab = TAB_INTEGRATIONS;
         assert!(d.handle_add_provider());
+    }
+
+    #[test]
+    fn projected_config_preserves_untouched_unknown_values() {
+        let mut cfg = UiConfig::defaults();
+        cfg.theme.name = "my-custom".into();
+        cfg.toasts.level = "debug".into();
+        cfg.toasts.duration_secs = 7;
+        cfg.integrations.entries = vec!["github".into(), "linear".into()];
+
+        // Opening the dialog and pressing Enter without touching a row must
+        // never rewrite values the dialog cannot represent.
+        let d = SettingsDialog::new(&cfg);
+        assert_eq!(d.projected_ui_config(), cfg);
+    }
+
+    #[test]
+    fn touching_a_cycle_overrides_only_that_value() {
+        let mut cfg = UiConfig::defaults();
+        cfg.toasts.duration_secs = 7;
+        cfg.integrations.entries = vec!["github".into()];
+        let mut d = SettingsDialog::new(&cfg);
+
+        d.active_tab = TAB_THEME;
+        d.select_next();
+        d.toggle_selected();
+
+        d.active_tab = TAB_TOASTS;
+        d.toggle_selected();
+
+        let projected = d.projected_ui_config();
+        assert_eq!(projected.theme.name, "one-light");
+        assert_eq!(projected.toasts.level, "warn");
+        // Untouched duration and entries keep their persisted values.
+        assert_eq!(projected.toasts.duration_secs, 7);
+        assert_eq!(projected.integrations.entries, vec!["github".to_string()]);
     }
 
     #[test]

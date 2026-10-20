@@ -73,6 +73,15 @@ pub enum Payload {
     Help,
 }
 
+impl Payload {
+    /// Workflow forms own Ctrl+C for themselves: cancelling the form is the
+    /// documented behavior, and pre-overlay Ctrl+C never reached the turn
+    /// while a form was open.
+    pub const fn is_workflow(&self) -> bool {
+        matches!(self, Self::Workflow(_))
+    }
+}
+
 /// Pure input decisions. The host executes them after releasing UiState and
 /// checks the captured transition ticket again before committing any effect.
 pub(crate) enum InputEffect {

@@ -105,7 +105,11 @@ impl StatusBar {
             widgets: state
                 .widgets
                 .iter()
-                .map(|(_, view)| crate::state::safe(&view.plain_text()))
+                .map(|(_, view)| {
+                    // The status line is one row: a multi-line widget body
+                    // must not push its tail out of view.
+                    crate::state::safe(&view.plain_text()).replace(['\n', '\t'], " ")
+                })
                 .collect::<Vec<_>>()
                 .join(" | "),
         }
@@ -227,6 +231,24 @@ mod tests {
         let bar = StatusBar::from_state(&state);
         assert_eq!(bar.notification, "Form discarded.");
         assert!(!bar.diagnostic);
+    }
+
+    #[test]
+    fn multiline_widget_text_is_flattened_into_the_status_line() {
+        let mut state = crate::state::UiState::default();
+        state.widgets = vec![(
+            "widget".into(),
+            huginn_plugin_api::v1::View::text("first line\nsecond line\ttabbed"),
+        )];
+
+        let detail = StatusBar::from_state(&state).detail();
+
+        assert!(!detail.contains('\n'), "{detail:?}");
+        assert!(!detail.contains('\t'), "{detail:?}");
+        assert!(
+            detail.contains("first line second line tabbed"),
+            "{detail:?}"
+        );
     }
 
     #[test]

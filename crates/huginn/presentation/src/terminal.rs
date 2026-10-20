@@ -44,6 +44,16 @@ const fn viewport_is_viable(size: Size) -> bool {
     size.width >= 20 && size.height >= 8
 }
 
+fn is_ctrl_c(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(key)
+            if key.kind == KeyEventKind::Press
+                && key.code == KeyCode::Char('c')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+    )
+}
+
 fn arm_approval_after_draw(ui: &Ui, identity: Option<crate::overlay::OverlaySnapshot>) {
     let mut state = ui.lock();
     if state.overlays.snapshot() == identity {
@@ -1073,7 +1083,8 @@ impl Ui {
         focus: crate::overlay::FocusLease,
     ) {
         use crate::overlay::InputEffect as Effect;
-        let effect = {
+        let ctrl_c = is_ctrl_c(&event);
+        let (effect, cancels_turn) = {
             let mut state = self.lock();
             if !state.overlays.accepts(ticket, focus) {
                 drop(state);
@@ -1094,8 +1105,19 @@ impl Ui {
                 discard_input(event);
                 return;
             };
-            payload.input(event, settings_pending)
+            let cancels_turn = ctrl_c && !payload.is_workflow();
+            (payload.input(event, settings_pending), cancels_turn)
         };
+        // Ctrl+C keeps its documented meaning while an overlay is open: the
+        // overlay closes or refuses, and the running turn is cancelled too.
+        // Quitting stays in the driver's no-overlay branch, so a key press in
+        // a dialog can never shut the chat down.
+        if cancels_turn {
+            let turn = self.lock().turn_cancel.clone();
+            if let Some(turn) = turn {
+                turn.cancel();
+            }
+        }
         match effect {
             Effect::None => {}
             Effect::Close => self.close_overlay(ticket, focus),
@@ -1271,6 +1293,83 @@ mod tests {
         );
         assert!(View::snapshot(&ui.lock()).overlay.is_none());
         assert!(ui.lock().conversation.is_empty());
+    }
+
+    fn ctrl_c() -> Event {
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ))
+    }
+
+    #[test]
+    fn ctrl_c_closes_settings_and_cancels_the_running_turn() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        ui.dispatch_command("/settings");
+        let turn = CancellationToken::new();
+        let (ticket, focus) = {
+            let mut state = ui.lock();
+            state.turn_cancel = Some(turn.clone());
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+
+        ui.overlay_input(ctrl_c(), ticket, focus);
+
+        assert!(turn.is_cancelled(), "Ctrl+C must still cancel the turn");
+        assert!(!ui.stop.is_cancelled(), "Ctrl+C must not exit the chat");
+        assert!(View::snapshot(&ui.lock()).overlay.is_none());
+    }
+
+    #[test]
+    fn ctrl_c_in_a_workflow_form_keeps_the_turn_running() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let workflow = huginn_plugin_api::v1::Workflow::new(
+            "Login",
+            "Exact body",
+            vec![huginn_plugin_api::v1::Field {
+                id: "secret".into(),
+                label: "Credential".into(),
+                kind: huginn_plugin_api::v1::FieldKind::Secret,
+                initial: String::new(),
+            }],
+            Arc::new(|_, _| Box::pin(async { unreachable!() })),
+        )
+        .unwrap();
+        let form = crate::workflow::HostWorkflow::new(workflow);
+        let turn = CancellationToken::new();
+        let (ticket, focus) = {
+            let mut state = ui.lock();
+            state.turn_cancel = Some(turn.clone());
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Login,
+                origin: Origin::Host,
+                operation: crate::event::OperationId(7),
+                payload: Payload::Workflow(form),
+                ticket,
+            });
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+
+        ui.overlay_input(ctrl_c(), ticket, focus);
+
+        assert!(!turn.is_cancelled(), "a form only discards itself");
+        assert!(View::snapshot(&ui.lock()).overlay.is_none());
     }
 
     #[test]
