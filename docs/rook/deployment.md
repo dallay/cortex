@@ -29,7 +29,7 @@ API_KEY_HASH_SECRET="your-hash-secret-here"
 ```
 
 > **⚠️ CRITICAL**: This secret MUST remain stable. If it changes, ALL existing API keys become invalid.
-> See [API Key Troubleshooting](api-key-troubleshooting.md) for recovery steps if this happens.
+> See [API Key Troubleshooting](../api-key-troubleshooting.md) for recovery steps if this happens.
 
 ### Optional
 
