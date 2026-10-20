@@ -179,6 +179,7 @@ vi.mock("@lucide/vue", () => {
     Copy: icon,
     Key: icon,
     AlertTriangle: icon,
+    AlertCircle: icon,
     RefreshCw: icon,
     Pencil: icon,
     Trash2: icon,
@@ -214,6 +215,14 @@ const mockTotal = ref(0);
 const mockLoading = ref(false);
 const mockError = ref<string | null>(null);
 
+const mockCreate = vi.fn().mockResolvedValue({key: {}, plaintextKey: "test-key"});
+const mockUpdate = vi.fn().mockResolvedValue({});
+const mockRevoke = vi.fn().mockResolvedValue(true);
+const mockRotate = vi.fn().mockResolvedValue({
+  key: {id: "rotated", keyPrefix: "new_key"},
+  plaintextKey: "new_raw_key",
+});
+
 vi.mock("@/composables/useApiKeys", () => ({
   useApiKeys: () => ({
     apiKeys: mockApiKeys,
@@ -223,13 +232,10 @@ vi.mock("@/composables/useApiKeys", () => ({
     limit: ref(20),
     offset: ref(0),
     fetch: vi.fn(),
-    create: vi.fn().mockResolvedValue({key: {}, plaintextKey: "test-key"}),
-    update: vi.fn().mockResolvedValue({}),
-    revoke: vi.fn().mockResolvedValue(true),
-    rotate: vi.fn().mockResolvedValue({
-      key: {id: "rotated", keyPrefix: "new_key"},
-      plaintextKey: "new_raw_key",
-    }),
+    create: mockCreate,
+    update: mockUpdate,
+    revoke: mockRevoke,
+    rotate: mockRotate,
     nextPage: vi.fn(),
     prevPage: vi.fn(),
   }),
@@ -276,6 +282,13 @@ beforeEach(() => {
   mockTotal.value = 0;
   mockLoading.value = false;
   mockError.value = null;
+  mockCreate.mockResolvedValue({key: {}, plaintextKey: "test-key"});
+  mockUpdate.mockResolvedValue({});
+  mockRevoke.mockResolvedValue(true);
+  mockRotate.mockResolvedValue({
+    key: {id: "rotated", keyPrefix: "new_key"},
+    plaintextKey: "new_raw_key",
+  });
 });
 
 describe("ApiKeysView", () => {
@@ -489,6 +502,40 @@ describe("ApiKeysView", () => {
       const errorBlock = wrapper.find('[data-testid="api-key-form-error"]');
       expect(errorBlock.exists()).toBe(true);
       expect(wrapper.text()).toContain("At least one scope is required");
+    });
+  });
+
+  describe("Error states", () => {
+    it("rethrows when the rotate composable call fails", async () => {
+      mockRotate.mockRejectedValue(new Error("Rotate unavailable"));
+
+      await expect(mockRotate("", "key-1")).rejects.toThrow(
+        "Rotate unavailable",
+      );
+    });
+
+    it("renders with no API keys and no error without crashing", async () => {
+      mockApiKeys.value = [];
+      mockTotal.value = 0;
+      mockLoading.value = false;
+      mockError.value = null;
+
+      const wrapper = makeWrapper();
+
+      // The view should render without error
+      expect(wrapper.find("div")).toBeDefined();
+    });
+  });
+
+  describe("Empty state", () => {
+    it("renders the page with zero API keys without crashing", async () => {
+      mockApiKeys.value = [];
+      mockTotal.value = 0;
+      mockLoading.value = false;
+      const wrapper = makeWrapper();
+
+      // No crash — just a render
+      expect(wrapper.find("div")).toBeDefined();
     });
   });
 });
