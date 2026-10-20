@@ -12,7 +12,7 @@ fn start(mode: &str, cursor: bool) -> Pty {
 
 fn approval_code(pty: &Pty) -> String {
     pty.wait_for("Type ");
-    let output = pty.output();
+    let output = pty.screen_text();
     let start = output.rfind("Type ").expect("approval challenge is shown") + 5;
     let code = output
         .get(start..start + 8)

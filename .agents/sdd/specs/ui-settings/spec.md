@@ -40,9 +40,9 @@ The system SHALL register a `/settings` command in the chat-mode `/`-completion 
 
 The system SHALL render a bordered modal with three regions:
 
-1. A single-line tab header showing the five tab names (`theme`, `indicators`, `sound`, `toasts`, `integrations`). The active tab SHALL be rendered with inverted or underlined style; inactive tabs SHALL render in default style.
+1. El encabezado de una línea SHALL mostrar las cinco pestañas (`theme`, `indicators`, `sound`, `toasts`, `integrations`) cuando quepan. Si no caben, SHALL mostrar la pestaña activa y su posición, por ejemplo `integrations (5/5)` en 20 columnas. La pestaña activa SHALL usar estilo invertido o subrayado.
 2. A body listing the items of the active tab in the format `▶ name ✓` where `▶` marks the currently selected item (one row per tab) and `✓` marks the working-copy value. Only rows whose value matches the working copy carry the `✓`; the selected row (the row with `▶`) MAY or MAY NOT carry `✓` (they are independent concerns).
-3. A one-line footer with the literal text `↑↓ select · ←→ section · ↵ apply · esc close`.
+3. El diálogo SHALL indicar que Espacio modifica el valor, `↑/↓` mueve el cursor, `Tab` cambia de sección, Enter guarda y Esc descarta. Si las instrucciones no caben en una línea, SHALL distribuirlas en varias líneas sin ocultar la acción de Espacio en el viewport 20×8.
 
 #### Scenario: modal renders header body and footer
 
@@ -50,7 +50,7 @@ The system SHALL render a bordered modal with three regions:
 - **When** the next frame is drawn
 - **Then** the tab header shows `theme indicators sound toasts integrations` with `theme` highlighted
 - **And** the body lists all 13 themes as rows in the documented order with `▶ one-dark ✓` on the first row
-- **And** the footer shows `↑↓ select · ←→ section · ↵ apply · esc close`
+- **And** las instrucciones muestran Espacio para modificar el valor, además de selección, cambio de sección, guardado y descarte.
 
 ### REQ-03 — Tab navigation
 
@@ -139,6 +139,10 @@ The system SHALL render the following concrete items per tab. Each item's workin
 - **And** the `✓` no longer appears on `info` in the same session
 
 ### REQ-06 — Working copy
+
+Espacio SHALL modificar el valor de la fila seleccionada en la copia de trabajo:
+elige el tema, alterna un booleano o avanza un selector cíclico.
+Mover el cursor con `↑/↓` SHALL NOT modificar ese valor.
 
 The system SHALL maintain a working copy of the values for every tab inside the dialog. Selection movements (`↑/↓`, `←/→` on cycle pickers, tab change) SHALL NOT persist to disk. The `✓` marker SHALL reflect the working copy, not the persisted `Config`. The working copy is committed only on Enter (REQ-07). The working copy is discarded on Esc (REQ-08).
 

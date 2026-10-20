@@ -21,7 +21,7 @@ use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
-    Terminal, TerminalOptions, Viewport,
+    Frame, Terminal, TerminalOptions, Viewport,
 };
 use std::{
     io::{IsTerminal, Write},
@@ -36,7 +36,7 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
-const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 type Screen = Terminal<HostBackend>;
 
@@ -419,7 +419,7 @@ enum OverlayView {
     Dialog(String, String, Vec<String>, usize, usize),
     Workflow(String, String, Vec<String>, usize, bool),
     Settings(SettingsView),
-    Help,
+    Help(usize),
 }
 
 struct View {
@@ -489,7 +489,7 @@ impl View {
                         m.typed.clone(),
                         m.scroll,
                     ),
-                    crate::overlay::Payload::Help => OverlayView::Help,
+                    crate::overlay::Payload::Help => OverlayView::Help(active.help_scroll),
                 }),
         }
     }
@@ -560,6 +560,23 @@ impl Driver {
         Ok(())
     }
 
+    fn update_help_scroll(ui: &Ui, view: &View, size: Size) {
+        if !matches!(view.overlay, Some(OverlayView::Help(_))) || !viewport_is_viable(size) {
+            return;
+        }
+        let mut state = ui.lock();
+        if view.overlay_identity.is_some() && state.overlays.snapshot() == view.overlay_identity {
+            if let Some(active) = state.overlays.active_mut() {
+                if matches!(active.payload(), crate::overlay::Payload::Help) {
+                    let max = wrapped(HELP, size.width.saturating_sub(2))
+                        .len()
+                        .saturating_sub(usize::from(size.height.saturating_sub(3)));
+                    active.help_scroll = active.help_scroll.min(max);
+                }
+            }
+        }
+    }
+
     fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
         if let Some(OverlayView::Approval(_, _, code, _, _)) = &view.overlay {
             let mut state = self.ui.lock();
@@ -588,221 +605,315 @@ impl Driver {
 
     fn draw_frame(&mut self, view: &View) -> Result<usize> {
         let mut last_scroll = 0;
+        let mut size = Size::default();
         self.screen.draw(|frame| {
-            // Reserve the bar before any overlay's early return.
-            let [area, status] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-            frame.render_widget(Paragraph::new(view.bar.summary(status.width))
-                .style(if view.bar.diagnostic { Style::default().fg(Color::Red) } else { Style::default() }), status);
-            if matches!(&view.overlay, Some(OverlayView::Help)) {
-                frame.render_widget(Paragraph::new(wrapped(HELP, area.width.saturating_sub(2)).join("\n"))
-                    .block(Block::bordered().title("Help — Esc closes")), area);
-                return;
-            }
-            if let Some(OverlayView::Approval(preview, number, code, typed, scroll)) = &view.overlay {
-                let [body, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-                let lines = wrapped(preview, body.width.saturating_sub(2));
-                let last = lines
-                    .len()
-                    .saturating_sub(usize::from(body.height.saturating_sub(2)));
-                last_scroll = last;
-                let visible: Vec<_> = lines
-                    .into_iter()
-                    .skip((*scroll).min(last))
-                    .take(usize::from(body.height.saturating_sub(2)))
-                    .collect();
-                frame.render_widget(
-                    Paragraph::new(visible.join("\n")).block(
-                        Block::bordered()
-                            .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-                    ),
-                    body,
-                );
-                let instructions = if footer.width < 42 {
-                    format!("Approve: {code}\nCode: {typed}")
+            size = frame.area().as_size();
+            last_scroll = Self::render_frame(frame, view);
+        })?;
+        Self::update_help_scroll(&self.ui, view, size);
+        Ok(last_scroll)
+    }
+
+    fn render_frame(frame: &mut Frame, view: &View) -> usize {
+        let mut last_scroll = 0;
+        // Reserve the bar before any overlay's early return.
+        let [area, status] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+        frame.render_widget(
+            Paragraph::new(view.bar.summary(status.width)).style(if view.bar.diagnostic {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+            }),
+            status,
+        );
+        if let Some(OverlayView::Help(scroll)) = &view.overlay {
+            let lines = wrapped(HELP, area.width.saturating_sub(2));
+            let height = usize::from(area.height.saturating_sub(2));
+            let scroll = (*scroll).min(lines.len().saturating_sub(height));
+            let visible = lines
+                .into_iter()
+                .skip(scroll)
+                .take(height)
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                Paragraph::new(visible.join("\n"))
+                    .block(Block::bordered().title("Help — Esc closes")),
+                area,
+            );
+            return last_scroll;
+        }
+        if let Some(OverlayView::Approval(preview, number, code, typed, scroll)) = &view.overlay {
+            let [body, footer] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
+            let lines = wrapped(preview, body.width.saturating_sub(2));
+            let last = lines
+                .len()
+                .saturating_sub(usize::from(body.height.saturating_sub(2)));
+            last_scroll = last;
+            let visible: Vec<_> = lines
+                .into_iter()
+                .skip((*scroll).min(last))
+                .take(usize::from(body.height.saturating_sub(2)))
+                .collect();
+            frame.render_widget(
+                Paragraph::new(visible.join("\n")).block(
+                    Block::bordered()
+                        .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
+                ),
+                body,
+            );
+            let instructions = if footer.width < 42 {
+                format!("Approve: {code}\nCode: {typed}")
+            } else {
+                format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+            };
+            frame.render_widget(Paragraph::new(instructions), footer);
+            return last_scroll;
+        }
+        if let Some(OverlayView::Workflow(title, body, fields, selected, pending)) = &view.overlay {
+            let [heading, content, footer] = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Min(1),
+                Constraint::Length(2),
+            ])
+            .areas(area);
+            frame.render_widget(Paragraph::new(safe(body)), heading);
+            let rows = usize::from(content.height.saturating_sub(2)).max(1);
+            let start = selected.saturating_sub(rows.saturating_sub(1));
+            let text = if *pending {
+                "Waiting… Esc cancels locally; completion may be unknown".into()
+            } else {
+                fields
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(rows)
+                    .map(|(i, field)| {
+                        format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            frame.render_widget(
+                Paragraph::new(text).block(Block::bordered().title(safe(title))),
+                content,
+            );
+            frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
+            return last_scroll;
+        }
+        if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
+            let toasts = *active == crate::settings::TAB_TOASTS;
+            let wide_hint = if toasts {
+                "Up/Down select · Tab section · Space value · Left/Right value · Enter save · Esc close"
+            } else {
+                "Up/Down select · Tab section · Space value · Enter save · Esc close"
+            };
+            let hints = if unicode_width::UnicodeWidthStr::width(wide_hint) <= area.width as usize {
+                wide_hint
+            } else if toasts {
+                "Space value
+Tab section ←→ value
+Enter save Esc close"
+            } else {
+                "Space value
+Tab section ↑↓ pick
+Enter save Esc close"
+            };
+            let [header, body, footer] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(3),
+                Constraint::Length(hints.lines().count() as u16),
+            ])
+            .areas(area);
+            let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
+            for (i, name) in tabs.iter().enumerate() {
+                let style = if i == *active {
+                    Style::default().reversed()
                 } else {
-                    format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+                    Style::default()
                 };
-                frame.render_widget(Paragraph::new(instructions), footer);
-                return;
+                header_spans.push(Span::styled(format!(" {name} "), style));
+                header_spans.push(Span::raw(" "));
             }
-            if let Some(OverlayView::Workflow(title, body, fields, selected, pending)) = &view.overlay {
-                let [heading, content, footer] = Layout::vertical([
-                    Constraint::Length(2), Constraint::Min(1), Constraint::Length(2),
-                ]).areas(area);
-                frame.render_widget(Paragraph::new(safe(body)), heading);
-                let rows = usize::from(content.height.saturating_sub(2)).max(1);
-                let start = selected.saturating_sub(rows.saturating_sub(1));
-                let text = if *pending { "Waiting… Esc cancels locally; completion may be unknown".into() } else {
-                    fields.iter().enumerate().skip(start).take(rows)
-                        .map(|(i, field)| format!("{} {}", if i == *selected { ">" } else { " " }, safe(field)))
-                        .collect::<Vec<_>>().join("\n")
-                };
-                frame.render_widget(Paragraph::new(text).block(Block::bordered().title(safe(title))), content);
-                frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
-                return;
+            let full_width: usize = tabs
+                .iter()
+                .map(|name| unicode_width::UnicodeWidthStr::width(name.as_str()) + 3)
+                .sum();
+            let header_line = if full_width <= header.width as usize {
+                Line::from(header_spans)
+            } else {
+                Line::from(Span::styled(
+                    format!(
+                        "{} {}/{}",
+                        tabs.get(*active).map(String::as_str).unwrap_or("Settings"),
+                        active + 1,
+                        tabs.len()
+                    ),
+                    Style::default().reversed(),
+                ))
+            };
+            frame.render_widget(Paragraph::new(header_line), header);
+            let body_rows = usize::from(body.height).saturating_sub(2).max(1);
+            let total_items = items.len();
+            let start = selected
+                .saturating_sub(body_rows.saturating_sub(1))
+                .min(total_items.saturating_sub(body_rows));
+            let mut text = String::new();
+            if let Some(err) = error {
+                text.push_str(&format!("!! {}\n", err));
             }
-            if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
-                let [header, body, footer] = Layout::vertical([
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                ])
-                .areas(area);
-                let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
-                for (i, name) in tabs.iter().enumerate() {
-                    let style = if i == *active {
-                        Style::default().reversed()
-                    } else {
-                        Style::default()
-                    };
-                    header_spans.push(Span::styled(
-                        format!(" {name} "),
-                        style,
-                    ));
-                    header_spans.push(Span::raw(" "));
-                }
-                frame.render_widget(
-                    Paragraph::new(Line::from(header_spans)),
-                    header,
-                );
-                let body_rows = usize::from(body.height).saturating_sub(2).max(1);
-                let total_items = items.len();
-                let start = selected
-                    .saturating_sub(body_rows.saturating_sub(1))
-                    .min(total_items.saturating_sub(body_rows));
-                let mut text = String::new();
-                if let Some(err) = error {
-                    text.push_str(&format!("!! {}\n", err));
-                }
-                for (i, (label, checked, _kind)) in
-                    items.iter().enumerate().skip(start).take(body_rows)
-                {
-                    text.push_str(&format!(
-                        "{} {}{}\n",
-                        if i == *selected { ">" } else { " " },
-                        label,
-                        if *checked { " ✓" } else { "" }
-                    ));
-                }
-                frame.render_widget(
-                    Paragraph::new(text).block(Block::bordered().title("Settings")),
-                    body,
-                );
-                frame.render_widget(
-                    Paragraph::new("↑↓ select · ←→ section · ↵ apply · esc close"),
-                    footer,
-                );
-                return;
+            for (i, (label, checked, _kind)) in items.iter().enumerate().skip(start).take(body_rows)
+            {
+                text.push_str(&format!(
+                    "{} {}{}\n",
+                    if i == *selected { ">" } else { " " },
+                    label,
+                    if *checked { " ✓" } else { "" }
+                ));
             }
-            if let Some(OverlayView::Dialog(title, body, choices, selected, body_scroll)) = &view.overlay {
-                let [body_area, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-                let body = safe(body);
-                // Window the body too: a long body must never push every choice
-                // out of view. One content row is always reserved so the
-                // selected choice stays visible and actionable.
-                let height = usize::from(body_area.height).saturating_sub(2);
-                let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
-                let body_lines: Vec<&str> = body.lines().collect();
-                let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
-                let mut text = String::new();
-                for line in body_lines.into_iter().skip(first).take(body_rows) {
-                    text.push_str(line);
-                    text.push('\n');
-                }
-                // Keep the selected choice visible: window the list like the
-                // approval preview does, preserving marker and safe rendering.
-                let rows = height.saturating_sub(body_rows);
-                let start = selected
-                    .saturating_sub(rows.saturating_sub(1))
-                    .min(choices.len().saturating_sub(rows));
-                for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
-                    text.push_str(&format!(
-                        "{} {}\n",
-                        if index == *selected { ">" } else { " " },
-                        safe(choice)
-                    ));
-                }
-                frame.render_widget(
-                    Paragraph::new(text)
-                        .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
-                    body_area,
-                );
-                frame.render_widget(
+            frame.render_widget(
+                Paragraph::new(text).block(Block::bordered().title("Settings")),
+                body,
+            );
+            frame.render_widget(Paragraph::new(hints), footer);
+            return last_scroll;
+        }
+        if let Some(OverlayView::Dialog(title, body, choices, selected, body_scroll)) =
+            &view.overlay
+        {
+            let [body_area, footer] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+            let body = safe(body);
+            // Window the body too: a long body must never push every choice
+            // out of view. One content row is always reserved so the
+            // selected choice stays visible and actionable.
+            let height = usize::from(body_area.height).saturating_sub(2);
+            let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+            let body_lines: Vec<&str> = body.lines().collect();
+            let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
+            let mut text = String::new();
+            for line in body_lines.into_iter().skip(first).take(body_rows) {
+                text.push_str(line);
+                text.push('\n');
+            }
+            // Keep the selected choice visible: window the list like the
+            // approval preview does, preserving marker and safe rendering.
+            let rows = height.saturating_sub(body_rows);
+            let start = selected
+                .saturating_sub(rows.saturating_sub(1))
+                .min(choices.len().saturating_sub(rows));
+            for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
+                text.push_str(&format!(
+                    "{} {}\n",
+                    if index == *selected { ">" } else { " " },
+                    safe(choice)
+                ));
+            }
+            frame.render_widget(
+                Paragraph::new(text)
+                    .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
+                body_area,
+            );
+            frame.render_widget(
                     Paragraph::new(
                         "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
                     ),
                     footer,
                 );
-                return;
-            }
-            let [tail, composer, detail] = Layout::vertical([
-                Constraint::Min(1),
-                Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 { 3 } else { 4 }),
-                Constraint::Length(if area.height < 8 { 0 } else { 1 }),
-            ])
-            .areas(area);
-            let popup_height = if view.completion.items.is_empty() { 0 } else { (view.completion.items.len() as u16 + 2).min(7).min(tail.height) };
-            let [tail, popup] = Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
-            let lines = wrapped(&view.tail, tail.width);
-            let offset = lines.len().saturating_sub(usize::from(tail.height));
-            frame.render_widget(
-                Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
-                tail,
-            );
-            if popup_height > 0 {
-                let name_width = view.completion.items.iter().map(|item| unicode_width::UnicodeWidthStr::width(item.label.as_str())).max().unwrap_or(0).min(usize::from(popup.width / 2));
-                let items: Vec<_> = view.completion.items.iter().map(|item| {
+            return last_scroll;
+        }
+        let [tail, composer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 {
+                3
+            } else {
+                4
+            }),
+        ])
+        .areas(area);
+        let popup_height = if view.completion.items.is_empty() {
+            0
+        } else {
+            (view.completion.items.len() as u16 + 2)
+                .min(7)
+                .min(tail.height)
+        };
+        let [tail, popup] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
+        let lines = wrapped(&view.tail, tail.width);
+        let offset = lines.len().saturating_sub(usize::from(tail.height));
+        frame.render_widget(
+            Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
+            tail,
+        );
+        if popup_height > 0 {
+            let name_width = view
+                .completion
+                .items
+                .iter()
+                .map(|item| unicode_width::UnicodeWidthStr::width(item.label.as_str()))
+                .max()
+                .unwrap_or(0)
+                .min(usize::from(popup.width / 2));
+            let items: Vec<_> = view
+                .completion
+                .items
+                .iter()
+                .map(|item| {
                     let label = safe(&item.label);
-                    let padding = name_width.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
-                    ListItem::new(Line::from(vec![Span::raw(label), Span::raw(" ".repeat(padding + 2)), Span::styled(safe(&item.description).replace(['\n', '\t'], " "), Style::default().fg(Color::DarkGray))]))
-                }).collect();
-                let list = List::new(items).block(Block::bordered().title(format!("{} — ↑↓ · Tab · Enter · Esc", view.completion.title())))
-                    .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black))
-                    .highlight_symbol("› ");
-                let mut selection = ListState::default().with_selected(Some(view.completion.selected));
-                frame.render_stateful_widget(list, popup, &mut selection);
-            }
-            let editor_width = composer.width.saturating_sub(2).max(1);
-            let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
-            let row = before.len().saturating_sub(1);
-            let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
-            let lines = wrapped(&view.editor.text, editor_width);
-            frame.render_widget(
-                Paragraph::new(
-                    lines
-                        .into_iter()
-                        .skip(offset)
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-                .block(Block::bordered().title(if view.busy {
-                    "Compose next prompt — Esc cancels turn"
-                } else {
-                    "Huginn — Enter sends / Alt+Enter newline / /help"
-                })),
-                composer,
-            );
-            let column: usize = before.last().map_or(0, |line| {
-                line.chars().map(|ch| ch.width().unwrap_or(0)).sum()
-            });
-            frame.set_cursor_position((
-                composer.x + 1 + (column as u16).min(editor_width.saturating_sub(1)),
-                composer.y + 1 + (row - offset) as u16,
-            ));
-            frame.render_widget(
-                Paragraph::new(safe(&view.bar.detail()))
-                .style(if view.bar.diagnostic {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default()
-                }),
-                detail,
-            );
-        })?;
-        Ok(last_scroll)
+                    let padding = name_width
+                        .saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
+                    ListItem::new(Line::from(vec![
+                        Span::raw(label),
+                        Span::raw(" ".repeat(padding + 2)),
+                        Span::styled(
+                            safe(&item.description).replace(['\n', '\t'], " "),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]))
+                })
+                .collect();
+            let list = List::new(items)
+                .block(Block::bordered().title(format!(
+                    "{} — ↑↓ · Tab · Enter · Esc",
+                    view.completion.title()
+                )))
+                .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black))
+                .highlight_symbol("› ");
+            let mut selection = ListState::default().with_selected(Some(view.completion.selected));
+            frame.render_stateful_widget(list, popup, &mut selection);
+        }
+        let editor_width = composer.width.saturating_sub(2).max(1);
+        let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
+        let row = before.len().saturating_sub(1);
+        let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
+        let lines = wrapped(&view.editor.text, editor_width);
+        frame.render_widget(
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .skip(offset)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .block(Block::bordered().title(if view.busy {
+                "Compose next prompt — Esc cancels turn"
+            } else {
+                "Huginn — Enter sends / Alt+Enter newline / /help"
+            })),
+            composer,
+        );
+        let column: usize = before.last().map_or(0, |line| {
+            line.chars().map(|ch| ch.width().unwrap_or(0)).sum()
+        });
+        frame.set_cursor_position((
+            composer.x + 1 + (column as u16).min(editor_width.saturating_sub(1)),
+            composer.y + 1 + (row - offset) as u16,
+        ));
+        last_scroll
     }
+
     fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
         let focus = self.ui.lock().focus();
         // Discard queued keys/pastes before showing a new challenge. The
@@ -1100,13 +1211,13 @@ impl Ui {
                 return;
             }
             let settings_pending = state.settings().is_some() && state.settings_is_pending();
-            let Some(payload) = state.overlays.payload_mut() else {
+            let Some(active) = state.overlays.active_mut() else {
                 drop(state);
                 discard_input(event);
                 return;
             };
-            let cancels_turn = ctrl_c && !payload.is_workflow();
-            (payload.input(event, settings_pending), cancels_turn)
+            let cancels_turn = ctrl_c && !active.payload().is_workflow();
+            (active.input(event, settings_pending), cancels_turn)
         };
         // Ctrl+C keeps its documented meaning while an overlay is open: the
         // overlay closes or refuses, and the running turn is cancelled too.
@@ -1152,6 +1263,186 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame_text(view: &View, width: u16, height: u16) -> String {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                Driver::render_frame(frame, view);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn test_view(overlay: OverlayView) -> View {
+        View {
+            bar: crate::status_bar::StatusBar {
+                connection: None,
+                activity: crate::status_bar::Activity::Idle,
+                usage: None,
+                notification: "unique feedback".into(),
+                diagnostic: false,
+                widgets: String::new(),
+            },
+            editor: Editor::default(),
+            tail: String::new(),
+            busy: false,
+            overlay: Some(overlay),
+            overlay_identity: None,
+            completion: Suggestions::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn help_scroll_reaches_last_line_at_twenty_by_eight_and_preserves_focus() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let identity = {
+            let mut state = ui.lock();
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Help,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Help,
+                ticket,
+            });
+            state.overlays.snapshot().unwrap()
+        };
+        let ticket = ui.lock().overlays.ticket();
+        let first = frame_text(&View::snapshot(&ui.lock()), 20, 8);
+        for _ in 0..100 {
+            ui.overlay_input(
+                Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::PageDown,
+                    KeyModifiers::NONE,
+                )),
+                ticket,
+                identity.focus,
+            );
+        }
+        let last = frame_text(&View::snapshot(&ui.lock()), 20, 8);
+        assert_ne!(first, last);
+        let final_line = wrapped(HELP, 18).pop().unwrap();
+        assert!(last.contains(&final_line), "{last}");
+        // A completed paint must persist the clamp, including after resize.
+        for size in [Size::new(20, 8), Size::new(40, 12)] {
+            for _ in 0..100 {
+                ui.overlay_input(
+                    Event::Key(crossterm::event::KeyEvent::new(
+                        KeyCode::Down,
+                        KeyModifiers::NONE,
+                    )),
+                    ticket,
+                    identity.focus,
+                );
+            }
+            let view = View::snapshot(&ui.lock());
+            let bottom = frame_text(&view, size.width, size.height);
+            Driver::update_help_scroll(&ui, &view, size);
+            ui.overlay_input(
+                Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Up,
+                    KeyModifiers::NONE,
+                )),
+                ticket,
+                identity.focus,
+            );
+            let after_up = frame_text(&View::snapshot(&ui.lock()), size.width, size.height);
+            assert_ne!(bottom, after_up, "Up must move immediately at {size:?}");
+        }
+        assert_eq!(ui.lock().overlays.snapshot(), Some(identity));
+        for _ in 0..100 {
+            ui.overlay_input(
+                Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::PageUp,
+                    KeyModifiers::NONE,
+                )),
+                ticket,
+                identity.focus,
+            );
+        }
+        assert_eq!(frame_text(&View::snapshot(&ui.lock()), 20, 8), first);
+        // A paint from a retired Help must not clamp the replacement's scroll.
+        let stale = View::snapshot(&ui.lock());
+        {
+            let mut state = ui.lock();
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Help,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Help,
+                ticket,
+            });
+            state.overlays.active_mut().unwrap().help_scroll = 123;
+        }
+        Driver::update_help_scroll(&ui, &stale, Size::new(80, 24));
+        assert_eq!(ui.lock().overlays.active().unwrap().help_scroll, 123);
+    }
+
+    #[test]
+    fn narrow_settings_header_keeps_active_tab_and_index() {
+        let view = test_view(OverlayView::Settings((
+            vec![
+                "general",
+                "appearance",
+                "toasts",
+                "providers",
+                "integrations",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            4,
+            vec![],
+            0,
+            None,
+        )));
+        assert!(frame_text(&view, 20, 12).contains("integrations 5/5"));
+    }
+
+    #[test]
+    fn settings_hints_show_space_and_section_navigation_at_twenty_columns() {
+        let view = test_view(OverlayView::Settings((
+            vec!["general", "appearance", "editor", "toasts", "integrations"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            crate::settings::TAB_TOASTS,
+            vec![("Selected toast".into(), false, 2)],
+            0,
+            None,
+        )));
+        let text = frame_text(&view, 20, 8);
+        assert!(text.contains("Space value"), "{text}");
+        assert!(text.contains("Tab section"), "{text}");
+        assert!(text.contains("←→ value"), "{text}");
+        assert!(text.contains("Enter save"), "{text}");
+        assert!(text.contains("Selected toast"), "{text}");
+    }
+
+    #[test]
+    fn feedback_has_only_one_renderer_row() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        let text = frame_text(&view, 160, 24);
+        assert_eq!(text.matches("unique feedback").count(), 1);
+    }
 
     #[test]
     fn zero_area_draw_does_not_arm_approval_then_viable_draw_can_arm() {

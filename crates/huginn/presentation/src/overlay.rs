@@ -295,6 +295,33 @@ pub struct ActiveOverlay<T> {
     pub origin: Origin,
     pub operation: OperationId,
     payload: T,
+    pub help_scroll: usize,
+}
+
+impl ActiveOverlay<Payload> {
+    pub(crate) fn input(
+        &mut self,
+        event: crossterm::event::Event,
+        settings_pending: bool,
+    ) -> InputEffect {
+        if matches!(self.payload, Payload::Help) {
+            if let crossterm::event::Event::Key(key) = &event {
+                use crossterm::event::{KeyCode, KeyEventKind};
+                if key.kind != KeyEventKind::Release {
+                    match key.code {
+                        KeyCode::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
+                        KeyCode::Down => self.help_scroll = self.help_scroll.saturating_add(1),
+                        KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(5),
+                        KeyCode::PageDown => self.help_scroll = self.help_scroll.saturating_add(5),
+                        KeyCode::Home => self.help_scroll = 0,
+                        _ => return self.payload.input(event, settings_pending),
+                    }
+                    return InputEffect::None;
+                }
+            }
+        }
+        self.payload.input(event, settings_pending)
+    }
 }
 
 impl<T> ActiveOverlay<T> {
@@ -373,6 +400,12 @@ impl<T> Default for OverlayMachine<T> {
 impl<T> OverlayMachine<T> {
     pub const fn active(&self) -> Option<&ActiveOverlay<T>> {
         self.active.as_ref()
+    }
+
+    pub fn active_mut(&mut self) -> Option<&mut ActiveOverlay<T>> {
+        self.active
+            .as_mut()
+            .filter(|active| active.origin.is_active())
     }
 
     /// Mutations are permitted only while the exact registration is live.
@@ -469,6 +502,7 @@ impl<T> OverlayMachine<T> {
             origin: request.origin,
             operation: request.operation,
             payload: request.payload,
+            help_scroll: 0,
         };
         let snapshot = active.snapshot(FocusLease(focus), revision);
         self.next_id = id;
