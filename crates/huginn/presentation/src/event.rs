@@ -1,5 +1,8 @@
 //! Explicit UI event categories. UI-only events are never conversation entries.
-use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+use aes_gcm::{
+    aead::{Aead, OsRng},
+    Aes256Gcm, KeyInit, Nonce,
+};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -76,20 +79,15 @@ impl ErrorDeduplicator {
 
     /// Injectable hash function exists to exercise collision safety.
     pub fn with_hasher(clock: Arc<dyn Clock>, hash_message: MessageHasher) -> Self {
-        // 256-bit key and 32-bit nonce prefix taken from the OS CSPRNG.
-        // Building them by concatenation keeps zero-filled buffers out of the
-        // cryptographic path and makes the entropy source explicit.
-        let first = uuid::Uuid::new_v4();
-        let second = uuid::Uuid::new_v4();
-        let key = [first.as_bytes().as_slice(), second.as_bytes().as_slice()].concat();
-        let nonce_prefix = first.as_bytes()[..4]
-            .try_into()
-            .expect("4-byte nonce prefix");
+        // Generate a fresh AES-256 key from the OS CSPRNG for this instance.
+        // Nonces need uniqueness under this key, not randomness or separation
+        // from the nonces used by other instances with independently generated keys.
+        let key = Aes256Gcm::generate_key(&mut OsRng);
         Self {
             clock,
             hash_message,
-            cipher: Aes256Gcm::new_from_slice(&key).expect("AES-256 key length"),
-            nonce_prefix,
+            cipher: Aes256Gcm::new(&key),
+            nonce_prefix: [0; 4],
             nonce_counter: 0,
             entries: VecDeque::new(),
             retained_bytes: 0,
@@ -137,9 +135,10 @@ impl ErrorDeduplicator {
         };
         let counter = self.nonce_counter.to_be_bytes();
         self.nonce_counter = next_nonce_counter;
-        // 96-bit nonce: per-instance prefix + 64-bit counter. The counter
-        // guarantees uniqueness within an instance; the prefix keeps nonce
-        // spaces disjoint across instances even if a counter repeats.
+        // 96-bit nonce: fixed prefix + 64-bit counter. The counter never resets
+        // while this instance holds its key, including after cache eviction or
+        // operation completion. checked_add above prevents wraparound and reuse.
+        // Different instances may use the same nonce under their independent keys.
         let nonce = [self.nonce_prefix.as_slice(), counter.as_slice()].concat();
         let ciphertext = self
             .cipher
@@ -364,10 +363,89 @@ mod tests {
     }
 
     #[test]
+    fn dedup_nonces_do_not_repeat_after_eviction_expiry_or_operation_finish() {
+        let clock = Arc::new(FakeClock::at(0));
+        let mut dedup = ErrorDeduplicator::new(clock.clone());
+        let op = OperationId(1);
+        let mut nonces = std::collections::HashSet::new();
+
+        for _ in 0..=ERROR_DEDUP_CAPACITY {
+            dedup.finish_operation(op);
+            assert!(dedup.should_emit(op, "same plaintext"));
+            let fingerprint = &dedup.entries.back().unwrap().fingerprint;
+            assert!(nonces.insert(fingerprint[..12].to_vec()));
+            assert_eq!(
+                dedup
+                    .cipher
+                    .decrypt(Nonce::from_slice(&fingerprint[..12]), &fingerprint[12..])
+                    .unwrap(),
+                b"same plaintext"
+            );
+        }
+        for index in 0..=ERROR_DEDUP_CAPACITY {
+            assert!(dedup.should_emit(op, &format!("error {index}")));
+            assert!(nonces.insert(dedup.entries.back().unwrap().fingerprint[..12].to_vec()));
+        }
+        dedup.finish_operation(op);
+        assert!(dedup.should_emit(op, "after finish"));
+        assert!(nonces.insert(dedup.entries.back().unwrap().fingerprint[..12].to_vec()));
+        clock.advance_ms(2_000);
+        assert!(dedup.should_emit(op, "after expiry"));
+        assert!(nonces.insert(dedup.entries.back().unwrap().fingerprint[..12].to_vec()));
+    }
+
+    #[test]
+    fn dedup_instances_keep_independent_caches() {
+        let clock = Arc::new(FakeClock::at(0));
+        let mut first = ErrorDeduplicator::new(clock.clone());
+        let mut second = ErrorDeduplicator::new(clock);
+        let op = OperationId(1);
+        assert!(first.should_emit(op, "same"));
+        assert!(second.should_emit(op, "same"));
+        assert!(!first.should_emit(op, "same"));
+        assert!(!second.should_emit(op, "same"));
+        first.finish_operation(op);
+        assert!(!second.should_emit(op, "same"));
+    }
+
+    #[test]
+    fn dedup_decryption_requires_the_matching_key_even_with_the_same_nonce() {
+        let clock = Arc::new(FakeClock::at(0));
+        let mut first = ErrorDeduplicator::new(clock.clone());
+        let mut second = ErrorDeduplicator::new(clock);
+        // Fixed distinct test keys avoid probabilistic assertions about key generation.
+        first.cipher = Aes256Gcm::new_from_slice(&[1; 32]).unwrap();
+        second.cipher = Aes256Gcm::new_from_slice(&[2; 32]).unwrap();
+        second.nonce_prefix = first.nonce_prefix;
+        assert!(first.should_emit(OperationId(1), "same"));
+        assert!(second.should_emit(OperationId(1), "same"));
+        let first_fingerprint = &first.entries.back().unwrap().fingerprint;
+        let second_fingerprint = &second.entries.back().unwrap().fingerprint;
+        assert_eq!(first_fingerprint[..12], second_fingerprint[..12]);
+        for (own, other, fingerprint) in [
+            (&first, &second, &first_fingerprint),
+            (&second, &first, &second_fingerprint),
+        ] {
+            let nonce = Nonce::from_slice(&fingerprint[..12]);
+            assert_eq!(
+                own.cipher.decrypt(nonce, &fingerprint[12..]).unwrap(),
+                b"same"
+            );
+            assert!(other.cipher.decrypt(nonce, &fingerprint[12..]).is_err());
+        }
+    }
+
+    #[test]
     fn dedup_nonce_exhaustion_emits_without_panicking_or_caching() {
         let clock = Arc::new(FakeClock::at(0));
         let mut dedup = ErrorDeduplicator::new(clock);
-        dedup.nonce_counter = u64::MAX;
+        dedup.nonce_counter = u64::MAX - 1;
+        assert!(dedup.should_emit(OperationId(9), "last cached"));
+        assert_eq!(dedup.nonce_counter, u64::MAX);
+        assert_eq!(dedup.len(), 1);
+        let fingerprint = &dedup.entries.back().unwrap().fingerprint;
+        assert_eq!(&fingerprint[4..12], &(u64::MAX - 1).to_be_bytes());
+        assert!(!dedup.should_emit(OperationId(9), "last cached"));
 
         assert!(dedup.should_emit(OperationId(9), "nonce boundary"));
         assert!(dedup.should_emit(OperationId(9), "nonce boundary"));
