@@ -62,6 +62,26 @@ async fn pending(ui: &Ui) {
     .unwrap();
 }
 #[test]
+fn oversized_ui_diagnostic_is_bounded_without_truncating_conversation() {
+    let mut state = UiState::default();
+    let original = format!("diagnostic {}", "界".repeat(8192));
+    state.project_ui_event(
+        huginn_presentation::event::EventKind::Diagnostic,
+        original.clone(),
+    );
+    let record = state.notifications.iter().last().unwrap();
+    assert!(record.summary.len() <= 4096);
+    assert!(record.summary.ends_with(" [truncated]"));
+    let feedback = state.status.feedback.as_ref().unwrap();
+    assert!(feedback.len() <= 4096);
+    assert!(feedback.ends_with(" [truncated]"));
+    assert_eq!(feedback, &record.summary);
+
+    state.conversation(original.clone());
+    assert_eq!(state.conversation.last().unwrap(), &original);
+}
+
+#[test]
 fn editor_multiline_unicode_edits_without_splitting_utf8() {
     let mut editor = Editor::default();
     editor.insert("你好\nnext");
@@ -266,7 +286,7 @@ fn error_event_producer_uses_injected_clock_and_deduplicates_by_operation() {
 }
 
 #[test]
-fn oversized_errors_are_visible_without_retaining_or_truncating_them() {
+fn oversized_errors_remain_visible_without_dedup_caching_and_have_bounded_ui_summaries() {
     use huginn_presentation::event::{EventKind, ERROR_DEDUP_MAX_MESSAGE_BYTES};
 
     let clock = Arc::new(FakeClock::default());
@@ -287,9 +307,12 @@ fn oversized_errors_are_visible_without_retaining_or_truncating_them() {
         .cloned()
         .collect();
     assert_eq!(diagnostics.len(), 2);
-    assert!(diagnostics
-        .iter()
-        .all(|event| event.summary == full_message));
+    // Oversized errors bypass dedup caching, but their UI projection is bounded.
+    assert!(diagnostics.iter().all(|event| {
+        event.summary.len() <= 4096
+            && event.summary.ends_with(" [truncated]")
+            && full_message.starts_with(event.summary.trim_end_matches(" [truncated]"))
+    }));
     interaction.finish_operation(operation);
 }
 

@@ -20,19 +20,19 @@ pub struct StatusSnapshot {
 
 impl StatusSnapshot {
     pub fn set_notice(&mut self, text: String) {
-        self.notice = crate::state::safe(&text);
+        self.notice = crate::event::bounded_ui_summary(&text);
         self.diagnostic = false;
     }
 
     pub fn set_feedback(&mut self, text: String) {
-        self.notice = crate::state::safe(&text);
+        self.notice = crate::event::bounded_ui_summary(&text);
         self.diagnostic = false;
         self.feedback = Some(self.notice.clone());
         self.feedback_diagnostic = false;
     }
 
     pub fn set_diagnostic(&mut self, text: String) {
-        self.notice = crate::state::safe(&text);
+        self.notice = crate::event::bounded_ui_summary(&text);
         self.diagnostic = true;
         self.feedback = Some(self.notice.clone());
         self.feedback_diagnostic = true;
@@ -91,27 +91,26 @@ impl StatusBar {
                 Activity::Idle
             },
             usage: state.usage,
-            notification: state
-                .status
-                .feedback
-                .as_deref()
-                .unwrap_or(&state.status.notice)
-                .to_owned(),
+            notification: crate::event::bounded_ui_summary(
+                state
+                    .status
+                    .feedback
+                    .as_deref()
+                    .unwrap_or(&state.status.notice),
+            ),
             diagnostic: if state.status.feedback.is_some() {
                 state.status.feedback_diagnostic
             } else {
                 state.status.diagnostic
             },
-            widgets: state
-                .widgets
-                .iter()
-                .map(|(_, view)| {
-                    // The status line is one row: a multi-line widget body
-                    // must not push its tail out of view.
-                    crate::state::safe(&view.plain_text()).replace(['\n', '\t'], " ")
-                })
-                .collect::<Vec<_>>()
-                .join(" | "),
+            widgets: crate::event::bounded_ui_summary(
+                &state
+                    .widgets
+                    .iter()
+                    .map(|(_, view)| view.plain_text())
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            ),
         }
     }
 
@@ -220,6 +219,41 @@ impl StatusBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn status_setters_bound_and_sanitize_retained_text() {
+        for text in [
+            "a".repeat(8192),
+            "界🙂".repeat(2048),
+            "\x1b\n\t".repeat(4096),
+        ] {
+            let mut snapshot = StatusSnapshot::default();
+            for setter in [
+                StatusSnapshot::set_notice,
+                StatusSnapshot::set_feedback,
+                StatusSnapshot::set_diagnostic,
+            ] {
+                setter(&mut snapshot, text.clone());
+                assert!(snapshot.notice.len() <= 4096);
+                assert!(snapshot.notice.ends_with(" [truncated]"));
+                assert!(!snapshot.notice.chars().any(char::is_control));
+                if let Some(feedback) = &snapshot.feedback {
+                    assert!(feedback.len() <= 4096);
+                    assert!(feedback.ends_with(" [truncated]"));
+                }
+            }
+            let mut state = crate::state::UiState::default();
+            state.status.set_feedback(text.clone());
+            state.widgets = vec![("widget".into(), huginn_plugin_api::v1::View::text(text))];
+            let bar = StatusBar::from_state(&state);
+            assert!(bar.notification.len() <= 4096);
+            assert!(bar.notification.ends_with(" [truncated]"));
+            assert!(!bar.notification.chars().any(char::is_control));
+            assert!(bar.widgets.len() <= 4096);
+            assert!(bar.widgets.ends_with(" [truncated]"));
+            assert!(!bar.widgets.chars().any(char::is_control));
+        }
+    }
+
     #[test]
     fn actionable_notification_survives_informational_completion_refresh() {
         let mut state = crate::state::UiState::default();

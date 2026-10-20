@@ -9,6 +9,32 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const UI_EVENT_CAPACITY: usize = 256;
+pub(crate) const UI_SUMMARY_MAX_BYTES: usize = 4096;
+const UI_SUMMARY_TRUNCATED: &str = " [truncated]";
+
+/// Sanitize a UI-only summary and bound its UTF-8 bytes, including the marker.
+/// Conversation content and error de-duplication must keep their original text.
+pub(crate) fn bounded_ui_summary(text: &str) -> String {
+    let mut summary = String::with_capacity(text.len().min(UI_SUMMARY_MAX_BYTES));
+    for c in text.chars() {
+        let c = match c {
+            '\n' | '\t' => ' ',
+            c if c.is_control() => continue,
+            c => c,
+        };
+        if summary.len() + c.len_utf8() > UI_SUMMARY_MAX_BYTES {
+            let mut end = UI_SUMMARY_MAX_BYTES - UI_SUMMARY_TRUNCATED.len();
+            while !summary.is_char_boundary(end) {
+                end -= 1;
+            }
+            summary.truncate(end);
+            summary.push_str(UI_SUMMARY_TRUNCATED);
+            return summary;
+        }
+        summary.push(c);
+    }
+    summary
+}
 pub const ERROR_DEDUP_WINDOW: Duration = Duration::from_secs(2);
 pub const ERROR_DEDUP_CAPACITY: usize = 256;
 pub const ERROR_DEDUP_BYTES: usize = 256 * 1024;
@@ -227,7 +253,8 @@ pub struct UiEventRecord {
 pub struct UiEventBuffer(VecDeque<UiEventRecord>);
 
 impl UiEventBuffer {
-    pub fn push(&mut self, event: UiEventRecord) {
+    pub fn push(&mut self, mut event: UiEventRecord) {
+        event.summary = bounded_ui_summary(&event.summary);
         if self.0.len() == UI_EVENT_CAPACITY {
             self.0.pop_front();
         }
@@ -251,6 +278,39 @@ impl UiEventBuffer {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn bounded_summary_preserves_short_and_exact_limit_text() {
+        assert_eq!(
+            bounded_ui_summary("hello\n界\t\x1b\rworld"),
+            "hello 界 world"
+        );
+        assert_eq!(bounded_ui_summary(&"a".repeat(4096)), "a".repeat(4096));
+        assert_eq!(bounded_ui_summary(&"🙂".repeat(1024)), "🙂".repeat(1024));
+        assert_eq!(bounded_ui_summary(&"\x1b".repeat(8192)), "");
+        let truncated = bounded_ui_summary(&"🙂".repeat(1025));
+        assert!(truncated.len() <= 4096);
+        assert!(truncated.ends_with(" [truncated]"));
+    }
+
+    #[test]
+    fn ui_event_buffer_bounds_and_sanitizes_retained_summaries() {
+        for text in [
+            "a".repeat(8192),
+            "界🙂".repeat(2048),
+            "\x1b\n\t".repeat(4096),
+        ] {
+            let mut buffer = UiEventBuffer::default();
+            buffer.push(UiEventRecord {
+                kind: EventKind::Diagnostic,
+                summary: text,
+            });
+            let retained = &buffer.iter().next().unwrap().summary;
+            assert!(retained.len() <= 4096, "retained {} bytes", retained.len());
+            assert!(retained.ends_with(" [truncated]"));
+            assert!(!retained.chars().any(char::is_control));
+        }
+    }
 
     struct FakeClock(AtomicU64);
     impl FakeClock {
