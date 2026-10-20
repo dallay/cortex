@@ -2,11 +2,18 @@
 
 Cortex es un proyecto Rust que incluye **Rook** (proxy y router de IA) y **Huginn** (agente de programación local).
 
+## Formato canónico: Markdown y Obsidian
+
+Toda la documentación de CORTEX se mantiene como archivos Markdown reales (`.md`) compatibles con Obsidian. **No se crean Google Docs nativos (`.gdoc`)**, ni siquiera como borradores o archivos temporales de conversión, salvo petición explícita para un documento concreto.
+
+Consulta el [estándar canónico de documentación](documentation-standards.md) para estructura, metadatos YAML, Mermaid, enlaces, comprobaciones de calidad y excepciones.
+
 ## Estructura de documentación
 
 ```
 docs/
 ├── README.md              ← Este archivo
+├── documentation-standards.md ← Estándar Markdown/Obsidian
 ├── development.md         ← Guía de desarrollo local
 │
 ├── rook/                  ← Documentación de Rook
