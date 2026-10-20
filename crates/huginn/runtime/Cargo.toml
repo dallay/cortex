@@ -37,10 +37,10 @@ fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+keyring = { version = "=4.2.0", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+keyring = { version = "=4.2.0", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [[test]]
 name = "tls_transport"
