@@ -57,6 +57,7 @@ pub struct ErrorDeduplicator {
     clock: Arc<dyn Clock>,
     hash_message: MessageHasher,
     cipher: Aes256Gcm,
+    nonce_prefix: [u8; 4],
     nonce_counter: u64,
     entries: VecDeque<DedupEntry>,
     retained_bytes: usize,
@@ -75,15 +76,20 @@ impl ErrorDeduplicator {
 
     /// Injectable hash function exists to exercise collision safety.
     pub fn with_hasher(clock: Arc<dyn Clock>, hash_message: MessageHasher) -> Self {
+        // 256-bit key and 32-bit nonce prefix taken from the OS CSPRNG.
+        // Building them by concatenation keeps zero-filled buffers out of the
+        // cryptographic path and makes the entropy source explicit.
         let first = uuid::Uuid::new_v4();
         let second = uuid::Uuid::new_v4();
-        let mut key = [0u8; 32];
-        key[..16].copy_from_slice(first.as_bytes());
-        key[16..].copy_from_slice(second.as_bytes());
+        let key = [first.as_bytes().as_slice(), second.as_bytes().as_slice()].concat();
+        let nonce_prefix = first.as_bytes()[..4]
+            .try_into()
+            .expect("4-byte nonce prefix");
         Self {
             clock,
             hash_message,
             cipher: Aes256Gcm::new_from_slice(&key).expect("AES-256 key length"),
+            nonce_prefix,
             nonce_counter: 0,
             entries: VecDeque::new(),
             retained_bytes: 0,
@@ -129,15 +135,17 @@ impl ErrorDeduplicator {
             self.retained_bytes = 0;
             return true;
         };
-        let nonce_bytes = self.nonce_counter.to_be_bytes();
+        let counter = self.nonce_counter.to_be_bytes();
         self.nonce_counter = next_nonce_counter;
-        let mut nonce = [0u8; 12];
-        nonce[4..].copy_from_slice(&nonce_bytes);
+        // 96-bit nonce: per-instance prefix + 64-bit counter. The counter
+        // guarantees uniqueness within an instance; the prefix keeps nonce
+        // spaces disjoint across instances even if a counter repeats.
+        let nonce = [self.nonce_prefix.as_slice(), counter.as_slice()].concat();
         let ciphertext = self
             .cipher
             .encrypt(Nonce::from_slice(&nonce), message.as_bytes())
             .expect("AES-GCM encryption");
-        let mut fingerprint = nonce.to_vec();
+        let mut fingerprint = nonce;
         fingerprint.extend(ciphertext);
         self.retained_bytes += retained_size;
         self.entries.push_back(DedupEntry {

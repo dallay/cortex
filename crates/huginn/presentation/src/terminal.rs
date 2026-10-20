@@ -793,51 +793,6 @@ impl Driver {
         })?;
         Ok(last_scroll)
     }
-    #[cfg(feature = "test-driver")]
-    fn acknowledge_test_input(&self) {
-        self.acknowledge_test_draw_with_input(true);
-    }
-
-    #[cfg(feature = "test-driver")]
-    fn acknowledge_test_draw(&self) {
-        self.acknowledge_test_draw_with_input(false);
-    }
-
-    #[cfg(feature = "test-driver")]
-    fn acknowledge_test_draw_with_input(&self, input_processed: bool) {
-        let Some(path) = std::env::var_os("HUGINN_TEST_RESIZE_ACK") else {
-            return;
-        };
-        let (armed, remains, outcome) = {
-            let state = self.ui.lock();
-            let armed = state.modal().is_some_and(|modal| modal.armed);
-            let remains = state.modal().is_some();
-            let outcome = if remains {
-                "approval-open".to_owned()
-            } else {
-                format!("resolved:{}", state.status.notice)
-            };
-            drop(state);
-            (armed, remains, outcome)
-        };
-        let size = self
-            .screen
-            .size()
-            .map(|size| (size.width, size.height))
-            .unwrap_or_default();
-        static ACK_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let sequence = ACK_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        let contents = format!(
-            "draw:{}x{}:{armed}:modal={remains}:input={input_processed}:outcome={outcome}:seq={sequence}",
-            size.0, size.1
-        );
-        let path = std::path::PathBuf::from(path);
-        let temporary = path.with_extension(format!("ack-{sequence}.tmp"));
-        if std::fs::write(&temporary, contents).is_ok() {
-            let _ = std::fs::rename(temporary, path);
-        }
-    }
-
     fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
         let focus = self.ui.lock().focus();
         // Discard queued keys/pastes before showing a new challenge. The
@@ -854,8 +809,6 @@ impl Driver {
                 }
             }
         }
-        #[cfg(feature = "test-driver")]
-        self.acknowledge_test_draw();
         Ok(focus)
     }
 
@@ -915,8 +868,6 @@ impl Driver {
                         let focus = self.ui.lock().focus();
                         if draining_focus.is_none() && focus == shown_focus {
                             self.draw()?;
-                            #[cfg(feature = "test-driver")]
-                            self.acknowledge_test_draw();
                             dirty = false;
                         }
                     }
@@ -981,8 +932,6 @@ impl Driver {
             drop(state);
             self.ui
                 .overlay_input(event, ticket, crate::overlay::FocusLease(focus));
-            #[cfg(feature = "test-driver")]
-            self.acknowledge_test_input();
             return;
         }
         if let Event::Paste(text) = &event {
