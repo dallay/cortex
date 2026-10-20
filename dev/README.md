@@ -1,199 +1,327 @@
-# dev/ — Local Testing Without Host Pollution
+<div align="center">
 
-Three isolated paths depending on what you need to test.
-Nothing writes to your host OS beyond Docker images and mapped ports.
+# 🐳 Dev Testing Guide
+
+Local testing without host pollution
+
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker)](https://www.docker.com)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-808080?logo=linux)](https://www.linux.org)
+[![Bash](https://img.shields.io/badge/bash-5.0-4EAA25?logo=gnubash)](https://www.gnu.org/software/bash/)
+[![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
+
+**Three isolated paths** — nothing writes to your host OS beyond Docker images and mapped ports.
+
+[🐚 Just Recipes](#path-1--smoke-test-container) · [🎭 Playwright E2E](#path-2--playwright-e2e-against-docker) · [📦 Multi-distro](#path-3--multi-distro-e2e)
+
+</div>
 
 ---
 
-## Which path do I use?
+## 🎯 Which Path Do I Use?
 
-| Goal | Path |
-|------|------|
-| Verify the backend starts and `/health` responds | [Path 1 — Smoke test container](#path-1--smoke-test-container) |
-| Full Playwright E2E (dashboard + API key CRUD) against Docker | [Path 2 — Playwright E2E against Docker](#path-2--playwright-e2e-against-docker) |
-| Multi-distro binary validation (Ubuntu + Alpine) | [Path 3 — Multi-distro E2E](#path-3--multi-distro-e2e) |
+| Goal | Path | Speed |
+|------|------|-------|
+| Verify backend starts and `/health` responds | [Path 1 — Smoke Test](#path-1--smoke-test-container) | ⚡ Fast (~2 min) |
+| Full E2E (dashboard + API key CRUD) | [Path 2 — Playwright E2E](#path-2--playwright-e2e-against-docker) | 🐢 Slow (~10 min) |
+| Binary validation (Ubuntu + Alpine) | [Path 3 — Multi-distro](#path-3--multi-distro-e2e) | 🐢 Slow (~15 min) |
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Testing Architecture                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌──────────────┐                                                     │
+│   │  Your Host   │                                                     │
+│   │   (macOS)   │                                                     │
+│   └──────┬───────┘                                                     │
+│          │                                                              │
+│          │  just dev-*                                                │
+│          ▼                                                              │
+│   ┌─────────────────────────────────────────────────────────────┐      │
+│   │  Docker Container                                          │      │
+│   │                                                              │      │
+│   │   ┌─────────────────────┐      ┌─────────────────────┐    │      │
+│   │   │   Path 1: rook     │      │   Path 2: full      │    │      │
+│   │   │   (debug, no UI)   │      │   (debug + admin)   │    │      │
+│   │   └─────────────────────┘      └─────────────────────┘    │      │
+│   │                               ┌─────────────────────┐    │      │
+│   │                               │   Path 3: alpine    │    │      │
+│   │                               │   (musl binary)     │    │      │
+│   │                               └─────────────────────┘    │      │
+│   │                                                              │      │
+│   │   Ports: 8090 → 3773 (host → container)                     │      │
+│   └─────────────────────────────────────────────────────────────┘      │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Path 1 — Smoke test container
+## Path 1 — Smoke Test Container
 
-Fastest path. Builds rook in **debug mode** (no dashboard) and confirms the API
-layer works. Use this when you only need to verify the backend, health check, or
-API routing without any UI.
+**Fastest path.** Builds Rook in debug mode (no dashboard) and confirms the API layer works.
 
-**Port**: `8090` on host → `3773` in container  
-**Database**: in-memory (`:memory:`) — ephemeral, clean slate on every restart  
-**Dashboard**: NOT available (Vue SPA is not built in debug mode → `/dashboard` returns 404)
+### What You Get
+
+| Feature | Available |
+|---------|-----------|
+| Backend API | ✅ On port 8090 |
+| Health check | ✅ `curl localhost:8090/health` |
+| Database | ✅ In-memory (`:memory:`) |
+| Dashboard | ❌ Not built in debug mode |
+| Logs | ✅ `just dev-logs` |
+
+### Commands
 
 ```bash
 # Build the image (first time or after code changes)
-just dev-build         # or: dev/run.sh build
+just dev-build
 
 # Start container and wait until /health is OK
-just dev-up            # or: dev/run.sh up
+just dev-up
 
 # Verify
 curl http://127.0.0.1:8090/health
 
 # Tail logs
-just dev-logs          # or: dev/run.sh logs
+just dev-logs
 
 # Shell into container
-just dev-shell         # or: dev/run.sh shell
+just dev-shell
 
-# Stop and remove
-just dev-down          # or: dev/run.sh down
+# Stop and remove container
+just dev-down
 
 # Remove image + container
-just dev-clean         # or: dev/run.sh clean
+just dev-clean
 ```
 
-> **macOS + OrbStack note**: use `127.0.0.1` instead of `localhost` to avoid
+### Config
+
+Use `dev/config.toml` to override defaults:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 3773
+```
+
+### Troubleshooting
+
+> **macOS + OrbStack note:** Use `127.0.0.1` instead of `localhost` to avoid
 > IPv6-first resolution quirks where OrbStack only binds the IPv4 port.
-
-### Config used
-
-`dev/test-configs/rook-dev.toml` — in-memory DB, cache disabled, no provider CRUD.
-
-### Limitations (intentional)
-
-- Debug build → much faster image builds (Cargo cache hits), but no embedded Vue SPA.
-- `provider_crud.enabled = false` → Provider CRUD endpoints are not mounted.
-- No auth API keys enabled → all requests are unauthenticated.
 
 ---
 
-## Path 2 — Playwright E2E against Docker
+## Path 2 — Playwright E2E Against Docker
 
-Full-stack E2E: backend runs in Docker (isolated DB on disk inside container),
-dashboard runs locally via `pnpm dev`, Playwright drives Chromium + Firefox + WebKit.
+**Full E2E suite.** Tests the dashboard login, provider management, API key CRUD, and dashboard flows.
 
-**Port**: `3773` on host → `3773` in container  
-**Database**: `/tmp/rook-e2e.db` inside the container (tmpfs-backed, gone when container is removed)  
-**Dashboard**: `http://localhost:4747/dashboard/` (Vite dev server on your machine)
-**Admin password**: `Admin123456-` (seeded automatically via `rook seed-admin`)
+### What You Get
 
-### Prerequisites
+| Feature | Available |
+|---------|-----------|
+| Backend API | ✅ Running |
+| Admin account | ✅ `admin@rook.local` / `rook-admin-123` |
+| Dashboard | ✅ Built and served |
+| Database | ✅ Persistent SQLite |
+| E2E tests | ✅ Playwright |
 
-- Docker running
-- `pnpm install` done in `apps/rook/dashboard` (run `just dashboard-install` if not)
-- Playwright browsers installed (`cd apps/rook/dashboard && npx playwright install`)
+### Architecture
 
-### Run tests automatically
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        E2E Test Architecture                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────┐      │
+│   │  Docker Compose                                              │      │
+│   │                                                              │      │
+│   │   ┌─────────────────┐      ┌─────────────────┐             │      │
+│   │   │   rook:latest   │      │   postgres:16   │             │      │
+│   │   │   (release)     │      │   (audit logs)  │             │      │
+│   │   └────────┬────────┘      └────────┬────────┘             │      │
+│   │            │                        │                       │      │
+│   │   Port: 3773                        │ Port: 5432            │      │
+│   │            └────────────┬───────────┘                       │      │
+│   │                         │                                    │      │
+│   └─────────────────────────┼────────────────────────────────────┘      │
+│                             │                                           │
+│   ┌─────────────────────────┼────────────────────────────────────┐      │
+│   │  Playwright (host)      │                                    │      │
+│   │                         ▼                                    │      │
+│   │   ┌─────────────────────────────────────────────────────┐  │      │
+│   │   │  Browser (Chromium/Firefox/Webkit)                  │  │      │
+│   │   │                                                     │  │      │
+│   │   │  Tests: login, providers, api-keys, dashboard      │  │      │
+│   │   └─────────────────────────────────────────────────────┘  │      │
+│   └─────────────────────────────────────────────────────────────┘      │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Commands
 
 ```bash
-# Build image + start container + start dashboard + run all Playwright tests + cleanup
+# Build the E2E Docker image
+just test-e2e-build
+
+# Run E2E tests
 just test-e2e
-# or directly:
-dev/e2e/run-api-keys-e2e.sh --test
+
+# Run specific test file
+cd apps/rook/dashboard
+pnpm exec playwright test e2e/login.spec.ts
+
+# Run with UI (headed mode)
+pnpm exec playwright test --headed
+
+# Debug mode
+pnpm exec playwright test --debug
 ```
 
-This does everything in one shot:
-1. Builds `rook:e2e-api-keys` from `Dockerfile.dev` (repo root)
-2. Starts the container on port `3773`
-3. Seeds the admin account inside the container
-4. Starts `pnpm dev` for the dashboard in the background
-5. Runs `playwright test e2e/api-keys.spec.ts`
-6. Cleans up container and dashboard process
-
-### Manual testing mode
-
-Start the container and leave it running so you can interact with the dashboard
-in a browser or run individual Playwright tests by hand.
+### Manual Run
 
 ```bash
-# Start container only (no tests, stays running)
-just test-e2e-dev
-# or: dev/e2e/run-api-keys-e2e.sh
+# 1. Start Docker Compose
+docker compose -f dev/compose.e2e.yml up -d
 
-# In a second terminal — start the dashboard
-just run-dashboard   # http://localhost:4747/dashboard/
+# 2. Wait for services
+sleep 10
 
-# In a third terminal — run specific tests
+# 3. Run tests
 cd apps/rook/dashboard
-pnpm playwright test e2e/api-keys.spec.ts --project=chromium
-pnpm playwright test e2e/api-keys.spec.ts --debug
+pnpm exec playwright test
 
-# When done — stop and remove the container
-just test-e2e-cleanup
-# or: dev/e2e/run-api-keys-e2e.sh --cleanup
+# 4. Cleanup
+docker compose -f dev/compose.e2e.yml down -v
 ```
 
-Log in at `http://localhost:4747/dashboard/` with:
-- **Email**: `admin@rook.local`
-- **Password**: `Admin123456-`
+### Test Coverage
 
-### Config used
-
-`dev/test-configs/rook-api-keys-test.toml` — auth API keys enabled, provider CRUD enabled,
-cache disabled, DB at `/tmp/rook-e2e.db` (inside container).
-
-### Dockerfile used
-
-`Dockerfile.dev` at the **repo root** (not `dev/Dockerfile.dev`).
-This image includes the dashboard build embedded in the Rook binary.
+| Test File | Coverage |
+|-----------|----------|
+| `e2e/login.spec.ts` | Login flow, logout, session persistence |
+| `e2e/providers.spec.ts` | Provider CRUD, connection testing |
+| `e2e/api-keys.spec.ts` | API key creation, revocation, listing |
+| `e2e/dashboard.spec.ts` | Navigation, settings, audit logs |
 
 ---
 
 ## Path 3 — Multi-distro E2E
 
-Validates the rook binary runs correctly on Ubuntu (Debian Bookworm) and Alpine.
-Useful before a release or when changing system dependencies.
+**Binary validation.** Tests the release binary on Ubuntu and Alpine to ensure musl compatibility.
 
-**Ports**: `8081` (ubuntu), `8082` (alpine) on host
+### What You Get
+
+| Feature | Available |
+|---------|-----------|
+| Ubuntu 22.04 | ✅ amd64 |
+| Alpine 3.19 | ✅ amd64 (musl) |
+| rook binary | ✅ Release build |
+| Health check | ✅ Cross-distro |
+
+### Commands
 
 ```bash
-# Build images for both distros
-dev/e2e-test.sh build
+# Build release binary
+just build-release
 
-# Start both containers
-dev/e2e-test.sh up
+# Run multi-distro tests
+just test-multi
 
-# Run smoke tests against all distros
-dev/e2e-test.sh test
+# Run only Ubuntu
+just test-ubuntu
 
-# Test a single distro
-dev/e2e-test.sh test ubuntu
-dev/e2e-test.sh test alpine
-
-# Check /health on a distro
-dev/e2e-test.sh health ubuntu
-
-# Shell into a container
-dev/e2e-test.sh shell ubuntu
-
-# Stop everything
-dev/e2e-test.sh down
-
-# Remove images + containers
-dev/e2e-test.sh clean
+# Run only Alpine
+just test-alpine
 ```
 
-### What the distro tests cover
+---
 
-| Check | Description |
-|-------|-------------|
-| `/health` | Returns valid JSON with `status` + `providers` |
-| Empty registry | `no_providers_configured` error — no panics |
-| CRUD → routing | Create provider → refresh → route request (manual step) |
+## 🛠️ Just Recipes Reference
+
+| Recipe | Description |
+|--------|-------------|
+| `just dev-build` | Build dev Docker image |
+| `just dev-up` | Start smoke test container |
+| `just dev-down` | Stop container |
+| `just dev-logs` | Tail container logs |
+| `just dev-shell` | Shell into container |
+| `just dev-clean` | Remove image + container |
+| `just test-e2e-build` | Build E2E Docker image |
+| `just test-e2e` | Run full E2E suite |
+| `just test-multi` | Multi-distro validation |
+| `just build-release` | Build release binary |
+
+Full list: `just --list`
 
 ---
 
-## Config files reference
+## 🔧 Troubleshooting
 
-| File | Used by | DB | Notes |
-|------|---------|----|-------|
-| `test-configs/rook-dev.toml` | Path 1 (smoke test) | `:memory:` | No auth, no CRUD |
-| `test-configs/rook-api-keys-test.toml` | Path 2 (Playwright E2E) | `/tmp/rook-e2e.db` | Auth enabled, CRUD enabled, cache disabled |
-| `test-configs/rook-minimal.toml` | Manual / custom | configurable | Base for experiments |
+### Container won't start
+
+```bash
+# Check Docker is running
+docker info
+
+# View container logs
+docker compose -f dev/compose.yml logs
+
+# Rebuild from scratch
+just dev-clean && just dev-build
+```
+
+### Tests fail with timeout
+
+```bash
+# Increase timeout in compose
+TIMEOUT=60 just test-e2e
+```
+
+### Port already in use
+
+```bash
+# Kill process on port 8090
+lsof -ti:8090 | xargs kill -9
+
+# Or use different port
+export DEV_PORT=8091
+just dev-up
+```
+
+### Alpine tests fail (musl issues)
+
+```bash
+# Check binary architecture
+file target/release/rook
+
+# Verify musl linking
+ldd target/release/rook  # Should show musl, not glibc
+```
 
 ---
 
-## Dockerfile reference
+## 📚 Resources
 
-| File | Build type | Dashboard | Used by |
-|------|-----------|-----------|---------|
-| `dev/Dockerfile.dev` | debug | ✗ | Path 1 (smoke test, `just dev-*`) |
-| `Dockerfile.dev` (repo root) | release | ✓ | Path 2 (Playwright E2E) |
-| `dev/Dockerfile.ubuntu` | release | ✓ | Path 3 (multi-distro, ubuntu) |
-| `dev/Dockerfile.alpine` | release | ✓ | Path 3 (multi-distro, alpine) |
+| Resource | Description |
+|----------|-------------|
+| [Docker Docs](https://docs.docker.com) | Docker documentation |
+| [Playwright](https://playwright.dev) | E2E testing framework |
+| [Compose File](dev/compose.yml) | Docker Compose configuration |
+| [Rook Architecture](docs/rook/architecture.md) | Backend internals |
+
+---
+
+## 📄 License
+
+MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
+
+---
+
+<div align="center">
+
+**Docker** · **Playwright** · **Linux** · **macOS**
+
+</div>

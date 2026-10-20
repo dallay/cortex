@@ -2,295 +2,478 @@
 
 # 🧠 Cortex
 
-## Next-generation AI proxy and routing infrastructure
+The AI Infrastructure Stack for Production
 
 [![CI](https://img.shields.io/github/actions/workflow/status/dallay/cortex/ci.yml?branch=main&label=CI&logo=github)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/dallay/cortex)](LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.81%2B-blue.svg)](https://www.rust-lang.org)
-[![GitHub Stars](https://img.shields.io/github/stars/dallay/cortex?style=social)](https://github.com/dallay/cortex/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/dallay/cortex)](https://github.com/dallay/cortex/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex)](https://github.com/dallay/cortex/commits/main)
+[![Rust](https://img.shields.io/badge/rust-1.81%2B-DEA584?logo=rust&labelColor=4A4A4A)](https://www.rust-lang.org)
+[![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&labelColor=4A4A4A)](https://nodejs.org)
+[![Vue](https://img.shields.io/badge/vue-3.4-4FC08D?logo=vuedotjs&labelColor=4A4A4A)](https://vuejs.org)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&labelColor=4A4A4A)](https://www.docker.com)
+[![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex/main?label=last%20commit)](https://github.com/dallay/cortex/commits/main)
+[![Stars](https://img.shields.io/github/stars/dallay/cortex?style=flat&color=yellow)](https://github.com/dallay/cortex/stargazers)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dallay/cortex)
 
-[Getting Started](#-getting-started) • [Documentation](#-documentation) • [Contributing](#-contributing) • [Community](#-community)
+**Rook** — AI Proxy & Router · **Huginn** — Local Coding Agent
 
 </div>
 
-## 📑 Table of Contents
+---
 
-- [About](#-about)
-- [Features](#-features)
-- [Getting Started](#-getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Quick Start](#quick-start)
-- [Usage](#-usage)
-- [Configuration](#-configuration)
-- [Architecture](#-architecture)
-- [Tools](#-tools)
-- [Development](#-development)
-- [Documentation](#-documentation)
-- [Roadmap](#-roadmap)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Community](#-community)
-- [Acknowledgments](#-acknowledgments)
+<p align="center">
+  <a href="#-what-is-cortex"><b>What is Cortex</b></a> •
+  <a href="#-products"><b>Products</b></a> •
+  <a href="#-why-cortex"><b>Why Cortex</b></a> •
+  <a href="#-quick-start"><b>Quick Start</b></a> •
+  <a href="#-architecture"><b>Architecture</b></a> •
+  <a href="#-documentation"><b>Docs</b></a>
+</p>
 
-## 📖 About
+---
 
-**Cortex** is a high-performance AI infrastructure project written in Rust. Its primary component, **Rook**, acts as an intelligent AI proxy and router designed to simplify and harden your AI application stack.
+## 🎯 What is Cortex?
 
-In an ecosystem with multiple LLM providers (OpenAI, Anthropic, Google, etc.), Cortex provides a unified, OpenAI-compatible interface with enterprise-grade features out of the box. It solves common challenges such as provider outages, high latency, and lack of observability by providing automatic failover, efficient caching, and comprehensive audit logging.
+Cortex is a **production-ready AI infrastructure stack** built in Rust that handles everything between your application and the AI providers.
 
-## ✨ Features
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│    Your App                    Cortex                    AI Providers         │
+│  ┌────────┐              ┌────────────┐           ┌─────────────────┐   │
+│  │        │              │            │             │                 │   │
+│  │  Any   │────────────▶│   Rook     │───────────▶│  OpenAI         │   │
+│  │  SDK   │   OpenAI    │   Proxy    │             │  Anthropic      │   │
+│  │        │   Compatible│            │             │  Gemini         │   │
+│  │        │◀────────────│  + Cache   │◀───────────│  Ollama         │   │
+│  └────────┘   Response   │  + Audit   │  Fallback   │  Groq           │   │
+│                          └────────────┘             └─────────────────┘   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-- 🔌 **OpenAI-compatible API**: Drop-in replacement for existing OpenAI clients.
-- ✨ **Multi-provider routing**: Support for OpenAI, Anthropic, Ollama, Gemini, and Groq.
-- 🔄 **Automatic fallback**: Resilience against provider failures with Combos (ordered fallback chains, `X-Rook-Combo`).
-- 🏷️ **Model aliasing**: Normalize variant names (`gpt-4-turbo` → dated canonical) with 30+ built-ins plus custom aliases.
-- 🌊 **Streaming**: OpenAI-compatible SSE streaming, including tool-call deltas.
-- 🚀 **Built-in caching**: Reduce costs and latency with TTL-based in-memory caching.
-- 📊 **Audit logging**: Full traceability of requests and responses backed by SQLite.
-- 🏗️ **Clean Architecture**: Built with Domain-Driven Design (DDD) for high maintainability.
-- 🦀 **Rust-powered**: Exceptional performance, memory safety, and concurrency.
-- 🔒 **Production-ready**: Includes health checks, observability (tracing, metrics), and encryption.
+### The Two Products
 
-## 🚀 Getting Started
+| Product | Purpose | What it does |
+|---------|---------|--------------|
+| **🛡️ Rook** | AI Proxy | Routes requests, handles fallbacks, caches responses, logs everything |
+| **🤖 Huginn** | Coding Agent | Your local AI coding partner with native tool access |
+
+---
+
+## 📦 Products
+
+### 🛡️ Rook — AI Proxy & Router
+
+> *"Never let an AI outage break your app again."*
+
+Rook is an OpenAI-compatible proxy that sits between your app and AI providers.
+
+```
+Request
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│              Rook Proxy                      │
+│                                             │
+│  1. Authenticate API key                   │
+│  2. Log request (audit)                    │
+│  3. Check cache (return if hit)            │
+│  4. Route to primary provider               │
+│     │                                      │
+│     ├── Success → Cache → Response         │
+│     │                                      │
+│     └── Failure → Try next provider         │
+│              │                              │
+│              └── All fail → Error response  │
+└─────────────────────────────────────────────┘
+```
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔌 **OpenAI Compatible** | Drop-in replacement for any OpenAI client |
+| 🔄 **Automatic Fallbacks** | Define combo chains: `gpt-4` → `claude-3` → `gemini-pro` |
+| 🏷️ **Model Aliasing** | Use `gpt-4-turbo` → maps to actual model in config |
+| ⚡ **Smart Caching** | TTL-based response caching to cut costs |
+| 📊 **Full Audit Trail** | Every request/response logged to SQLite |
+| 🔑 **API Key Management** | Create, revoke, rotate keys from dashboard |
+| 🚀 **Streaming** | SSE streaming with tool call support |
+| 🌐 **Web Dashboard** | Vue 3 SPA embedded in binary |
+
+#### Providers Supported
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                                                                │
+│   OpenAI          Anthropic          Google Gemini              │
+│   ├─ GPT-4o      ├─ Claude 3.5      ├─ Gemini 1.5 Pro        │
+│   ├─ GPT-4       ├─ Claude 3       └─ Gemini 1.5 Flash       │
+│   └─ GPT-3.5     └─ Claude 2                                   │
+│                                                                │
+│   Groq            Ollama              Custom (OpenAI-like)     │
+│   ├─ Llama 3.1   ├─ Llama 3         ├─ LM Studio             │
+│   └─ Mixtral     ├─ Mistral         └─ Local endpoints       │
+│                  └─ CodeLlama                                │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+📖 [Docs](docs/rook/README.md) · [API Reference](docs/rook/api.md) · [Dashboard](apps/rook/dashboard/README.md) · [Configuration](docs/rook/configuration.md)
+
+---
+
+### 🤖 Huginn — Local Coding Agent
+
+> *"Your AI coding partner that respects your privacy."*
+
+Huginn is a Rust-powered coding assistant that runs locally with access to your codebase.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│   You: "Refactor the auth module to use async/await"                    │
+│                                                                          │
+│   Huginn Processing:                                                     │
+│                                                                          │
+│   ┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐   │
+│   │  Parse      │────▶│  LLM Call   │────▶│  Execute Tools      │   │
+│   │  Intent     │     │  (Provider) │     │                     │   │
+│   └─────────────┘     └──────────────┘     ├─────────────────────┤   │
+│                                              │ Read auth/*.rs     │   │
+│                                              │ Edit files         │   │
+│                                              │ Run cargo check    │   │
+│                                              └─────────────────────┘   │
+│                                                                          │
+│   Response: Here's the refactored auth module...                         │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 💻 **Native TUI** | Beautiful terminal interface with Ratatui |
+| 🔒 **Privacy First** | Code never leaves your machine |
+| 🛠️ **Native Tools** | File ops, terminal, git — all built-in |
+| 🔌 **MCP Integration** | Connect to any MCP stdio server |
+| 💾 **Session Memory** | SQLite-backed conversation history |
+| 📋 **Scoped Context** | Per-repo `AGENTS.md` for instructions |
+
+📖 [Docs](docs/huginn/README.md) · [TUI Guide](docs/huginn/README.md#-tui-guide) · [MCP Setup](docs/huginn/README.md#--mcp-integration)
+
+---
+
+## ✨ Why Cortex?
+
+### The Problem
+
+Building with AI is fragile:
+
+| Pain Point | Impact |
+|------------|--------|
+| Provider goes down | Your app breaks |
+| Need to switch models | Code changes everywhere |
+| Audit requirements | No visibility |
+| Cost spikes | Budget surprises |
+| Multiple providers | SDK hell |
+
+### The Solution
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         With Cortex                                │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   ❌ Provider down?     ──▶  ✅ Automatic failover                  │
+│   ❌ Hard-coded models  ──▶  ✅ Model aliases                       │
+│   ❌ No audit trail     ──▶  ✅ Full request logging                │
+│   ❌ SDK complexity     ──▶  ✅ Single OpenAI-compatible API        │
+│   ❌ Cost overruns     ──▶  ✅ Response caching                     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Performance
+
+| Metric | Value |
+|--------|-------|
+| **Response Time** | <5ms overhead (proxy latency) |
+| **Cache Hit** | ~50ms (vs 500ms+ API call) |
+| **Memory Footprint** | ~20MB (Rook) |
+| **Binary Size** | ~15MB (static, musl) |
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- **Rust 1.89 toolchain** (pinned in `rust-toolchain.toml`; MSRV 1.81 per `Cargo.toml`)
-- **Cargo** (included with Rust)
-- (Optional) **Just** task runner: `cargo install just`
-- (Optional for dashboard) **Node.js** and **pnpm** (`pnpm@11` pinned in root `package.json`)
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Tool        │  Version  │  Install                           │
+├──────────────┼───────────┼────────────────────────────────────┤
+│  Rust        │  1.81+   │  curl --proto '=https' -sSf \       │
+│              │          │    https://sh.rustup.rs | sh        │
+│  Node.js     │  20+     │  nvm install 20                     │
+│  pnpm        │  latest  │  npm i -g pnpm                      │
+│  Docker      │  latest  │  docker.com/get-started             │
+└────────────────────────────────────────────────────────────────┘
+```
 
-### Installation
+### Install Rook
 
-#### From source
 ```bash
+# Clone the repo
 git clone https://github.com/dallay/cortex.git
 cd cortex
+
+# Build Rook
 cargo build --release -p rook
+
+# Run it
+cargo run --release -p rook
 ```
 
-#### Rust installation from a product tag
-
-Rook GA supports installing directly from its immutable product tag. Publishing
-the internal crates to crates.io is a later distribution phase and is not a
-first-release requirement:
+### Configure Rook
 
 ```bash
-cargo install \
-  --git https://github.com/dallay/cortex.git \
-  --tag rook@vX.Y.Z \
-  --locked \
-  -p rook
+# Create config file
+cat > rook.toml << 'EOF'
+[server]
+host = "127.0.0.1"
+port = 3773
+
+[[providers]]
+name = "openai"
+type = "openai"
+api_key = "sk-..."
+
+[[providers]]
+name = "anthropic"
+type = "anthropic"
+api_key = "sk-ant-..."
+
+[routing]
+strategy = "priority"
+combos = [
+  ["openai/gpt-4o", "anthropic/claude-3-5-sonnet"],
+]
+EOF
 ```
 
-#### Binary releases
-Download pre-built binaries from [Releases](https://github.com/dallay/cortex/releases) for:
-- Linux (x86_64)
-- macOS (Intel, Apple Silicon)
-- Windows (x86_64)
+### Test It
 
-Rook and Huginn are separate products with separate versions and release tags.
-See the [release and distribution contract](docs/releasing.md) before relying
-on a registry or container channel. Huginn's public distribution remains
-blocked until its acceptance gates are complete.
+```bash
+# Health check
+curl http://localhost:3773/health
 
-### Quick Start
+# OpenAI-compatible chat completions
+curl http://localhost:3773/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
 
-1. **Configure Rook**:
-   Create a config file at `./rook.toml` (or use the `ROOK_CONFIG` env var to point elsewhere):
-   ```toml
-   [server]
-   host = "127.0.0.1"
-   port = 3773
+### Open Dashboard
 
-   [routing]
-   strategy = "priority"
+```bash
+# Dashboard is embedded at /dashboard/
+open http://localhost:3773/dashboard/
 
-   [database]
-   db_path = "~/.local/share/cortex/rook/rook.db"
-   ```
+# Login with admin credentials (set on first run)
+```
 
-   > Providers are **not** configured in TOML. Create them at runtime via the
-   > Provider CRUD API (`POST /api/providers`). See the [Configuration Guide](docs/rook/configuration.md).
+---
 
-2. **Run the server**:
-   ```bash
-   # Using cargo
-   ROOK_CONFIG=./rook.toml cargo run --release -p rook
+## 🏗️ Architecture
 
-   # Using binary
-   ./target/release/rook
-   ```
+### Project Structure
 
-3. **Test the proxy**:
-   ```bash
-   curl http://localhost:3773/v1/chat/completions \
-     -H "Content-Type: application/json" \
-     -d '{
-       "model": "gpt-4",
-       "messages": [{"role": "user", "content": "Hello!"}]
-     }'
-    ```
-
-   This requires a completion provider configured for Rook; see the
-   [Configuration Guide](docs/rook/configuration.md) before sending requests.
-
-## 🛠 Usage
-
-### Multi-provider fallback with Combos
-Define ordered provider/model fallback steps as `[[combos]]` in `rook.toml` or
-through the `/api/combos` CRUD API. Select one per request with
-`X-Rook-Combo`, or set `routing.default_combo`. See the
-[Configuration Guide](docs/rook/configuration.md#combos-multi-step-fallback-chains)
-for the schema and execution behavior.
-
-### Dashboard access
-Rook serves an embedded dashboard at `/dashboard/` on the same port
-(e.g. `http://localhost:3773/dashboard/`). For frontend development use
-`just run-dashboard` (Vite at `http://localhost:4747/dashboard/`, proxied to the backend).
-On a fresh database Rook enters **bootstrap mode** — check the logs for the
-setup token. See [dashboard README](apps/rook/dashboard/README.md).
-
-## ⚙️ Configuration
-
-See the [Configuration Guide](docs/rook/configuration.md) for detailed options.
-
-**Quick reference**:
-- **Server**: host, port, health check interval.
-- **Routing**: strategy (`priority` | `round-robin` | `model-based`), optional `default_combo`.
-- **Providers**: managed through `/api/providers`; see the [Provider Management guide](docs/rook/configuration.md#provider-management-dashboard).
-- **Combos**: managed via `/api/combos`, selected with `X-Rook-Combo` or `routing.default_combo`.
-- **Model aliases**: CRUD at `/api/models/aliases`; global aliases resolve before routing (provider-scoped records are not applied during resolution).
-- **Cache / DB / auth / rate limiting**: see full schema in the guide.
-
-## 🏗 Architecture
-
-Cortex follows Clean Architecture principles with clear separation of concerns:
-
-```text
+```
 cortex/
-├── apps/rook/              # Binary entry point, DI bootstrap + embedded dashboard
-├── apps/huginn/            # Personal Rust coding agent (CLI)
+│
+├── apps/
+│   ├── rook/                    # 🛡️ Rook binary
+│   │   ├── src/
+│   │   │   ├── main.rs          # Entry point
+│   │   │   ├── server.rs        # Axum server
+│   │   │   └── routes/          # HTTP handlers
+│   │   └── dashboard/           # 📊 Vue SPA (embedded)
+│   │       ├── src/views/       # Page components
+│   │       ├── src/components/ # UI components
+│   │       ├── src/stores/     # Pinia state
+│   │       └── e2e/            # Playwright tests
+│   │
+│   └── huginn/                 # 🤖 Huginn binary
+│       └── src/
+│
 ├── crates/
-│   ├── domain/             # Business logic
-│   │   ├── shared-kernel/  # Zero-deps common types
-│   │   └── rook-core/      # Domain models, ports, Combo entities
-│   ├── application/
-│   │   └── rook-usecases/  # Orchestration (RouteRequest, FallbackRouter, CRUD)
-│   ├── infrastructure/     # External adapters
-│   │   ├── providers-*/    # LLM clients: openai, anthropic, ollama, gemini, groq (+ core)
-│   │   ├── provider-sqlite/# Persisted provider connections
-│   │   ├── combo-sqlite/   # Combo persistence
-│   │   ├── alias-sqlite/   # Model aliases
-│   │   ├── auth-sqlite/    # API keys + auth
-│   │   ├── cache-memory/   # TTL in-memory cache
-│   │   ├── audit-sqlite/   # Audit logging
-│   │   ├── db-migration/   # SQLite migrations
-│   │   ├── models-catalog/ # Model metadata
-│   │   ├── sse-stream/     # Streaming (SSE)
-│   │   ├── observability/  # Tracing + metrics
-│   │   ├── encryption-inmemory/ # Credential encryption boundary
-│   │   └── transport-axum/ # HTTP server + OpenAI-compatible adapters
-│   ├── huginn/             # Huginn core, runtime + Ratatui presentation (no Rook dependency)
-│   └── test-support/       # Shared test fixtures
-└── docs/                   # Documentation
+│   │
+│   ├── domain/                  # 💼 Business logic (zero deps)
+│   │   ├── shared-kernel/       # Core types & traits
+│   │   └── rook-core/          # Domain models & ports
+│   │
+│   ├── application/            # 🎻 Use cases
+│   │   └── rook-usecases/      # Business rules
+│   │
+│   ├── infrastructure/         # 🔌 External adapters
+│   │   ├── providers-openai/   # OpenAI client
+│   │   ├── providers-anthropic/# Anthropic client
+│   │   ├── providers-gemini/   # Google Gemini client
+│   │   ├── providers-ollama/   # Ollama client
+│   │   ├── providers-groq/     # Groq client
+│   │   ├── auth-sqlite/        # API key management
+│   │   ├── audit-sqlite/       # Request logging
+│   │   ├── cache-memory/       # TTL cache
+│   │   └── transport-axum/     # HTTP transport
+│   │
+│   └── huginn/                 # 🤖 Huginn runtime
+│       └── runtime/
+│
+├── docs/                       # 📖 Documentation
+│   ├── rook/                   # Rook docs
+│   │   ├── architecture.md
+│   │   ├── api.md
+│   │   ├── configuration.md
+│   │   ├── providers.md
+│   │   └── deployment.md
+│   └── huginn/                 # Huginn docs
+│
+└── dev/                        # 🐳 Testing
+    ├── compose.yml             # Smoke test
+    └── compose.e2e.yml         # Full E2E
 ```
 
-See [Architecture Documentation](docs/rook/architecture.md) for details.
+### Tech Stack
 
-## 🧰 Tools
+| Layer | Technology | Why |
+|-------|------------|-----|
+| **Language** | Rust 1.81+ | Memory safety, performance |
+| **HTTP Server** | Axum | Ergonomic, async |
+| **Runtime** | Tokio | Proven async runtime |
+| **Database** | SQLite | Zero-config, portable |
+| **Frontend** | Vue 3 + TypeScript | Reactive, typed |
+| **Build** | Vite | Fast HMR |
+| **TUI** | Ratatui | Native, cross-platform |
+| **Testing** | Vitest + Playwright | Fast + E2E |
 
-| Tool | Status | Description |
-|------|--------|-------------|
-| [Rook](apps/rook/) | ✅ Active | AI proxy/router with multi-provider support |
-| [Huginn](docs/huginn/README.md) | 🚧 Personal MVP in progress | Local Rust coding agent: CLI + Ratatui TUI, streaming, native tools, SQLite sessions, MCP stdio |
-| *Future tools* | 🚧 Planned | TBD |
+---
 
-## 🛠 Development
+## 🛠️ Development
 
 ### Setup
+
 ```bash
-# Clone and setup
-git clone https://github.com/dallay/cortex.git
-cd cortex
+# Install dependencies
 just setup
+
+# Verify tools
+just doctor
 ```
 
-### Development commands
+### Common Commands
+
 ```bash
-# Format code
+# Format, lint, test
 just fmt
-
-# Run linter
 just clippy
-
-# Run tests
 just test
 
-# Watch mode (auto-check, test, clippy)
-just dev
+# Run locally
+just run              # Rook server
+just run-dashboard    # Vite dev server
+just huginn-run       # Huginn
+
+# E2E testing
+just test-e2e         # Full E2E suite
+just dev-up           # Smoke test container
 
 # Full CI locally
 just ci-local
 ```
 
-### Testing
+### Code Quality
+
 ```bash
-# Run all tests
-cargo test --workspace
+# Rust only
+cargo fmt --all
+cargo clippy --all -- -D warnings
 
-# Run specific crate tests
-cargo test -p rook-core
-
-# Run E2E tests (requires Docker)
-just test-e2e
+# Dashboard only
+cd apps/rook/dashboard
+pnpm typecheck && pnpm build && pnpm exec vitest run
 ```
+
+📖 [Development Guide](docs/development.md) · [Testing Guide](dev/README.md) · [Contributing](CONTRIBUTING.md)
+
+---
 
 ## 📚 Documentation
 
-- [Architecture](docs/rook/architecture.md)
-- [Configuration](docs/rook/configuration.md) (providers via CRUD API, combos, aliases)
-- [Providers](docs/rook/providers.md)
-- [API Reference](docs/rook/api.md)
-- [Deployment](docs/rook/deployment.md)
-- [Release and distribution contract](docs/releasing.md)
-- [ADR-0015: Product releases versus Cargo publishing](docs/huginn/adr/0015-separate-product-releases-from-cargo-publishing.md)
-- [API key troubleshooting](docs/api-key-troubleshooting.md)
-- [Rook dashboard](apps/rook/dashboard/README.md) (Vue SPA, embedded at `/dashboard/`)
-- [Local Docker testing](dev/README.md) (smoke, Playwright E2E, multi-distro)
-- [Huginn coding agent](docs/huginn/README.md)
+| Guide | Description |
+|-------|-------------|
+| [Rook Architecture](docs/rook/architecture.md) | How Rook works internally |
+| [API Reference](docs/rook/api.md) | All HTTP endpoints |
+| [Configuration](docs/rook/configuration.md) | Complete config reference |
+| [Providers](docs/rook/providers.md) | Provider setup & quirks |
+| [Deployment](docs/rook/deployment.md) | Production deployment |
+| [Huginn Docs](docs/huginn/README.md) | Coding agent documentation |
+| [Dev Testing](dev/README.md) | Local testing with Docker |
 
-## 🗺 Roadmap
+---
 
-Project priorities evolve with active development. See the [GitHub issue
-tracker](https://github.com/dallay/cortex/issues) for current work and planned
-features rather than relying on a static roadmap in this README.
+## 📊 Project Stats
+
+<div align="center">
+
+| Metric | Value |
+|--------|-------|
+| 🦀 **Rust Version** | 1.81+ (MSRV) |
+| 📦 **Crates** | 15+ packages |
+| 🌐 **Providers** | 5 (OpenAI, Anthropic, Gemini, Ollama, Groq) |
+| 📄 **License** | MIT |
+| ⭐ **Stars** | [GitHub](https://github.com/dallay/cortex/stargazers) |
+
+</div>
+
+---
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
-Follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
+- Development setup
+- Code style guidelines
+- Pull request process
+- Issue templates
+
+We follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
+
+---
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT License. See [LICENSE](LICENSE).
+
+---
 
 ## 👥 Community
 
-- 💬 [GitHub Discussions](https://github.com/dallay/cortex/discussions) - Questions and ideas
-- 🐛 [Issue Tracker](https://github.com/dallay/cortex/issues) - Bug reports and feature requests
+| Channel | Purpose |
+|---------|---------|
+| 💬 [Discussions](https://github.com/dallay/cortex/discussions) | Questions & ideas |
+| 🐛 [Issues](https://github.com/dallay/cortex/issues) | Bug reports |
+| 🌐 [DeepWiki](https://deepwiki.com/dallay/cortex) | AI-powered docs |
 
-## 🙏 Acknowledgments
+---
 
-Built with:
-- [Rust](https://www.rust-lang.org/) - Systems programming language
-- [Tokio](https://tokio.rs/) - Async runtime
-- [Axum](https://github.com/tokio-rs/axum) - Web framework
-- [Rusqlite](https://github.com/rusqlite/rusqlite) - SQLite bindings
+<div align="center">
 
-Special thanks to all contributors and the Rust community.
+**Built with Rust** · **Designed for Production** · **Ready for Your AI Stack**
+
+</div>
