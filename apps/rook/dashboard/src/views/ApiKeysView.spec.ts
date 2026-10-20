@@ -1,9 +1,10 @@
-import {mount} from "@vue/test-utils";
+import {flushPromises, mount} from "@vue/test-utils";
 import {createPinia, setActivePinia} from "pinia";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 import {defineComponent, h, ref} from "vue";
 import {createI18n} from "vue-i18n";
 import {createMemoryHistory, createRouter} from "vue-router";
+import {Dialog} from "@/components/ui/dialog";
 import en from "@/locales/en.json";
 import ApiKeysView from "./ApiKeysView.vue";
 
@@ -31,11 +32,15 @@ vi.mock("@/components/ui/button", () => ({
   Button: defineComponent({
     props: {disabled: Boolean, variant: String, size: String},
     emits: ["click"],
-    setup(props, {slots}) {
+    setup(props, {emit, slots}) {
       return () =>
         h(
           "button",
-          {type: "button", disabled: props.disabled},
+          {
+            type: "button",
+            disabled: props.disabled,
+            onClick: () => emit("click"),
+          },
           slots.default?.(),
         );
     },
@@ -506,36 +511,43 @@ describe("ApiKeysView", () => {
   });
 
   describe("Error states", () => {
-    it("rethrows when the rotate composable call fails", async () => {
-      mockRotate.mockRejectedValue(new Error("Rotate unavailable"));
-
-      await expect(mockRotate("", "key-1")).rejects.toThrow(
-        "Rotate unavailable",
-      );
-    });
-
-    it("renders with no API keys and no error without crashing", async () => {
-      mockApiKeys.value = [];
-      mockTotal.value = 0;
-      mockLoading.value = false;
-      mockError.value = null;
+    it("renders the rotate error when rotation fails", async () => {
+      mockApiKeys.value = [createApiKey()];
+      mockTotal.value = 1;
+      mockRotate.mockImplementationOnce(async () => {
+        mockError.value = "Rotate unavailable";
+        return null;
+      });
 
       const wrapper = makeWrapper();
+      await wrapper.get("tbody tr").findAll("button")[1]!.trigger("click");
 
-      // The view should render without error
-      expect(wrapper.find("div")).toBeDefined();
+      const rotateDialog = wrapper
+        .findAllComponents(Dialog)
+        .find((dialog) => dialog.text().includes("Rotate API Key"))!;
+      expect(rotateDialog.props("open")).toBe(true);
+      expect(rotateDialog.text()).not.toContain("Rotate unavailable");
+
+      const submitButton = rotateDialog
+        .findAll("button")
+        .find((button) => button.text() === "Rotate Key")!;
+      await submitButton.trigger("click");
+      await flushPromises();
+
+      expect(mockRotate).toHaveBeenCalledWith("key-1");
+      expect(rotateDialog.text()).toContain("Rotate unavailable");
     });
   });
 
   describe("Empty state", () => {
-    it("renders the page with zero API keys without crashing", async () => {
+    it("renders the empty-state message when there are no API keys", () => {
       mockApiKeys.value = [];
       mockTotal.value = 0;
       mockLoading.value = false;
+      mockError.value = null;
       const wrapper = makeWrapper();
 
-      // No crash — just a render
-      expect(wrapper.find("div")).toBeDefined();
+      expect(wrapper.text()).toContain(en.apiKeys.empty);
     });
   });
 });
