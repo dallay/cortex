@@ -100,7 +100,7 @@ ttl_cache = "0.5"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 # HTTP clients
-reqwest = { version = "0.13", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["form", "json", "rustls"], default-features = false }
 
 # Config
 toml = "1.1"
@@ -116,8 +116,8 @@ rand = { version = "0.10", features = ["std_rng"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 # Encryption
-aes-gcm = "0.11"
-argon2 = "0.6"
+aes-gcm = "0.10.3"
+argon2 = "0.5.3"
 base64 = "0.23"
 
 # Dev tools (installed via cargo install or as dependencies)
