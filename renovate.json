@@ -6,7 +6,7 @@
   "assignees": ["yacosta738"],
   "reviewers": ["team:dbwh", "yacosta738"],
   "labels": ["area/dependencies"],
-  "minimumReleaseAge": "5 days",
+  "minimumReleaseAge": "3 days",
   "dependencyDashboard": true,
   "prConcurrentLimit": 10,
   "semanticCommits": "enabled",
