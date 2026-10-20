@@ -319,4 +319,50 @@ mod tests {
             "provider endpoint must not target cloud metadata services"
         );
     }
+
+    #[test]
+    fn test_status_accessors_expose_only_the_matching_outcome_data() {
+        let timestamp = Utc::now();
+        let active = TestStatus::Active {
+            last_test_at: timestamp,
+            latency_ms: 42,
+        };
+        assert_eq!(active.latency_ms(), Some(42));
+        assert_eq!(active.last_test_at(), Some(timestamp));
+        assert_eq!(active.error_msg(), None);
+        assert_eq!(active.expires_at(), None);
+
+        let unhealthy = TestStatus::Unhealthy {
+            last_test_at: timestamp,
+            error: "unauthorized".into(),
+        };
+        assert_eq!(unhealthy.error_msg().as_deref(), Some("unauthorized"));
+        assert_eq!(unhealthy.latency_ms(), None);
+        assert_eq!(unhealthy.expires_at(), None);
+        assert_eq!(unhealthy.last_test_at(), Some(timestamp));
+
+        let expired = TestStatus::Expired {
+            last_test_at: timestamp,
+            expires_at: 1_800_000_000,
+        };
+        assert_eq!(expired.expires_at(), Some(1_800_000_000));
+        assert_eq!(expired.last_test_at(), Some(timestamp));
+        assert_eq!(expired.error_msg(), None);
+
+        let unknown = TestStatus::Unknown {
+            last_test_at: timestamp,
+            reason: "provider returned an unknown state".into(),
+        };
+        assert_eq!(
+            unknown.error_msg().as_deref(),
+            Some("provider returned an unknown state")
+        );
+        assert_eq!(unknown.last_test_at(), Some(timestamp));
+
+        let never_tested = TestStatus::NeverTested;
+        assert_eq!(never_tested.last_test_at(), None);
+        assert_eq!(never_tested.latency_ms(), None);
+        assert_eq!(never_tested.error_msg(), None);
+        assert_eq!(never_tested.expires_at(), None);
+    }
 }

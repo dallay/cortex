@@ -105,7 +105,7 @@ export function getAuthRedirect(
   to: Pick<RouteLocationNormalized, "name" | "meta" | "matched">,
   isAuthenticated: boolean,
   bootstrapRequired: boolean,
-): true | { name: string } {
+): true | {name: string} {
   const requiresAuth = to.matched.some((r) => r.meta.requiresAuth);
   const guestOnly = to.matched.some((r) => r.meta.guestOnly);
 
@@ -120,25 +120,47 @@ export function getAuthRedirect(
   return true;
 }
 
+/**
+ * Auth navigation handler — extracted so it can be unit-tested without a
+ * live router or a real Pinia store. Accepts the auth store as a plain
+ * object so callers can inject a mock in tests.
+ *
+ * Responsibilities:
+ * 1. Lazy-load bootstrap status on the first navigation guard invocation.
+ * 2. Surface bootstrap failures in the console but never block navigation.
+ * 3. Delegate the actual redirect decision to {@link getAuthRedirect}.
+ */
+export async function handleAuthNavigation(
+  to: Pick<RouteLocationNormalized, "name" | "meta" | "matched">,
+  authStore: {
+    initialized: boolean;
+    isAuthenticated: boolean;
+    bootstrapRequired: boolean;
+    loadBootstrapStatus: () => Promise<void>;
+  },
+): Promise<true | {name: string}> {
+  if (!authStore.initialized) {
+    await authStore.loadBootstrapStatus().catch((err) => {
+      console.error(
+        "[router] bootstrap failed, allowing navigation to proceed",
+        err,
+      );
+      authStore.initialized = true;
+    });
+  }
+
+  return getAuthRedirect(
+    to,
+    authStore.isAuthenticated,
+    authStore.bootstrapRequired,
+  );
+}
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 });
 
-router.beforeEach(async (to) => {
-  const auth = useAuthStore();
-
-  if (!auth.initialized) {
-    await auth.loadBootstrapStatus().catch((err) => {
-      console.error(
-        "[router] bootstrap failed, allowing navigation to proceed",
-        err,
-      );
-      auth.initialized = true;
-    });
-  }
-
-  return getAuthRedirect(to, auth.isAuthenticated, auth.bootstrapRequired);
-});
+router.beforeEach(async (to) => handleAuthNavigation(to, useAuthStore()));
 
 export default router;

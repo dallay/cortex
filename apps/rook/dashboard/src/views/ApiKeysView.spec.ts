@@ -1,9 +1,10 @@
-import {mount} from "@vue/test-utils";
+import {flushPromises, mount} from "@vue/test-utils";
 import {createPinia, setActivePinia} from "pinia";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 import {defineComponent, h, ref} from "vue";
 import {createI18n} from "vue-i18n";
 import {createMemoryHistory, createRouter} from "vue-router";
+import {Dialog} from "@/components/ui/dialog";
 import en from "@/locales/en.json";
 import ApiKeysView from "./ApiKeysView.vue";
 
@@ -31,11 +32,15 @@ vi.mock("@/components/ui/button", () => ({
   Button: defineComponent({
     props: {disabled: Boolean, variant: String, size: String},
     emits: ["click"],
-    setup(props, {slots}) {
+    setup(props, {emit, slots}) {
       return () =>
         h(
           "button",
-          {type: "button", disabled: props.disabled},
+          {
+            type: "button",
+            disabled: props.disabled,
+            onClick: () => emit("click"),
+          },
           slots.default?.(),
         );
     },
@@ -179,6 +184,7 @@ vi.mock("@lucide/vue", () => {
     Copy: icon,
     Key: icon,
     AlertTriangle: icon,
+    AlertCircle: icon,
     RefreshCw: icon,
     Pencil: icon,
     Trash2: icon,
@@ -214,6 +220,14 @@ const mockTotal = ref(0);
 const mockLoading = ref(false);
 const mockError = ref<string | null>(null);
 
+const mockCreate = vi.fn().mockResolvedValue({key: {}, plaintextKey: "test-key"});
+const mockUpdate = vi.fn().mockResolvedValue({});
+const mockRevoke = vi.fn().mockResolvedValue(true);
+const mockRotate = vi.fn().mockResolvedValue({
+  key: {id: "rotated", keyPrefix: "new_key"},
+  plaintextKey: "new_raw_key",
+});
+
 vi.mock("@/composables/useApiKeys", () => ({
   useApiKeys: () => ({
     apiKeys: mockApiKeys,
@@ -223,13 +237,10 @@ vi.mock("@/composables/useApiKeys", () => ({
     limit: ref(20),
     offset: ref(0),
     fetch: vi.fn(),
-    create: vi.fn().mockResolvedValue({key: {}, plaintextKey: "test-key"}),
-    update: vi.fn().mockResolvedValue({}),
-    revoke: vi.fn().mockResolvedValue(true),
-    rotate: vi.fn().mockResolvedValue({
-      key: {id: "rotated", keyPrefix: "new_key"},
-      plaintextKey: "new_raw_key",
-    }),
+    create: mockCreate,
+    update: mockUpdate,
+    revoke: mockRevoke,
+    rotate: mockRotate,
     nextPage: vi.fn(),
     prevPage: vi.fn(),
   }),
@@ -276,6 +287,13 @@ beforeEach(() => {
   mockTotal.value = 0;
   mockLoading.value = false;
   mockError.value = null;
+  mockCreate.mockResolvedValue({key: {}, plaintextKey: "test-key"});
+  mockUpdate.mockResolvedValue({});
+  mockRevoke.mockResolvedValue(true);
+  mockRotate.mockResolvedValue({
+    key: {id: "rotated", keyPrefix: "new_key"},
+    plaintextKey: "new_raw_key",
+  });
 });
 
 describe("ApiKeysView", () => {
@@ -489,6 +507,47 @@ describe("ApiKeysView", () => {
       const errorBlock = wrapper.find('[data-testid="api-key-form-error"]');
       expect(errorBlock.exists()).toBe(true);
       expect(wrapper.text()).toContain("At least one scope is required");
+    });
+  });
+
+  describe("Error states", () => {
+    it("renders the rotate error when rotation fails", async () => {
+      mockApiKeys.value = [createApiKey()];
+      mockTotal.value = 1;
+      mockRotate.mockImplementationOnce(async () => {
+        mockError.value = "Rotate unavailable";
+        return null;
+      });
+
+      const wrapper = makeWrapper();
+      await wrapper.get("tbody tr").findAll("button")[1]!.trigger("click");
+
+      const rotateDialog = wrapper
+        .findAllComponents(Dialog)
+        .find((dialog) => dialog.text().includes("Rotate API Key"))!;
+      expect(rotateDialog.props("open")).toBe(true);
+      expect(rotateDialog.text()).not.toContain("Rotate unavailable");
+
+      const submitButton = rotateDialog
+        .findAll("button")
+        .find((button) => button.text() === "Rotate Key")!;
+      await submitButton.trigger("click");
+      await flushPromises();
+
+      expect(mockRotate).toHaveBeenCalledWith("key-1");
+      expect(rotateDialog.text()).toContain("Rotate unavailable");
+    });
+  });
+
+  describe("Empty state", () => {
+    it("renders the empty-state message when there are no API keys", () => {
+      mockApiKeys.value = [];
+      mockTotal.value = 0;
+      mockLoading.value = false;
+      mockError.value = null;
+      const wrapper = makeWrapper();
+
+      expect(wrapper.text()).toContain(en.apiKeys.empty);
     });
   });
 });
