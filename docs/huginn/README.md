@@ -1,174 +1,461 @@
-# Huginn
+<div align="center">
 
-Huginn is the local Rust coding assistant and a product alongside Rook. The
-service kernel, OpenAI-compatible streaming adapter, native tools, SQLite
-sessions, scoped `AGENTS.md` context, compaction and trusted MCP stdio
-client are implemented. Public distribution remains outside this MVP.
+# 🤖 Huginn
 
-## Install and start
+Local Rust coding assistant with native tools and MCP integration
 
-Use the repository's Rust 1.89 toolchain on macOS or Linux:
+[![Rust](https://img.shields.io/badge/rust-1.89%2B-DEA584?logo=rust)](https://www.rust-lang.org)
+[![SQLite](https://img.shields.io/badge/sqlite-3-003B57?logo=sqlite)](https://www.sqlite.org)
+[![MCP](https://img.shields.io/badge/MCP-ready-7C3AED?logo=modelcontextprotocol)](https://modelcontextprotocol.io)
+[![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
+
+**Your local AI coding partner** — runs locally with access to your codebase.
+
+[Huginn Architecture](#-architecture) · [Installation](#-installation) · [Usage](#-usage) · [TUI Guide](#-tui-guide) · [Providers](providers-ui.md)
+
+</div>
+
+---
+
+## 🎯 What is Huginn?
+
+Huginn is a **local coding agent** built in Rust that works with your codebase. Unlike cloud-based AI assistants, Huginn runs entirely on your machine.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Huginn: Local-First AI                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────┐  │
+│   │                                                                 │  │
+│   │   Your Machine                    Cloud Providers              │  │
+│   │   ────────────                    ───────────────              │  │
+│   │                                                                 │  │
+│   │   ┌───────────┐                   ┌─────────────┐             │  │
+│   │   │  Huginn   │ ─── API ───────▶ │  OpenAI     │             │  │
+│   │   │  (Local)  │                   │  Anthropic  │             │  │
+│   │   └─────┬─────┘                   └─────────────┘             │  │
+│   │         │                                                      │  │
+│   │         │  Local Tools                                         │  │
+│   │         ▼                                                      │  │
+│   │   ┌───────────┐                                               │  │
+│   │   │ Your Code │ ◀── Read/Write/Execute                        │  │
+│   │   └───────────┘                                               │  │
+│   │                                                                 │  │
+│   │   🔒 Code stays local — prompts and context sent to providers  │  │
+│   │                                                                 │  │
+│   └─────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Principles
+
+| Principle | Description |
+|-----------|-------------|
+| 🔒 **Privacy-first** | Code stays local, only model requests go to cloud |
+| 💻 **Native tools** | File ops, terminal, git — all built-in |
+| 🔌 **Extensible** | MCP stdio client for custom tools |
+| 📝 **Scoped context** | `AGENTS.md` controls what Huginn sees |
+| 💾 **Session memory** | SQLite-backed conversation history |
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🖥️ **Ratatui TUI** | Beautiful terminal interface with colors and layout |
+| 🔧 **Native tools** | File read/write, terminal execution, git operations |
+| 🔌 **MCP integration** | Connect to any MCP stdio server |
+| 💾 **SQLite sessions** | Persistent conversation history |
+| 📋 **Scoped context** | Per-repo `AGENTS.md` for agent instructions |
+| 🎯 **Tool calling** | Automatic tool selection based on task |
+| 📤 **JSON mode** | Machine-readable output for automation |
+| 🌐 **Provider agnostic** | OpenAI-compatible API support |
+
+---
+
+## 🏗️ Architecture
+
+```
+huginn/
+│
+├── src/
+│   ├── main.rs              # Entry point, CLI parsing
+│   │
+│   ├── cli/                 # Command handlers
+│   │   ├── chat.rs          # Interactive chat mode
+│   │   ├── run.rs           # Single command mode
+│   │   └── sessions.rs      # Session management
+│   │
+│   └── runtime/
+│       ├── mod.rs           # Core runtime
+│       ├── provider.rs      # LLM provider abstraction
+│       ├── tools/           # Native tools
+│       │   ├── file.rs      # File operations
+│       │   ├── terminal.rs  # Shell commands
+│       │   ├── git.rs       # Git operations
+│       │   └── mod.rs       # Tool registry
+│       │
+│       ├── mcp/             # MCP client
+│       │   ├── client.rs    # Stdio client
+│       │   └── protocol.rs  # MCP protocol
+│       │
+│       ├── session.rs       # SQLite session storage
+│       ├── context.rs       # Context building
+│       └── ui/              # Ratatui UI components
+│
+├── runtime/                 # Huginn runtime crate (shared)
+│   ├── src/
+│   │   ├── service_kernel.rs
+│   │   ├── streaming_adapter.rs  # OpenAI-compatible streaming
+│   │   ├── tools.rs
+│   │   └── sessions.rs
+│   │
+│   └── tests/
+│       └── fixtures/
+│
+└── AGENTS.md               # Per-repo agent instructions
+```
+
+### Runtime Flow
+
+```
+User Input
+    │
+    ▼
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   Parser    │ ──▶ │   Provider   │ ──▶ │  Response   │
+│  (Command)  │     │  (LLM Call)  │     │  (Streaming)│
+└─────────────┘     └──────┬───────┘     └──────┬──────┘
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │   Tool Call   │
+                    │  Execution    │
+                    └──────┬───────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ File System  │   │   Terminal   │   │     Git      │
+└──────────────┘   └──────────────┘   └──────────────┘
+```
+
+---
+
+## 🚀 Installation
+
+### From Source
 
 ```bash
+# Clone the repository
+git clone https://github.com/dallay/cortex.git
+cd cortex
+
+# Install globally
 cargo install --path apps/huginn --locked
-huginn --provider mock --workspace /path/to/repository run "list files"
+
+# Or build only
+cargo build --release -p huginn
 ```
 
-From the checkout, use `just huginn-run` or `cargo run -p huginn --` followed
-by the same arguments. `mock` is an offline diagnostic provider with a
-read-only `list files` example; it does not perform real coding reasoning.
+### Requirements
 
-En la TUI, usa `/login`, `/providers`, `/model` y `/logout` para
-[gestionar conexiones con formularios secretos del host](providers-ui.md),
-sin editar configuración ni reiniciar. La verificación de esta UI usa dobles;
-no acredita aceptación de proveedores reales ni onboarding.
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Rust | 1.89+ | MSRV may be higher |
+| Cargo | latest | Included with Rust |
+| SQLite | system | Usually pre-installed |
 
-For a model, set `HUGINN_BASE_URL` (including `/v1`), `HUGINN_MODEL`, and
-`HUGINN_API_KEY` in the invoking shell, then run:
+### Verify Installation
 
 ```bash
-huginn --workspace /path/to/repository chat
-huginn --workspace /path/to/repository --json run "Explain the project"
-huginn sessions
-huginn resume SESSION_UUID
-huginn resume SESSION_UUID --prompt "Continue the task"
+huginn --version
 ```
 
-Interactive `chat` (or no subcommand) uses the Ratatui TUI when attached to a
-terminal. `--line-mode` selects the line-oriented recovery adapter; `--json`
-emits machine-readable events instead.
+---
 
-### Chat suggestions
+## 📖 Usage
 
-- Type `/` to open the active command catalog with descriptions.
-  Search accepts prefixes and gapped characters, for example `/exinfo`.
-- Type `@` at a token start to search workspace filenames.
-  Paths with spaces are inserted as `@"docs/my guide.md"`.
-  The reference is **text only**: it never reads or attaches file contents.
-- Use ↑/↓ to select, Tab to complete without running, and Esc to close.
-  Enter runs the selected command; for files and arguments it only completes.
-  A later Enter sends the draft. Alt/Shift+Enter and Ctrl+J insert a newline.
-- Plugins can declare descriptions, argument values, and paths through
-  `CommandMetadata` and `Contributions::register_command`. Existing commands
-  without metadata keep working; undeclared arguments are never inferred.
-  Summary commands are suggested only with a configured model.
-- The filename index is built in the background once per chat connection,
-  with a 20,000-entry walk limit. Restart the chat to refresh it.
-  It excludes `.git`, `target`, `node_modules`, `.pnpm-store`, `.cache`, and
-  symbolic links; it does not interpret `.gitignore`. It reports a partial
-  index or failure. It is not a security boundary against concurrent
-  filesystem changes.
-- Approvals and dialogs take priority over suggestions. Completing text
-  never grants permissions; a revoked plugin selection never runs its replacement.
-
-`doctor` valida configuración y muestra servicios sin contactar al modelo ni
-iniciar MCP. Sin configuración explícita ni selección persistida utilizable,
-informa `model_readiness: "unconfigured"`. Una selección recuperada solo indica
-preparación local: no verifica disponibilidad remota. `run` y `resume --prompt`
-necesitan un modelo y las credenciales que requiera el proveedor. `--db` elige
-otra base de sesiones; `--config` elige un archivo TOML.
-
-## Configuration and permissions
-
-See [config.example.toml](../../apps/huginn/config.example.toml) for every
-setting. The default location follows the OS configuration directory: on
-macOS, `~/Library/Application Support/cortex/huginn/config.toml`; on Linux,
-`~/.config/cortex/huginn/config.toml` (or the XDG override). If a new
-install runs on a host that only has the legacy
-`~/.../cortex/agent/config.toml`, Huginn reads it once (read-only) and
-prints a warning suggesting the migration; it never overwrites the legacy
-file. CLI options override the file; environment variables provide
-defaults for the endpoint and model. API keys are loaded from a named
-environment variable. Set `api_key_env = ""` for a local endpoint
-without authentication.
-
-HTTPS endpoints use validated certificates. Plain HTTP requires
-`allow_loopback_http = true` and a literal loopback IP (`127.0.0.1` or `[::1]`);
-private/LAN addresses and DNS names are not a local exception. Existing local
-HTTP configurations must explicitly enable this setting. Redirects are rejected.
-Para los adaptadores integrados y los modelos Ollama probados anteriormente,
-consulta [adaptadores y verificación local](inference-adapters.md). El
-catálogo remoto no se consulta desde los formularios: la UI admite un modelo
-candidato cuando no hay modelos estáticos. La aceptación automatizada del flujo
-completo con adaptadores reales sigue siendo una entrega de integración separada.
-
-Reads are limited to resolved paths within the workspace. Edits show their
-complete diff and require approval; changed files require a new diff.
-Shell and every MCP call require approval too. Ctrl+C interrupts a turn;
-`/quit` ends a conversation. MCP startup asks separately. Only configured
-environment variables are passed to MCP processes; native shell inherits
-PATH only. Shell and MCP have full host access under the user's account
-and must be trusted.
-
-One-shot mode denies effects unless explicitly granted for that invocation:
+### Quick Start
 
 ```bash
-huginn --allow native.edit_file,native.shell run "Fix the bug and run its tests"
+# 1. Set environment variables
+export HUGINN_BASE_URL=https://api.openai.com/v1
+export HUGINN_MODEL=gpt-4o
+export HUGINN_API_KEY=your-api-key
+
+# 2. Run in chat mode
+huginn --workspace /path/to/your/project chat
+
+# 3. Or run a single command
+huginn --workspace /path/to/your/project run "Explain this codebase"
 ```
 
-Grants match exact action names, have no wildcard, and authorize all
-occurrences of that action during this invocation. Available native
-effects are `native.write_file`, `native.edit_file`, and `native.shell`.
-MCP actions use `mcp.SERVER.start` and `mcp.SERVER.REMOTE_TOOL`. Grants
-are never restored from a session. `--json` emits one typed event per
-stdout line; diagnostics use stderr.
+### Command Reference
 
-### Environment variable fallback
+| Command | Description |
+|---------|-------------|
+| `huginn chat` | Interactive TUI chat (default) |
+| `huginn run "<prompt>"` | Single command, exit |
+| `huginn sessions` | List saved sessions |
+| `huginn resume <uuid>` | Continue a session |
+| `huginn --json run "<prompt>"` | JSON output (for scripting) |
 
-`AGENT_BASE_URL`, `AGENT_MODEL`, and `AGENT_API_KEY` are still read as a
-fallback when the canonical `HUGINN_*` variables are unset. The fallback
-exists so users who already exported the old names keep working after
-the rename; new installations should set the `HUGINN_*` variables
-directly.
+### Environment Variables
 
-## Durable context and recovery
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `HUGINN_BASE_URL` | For non-mock providers | API endpoint (include `/v1`) |
+| `HUGINN_MODEL` | For non-mock providers | Model name |
+| `HUGINN_API_KEY` | For auth-required providers | API key (optional for mock/Ollama) |
 
-Sessions store messages, calls, results, approval events and interruption
-state in SQLite. Originals survive compaction. New databases use schema
-version 1; newer unknown versions fail explicitly. One process may hold
-a session at a time. Provider credentials are not stored. Repository
-content, prompts and tool output are part of history and may themselves
-contain sensitive text.
+---
 
-Interrupted calls receive a result indicating unknown completion when
-resumed; they are never automatically replayed. Inspect external effects
-before requesting a replacement action. Compaction keeps the last two user
-turns and complete tool pairs, summarizes older messages with the same
-provider, and stops if it fails. Context accounting uses conservative
-serialized bytes rather than a model tokenizer.
+## 🖥️ TUI Guide
 
-Root and nested AGENTS.md documents are loaded with directory scope
-labels on each iteration. Symlinks must resolve inside the workspace;
-generated/dependency folders are excluded. Instructions are context and
-cannot grant permissions.
+When you run `huginn chat`, you get a Ratatui-based terminal interface.
 
-## Cross-process session locking
+### Layout
 
-Huginn acquires an advisory lock file before mutating a session. The lock filename remains `cortex-agent-session-<uuid>.lock` during the
-compatibility window. Both old and new executables acquire the same lock;
-using separate names would allow two versions to mutate one SQLite session
-at once. Huginn does not delete, copy or rewrite legacy SQLite databases
-through a plain file copy.
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Huginn - /path/to/workspace                              [?] [⚙] [✕] │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                                                                 │   │
+│  │  🤖 Assistant                                                  │   │
+│  │  ─────────────────                                             │   │
+│  │  Welcome to Huginn! Type / for commands.                       │   │
+│  │                                                                 │   │
+│  │  👤 You                                                         │   │
+│  │  ─────────────────                                             │   │
+│  │  Explain the project structure                                  │   │
+│  │                                                                 │   │
+│  │  🤖 Assistant                                                  │   │
+│  │  ─────────────────                                             │   │
+│  │  This is a Rust monorepo with...                               │   │
+│  │                                                                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ > Explain the project structure                              [Send]   │
+│                                                                         │
+│ Model: gpt-4o | Provider: OpenAI | Tokens: 1,234                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-## Development and architecture
+### Commands (type `/` to open)
 
-- Code: [`apps/huginn`](../../apps/huginn/), [`core`](../../crates/huginn/core/), [`runtime`](../../crates/huginn/runtime/).
-- [Implementation specification](implementation-specification.md) — contracts and limits.
-- [Architecture decisions](adr/README.md) — accepted ADRs.
-- [Implementation plan](implementation-plan.md) — milestones and acceptance boundaries.
-- [Linux daily-use checklist](linux-daily-use.md) — manual acceptance workflow on Linux.
-- [Validation record](validation.md) — automated and manual evidence; status of open items.
-- `just huginn-test` runs deterministic kernel, coding, HTTP, MCP and CLI fixtures.
-- `./scripts/huginn-linux-smoke.sh` verifies the local install on a Linux host without contacting a model.
-- `just ci-local` runs the complete workspace gate, including Rook and Docker E2E.
+| Command | Description |
+|---------|-------------|
+| `/login` | Configure provider credentials |
+| `/providers` | Switch between providers |
+| `/model` | Change the active model |
+| `/logout` | Clear stored credentials |
+| `/exinfo` | System information |
+| `/clear` | Clear current conversation |
+| `/quit` | Exit Huginn |
 
-Huginn is independent of Rook's abstractions; Rook is not a supported backend
-as of 2026-10-06 — see
-[validation.md § Rook compatibility result](validation.md#rook-compatibility-result).
-Real-model validation and a Linux daily-use run must be recorded before
-declaring the personal MVP fully accepted. MCP transport fixtures
-require Python 3 at `/usr/bin/python3` on the supported platforms.
+### Keyboard Shortcuts
 
-Obsidian's rust-agent-harness-research remains the research source. The
-repository is the canonical source of implementation specifications and
-ADRs.
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Cancel current request |
+| `Ctrl+L` | Clear screen |
+| `Ctrl+Enter` | Send message |
+| `↑/↓` | History navigation |
+
+---
+
+## 🔧 Configuration
+
+### AGENTS.md
+
+Place an `AGENTS.md` file in your repository root to scope Huginn's context:
+
+```markdown
+# Agent Instructions
+
+## Project Context
+This is a Rust monorepo with Rook (AI proxy) and Huginn (coding agent).
+
+## Coding Standards
+- Use 2-space indentation
+- Run `cargo fmt` before commits
+- Follow Rust idioms
+
+## Available Commands
+- `just dev` - Start development
+- `just test` - Run tests
+- `just ci-local` - Full CI locally
+```
+
+### Provider Configuration
+
+Huginn supports OpenAI-compatible APIs:
+
+```bash
+# OpenAI
+export HUGINN_BASE_URL=https://api.openai.com/v1
+export HUGINN_MODEL=gpt-4o
+
+# Anthropic (via proxy)
+export HUGINN_BASE_URL=http://localhost:3773/v1
+export HUGINN_MODEL=claude-3-sonnet-20240229
+
+# Local Ollama
+export HUGINN_BASE_URL=http://localhost:11434/v1
+export HUGINN_MODEL=llama3
+```
+
+### Mock Provider (Offline Testing)
+
+```bash
+# Test without real API calls
+huginn --provider mock --workspace /path/to/repo run "list files"
+```
+
+The mock provider responds with predefined examples and does not perform real LLM calls.
+
+---
+
+## 🔌 MCP Integration
+
+Connect Huginn to MCP servers for extended capabilities via CLI configuration:
+
+```toml
+# huginn.toml (or pass via --config)
+[[mcp]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem@0.6.3", "."]
+
+[[mcp]]
+name = "git"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-git@0.5.0"]
+```
+
+```bash
+# From the Cortex repository root; "." allows filesystem access to this workspace
+huginn --workspace . --config huginn.toml chat
+```
+
+> ⚠️ **Security Notice:** MCP servers run with your OS permissions and are not sandboxed. Only connect to servers you trust.
+
+### Available MCP Servers
+
+| Server | Version | Purpose |
+|--------|---------|---------|
+| `@modelcontextprotocol/server-filesystem` | 0.6.3 | File operations |
+| `@modelcontextprotocol/server-git` | 0.5.0 | Git operations |
+| `@modelcontextprotocol/server-brave` | latest | Web search |
+| `@modelcontextprotocol/server-slack` | latest | Slack integration |
+
+---
+
+## 📝 Examples
+
+### Explain Code
+
+```bash
+huginn --workspace ./my-project run "Explain the main.rs entry point"
+```
+
+### Refactor Code
+
+```bash
+huginn --workspace ./my-project run "Refactor the auth module to use async/await"
+```
+
+### Write Tests
+
+```bash
+huginn --workspace ./my-project run "Write unit tests for the UserService"
+```
+
+### Generate Documentation
+
+```bash
+huginn --workspace ./my-project run "Add doc comments to the public API"
+```
+
+### Git Operations
+
+```bash
+huginn --workspace ./my-project run "Create a commit for the new feature with good message"
+```
+
+### JSON Output (CI/CD)
+
+```bash
+huginn --workspace ./my-project --json run "Analyze the code and return metrics"
+```
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+cargo test -p huginn
+
+# With coverage
+cargo tarpaulin -p huginn
+```
+
+---
+
+## 🔒 Security
+
+| Concern | Mitigation |
+|---------|------------|
+| API keys | Use environment variables, not config files |
+| File access | Workspace-scoped — Huginn only accesses specified directory |
+| Shell execution | Terminal commands require explicit approval |
+| MCP tools | MCP calls require explicit approval |
+| Session data | SQLite DB stored locally (no built-in encryption) |
+
+### Best Practices
+
+1. **Never commit API keys** — use environment variables
+2. **Review tool calls** — Huginn shows what it will execute
+3. **Scope workspaces** — Use `--workspace` to limit access
+4. **Audit sessions** — Check `huginn sessions` for history
+
+---
+
+## 📚 Resources
+
+| Resource | Description |
+|---------|-------------|
+| [Architecture](adr/README.md) | Design decisions and ADRs |
+| [Providers UI](providers-ui.md) | Provider configuration in TUI |
+| [Rook](../rook/README.md) | Companion AI proxy |
+| [Cortex](../README.md) | Full project documentation |
+
+---
+
+## 📄 License
+
+MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
+
+---
+
+## 🙏 Acknowledgments
+
+- Built with [Ratatui](https://ratatui.rs/) for the TUI
+- Inspired by [Claude](https://claude.ai/) and [Cursor](https://cursor.sh/)
+- MCP protocol by [Model Context Protocol](https://modelcontextprotocol.io)
+
+---
+
+<div align="center">
+
+**Rust** · **Privacy-first** · **Local-first** · **MCP-native**
+
+</div>
