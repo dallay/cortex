@@ -3,6 +3,7 @@ import {beforeEach, describe, expect, it, vi} from "vitest";
 describe("Rook auth API client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     localStorage.clear();
     document.cookie = "csrf_token=; Max-Age=0; path=/";
   });
@@ -541,11 +542,13 @@ describe("Rook auth API client", () => {
 describe("Rook OAuth API client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     localStorage.clear();
     document.cookie = "csrf_token=; Max-Age=0; path=/";
   });
 
   async function apiWithFetch(fetchMock: ReturnType<typeof vi.fn>) {
+    vi.unstubAllGlobals();
     vi.stubGlobal("fetch", fetchMock);
     vi.resetModules();
     return (await import("./api")).useApi();
@@ -581,6 +584,67 @@ describe("Rook OAuth API client", () => {
       "/api/oauth/azure-openai/authorize",
       expect.objectContaining({method: "POST"}),
     );
+  });
+
+  it("stores and clears the API base URL override", async () => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+    const {setApiBaseUrl} = await import("./api");
+
+    setApiBaseUrl("https://stored.example.test");
+    expect(localStorage.getItem("rook-api-base-url")).toBe(
+      "https://stored.example.test",
+    );
+
+    setApiBaseUrl(null);
+    expect(localStorage.getItem("rook-api-base-url")).toBeNull();
+  });
+
+  it("uses an explicit API base URL override for requests", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("__ROOK_API_BASE__", "https://rook.example.test");
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson({healthy: true}));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    const api = (await import("./api")).useApi();
+
+    await api.getHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://rook.example.test/health",
+      expect.objectContaining({credentials: "include"}),
+    );
+  });
+
+  it("uses the stored API base URL when no runtime override is set", async () => {
+    localStorage.setItem("rook-api-base-url", "https://stored.example.test");
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson({healthy: true}));
+    const api = await apiWithFetch(fetchMock);
+
+    await api.getHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://stored.example.test/health",
+      expect.anything(),
+    );
+  });
+
+  it("treats unauthorized current-user requests as a signed-out session", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("unauthorized", {status: 401}),
+    );
+    const api = await apiWithFetch(fetchMock);
+
+    await expect(api.getMe()).resolves.toBeNull();
+  });
+
+  it("rethrows non-authentication errors from current-user requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("backend unavailable", {status: 503}),
+    );
+    const api = await apiWithFetch(fetchMock);
+
+    await expect(api.getMe()).rejects.toThrow("API Error 503: backend unavailable");
   });
 
   it("queries OAuth status by flow id only", async () => {
