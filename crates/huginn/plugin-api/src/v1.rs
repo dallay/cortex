@@ -49,9 +49,20 @@ impl View {
         Ok(self)
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverlayKind {
+    Settings,
+    Provider,
+    Login,
+    ModelPicker,
+    Help,
+    Confirm,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandResult {
     Notice(View),
+    Overlay(OverlayKind),
     Dialog(String),
     /// The host owns input, focus and execution; callbacks only describe work.
     Workflow(Workflow),
@@ -503,6 +514,15 @@ impl Command {
     pub fn run(&self, arguments: &str) -> Result<CommandResult> {
         self.registration
             .invoke(|| match (self.handler)(&text(arguments)?)? {
+                CommandResult::Overlay(kind @ (OverlayKind::Help | OverlayKind::Settings)) => {
+                    Ok(CommandResult::Overlay(kind))
+                }
+                CommandResult::Overlay(
+                    OverlayKind::Provider
+                    | OverlayKind::Login
+                    | OverlayKind::ModelPicker
+                    | OverlayKind::Confirm,
+                ) => Err(error("overlay requires a host-provided payload")),
                 CommandResult::Notice(view) => Ok(CommandResult::Notice(view.checked()?)),
                 CommandResult::Dialog(id) if identifier(&id) => Ok(CommandResult::Dialog(id)),
                 CommandResult::Dialog(_) => Err(error("invalid dialog id")),

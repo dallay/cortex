@@ -216,6 +216,7 @@ pub trait SecretStore: Send + Sync {
 /// Headless management port, also consumed by optional declarative UI authors.
 #[async_trait]
 pub trait ConnectionManagement: Send + Sync {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<crate::providers::ConnectionSnapshot>;
     /// Recover uncertain metadata writes from authoritative storage on the same owner.
     /// A healthy manager is unchanged; failed recovery must remain fail-closed.
     async fn recover(&self) -> ConnectionResult<()>;

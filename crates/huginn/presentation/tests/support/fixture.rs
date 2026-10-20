@@ -30,13 +30,25 @@ impl AgentLoop for Engine {
         if prompt == "panic-now" {
             panic!("uncaught panic after recovered callbacks");
         }
+        if prompt == "hold" {
+            events.emit(Event::Text {
+                text: "STREAM_HELD".into(),
+            });
+            cancel.cancelled().await;
+            session.interrupted = true;
+            return Err(huginn_core::AgentError::Cancelled);
+        }
         if prompt == "approve" {
             let approved = policy
                 .approve(
                     &huginn_core::ApprovalRequest {
                         id: "test".into(),
                         action: "native.edit".into(),
-                        preview: "--- file\n+++ file\n-old\n+new\nEND_OF_DIFF".into(),
+                        preview: std::iter::once("PREVIEW_FIRST".to_owned())
+                            .chain((0..40).map(|index| format!("diff-line-{index:02}")))
+                            .chain(std::iter::once("PREVIEW_LAST".to_owned()))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                     },
                     cancel.clone(),
                 )
@@ -163,6 +175,61 @@ impl Plugin for LongDialogPlugin {
 }
 /// Test-only recovered panic through the normal command-dispatch path.
 struct BoomPlugin;
+struct BarPlugin(tokio::sync::watch::Sender<huginn_core::providers::ConnectionSnapshot>);
+#[async_trait]
+impl Plugin for BarPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.bar".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        use huginn_plugin_api::v1::{Field, FieldKind, OverlayKind, Workflow};
+        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+        for (name, kind, title) in [
+            ("/bar-provider", OverlayKind::Provider, "Bar Provider"),
+            ("/bar-login", OverlayKind::Login, "Bar Login"),
+            ("/bar-model", OverlayKind::ModelPicker, "Bar Model"),
+            ("/bar-confirm", OverlayKind::Confirm, "Bar Confirm"),
+        ] {
+            let sender = self.0.clone();
+            ui.register(
+                ctx,
+                format!("fixture.{}", name.trim_start_matches('/')),
+                Contribution::Command {
+                    name: name.into(),
+                    handler: Arc::new(move |_| {
+                        sender.send_modify(|snapshot| {
+                            snapshot.revision += 1;
+                            snapshot.selection.as_mut().unwrap().model = title.replace(' ', "-");
+                        });
+                        Ok(CommandResult::Workflow(
+                            Workflow::new(
+                                title,
+                                "Local fixture, not remote verification",
+                                vec![Field {
+                                    id: "secret".into(),
+                                    label: "Credential".into(),
+                                    kind: FieldKind::Secret,
+                                    initial: String::new(),
+                                }],
+                                Arc::new(|_, _| {
+                                    Box::pin(async {
+                                        Ok(CommandResult::Notice(View::text("done")))
+                                    })
+                                }),
+                            )?
+                            .with_overlay_kind(kind)?,
+                        ))
+                    }),
+                },
+            )?;
+        }
+        Ok(())
+    }
+}
 struct SecretFormPlugin;
 #[async_trait]
 impl Plugin for SecretFormPlugin {
@@ -211,7 +278,7 @@ impl Plugin for SecretFormPlugin {
                             Arc::new(move |input, _| {
                                 let cancellation = cancellation.clone();
                                 Box::pin(async move {
-                                    let secret = input.secrets.get("key").unwrap();
+                                    assert!(input.secrets.contains_key("key"));
                                     match input.public["mode"].as_str() {
                                         "1" => {
                                             return Err(huginn_core::AgentError::Composition(
@@ -277,7 +344,33 @@ impl Plugin for EnginePlugin {
 async fn main() -> Result<()> {
     let mut supervisor = Supervisor::default();
     supervisor.register(Box::new(EnginePlugin))?;
-    supervisor.register(Box::new(RatatuiPlugin::default()))?;
+    let bar = std::env::args().nth(1).as_deref() == Some("bar");
+    let terminal = if bar {
+        use huginn_core::providers::*;
+        let (sender, receiver) = tokio::sync::watch::channel(ConnectionSnapshot {
+            source: uuid::Uuid::new_v4(),
+            revision: 0,
+            phase: ConnectionPhase::Unconfigured,
+            selection: None,
+        });
+        // A cloned receiver with an already-unread update must initialize from latest.
+        let terminal = RatatuiPlugin::default().with_connection(receiver);
+        sender.send_modify(|snapshot| {
+            snapshot.revision = 1;
+            snapshot.phase = ConnectionPhase::Selected;
+            snapshot.selection = Some(SelectionSnapshot {
+                provider: "fixture".into(),
+                connection: "fixture".into(),
+                model: "alpha".into(),
+                mode: SelectionMode::Managed(huginn_core::connections::SecretMode::Ephemeral),
+            });
+        });
+        supervisor.register(Box::new(BarPlugin(sender)))?;
+        terminal
+    } else {
+        RatatuiPlugin::default()
+    };
+    supervisor.register(Box::new(terminal))?;
     supervisor.register(Box::new(ConversationPlugin))?;
     if matches!(
         std::env::args().nth(1).as_deref(),
@@ -285,8 +378,13 @@ async fn main() -> Result<()> {
     ) {
         supervisor.register(Box::new(Replaceable("OLD_COMMAND_EXECUTED")))?;
     }
-    if std::env::args().nth(1).as_deref() == Some("extension") {
-        supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("extension" | "bar")
+    ) {
+        if std::env::args().nth(1).as_deref() == Some("extension") {
+            supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
+        }
         supervisor.register(Box::new(LongDialogPlugin))?;
     }
     if std::env::args().nth(1).as_deref() == Some("panic-after-callback") {
@@ -325,7 +423,7 @@ async fn main() -> Result<()> {
         supervisor.remove("fixture.replaceable").await?;
         supervisor.register(Box::new(Replaceable("NEW_COMMAND_EXECUTED")))?;
         supervisor.start().await?;
-        connection.ui.notice("REPLACEMENT_READY".into());
+        connection.ui.notification("REPLACEMENT_READY".into());
         if std::env::args().nth(1).as_deref() == Some("replace-approval") {
             while !std::path::Path::new("show-approval").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -343,7 +441,7 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             connection.ui.synchronize(&session);
-            connection.ui.notice("APPROVAL_CLOSED".into());
+            connection.ui.notification("APPROVAL_CLOSED".into());
         }
     }
     if std::env::args().nth(1).as_deref() == Some("drop-reopen") {
@@ -352,7 +450,7 @@ async fn main() -> Result<()> {
         drop(connection);
         assert!(!crossterm::terminal::is_raw_mode_enabled()?);
         let next = presentation.0.open(&session).await?;
-        next.ui.notice("NEW_GENERATION_READY".into());
+        next.ui.notification("NEW_GENERATION_READY".into());
         assert_eq!(next.ui.prompt().await.as_deref(), Some("replacement input"));
         next.finish().await?;
         return Ok(());
@@ -395,7 +493,7 @@ async fn main() -> Result<()> {
             .await;
         ui.synchronize(&session);
         if let Err(error) = result {
-            ui.notice(error.to_string());
+            ui.notification(error.to_string());
         }
     }
     connection.finish().await?;

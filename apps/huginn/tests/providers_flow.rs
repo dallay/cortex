@@ -352,7 +352,7 @@ async fn settle(ui: &Ui) {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             ui.refresh_contributions();
-            if !ui.lock().workflow.as_ref().is_some_and(|w| w.is_pending()) {
+            if !ui.lock().workflow().is_some_and(|w| w.is_pending()) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -371,7 +371,7 @@ async fn submit(ui: &Ui) {
 }
 fn replace(ui: &Ui, old: &str, new: &str) {
     let mut state = ui.lock();
-    let form = state.workflow.as_mut().unwrap();
+    let form = state.workflow_mut().unwrap();
     for _ in old.chars() {
         form.backspace();
     }
@@ -392,12 +392,12 @@ async fn login_form(h: &Harness, endpoint: &str, secret: &str, mode: SecretMode)
         .position(|(id, a)| id == "openai" && a == AuthenticationMethod::ApiKey)
         .unwrap();
     for _ in 0..index {
-        h.ui.lock().workflow.as_mut().unwrap().choice(true);
+        h.ui.lock().workflow_mut().unwrap().choice(true);
     }
     submit(&h.ui).await;
     {
         let mut state = h.ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.insert(endpoint);
         form.navigate(true);
         form.insert("alpha");
@@ -430,7 +430,7 @@ async fn select(h: &Harness, id: uuid::Uuid, model: &str) {
     let index = records.iter().position(|r| r.id == id).unwrap();
     command(&h.ui, "/model").await;
     for _ in 0..index {
-        h.ui.lock().workflow.as_mut().unwrap().choice(true);
+        h.ui.lock().workflow_mut().unwrap().choice(true);
     }
     submit(&h.ui).await;
     replace(&h.ui, &records[index].settings.model, model);
@@ -448,7 +448,7 @@ async fn logout(h: &Harness, id: uuid::Uuid) {
     command(&h.ui, "/logout").await;
     {
         let mut state = h.ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         for _ in 0..index {
             form.choice(true);
         }
@@ -502,13 +502,12 @@ async fn assert_surfaces(h: &Harness, root: &std::path::Path) {
         let state = h.ui.lock();
         assert_public(&format!(
             "{:?}{:?}{:?}{:?}{}",
-            state.committed,
+            state.conversation,
             state.events,
             state.tail,
             state.editor.text,
             state
-                .workflow
-                .as_ref()
+                .workflow()
                 .map(|w| format!("{:?}", w.snapshot()))
                 .unwrap_or_default()
         ));
@@ -551,7 +550,12 @@ async fn ui_two_connections_select_switch_pin_revoke_and_persist_without_secret_
     // 1: Unconfigured is explicit and does not perform inference.
     assert_blocked(h.model.0.as_ref(), &service).await;
     command(&h.ui, "/providers").await;
-    assert!(h.ui.lock().committed.join("\n").contains("No connections"));
+    assert!(h
+        .ui
+        .lock()
+        .notifications
+        .iter()
+        .any(|event| event.summary.contains("No connections")));
     assert!(service.inbound.lock().unwrap().is_empty());
     // 2–3: Host-owned login, isolated credentials, real SQLite metadata.
     let a = login(
@@ -736,12 +740,10 @@ async fn restart_locked_or_ephemeral_is_visible_fail_closed_and_never_falls_back
             .position(|r| r.id == id)
             .unwrap();
         for _ in 0..index {
-            h.ui.lock().workflow.as_mut().unwrap().choice(true);
+            h.ui.lock().workflow_mut().unwrap().choice(true);
         }
-        assert!(
-            format!("{:?}", h.ui.lock().workflow.as_ref().unwrap().snapshot())
-                .contains(&expected.to_string())
-        );
+        assert!(format!("{:?}", h.ui.lock().workflow().unwrap().snapshot())
+            .contains(&expected.to_string()));
         assert_blocked(h.model.0.as_ref(), &service).await;
         assert_eq!(
             service.inbound.lock().unwrap().len(),
@@ -772,6 +774,33 @@ async fn failed_secret_write_rolls_back_and_cancelled_form_cannot_publish() {
     let service = service().await;
     let secrets = Secrets::new(SecretMode::Secure);
     let h = open(root.path(), secrets.clone()).await;
+    // Existing service validation must survive the surface migration. Reject
+    // invalid public settings before any credential write, then allow reopening.
+    for (endpoint, invalid_model) in [
+        ("http://192.168.1.2/v1".to_string(), false),
+        (format!("{}/a/v1", service.endpoint), true),
+    ] {
+        login_form(&h, &endpoint, A, SecretMode::Secure).await;
+        if invalid_model {
+            // Secret -> Endpoint -> Model; captured model is a public text field.
+            h.ui.lock().workflow_mut().unwrap().navigate(true);
+            h.ui.lock().workflow_mut().unwrap().navigate(true);
+            replace(&h.ui, "alpha", "invalid model");
+        }
+        submit(&h.ui).await;
+        assert!(h.manager.list().await.unwrap().is_empty());
+        assert!(secrets.values.lock().unwrap().is_empty());
+        assert!(h.ui.lock().workflow().is_none());
+        assert!(h
+            .ui
+            .lock()
+            .notifications
+            .iter()
+            .last()
+            .unwrap()
+            .summary
+            .contains("Connection action failed"));
+    }
     secrets.fail_write.store(true, Ordering::SeqCst);
     assert!(login(
         &h,
@@ -784,9 +813,9 @@ async fn failed_secret_write_rolls_back_and_cancelled_form_cannot_publish() {
     assert!(h
         .ui
         .lock()
-        .committed
-        .join("\n")
-        .contains("Connection action failed"));
+        .notifications
+        .iter()
+        .any(|event| event.summary.contains("Connection action failed")));
     command(&h.ui, "/providers").await;
     assert!(h.manager.list().await.unwrap().is_empty());
     // A failed secret write retains an orphan cleanup intent until reopen.
@@ -847,13 +876,13 @@ async fn cancelling_pending_login_prevents_stale_completion_and_next_save_cleans
     command(&h.ui, "/providers").await;
     secrets.write_release.notify_one();
     assert!(h.manager.list().await.unwrap().is_empty());
-    assert!(h.ui.lock().workflow.is_none());
+    assert!(h.ui.lock().workflow().is_none());
     assert!(h
         .ui
         .lock()
-        .committed
-        .join("\n")
-        .contains("cancelled locally"));
+        .notifications
+        .iter()
+        .any(|event| event.summary.contains("cancelled locally")));
     let id = login(
         &h,
         &format!("{}/b/v1", service.endpoint),
@@ -906,7 +935,7 @@ async fn ui_credential_rotation_retires_pinned_authorization_until_explicit_rese
     command(&h.ui, "/providers").await;
     {
         let mut state = h.ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.navigate(true);
         form.choice(true); // update settings/credentials
         drop(state);
@@ -914,7 +943,7 @@ async fn ui_credential_rotation_retires_pinned_authorization_until_explicit_rese
     submit(&h.ui).await;
     {
         let mut state = h.ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         for _ in 0..4 {
             form.navigate(true);
         }

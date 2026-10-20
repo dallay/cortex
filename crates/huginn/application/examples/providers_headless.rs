@@ -92,6 +92,8 @@ async fn main() -> Result<()> {
     supervisor.start().await?;
     let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
     let management = supervisor.resolve::<ProvidersService>(&providers_id())?;
+    let mut observed = management.0.subscribe();
+    assert!(observed.borrow_and_update().selection.is_none());
     let router = supervisor.resolve::<ModelService>(&model_id())?;
     println!(
         "Sin modelo seleccionado: {}",
@@ -135,6 +137,11 @@ async fn main() -> Result<()> {
         .await?;
     println!("Turno fijado: {}", infer(pinned.as_ref()).await?);
     println!("Siguiente turno: {}", infer(router.0.as_ref()).await?);
+    observed.changed().await.expect("selección local publicada");
+    println!(
+        "Preparación local, no salud remota: {:?}",
+        *observed.borrow_and_update()
+    );
     management
         .0
         .execute(

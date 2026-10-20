@@ -107,6 +107,7 @@ mod tests {
         assert!(text.contains("level = \"info\""));
         assert!(text.contains("duration_secs = 3"));
         assert!(text.contains("[ui.indicators]"));
+        assert_eq!(crate::config::Config::load(Some(&path)).unwrap().ui, ui);
     }
 
     #[test]
@@ -132,6 +133,7 @@ default = "gpt-4o"
         assert!(text.contains("api_key = \"${OPENAI_API_KEY}\""));
         assert!(text.contains("[model]"));
         assert!(text.contains("default = \"gpt-4o\""));
+        assert!(text.starts_with(body), "outside-ui bytes must be identical");
         // Inside [ui]: patched correctly.
         assert!(text.contains("[ui.theme]"));
         assert!(text.contains("name = \"catppuccin\""));
@@ -145,6 +147,10 @@ default = "gpt-4o"
 unknown_user_key = true
 [ui.theme]
 name = "dracula"
+custom_theme_key = "retain"
+[ui.toasts]
+duration_secs = 5
+custom_toast_key = 17
 "#;
         write_file(&path, body);
         let ui = UiConfig::defaults();
@@ -153,6 +159,9 @@ name = "dracula"
         assert!(text.contains("unknown_user_key = true"));
         // Theme flipped to default yet the unknown key remains.
         assert!(text.contains("name = \"one-dark\""));
+        assert!(text.contains("custom_theme_key = \"retain\""));
+        assert!(text.contains("custom_toast_key = 17"));
+        assert_eq!(crate::config::Config::load(Some(&path)).unwrap().ui, ui);
     }
 
     #[test]
@@ -174,5 +183,6 @@ name = "dracula"
         assert!(text.contains("duration_secs = 10"));
         assert!(text.contains("scrollbar = false"));
         assert!(text.contains("line_numbers = false"));
+        assert_eq!(crate::config::Config::load(Some(&path)).unwrap().ui, ui);
     }
 }

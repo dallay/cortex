@@ -1,6 +1,7 @@
 //! Non-secret, headless provider contracts. Native adapters remain trusted code.
 use crate::{kernel::PluginContext, CancellationToken, ModelProvider, Result};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +57,37 @@ pub struct ConnectionIdentity {
 pub struct ModelSelection {
     pub connection: ConnectionIdentity,
     pub model: String,
+}
+
+/// Local preparation only; none of these phases asserts remote connectivity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionPhase {
+    Unconfigured,
+    Candidate,
+    Selected,
+    Revoked,
+    Unavailable,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelectionMode {
+    Managed(crate::connections::SecretMode),
+    Unmanaged,
+    Legacy,
+}
+/// Deliberately excludes endpoints, credentials, references and capabilities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionSnapshot {
+    pub provider: String,
+    pub connection: String,
+    pub model: String,
+    pub mode: SelectionMode,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionSnapshot {
+    pub source: uuid::Uuid,
+    pub revision: u64,
+    pub phase: ConnectionPhase,
+    pub selection: Option<SelectionSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -131,6 +163,8 @@ pub enum ProviderAction {
         adapter: ProviderRegistration,
     },
     Select(ModelSelection),
+    /// Installs an exact candidate, never a confirmed selection or new admission.
+    StageSelection(ModelSelection),
     Revoke(ConnectionIdentity),
     Replace {
         connection: ConnectionIdentity,
@@ -143,6 +177,7 @@ pub enum ProviderActionOutput {
     Diagnostic(ProvidersDiagnostic),
     Connected(ConnectionIdentity),
     Selected(ModelSelection),
+    Staged(ModelSelection),
     Revoked,
 }
 
@@ -158,6 +193,9 @@ pub enum ProviderActionState {
 
 #[async_trait]
 pub trait ProviderManagement: Send + Sync {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<ConnectionSnapshot>;
+    /// Synchronous commit under the router's serialization point.
+    fn publish_selection(&self, selection: &ModelSelection, mode: SelectionMode) -> Result<()>;
     fn diagnostic(&self) -> Result<ProvidersDiagnostic>;
     /// Stop new selected admission without revoking already pinned turns.
     fn clear_selection(&self) -> Result<()>;

@@ -1,5 +1,5 @@
 //! Additive asynchronous host workflows. No terminal types or secret defaults.
-use super::{error, identifier, text, CommandResult, Registration};
+use super::{error, identifier, text, CommandResult, OverlayKind, Registration};
 use crate::Result;
 use huginn_core::{connections::Secret, CancellationToken};
 use std::{collections::BTreeMap, fmt, future::Future, pin::Pin, sync::Arc};
@@ -31,11 +31,13 @@ pub type WorkflowFuture = Pin<Box<dyn Future<Output = Result<CommandResult>> + S
 pub type WorkflowHandler =
     Arc<dyn Fn(FormInput, CancellationToken) -> WorkflowFuture + Send + Sync>;
 
+#[derive(Clone)]
 struct Definition {
     title: String,
     body: String,
     fields: Vec<Field>,
     handler: WorkflowHandler,
+    overlay_kind: Option<OverlayKind>,
 }
 
 /// A description, not a running task. Empty fields mean an immediate async action.
@@ -111,6 +113,7 @@ impl Workflow {
                 body: text(&body.into())?,
                 fields: checked,
                 handler,
+                overlay_kind: None,
             }),
             registration: None,
         })
@@ -119,6 +122,24 @@ impl Workflow {
         registration.check()?;
         self.registration = Some(registration);
         Ok(self)
+    }
+    /// Attach host-surface metadata without changing the form, callback, or registration.
+    pub fn with_overlay_kind(mut self, kind: OverlayKind) -> Result<Self> {
+        if !matches!(
+            kind,
+            OverlayKind::Provider
+                | OverlayKind::Login
+                | OverlayKind::ModelPicker
+                | OverlayKind::Confirm
+        ) {
+            return Err(error("overlay kind requires a host-owned payload"));
+        }
+        let definition = Arc::make_mut(&mut self.definition);
+        definition.overlay_kind = Some(kind);
+        Ok(self)
+    }
+    pub fn overlay_kind(&self) -> Option<OverlayKind> {
+        self.definition.overlay_kind
     }
     pub fn is_active(&self) -> bool {
         self.registration
@@ -173,6 +194,15 @@ impl Workflow {
                 Ok(CommandResult::Workflow(next.bind(registration.clone())?))
             }
             CommandResult::Notice(view) => Ok(CommandResult::Notice(view.checked()?)),
+            CommandResult::Overlay(
+                kind @ (super::OverlayKind::Help | super::OverlayKind::Settings),
+            ) => Ok(CommandResult::Overlay(kind)),
+            CommandResult::Overlay(
+                super::OverlayKind::Provider
+                | super::OverlayKind::Login
+                | super::OverlayKind::ModelPicker
+                | super::OverlayKind::Confirm,
+            ) => Err(error("overlay requires a host-provided payload")),
             // Cross-registration named dialog lookup is intentionally excluded.
             CommandResult::Dialog(_) => Err(error("async workflows must return inline workflows")),
         }

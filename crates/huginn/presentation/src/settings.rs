@@ -23,31 +23,21 @@ pub struct UiConfig {
 impl UiConfig {
     /// Defaults documented in `proposal.md` and `spec.md` REQ-10.
     pub fn defaults() -> Self {
-        Self {
-            theme: UiTheme {
-                name: "one-dark".into(),
-            },
-            sound: UiSound { bell: false },
-            toasts: UiToasts {
-                level: "info".into(),
-                duration_secs: 3,
-            },
-            indicators: UiIndicators {
-                scrollbar: true,
-                breadcrumbs: true,
-                line_numbers: true,
-            },
-            integrations: UiIntegrations {
-                entries: Vec::new(),
-            },
-        }
+        Self::default()
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UiTheme {
     pub name: String,
+}
+impl Default for UiTheme {
+    fn default() -> Self {
+        Self {
+            name: "one-dark".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -56,19 +46,36 @@ pub struct UiSound {
     pub bell: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UiToasts {
     pub level: String,
     pub duration_secs: u32,
 }
+impl Default for UiToasts {
+    fn default() -> Self {
+        Self {
+            level: "info".into(),
+            duration_secs: 3,
+        }
+    }
+}
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UiIndicators {
     pub scrollbar: bool,
     pub breadcrumbs: bool,
     pub line_numbers: bool,
+}
+impl Default for UiIndicators {
+    fn default() -> Self {
+        Self {
+            scrollbar: true,
+            breadcrumbs: true,
+            line_numbers: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -373,7 +380,7 @@ impl SettingsDialog {
 
     /// Drop the working copy without calling `save`.
     pub const fn discard(&mut self) {
-        // Nothing to free; the dialog is heap-owned by `state.settings`.
+        // Nothing to free here; the host-owned overlay holds the working copy.
     }
 
     /// True when the currently selected row is the `(+) Add provider…`

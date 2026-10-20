@@ -18,13 +18,30 @@ enum Value {
 }
 struct Pending {
     cancel: CancellationToken,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<()>>,
     result: oneshot::Receiver<huginn_core::Result<CommandResult>>,
 }
 impl Drop for Pending {
     fn drop(&mut self) {
         self.cancel.cancel();
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+}
+
+pub struct PreparedSubmission {
+    workflow: Workflow,
+    input: FormInput,
+    token: CancellationToken,
+    sender: oneshot::Sender<huginn_core::Result<CommandResult>>,
+}
+impl PreparedSubmission {
+    pub fn start(self) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let result = self.workflow.execute(self.input, self.token).await;
+            let _ = self.sender.send(result);
+        })
     }
 }
 impl HostWorkflow {
@@ -152,16 +169,16 @@ impl HostWorkflow {
             }
         }
     }
-    pub fn submit(&mut self) -> bool {
+    pub(crate) fn prepare_submission(&mut self) -> Option<PreparedSubmission> {
         if self.is_pending() || !self.workflow.is_active() {
-            return false;
+            return None;
         }
         if self
             .values
             .iter()
             .any(|v| matches!(v, Value::Secret(s) if s.is_empty()))
         {
-            return false;
+            return None;
         }
         let mut input = FormInput::default();
         for (field, value) in self
@@ -180,10 +197,10 @@ impl HostWorkflow {
                 Value::Secret(mut bytes) => {
                     // Valid UTF-8 was inserted above. Move the allocation; never clone it.
                     let Ok(value) = String::from_utf8(std::mem::take(&mut *bytes)) else {
-                        return false;
+                        return None;
                     };
                     let Ok(secret) = Secret::new(value) else {
-                        return false;
+                        return None;
                     };
                     input.secrets.insert(field.id.clone(), secret);
                 }
@@ -193,15 +210,21 @@ impl HostWorkflow {
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         let (sender, result) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            let _ = sender.send(workflow.execute(input, token).await);
-        });
         self.pending = Some(Pending {
             cancel,
-            task,
+            task: None,
             result,
         });
-        true
+        Some(PreparedSubmission {
+            workflow,
+            input,
+            token,
+            sender,
+        })
+    }
+    pub(crate) fn attach_task(&mut self, task: tokio::task::JoinHandle<()>) {
+        // Called once for the prepared submission on this exact overlay.
+        self.pending.as_mut().expect("prepared submission").task = Some(task);
     }
     pub fn completed(&mut self) -> Option<huginn_core::Result<CommandResult>> {
         let pending = self.pending.as_mut()?;

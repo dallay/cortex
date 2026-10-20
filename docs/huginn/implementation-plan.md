@@ -1,6 +1,12 @@
 # MVP implementation plan
 
-Status: **Implemented; workspace verification and manual acceptance are tracked in validation.md.**  
+Status: **MVP implementation plan; overlay SDD work remains in progress.** Validation is tracked in validation.md.
+
+Checkpoint de implementación 2026-10-19: fase 4 de `huginn-overlay-system`
+completa en worktree (selección local confirmada observable y lifecycle); fase 5
+iniciada con barra persistente. Faltan panel largo, matriz resize/viewport de 5.2
+y fase 6. Evidencia focal propia en `apply-progress.md`; sin CI completa,
+verify/QA ni declaración PR-ready. Se conserva la entrega única autorizada.
 Audience: personal daily use.  
 Platforms: macOS and Linux.  
 Product identifier: **Huginn** (official name as of 2026-10-10, see [ADR-0011](adr/0011-huginn-product-naming.md)).

@@ -212,8 +212,165 @@ struct PublicationFault {
     inner: Arc<dyn ProviderManagement>,
     mode: AtomicUsize,
 }
+
+#[tokio::test]
+async fn every_selection_route_clears_effect_when_publication_errors_or_is_dropped() {
+    for explicit in [false, true] {
+        for mode in [1, 2, 3, 4, 5, 6] {
+            let store = Arc::new(Metadata::default());
+            let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+            let faults = Arc::new(PublicationFault {
+                inner: h.providers.0.clone(),
+                mode: AtomicUsize::new(0),
+            });
+            let manager = ConnectionManager::open(
+                store,
+                h.access.clone(),
+                faults.clone(),
+                h.supervisor
+                    .resolve::<ProviderCatalogService>(&catalog_id())
+                    .unwrap()
+                    .0
+                    .clone(),
+            )
+            .await
+            .unwrap();
+            let record = manager.create(settings(), secret("a")).await.unwrap();
+            faults.mode.store(mode, Ordering::SeqCst);
+            let mut operation = Box::pin(async {
+                if explicit {
+                    manager
+                        .resolve(ConnectionInputs {
+                            cli: Some(ConnectionChoice::Explicit {
+                                settings: settings(),
+                                secret: secret("b"),
+                            }),
+                            toml: None,
+                            environment: None,
+                        })
+                        .await
+                        .map(|_| ())
+                } else {
+                    manager.select(record.id).await.map(|_| ())
+                }
+            });
+            if !matches!(mode, 2 | 6) {
+                assert!(operation.await.is_err());
+            } else {
+                assert!(futures::poll!(operation.as_mut()).is_pending());
+                // No optimistic selection is visible even while the action is suspended.
+                assert!(
+                    faults.subscribe().borrow().selection.is_none(),
+                    "candidate leaked as confirmed selection"
+                );
+                drop(operation);
+            }
+            assert!(
+                h.providers.0.diagnostic().unwrap().selection.is_none(),
+                "failed route left admission open"
+            );
+            assert!(faults.subscribe().borrow().selection.is_none());
+            h.supervisor.shutdown().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn restore_and_recovery_publication_faults_are_fail_closed() {
+    for recovering in [false, true] {
+        for mode in [1, 2, 3, 4, 5, 6] {
+            let store = Arc::new(Metadata::default());
+            let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+            let record = h.manager.create(settings(), secret("a")).await.unwrap();
+            h.manager.select(record.id).await.unwrap();
+            let faults = Arc::new(PublicationFault {
+                inner: h.providers.0.clone(),
+                mode: AtomicUsize::new(if recovering { 0 } else { mode }),
+            });
+            let catalog = h
+                .supervisor
+                .resolve::<ProviderCatalogService>(&catalog_id())
+                .unwrap()
+                .0
+                .clone();
+            if recovering {
+                let manager = ConnectionManager::open(
+                    store.clone(),
+                    h.access.clone(),
+                    faults.clone(),
+                    catalog,
+                )
+                .await
+                .unwrap();
+                faults.mode.store(1, Ordering::SeqCst);
+                assert!(manager
+                    .select_model(record.id, "beta".into())
+                    .await
+                    .is_err());
+                faults.mode.store(mode, Ordering::SeqCst);
+                let mut recovering = Box::pin(manager.recover());
+                if matches!(mode, 2 | 6) {
+                    assert!(futures::poll!(recovering.as_mut()).is_pending());
+                    assert!(faults.subscribe().borrow().selection.is_none());
+                    drop(recovering);
+                } else {
+                    assert!(recovering.await.is_err());
+                }
+                assert!(faults.subscribe().borrow().selection.is_none());
+                manager.recover().await.unwrap();
+                assert_eq!(
+                    faults
+                        .subscribe()
+                        .borrow()
+                        .selection
+                        .as_ref()
+                        .unwrap()
+                        .model,
+                    "beta"
+                );
+            } else {
+                let mut opening = Box::pin(ConnectionManager::open(
+                    store.clone(),
+                    h.access.clone(),
+                    faults.clone(),
+                    catalog,
+                ));
+                if matches!(mode, 2 | 6) {
+                    assert!(futures::poll!(opening.as_mut()).is_pending());
+                    assert!(faults.subscribe().borrow().selection.is_none());
+                    drop(opening);
+                } else {
+                    assert!(opening.await.is_err());
+                }
+                assert!(faults.subscribe().borrow().selection.is_none());
+                assert!(h.providers.0.diagnostic().unwrap().selection.is_none());
+            }
+            h.supervisor.shutdown().await;
+        }
+    }
+}
 #[async_trait]
 impl ProviderManagement for PublicationFault {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<ConnectionSnapshot> {
+        self.inner.subscribe()
+    }
+    fn publish_selection(
+        &self,
+        selection: &ModelSelection,
+        mode: SelectionMode,
+    ) -> huginn_core::Result<()> {
+        match self.mode.swap(0, Ordering::SeqCst) {
+            3 => {
+                self.inner.publish_selection(selection, mode)?;
+                Err(ProviderError::Unavailable.into())
+            }
+            4 => {
+                self.inner.clear_selection()?;
+                self.inner.publish_selection(selection, mode)
+            }
+            _ => self.inner.publish_selection(selection, mode),
+        }
+    }
     fn diagnostic(&self) -> huginn_core::Result<ProvidersDiagnostic> {
         self.inner.diagnostic()
     }
@@ -229,15 +386,40 @@ impl ProviderManagement for PublicationFault {
         cancel: CancellationToken,
     ) -> huginn_core::Result<ProviderActionOutput> {
         let selected_identity = match &action {
-            ProviderAction::Select(selection) => Some(selection.connection.clone()),
-            _ => None,
+            ProviderAction::Select(selection) | ProviderAction::StageSelection(selection) => {
+                Some(selection.connection.clone())
+            }
+            ProviderAction::Diagnose
+            | ProviderAction::Connect { .. }
+            | ProviderAction::Revoke(_)
+            | ProviderAction::Replace { .. } => None,
         };
         let selecting = selected_identity.is_some();
+        if selecting {
+            match self.mode.load(Ordering::SeqCst) {
+                5 => {
+                    self.mode.store(0, Ordering::SeqCst);
+                    return Err(ProviderError::Unavailable.into());
+                }
+                6 => {
+                    self.mode.store(0, Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                }
+                _ => {}
+            }
+        }
         let output = self.inner.execute(action, cancel).await?;
         if selecting {
-            match self.mode.swap(0, Ordering::SeqCst) {
-                1 => return Err(ProviderError::Unavailable.into()),
-                2 => std::future::pending::<()>().await,
+            let mode = self.mode.load(Ordering::SeqCst);
+            match mode {
+                1 => {
+                    self.mode.store(0, Ordering::SeqCst);
+                    return Err(ProviderError::Unavailable.into());
+                }
+                2 => {
+                    self.mode.store(0, Ordering::SeqCst);
+                    std::future::pending::<()>().await
+                }
                 _ => {}
             }
         }
@@ -360,6 +542,11 @@ async fn unload_cancels_admitted_select_before_publication() {
         .unwrap();
     secrets.read_release.notify_one();
     assert_eq!(selecting.await, Err(ConnectionError::Revoked));
+    assert_eq!(
+        h.providers.0.subscribe().borrow().phase,
+        ConnectionPhase::Unavailable
+    );
+    assert!(h.providers.0.subscribe().borrow().selection.is_none());
     let diagnostic = h.providers.0.diagnostic().unwrap();
     assert!(diagnostic.connections.is_empty());
     assert!(diagnostic.selection.is_none());
@@ -443,6 +630,8 @@ async fn unloading_old_lease_preserves_replacement_manager_selection() {
     h.supervisor.start().await.unwrap();
     let replacement = reopen(&h, store).await.unwrap();
     let selected = replacement.select(record.id).await.unwrap();
+    let watch = h.providers.0.subscribe();
+    let confirmed = watch.borrow().clone();
     h.supervisor
         .remove("builtin.providers.connections")
         .await
@@ -450,6 +639,11 @@ async fn unloading_old_lease_preserves_replacement_manager_selection() {
     assert_eq!(
         h.providers.0.diagnostic().unwrap().selection,
         Some(selected.clone())
+    );
+    assert_eq!(
+        *watch.borrow(),
+        confirmed,
+        "retired manager cannot clear current watch generation"
     );
     h.access
         .resolve(&selected.connection, CancellationToken::new())
@@ -1026,7 +1220,7 @@ async fn retired_model_selection_cannot_publish_or_recover_after_second_read() {
 
 #[tokio::test]
 async fn failed_or_dropped_model_publication_closes_admission_and_retries() {
-    for mode in [1, 2] {
+    for mode in [1, 2, 3, 4, 5, 6] {
         let store = Arc::new(Metadata::default());
         let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
         let faults = Arc::new(PublicationFault {
@@ -1058,7 +1252,7 @@ async fn failed_or_dropped_model_publication_closes_admission_and_retries() {
             .unwrap();
         faults.mode.store(mode, Ordering::SeqCst);
         let mut selecting = Box::pin(h.manager.select_model(record.id, "beta".into()));
-        if mode == 1 {
+        if !matches!(mode, 2 | 6) {
             assert_eq!(selecting.await, Err(ConnectionError::InvalidSelection));
         } else {
             assert!(futures::poll!(selecting.as_mut()).is_pending());

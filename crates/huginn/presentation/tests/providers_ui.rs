@@ -27,6 +27,18 @@ struct Manager {
 }
 #[async_trait]
 impl ConnectionManagement for Manager {
+    fn subscribe(
+        &self,
+    ) -> tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot> {
+        let (_, receiver) =
+            tokio::sync::watch::channel(huginn_core::providers::ConnectionSnapshot {
+                source: uuid::Uuid::new_v4(),
+                revision: 0,
+                phase: huginn_core::providers::ConnectionPhase::Unconfigured,
+                selection: None,
+            });
+        receiver
+    }
     async fn recover(&self) -> ConnectionResult<()> {
         if self.recovery_fail.load(Ordering::SeqCst) {
             return Err(ConnectionError::Metadata);
@@ -204,10 +216,15 @@ async fn oauth_only_adapter_is_reported_as_unsupported_not_absent() {
         settle(&ui).await;
         let state = ui.lock();
         assert!(
-            state.workflow.is_none(),
+            state.workflow().is_none(),
             "OAuth must not expose an actionable form"
         );
-        let output = state.committed.join("\n");
+        let output = state
+            .notifications
+            .iter()
+            .map(|event| event.summary.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(output.contains("Test provider"));
         assert!(output.contains("OAuth: unsupported"));
         assert!(!output.contains("No provider adapters available"));
@@ -241,8 +258,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
     settle(&ui).await;
     assert!(ui
         .lock()
-        .workflow
-        .as_ref()
+        .workflow()
         .unwrap()
         .snapshot()
         .1
@@ -252,7 +268,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
     settle(&ui).await;
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         assert!(form.snapshot().1.contains("OAuth: unsupported"));
         assert!(form.snapshot().2[0].contains("API key"));
         form.choice(true);
@@ -268,7 +284,7 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
     submit(&ui).await;
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         assert_eq!(
             form.snapshot().2.len(),
             3,
@@ -292,7 +308,7 @@ async fn settle(ui: &Ui) {
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             ui.refresh_contributions();
-            if !ui.lock().workflow.as_ref().is_some_and(|w| w.is_pending()) {
+            if !ui.lock().workflow().is_some_and(|w| w.is_pending()) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -305,13 +321,20 @@ async fn submit(ui: &Ui) {
     assert!(ui.submit_workflow());
     settle(ui).await;
 }
+fn assert_surface(ui: &Ui, kind: huginn_presentation::overlay::OverlayKind) {
+    assert_eq!(ui.lock().overlays.snapshot().unwrap().kind, kind);
+}
 async fn login(ui: &Ui) {
+    use huginn_presentation::overlay::OverlayKind as Surface;
     assert!(ui.dispatch_command("/login"));
+    assert_surface(ui, Surface::Login); // loading is a real autoexecuted workflow
     settle(ui).await;
+    assert_surface(ui, Surface::Login);
     submit(ui).await; // choose provider/authentication
+    assert_surface(ui, Surface::Login);
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.insert("https://example.invalid/v1");
         form.navigate(true); // alpha
         form.navigate(true); // local HTTP stays disabled
@@ -326,7 +349,80 @@ async fn login(ui: &Ui) {
 }
 
 #[tokio::test]
+async fn repeated_ui_commands_after_dedup_expiry_preserve_stream_and_conversation() {
+    use huginn_core::{Event, EventSink};
+    use huginn_presentation::{event::Clock, Interaction};
+    use std::{sync::atomic::AtomicU64, time::Duration};
+    #[derive(Default)]
+    struct FakeClock(AtomicU64);
+    impl Clock for FakeClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::SeqCst))
+        }
+    }
+    let (mut supervisor, original, manager) = setup().await;
+    supervisor
+        .register(Box::new(
+            huginn_presentation::contributions::ConversationPlugin,
+        ))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let clock = Arc::new(FakeClock::default());
+    let ui = Ui::new_with_clock(
+        &Session::new(".".into()),
+        original.contributions.clone(),
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
+        clock.clone(),
+    )
+    .0;
+    login(&ui).await;
+    let cancel = CancellationToken::new();
+    let operation = ui.begin(cancel.clone());
+    ui.conversation("legitimate conversation".into());
+    ui.emit_for(
+        operation,
+        Event::Text {
+            text: "stream remains intact".into(),
+        },
+    );
+    let baseline = ui.lock().conversation.clone();
+    for round in 0..2 {
+        if round == 1 {
+            clock.0.fetch_add(2_001, Ordering::SeqCst);
+        }
+        for command in [
+            "/help",
+            "/providers",
+            "/login",
+            "/model",
+            "/settings",
+            "/logout",
+        ] {
+            assert!(ui.dispatch_command(command), "{command}");
+            settle(&ui).await;
+            let (ticket, focus) = {
+                let state = ui.lock();
+                (state.overlays.ticket(), state.overlays.focus())
+            };
+            ui.close_overlay(ticket, focus);
+            let state = ui.lock();
+            assert!(state.overlays.snapshot().is_none(), "{command}");
+            assert_eq!(state.conversation, baseline, "{command}, round {round}");
+            assert_eq!(state.tail, "stream remains intact");
+            assert!(state.editor.text.is_empty());
+            assert!(!cancel.is_cancelled());
+            drop(state);
+        }
+    }
+    assert_eq!(manager.records.lock().unwrap().len(), 1);
+    ui.finish_operation(operation);
+}
+
+#[tokio::test]
 async fn commands_create_select_update_revoke_without_restart_and_never_publish_secret() {
+    use huginn_presentation::overlay::OverlayKind as Surface;
     let (_supervisor, ui, manager) = setup().await;
     for name in ["/login", "/providers", "/model", "/logout"] {
         assert!(ui.contributions.command(name).is_some());
@@ -339,26 +435,36 @@ async fn commands_create_select_update_revoke_without_restart_and_never_publish_
     );
     assert!(manager.selected.lock().unwrap().is_none());
     ui.dispatch_command("/model");
+    assert_surface(&ui, Surface::ModelPicker);
     settle(&ui).await;
+    assert_surface(&ui, Surface::ModelPicker);
     submit(&ui).await;
-    ui.lock().workflow.as_mut().unwrap().choice(true);
+    assert_surface(&ui, Surface::ModelPicker);
+    ui.lock().workflow_mut().unwrap().choice(true);
     submit(&ui).await;
     assert_eq!(*manager.selected.lock().unwrap(), Some((id, "beta".into())));
-    assert!(ui.lock().committed.join("\n").contains("NEXT turn"));
+    assert!(ui
+        .lock()
+        .notifications
+        .iter()
+        .any(|event| event.summary.contains("NEXT turn")));
     let previous_revision = manager.records.lock().unwrap()[&id].revision;
     ui.dispatch_command("/providers");
+    assert_surface(&ui, Surface::Provider);
     settle(&ui).await;
+    assert_surface(&ui, Surface::Provider);
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.navigate(true);
         form.choice(true);
         drop(state);
     }
     submit(&ui).await;
+    assert_surface(&ui, Surface::Login); // exact update form, not a replacement lookup
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         for _ in 0..4 {
             form.navigate(true);
         }
@@ -372,10 +478,12 @@ async fn commands_create_select_update_revoke_without_restart_and_never_publish_
     );
     assert!(manager.selected.lock().unwrap().is_none());
     ui.dispatch_command("/logout");
+    assert_surface(&ui, Surface::Confirm);
     settle(&ui).await;
+    assert_surface(&ui, Surface::Confirm);
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.navigate(true);
         form.choice(true);
         drop(state);
@@ -383,11 +491,11 @@ async fn commands_create_select_update_revoke_without_restart_and_never_publish_
     submit(&ui).await;
     assert!(manager.records.lock().unwrap().is_empty());
     let state = ui.lock();
-    assert!(state.workflow.is_none());
+    assert!(state.workflow().is_none());
     assert!(state.editor.text.is_empty());
     assert!(state.events.is_empty());
     assert!(state.tail.is_empty());
-    assert!(!state.committed.join("\n").contains(SENTINEL));
+    assert!(!state.conversation.join("\n").contains(SENTINEL));
     drop(state);
     assert!(!format!("{:?}", ui.contributions.widgets()).contains(SENTINEL));
 }
@@ -408,7 +516,7 @@ async fn update_preserves_public_model_http_and_ephemeral_storage_defaults() {
     settle(&ui).await;
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         form.navigate(true);
         form.choice(true);
         drop(state);
@@ -416,7 +524,7 @@ async fn update_preserves_public_model_http_and_ephemeral_storage_defaults() {
     submit(&ui).await;
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         let fields = form.snapshot().2;
         assert_eq!(fields[1], "Model: beta");
         assert!(fields[2].contains("Yes, explicitly"));
@@ -436,6 +544,47 @@ async fn update_preserves_public_model_http_and_ephemeral_storage_defaults() {
 }
 
 #[tokio::test]
+async fn providers_disconnect_keeps_real_confirm_callback_and_local_cancel_is_recoverable() {
+    use huginn_presentation::overlay::OverlayKind as Surface;
+    let (_supervisor, ui, manager) = setup().await;
+    login(&ui).await;
+    for cancel in [true, false] {
+        ui.dispatch_command("/providers");
+        settle(&ui).await;
+        {
+            let mut state = ui.lock();
+            let form = state.workflow_mut().unwrap();
+            form.navigate(true);
+            form.choice(true);
+            form.choice(true); // Disconnect is a continuation, not an Approval
+            drop(state);
+        }
+        submit(&ui).await;
+        assert_surface(&ui, Surface::Confirm);
+        assert!(ui.lock().modal().is_none());
+        ui.lock().workflow_mut().unwrap().choice(true);
+        if cancel {
+            ui.cancel_workflow();
+            assert!(!ui.submit_workflow());
+            assert_eq!(manager.records.lock().unwrap().len(), 1);
+        } else {
+            submit(&ui).await;
+            assert!(manager.records.lock().unwrap().is_empty());
+            assert!(ui
+                .lock()
+                .notifications
+                .iter()
+                .last()
+                .unwrap()
+                .summary
+                .contains("revoked locally"));
+        }
+    }
+    assert!(ui.lock().editor.text.is_empty());
+    assert!(ui.lock().conversation.is_empty());
+}
+
+#[tokio::test]
 async fn providers_recovers_before_listing_and_reports_failed_recovery() {
     let (_supervisor, ui, manager) = setup().await;
     login(&ui).await;
@@ -443,17 +592,17 @@ async fn providers_recovers_before_listing_and_reports_failed_recovery() {
     manager.recovery_fail.store(true, Ordering::SeqCst);
     ui.dispatch_command("/providers");
     settle(&ui).await;
-    assert!(ui.lock().workflow.is_none());
+    assert!(ui.lock().workflow().is_none());
     assert!(manager.uncertain.load(Ordering::SeqCst));
     assert!(ui
         .lock()
-        .committed
-        .join("\n")
-        .contains("Connection action failed"));
+        .notifications
+        .iter()
+        .any(|event| event.summary.contains("Connection action failed")));
     manager.recovery_fail.store(false, Ordering::SeqCst);
     ui.dispatch_command("/providers");
     settle(&ui).await;
-    assert!(ui.lock().workflow.is_some());
+    assert!(ui.lock().workflow().is_some());
     assert!(!manager.uncertain.load(Ordering::SeqCst));
     submit(&ui).await; // choose connection/action
     submit(&ui).await; // select model
@@ -467,14 +616,14 @@ async fn locked_status_is_actionable_and_cancelled_login_does_not_save() {
     manager.fail.store(true, Ordering::SeqCst);
     ui.dispatch_command("/providers");
     settle(&ui).await;
-    assert!(format!("{:?}", ui.lock().workflow.as_ref().unwrap().snapshot()).contains("locked"));
+    assert!(format!("{:?}", ui.lock().workflow().unwrap().snapshot()).contains("locked"));
     ui.cancel_workflow();
     ui.dispatch_command("/login");
     settle(&ui).await;
     submit(&ui).await;
     {
         let mut state = ui.lock();
-        let form = state.workflow.as_mut().unwrap();
+        let form = state.workflow_mut().unwrap();
         for _ in 0..4 {
             form.navigate(true);
         }

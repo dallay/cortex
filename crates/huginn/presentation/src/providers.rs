@@ -12,8 +12,8 @@ use huginn_core::{
     Result,
 };
 use huginn_plugin_api::v1::{
-    contributions_id, CommandMetadata, CommandResult, Field, FieldKind, FormInput, UiService, View,
-    Workflow,
+    contributions_id, CommandMetadata, CommandResult, Field, FieldKind, FormInput, OverlayKind,
+    UiService, View, Workflow,
 };
 use std::sync::Arc;
 
@@ -72,10 +72,19 @@ impl Plugin for ProvidersUiPlugin {
                         Box::pin(async move {
                             if name == "/login" { management.login() } else { management.connections(name).await }
                         })
-                    }))?))
+                    }))?.with_overlay_kind(command_surface(name))?))
                 }))?;
         }
         Ok(())
+    }
+}
+fn command_surface(command: &str) -> OverlayKind {
+    match command {
+        "/login" => OverlayKind::Login,
+        "/providers" => OverlayKind::Provider,
+        "/model" => OverlayKind::ModelPicker,
+        "/logout" => OverlayKind::Confirm,
+        _ => unreachable!("registered provider command"),
     }
 }
 fn notice(text: impl Into<String>) -> CommandResult {
@@ -174,25 +183,28 @@ impl Management {
             })
             .collect();
         let management = self.clone();
-        Ok(CommandResult::Workflow(Workflow::new(
-            "Connect provider",
-            format!("Choose a provider/authentication method.\n{diagnostics}"),
-            vec![choice("provider", "Provider", labels)],
-            Arc::new(move |input, _| {
-                let management = management.clone();
-                let selected = options.get(index(&input, "provider")).cloned();
-                Box::pin(async move {
-                    let Some((descriptor, authentication)) = selected else {
-                        return Ok(failure(ConnectionError::InvalidConfiguration));
-                    };
-                    management.connection_form(
-                        descriptor,
-                        authentication == AuthenticationMethod::ApiKey,
-                        None,
-                    )
-                })
-            }),
-        )?))
+        Ok(CommandResult::Workflow(
+            Workflow::new(
+                "Connect provider",
+                format!("Choose a provider/authentication method.\n{diagnostics}"),
+                vec![choice("provider", "Provider", labels)],
+                Arc::new(move |input, _| {
+                    let management = management.clone();
+                    let selected = options.get(index(&input, "provider")).cloned();
+                    Box::pin(async move {
+                        let Some((descriptor, authentication)) = selected else {
+                            return Ok(failure(ConnectionError::InvalidConfiguration));
+                        };
+                        management.connection_form(
+                            descriptor,
+                            authentication == AuthenticationMethod::ApiKey,
+                            None,
+                        )
+                    })
+                }),
+            )?
+            .with_overlay_kind(OverlayKind::Login)?,
+        ))
     }
     fn connection_form(
         &self,
@@ -287,7 +299,7 @@ impl Management {
                         Err(error) => Ok(failure(error)),
                     }
                 })
-            }))?))
+            }))?.with_overlay_kind(OverlayKind::Login)?))
     }
     async fn connections(&self, command: &'static str) -> Result<CommandResult> {
         if let Err(error) = self.connections.recover().await {
@@ -376,7 +388,7 @@ impl Management {
                     }
                     management.model_form(record)
                 })
-            }))?))
+            }))?.with_overlay_kind(command_surface(command))?))
     }
     fn revoke_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
         let management = self.clone();
@@ -388,7 +400,7 @@ impl Management {
                     if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
                     Ok(match management.connections.revoke(id).await { Ok(()) => notice("Connection revoked locally. Remote completion remains unknown."), Err(error) => failure(error) })
                 })
-            }))?))
+            }))?.with_overlay_kind(OverlayKind::Confirm)?))
     }
     fn model_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
         let Some((_, descriptor)) = self
@@ -425,6 +437,6 @@ impl Management {
                     Err(error) => failure(error),
                 })
             })
-        }))?))
+        }))?.with_overlay_kind(OverlayKind::ModelPicker)?))
     }
 }

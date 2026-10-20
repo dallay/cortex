@@ -28,6 +28,43 @@ pub struct Config {
     pub provider_explicit: bool,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_defaults_fill_absent_sections_and_partial_nested_tables() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        for (text, expected) in [
+            ("", UiConfig::defaults()),
+            ("[ui]\n", UiConfig::defaults()),
+            ("[ui.theme]\nname = 'dracula'\n", {
+                let mut expected = UiConfig::defaults();
+                expected.theme.name = "dracula".into();
+                expected
+            }),
+            ("[ui.indicators]\nscrollbar = false\n", {
+                let mut expected = UiConfig::defaults();
+                expected.indicators.scrollbar = false;
+                expected
+            }),
+            ("[ui.toasts]\nlevel = 'warn'\n", {
+                let mut expected = UiConfig::defaults();
+                expected.toasts.level = "warn".into();
+                expected
+            }),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(
+                Config::load(Some(&path)).unwrap().ui,
+                expected,
+                "input: {text:?}"
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelReadiness {
     Ready,

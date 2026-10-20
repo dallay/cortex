@@ -19,6 +19,7 @@ path = "tests/input_parser.rs"
 required-features = ["test-driver"]
 
 [dependencies]
+aes-gcm.workspace = true
 cap-std = "4.0.3"
 # Used by the explicit PTY fixture host only.
 huginn-application = { path = "../application", optional = true }

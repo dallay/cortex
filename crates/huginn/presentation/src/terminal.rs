@@ -36,7 +36,22 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
+const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. File references are text, not attachments.";
+
 type Screen = Terminal<HostBackend>;
+
+const fn viewport_is_viable(size: Size) -> bool {
+    size.width >= 20 && size.height >= 8
+}
+
+fn arm_approval_after_draw(ui: &Ui, identity: Option<crate::overlay::OverlaySnapshot>) {
+    let mut state = ui.lock();
+    if state.overlays.snapshot() == identity {
+        if let Some(modal) = state.modal_mut() {
+            modal.armed = true;
+        }
+    }
+}
 
 /// Ratatui performs its stock initial cursor query. Subsequent inline resizes
 /// and clear() must not start a second input parser behind the host's back.
@@ -185,6 +200,10 @@ impl Drop for TerminalGuard {
     }
 }
 struct Driver {
+    connection: Option<(
+        tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot>,
+        uuid::Uuid,
+    )>,
     screen: Screen,
     #[cfg(unix)]
     input_generation: u64,
@@ -218,6 +237,8 @@ impl Drop for Driver {
 }
 
 pub struct Ratatui {
+    pub connection:
+        Option<tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot>>,
     pub contributions: Arc<Contributions>,
     pub lifecycle: CancellationToken,
     pub drivers: Arc<Mutex<Vec<(CancellationToken, CancellationToken)>>>,
@@ -262,7 +283,7 @@ impl Presentation for Ratatui {
                 cursor: None,
             },
             TerminalOptions {
-                viewport: Viewport::Inline(12.min(height - 1)),
+                viewport: Viewport::Inline(13.min(height - 1)),
             },
         )?;
         let stop = CancellationToken::new();
@@ -281,12 +302,17 @@ impl Presentation for Ratatui {
             save_ui_config,
         );
         ui.start_file_index(session.workspace.clone());
+        let connection = self.connection.clone().map(|mut receiver| {
+            let snapshot = receiver.borrow_and_update().clone();
+            let attachment = ui.lock().attach_connection(snapshot);
+            (receiver, attachment)
+        });
         if !self
             .readiness
             .as_ref()
             .map_or(self.model_configured, |ready| ready())
         {
-            ui.notice(if self.contributions.command("/login").is_some() {
+            ui.notification(if self.contributions.command("/login").is_some() {
                 "No model configured. Use /login to connect a provider, then /model to select a model. No restart needed.".into()
             } else {
                 "No model configured. Configure a provider and restart Huginn to enable inference.".into()
@@ -298,6 +324,7 @@ impl Presentation for Ratatui {
         drop(io);
         let cleanup_guard = guard.clone();
         let mut driver = Driver {
+            connection,
             screen,
             #[cfg(unix)]
             input_generation: crate::input::begin(),
@@ -369,91 +396,91 @@ fn markdown(lines: Vec<String>) -> Vec<Line<'static>> {
 /// Settings dialog projection: (tabs, active, items, selected, error).
 /// Tabs are owned strings because `SettingsSnapshot::tabs` holds `&'a str`;
 /// owning keeps `View` 'static.
-type SettingsView = Option<(
+type SettingsView = (
     Vec<String>,
     usize,
     Vec<(String, bool, u8)>,
     usize,
     Option<String>,
-)>;
+);
+
+enum OverlayView {
+    Approval(String, u64, String, String, usize),
+    Dialog(String, String, Vec<String>, usize, usize),
+    Workflow(String, String, Vec<String>, usize, bool),
+    Settings(SettingsView),
+    Help,
+}
 
 struct View {
+    bar: crate::status_bar::StatusBar,
     editor: Editor,
     completion: Suggestions,
     tail: String,
-    status: String,
-    status_error: bool,
     busy: bool,
-    modal: Option<(String, u64, String, String, usize)>,
-    plugin_dialog: Option<(String, String, Vec<String>, usize, usize)>,
-    workflow: Option<(String, String, Vec<String>, usize, bool)>,
-    settings: SettingsView,
-    widgets: String,
+    overlay: Option<OverlayView>,
+    overlay_identity: Option<crate::overlay::OverlaySnapshot>,
 }
 impl View {
     fn snapshot(state: &crate::state::UiState) -> Self {
         Self {
+            bar: crate::status_bar::StatusBar::from_state(state),
             editor: state.editor.clone(),
             completion: state.completion.clone(),
             tail: state.tail.clone(),
-            status: state.status.clone(),
-            status_error: state.status_error,
             busy: state.busy,
-            workflow: state
-                .workflow
-                .as_ref()
-                .map(crate::workflow::HostWorkflow::snapshot),
-            plugin_dialog: state.plugin_dialog.as_ref().map(|dialog| {
-                (
-                    dialog.handle.title().into(),
-                    dialog.handle.body().into(),
-                    dialog.handle.choices().to_vec(),
-                    dialog.selected,
-                    dialog.body_scroll,
-                )
-            }),
-            settings: state.settings.as_ref().map(|dialog| {
-                let snapshot = dialog.snapshot();
-                let items = snapshot
-                    .items
-                    .into_iter()
-                    .map(|item| {
-                        let kind_byte = match item.kind {
-                            crate::settings::ItemKind::Pick => 0,
-                            crate::settings::ItemKind::Bool => 1,
-                            crate::settings::ItemKind::Cycle => 2,
-                            crate::settings::ItemKind::Action => 3,
-                        };
-                        (item.label.into_owned(), item.checked, kind_byte)
-                    })
-                    .collect();
-                (
-                    snapshot
-                        .tabs
-                        .iter()
-                        .map(|name| (*name).to_string())
-                        .collect::<Vec<_>>(),
-                    snapshot.active,
-                    items,
-                    snapshot.selected,
-                    snapshot.error,
-                )
-            }),
-            widgets: state
-                .widgets
-                .iter()
-                .map(|(_, view)| safe(&view.plain_text()).replace('\n', " "))
-                .collect::<Vec<_>>()
-                .join(" | "),
-            modal: state.modal.as_ref().map(|m| {
-                (
-                    approval_preview(&m.request.action, m.number, &m.request.preview),
-                    m.number,
-                    m.code.clone(),
-                    m.typed.clone(),
-                    m.scroll,
-                )
-            }),
+            overlay_identity: state.overlays.snapshot(),
+            overlay: state
+                .overlays
+                .active()
+                .map(|active| match active.payload() {
+                    crate::overlay::Payload::Workflow(form) => {
+                        let (a, b, c, d, e) = form.snapshot();
+                        OverlayView::Workflow(a, b, c, d, e)
+                    }
+                    crate::overlay::Payload::PluginDialog(dialog) => OverlayView::Dialog(
+                        dialog.handle.title().into(),
+                        dialog.handle.body().into(),
+                        dialog.handle.choices().to_vec(),
+                        dialog.selected,
+                        dialog.body_scroll,
+                    ),
+                    crate::overlay::Payload::Settings(dialog) => {
+                        let snapshot = dialog.snapshot();
+                        let items = snapshot
+                            .items
+                            .into_iter()
+                            .map(|item| {
+                                let kind_byte = match item.kind {
+                                    crate::settings::ItemKind::Pick => 0,
+                                    crate::settings::ItemKind::Bool => 1,
+                                    crate::settings::ItemKind::Cycle => 2,
+                                    crate::settings::ItemKind::Action => 3,
+                                };
+                                (item.label.into_owned(), item.checked, kind_byte)
+                            })
+                            .collect();
+                        OverlayView::Settings((
+                            snapshot
+                                .tabs
+                                .iter()
+                                .map(|name| (*name).to_string())
+                                .collect::<Vec<_>>(),
+                            snapshot.active,
+                            items,
+                            snapshot.selected,
+                            snapshot.error,
+                        ))
+                    }
+                    crate::overlay::Payload::Approval(m) => OverlayView::Approval(
+                        approval_preview(&m.request.action, m.number, &m.request.preview),
+                        m.number,
+                        m.code.clone(),
+                        m.typed.clone(),
+                        m.scroll,
+                    ),
+                    crate::overlay::Payload::Help => OverlayView::Help,
+                }),
         }
     }
 }
@@ -493,34 +520,50 @@ impl Driver {
         if !self.guard.active.load(Ordering::SeqCst) {
             return Err(AgentError::Cancelled);
         }
+        self.screen.autoresize()?;
+        let size = self.screen.size()?;
+        if !viewport_is_viable(size) {
+            if let Some(modal) = self.ui.lock().modal_mut() {
+                modal.armed = false;
+            }
+            return Ok(());
+        }
         // Render cost grows with the accumulated tail: every frame rewraps
         // the whole in-flight text even though only the last screenful is
         // shown. A wrapped-line cache invalidated on width change is tracked
         // in DALLAY-665 with the load/latency measurements; the coalesced
         // 33 ms tick only bounds how often this runs, not the work per run.
-        let (committed, view) = {
+        let (conversation, view) = {
             let mut state = self.ui.lock();
-            (std::mem::take(&mut state.committed), View::snapshot(&state))
+            (
+                std::mem::take(&mut state.conversation),
+                View::snapshot(&state),
+            )
         };
-        self.commit_messages(committed)?;
+        self.commit_messages(conversation)?;
         let last_scroll = self.draw_frame(&view)?;
         self.update_modal_scroll(&view, last_scroll);
+        // Only a completed paint in a viable viewport may arm an approval.
+        if matches!(view.overlay, Some(OverlayView::Approval(_, _, _, _, _))) {
+            arm_approval_after_draw(&self.ui, view.overlay_identity);
+        }
         Ok(())
     }
 
     fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
-        if let Some((_, _, code, _, _)) = &view.modal {
-            if let Some(modal) = self.ui.lock().modal.as_mut() {
-                if &modal.code == code {
+        if let Some(OverlayView::Approval(_, _, code, _, _)) = &view.overlay {
+            let mut state = self.ui.lock();
+            if state.overlays.snapshot() == view.overlay_identity {
+                if let Some(modal) = state.modal_mut().filter(|modal| &modal.code == code) {
                     modal.last_scroll = last_scroll;
                 }
             }
         }
     }
 
-    fn commit_messages(&mut self, committed: Vec<String>) -> Result<()> {
+    fn commit_messages(&mut self, conversation: Vec<String>) -> Result<()> {
         let width = self.screen.size()?.width;
-        for block in committed {
+        for block in conversation {
             let lines = markdown(wrapped(&block, width));
             // Stock inline insertion commits complete messages once, never streaming tails.
             for chunk in lines.chunks(usize::from(self.screen.size()?.height.max(1))) {
@@ -536,8 +579,16 @@ impl Driver {
     fn draw_frame(&mut self, view: &View) -> Result<usize> {
         let mut last_scroll = 0;
         self.screen.draw(|frame| {
-            let area = frame.area();
-            if let Some((preview, number, code, typed, scroll)) = &view.modal {
+            // Reserve the bar before any overlay's early return.
+            let [area, status] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+            frame.render_widget(Paragraph::new(view.bar.summary(status.width))
+                .style(if view.bar.diagnostic { Style::default().fg(Color::Red) } else { Style::default() }), status);
+            if matches!(&view.overlay, Some(OverlayView::Help)) {
+                frame.render_widget(Paragraph::new(wrapped(HELP, area.width.saturating_sub(2)).join("\n"))
+                    .block(Block::bordered().title("Help — Esc closes")), area);
+                return;
+            }
+            if let Some(OverlayView::Approval(preview, number, code, typed, scroll)) = &view.overlay {
                 let [body, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
                 let lines = wrapped(preview, body.width.saturating_sub(2));
@@ -557,15 +608,15 @@ impl Driver {
                     ),
                     body,
                 );
-                frame.render_widget(
-                    Paragraph::new(format!(
-                        "Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}"
-                    )),
-                    footer,
-                );
+                let instructions = if footer.width < 42 {
+                    format!("Approve: {code}\nCode: {typed}")
+                } else {
+                    format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+                };
+                frame.render_widget(Paragraph::new(instructions), footer);
                 return;
             }
-            if let Some((title, body, fields, selected, pending)) = &view.workflow {
+            if let Some(OverlayView::Workflow(title, body, fields, selected, pending)) = &view.overlay {
                 let [heading, content, footer] = Layout::vertical([
                     Constraint::Length(2), Constraint::Min(1), Constraint::Length(2),
                 ]).areas(area);
@@ -581,9 +632,7 @@ impl Driver {
                 frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
                 return;
             }
-            // Modal > Settings > PluginDialog precedence. REQ-12: settings
-            // sits between `workflow` and `plugin_dialog` here.
-            if let Some((tabs, active, items, selected, error)) = &view.settings {
+            if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
                 let [header, body, footer] = Layout::vertical([
                     Constraint::Length(1),
                     Constraint::Min(1),
@@ -636,7 +685,7 @@ impl Driver {
                 );
                 return;
             }
-            if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
+            if let Some(OverlayView::Dialog(title, body, choices, selected, body_scroll)) = &view.overlay {
                 let [body_area, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
                 let body = safe(body);
@@ -678,10 +727,10 @@ impl Driver {
                 );
                 return;
             }
-            let [tail, composer, status] = Layout::vertical([
+            let [tail, composer, detail] = Layout::vertical([
                 Constraint::Min(1),
                 Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 { 3 } else { 4 }),
-                Constraint::Length(1),
+                Constraint::Length(if area.height < 8 { 0 } else { 1 }),
             ])
             .areas(area);
             let popup_height = if view.completion.items.is_empty() { 0 } else { (view.completion.items.len() as u16 + 2).min(7).min(tail.height) };
@@ -733,34 +782,80 @@ impl Driver {
                 composer.y + 1 + (row - offset) as u16,
             ));
             frame.render_widget(
-                Paragraph::new(if view.widgets.is_empty() {
-                    safe(&view.status)
-                } else {
-                    format!("{} | {}", safe(&view.status), view.widgets)
-                })
-                .style(if view.status_error {
+                Paragraph::new(safe(&view.bar.detail()))
+                .style(if view.bar.diagnostic {
                     Style::default().fg(Color::Red)
                 } else {
                     Style::default()
                 }),
-                status,
+                detail,
             );
         })?;
         Ok(last_scroll)
     }
+    #[cfg(feature = "test-driver")]
+    fn acknowledge_test_input(&self) {
+        self.acknowledge_test_draw_with_input(true);
+    }
+
+    #[cfg(feature = "test-driver")]
+    fn acknowledge_test_draw(&self) {
+        self.acknowledge_test_draw_with_input(false);
+    }
+
+    #[cfg(feature = "test-driver")]
+    fn acknowledge_test_draw_with_input(&self, input_processed: bool) {
+        let Some(path) = std::env::var_os("HUGINN_TEST_RESIZE_ACK") else {
+            return;
+        };
+        let (armed, remains, outcome) = {
+            let state = self.ui.lock();
+            let armed = state.modal().is_some_and(|modal| modal.armed);
+            let remains = state.modal().is_some();
+            let outcome = if remains {
+                "approval-open".to_owned()
+            } else {
+                format!("resolved:{}", state.status.notice)
+            };
+            drop(state);
+            (armed, remains, outcome)
+        };
+        let size = self
+            .screen
+            .size()
+            .map(|size| (size.width, size.height))
+            .unwrap_or_default();
+        static ACK_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = ACK_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let contents = format!(
+            "draw:{}x{}:{armed}:modal={remains}:input={input_processed}:outcome={outcome}:seq={sequence}",
+            size.0, size.1
+        );
+        let path = std::path::PathBuf::from(path);
+        let temporary = path.with_extension(format!("ack-{sequence}.tmp"));
+        if std::fs::write(&temporary, contents).is_ok() {
+            let _ = std::fs::rename(temporary, path);
+        }
+    }
+
     fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
-        let focus = self.ui.lock().workflow_focus;
+        let focus = self.ui.lock().focus();
         // Discard queued keys/pastes before showing a new challenge. The
         // unpredictable challenge additionally defeats late buffered input.
         while let Some(event) = self.next_input(shown_focus)? {
             discard_input(event);
         }
         self.draw()?;
-        if let Some(modal) = self.ui.lock().modal.as_mut() {
-            if modal.epoch == epoch {
-                modal.armed = true;
+        let size = self.screen.size()?;
+        if size.width >= 20 && size.height >= 8 {
+            if let Some(modal) = self.ui.lock().modal_mut() {
+                if modal.epoch == epoch {
+                    modal.armed = true;
+                }
             }
         }
+        #[cfg(feature = "test-driver")]
+        self.acknowledge_test_draw();
         Ok(focus)
     }
 
@@ -777,7 +872,7 @@ impl Driver {
         let mut draining_focus = None;
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
-            let epoch = self.ui.lock().modal.as_ref().map_or(0, |m| m.epoch);
+            let epoch = self.ui.lock().modal().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
                 shown_focus = self.arm_modal(epoch, shown_focus)?;
                 draining_focus = None;
@@ -788,16 +883,47 @@ impl Driver {
                 biased;
                 _ = self.ui.stop.cancelled() => return Ok(()),
                 _ = lifecycle.cancelled() => return Ok(()),
+                changed = async {
+                    match self.connection.as_mut() {
+                        Some((receiver, attachment)) => (receiver.changed().await, *attachment),
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let (result, attachment) = changed;
+                    if result.is_ok() {
+                        let snapshot = self.connection.as_mut().expect("attached watch").0.borrow_and_update().clone();
+                        self.ui.lock().update_connection(attachment, snapshot);
+                    } else {
+                        self.ui.lock().close_connection(attachment);
+                        self.connection = None;
+                    }
+                    dirty = true;
+                }
                 _ = tick.tick() => {
                     // The host reader does not install Crossterm's SIGWINCH
                     // event source. Size queries do not consume terminal input.
                     let size = crossterm::terminal::size()?;
-                    dirty |= size != terminal_size;
+                    let resized = size != terminal_size;
+                    dirty |= resized;
                     terminal_size = size;
+                    if resized {
+                        if size.0 < 20 || size.1 < 8 {
+                            if let Some(modal) = self.ui.lock().modal_mut() {
+                                modal.armed = false;
+                            }
+                        }
+                        let focus = self.ui.lock().focus();
+                        if draining_focus.is_none() && focus == shown_focus {
+                            self.draw()?;
+                            #[cfg(feature = "test-driver")]
+                            self.acknowledge_test_draw();
+                            dirty = false;
+                        }
+                    }
                     dirty |= self.ui.refresh_contributions();
                     for _ in 0..256 {
                         dirty |= self.ui.refresh_contributions();
-                        let focus = self.ui.lock().workflow_focus;
+                        let focus = self.ui.lock().focus();
                         if focus != shown_focus {
                             // Read available bytes under the old lease; framing
                             // retains that ownership even if the paste finishes
@@ -827,11 +953,11 @@ impl Driver {
                     }
                     #[cfg(unix)]
                     if crate::input::take_overflow() {
-                        self.ui.notice("Paste exceeded the 64 KiB input limit and was discarded; finish the paste before retrying.".into());
+                        self.ui.notification("Paste exceeded the 64 KiB input limit and was discarded; finish the paste before retrying.".into());
                         dirty = true;
                     }
                     dirty |= self.ui.refresh_completion(self.model_configured());
-                    if dirty && draining_focus.is_none() && self.ui.lock().workflow_focus == shown_focus {
+                    if dirty && draining_focus.is_none() && self.ui.lock().focus() == shown_focus {
                         self.draw()?;
                         dirty = false;
                     }
@@ -843,57 +969,28 @@ impl Driver {
     fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>, focus: u64) {
         self.ui.refresh_completion(self.model_configured());
         let mut state = self.ui.lock();
-        if state.workflow_focus != focus {
+        if !state
+            .overlays
+            .accepts(state.overlays.ticket(), crate::overlay::FocusLease(focus))
+        {
             discard_input(event);
             return;
         }
-        if state.modal.is_none() {
-            if let Some(form) = state.workflow.as_mut() {
-                match event {
-                    Event::Paste(mut text) => {
-                        form.insert(&text);
-                        use zeroize::Zeroize;
-                        text.zeroize();
-                    }
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('c')
-                                if key.code == KeyCode::Esc || ctrl =>
-                            {
-                                drop(state);
-                                self.ui.cancel_workflow();
-                            }
-                            KeyCode::Tab | KeyCode::Down => form.navigate(true),
-                            KeyCode::BackTab | KeyCode::Up => form.navigate(false),
-                            KeyCode::Left => form.choice(false),
-                            KeyCode::Right => form.choice(true),
-                            KeyCode::Backspace => form.backspace(),
-                            KeyCode::Char(ch) if !ctrl => {
-                                let mut bytes = [0; 4];
-                                form.insert(ch.encode_utf8(&mut bytes));
-                                use zeroize::Zeroize;
-                                bytes.zeroize();
-                            }
-                            KeyCode::Enter => {
-                                form.submit();
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
-                return;
-            }
+        if state.overlays.snapshot().is_some() {
+            let ticket = state.overlays.ticket();
+            drop(state);
+            self.ui
+                .overlay_input(event, ticket, crate::overlay::FocusLease(focus));
+            #[cfg(feature = "test-driver")]
+            self.acknowledge_test_input();
+            return;
         }
         if let Event::Paste(text) = &event {
-            if state.modal.is_none() && state.plugin_dialog.is_none() {
-                state.editor.insert(text);
-                let crate::state::UiState {
-                    editor, completion, ..
-                } = &mut *state;
-                completion.dismiss(editor);
-            }
+            state.editor.insert(text);
+            let crate::state::UiState {
+                editor, completion, ..
+            } = &mut *state;
+            completion.dismiss(editor);
             return;
         }
         let Event::Key(key) = event else {
@@ -908,100 +1005,6 @@ impl Driver {
                 cancel.cancel();
             } else {
                 self.ui.stop.cancel();
-            }
-            drop(state);
-            self.ui.resolve_modal(false);
-            self.ui.lock().plugin_dialog.take();
-            return;
-        }
-        if state.modal.is_none() {
-            // Modal > Settings > PluginDialog precedence. REQ-12: the
-            // settings lease consumes input before `plugin_dialog` does.
-            if let Some(dialog) = state.settings.as_mut() {
-                match key.code {
-                    KeyCode::Esc => {
-                        // Discard working copy without invoking the
-                        // persistence closure. REQ-08, REQ-13.
-                        dialog.discard();
-                        state.settings = None;
-                        state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
-                        drop(state);
-                        self.ui.notice("Settings discarded".into());
-                        return;
-                    }
-                    KeyCode::Left | KeyCode::BackTab => dialog.prev_tab(),
-                    KeyCode::Right | KeyCode::Tab => dialog.next_tab(),
-                    KeyCode::Up => dialog.select_prev(),
-                    KeyCode::Down => dialog.select_next(),
-                    KeyCode::Enter => {
-                        if dialog.handle_add_provider() {
-                            state.settings = None;
-                            state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
-                            drop(state);
-                            self.ui.notice("Add provider not implemented yet".into());
-                            return;
-                        }
-                        let save = self.ui.save_ui_config.clone();
-                        let outcome = dialog.apply(&mut |ui| save(ui));
-                        state.settings = None;
-                        state.settings_focus_epoch = state.settings_focus_epoch.wrapping_add(1);
-                        let message = match outcome {
-                            Ok(()) => "Settings saved".to_string(),
-                            Err(error) => format!("Settings apply failed: {error}"),
-                        };
-                        drop(state);
-                        self.ui.notice(message);
-                        return;
-                    }
-                    _ => {}
-                }
-                return;
-            }
-            if let Some(dialog) = state.plugin_dialog.as_mut() {
-                match key.code {
-                    KeyCode::Esc => {
-                        state.plugin_dialog.take();
-                    }
-                    KeyCode::Up => dialog.selected = dialog.selected.saturating_sub(1),
-                    KeyCode::Down => {
-                        dialog.selected = (dialog.selected + 1)
-                            .min(dialog.handle.choices().len().saturating_sub(1))
-                    }
-                    KeyCode::PageUp => dialog.body_scroll = dialog.body_scroll.saturating_sub(1),
-                    KeyCode::PageDown => dialog.body_scroll = dialog.body_scroll.saturating_add(1),
-                    KeyCode::Enter => {
-                        drop(state);
-                        self.ui.choose_plugin_dialog();
-                    }
-                    _ => {}
-                }
-                return;
-            }
-        }
-        if let Some(modal) = state.modal.as_mut() {
-            match key.code {
-                KeyCode::Esc => {
-                    drop(state);
-                    self.ui.resolve_modal(false);
-                }
-                KeyCode::PageDown | KeyCode::Down => modal.scroll = modal.scroll.saturating_add(1),
-                KeyCode::PageUp | KeyCode::Up => modal.scroll_up(),
-                KeyCode::Home => modal.scroll = 0,
-                KeyCode::End => modal.scroll = modal.last_scroll,
-                KeyCode::Char(ch)
-                    if modal.armed && !ctrl && ch.is_ascii_hexdigit() && modal.typed.len() < 8 =>
-                {
-                    modal.typed.push(ch)
-                }
-                KeyCode::Backspace => {
-                    modal.typed.pop();
-                }
-                KeyCode::Enter => {
-                    let approved = modal.confirm();
-                    drop(state);
-                    self.ui.resolve_modal(approved);
-                }
-                _ => {}
             }
             return;
         }
@@ -1023,7 +1026,7 @@ impl Driver {
                     return;
                 }
                 KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
-                    let execute = key.code == KeyCode::Enter && !state.busy;
+                    let execute = key.code == KeyCode::Enter;
                     let crate::state::UiState {
                         editor, completion, ..
                     } = &mut *state;
@@ -1049,7 +1052,9 @@ impl Driver {
                 .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
             && state.completion.blocks_submission(&state.editor)
         {
-            state.status = "The command changed; edit the draft before running it".into();
+            state
+                .status
+                .set_notice("The command changed; edit the draft before running it".into());
             return;
         }
         match key.code {
@@ -1066,7 +1071,7 @@ impl Driver {
                 state.editor.insert("\n")
             }
             KeyCode::Char('j') if ctrl => state.editor.insert("\n"),
-            KeyCode::Enter if !state.busy => {
+            KeyCode::Enter => {
                 let line = state.editor.text.trim().to_string();
                 if line.is_empty() {
                     return;
@@ -1081,6 +1086,11 @@ impl Driver {
                     return;
                 }
                 let mut state = self.ui.lock();
+                // UI commands remain usable during a turn, but a conversation
+                // draft must wait until that turn finishes.
+                if state.busy {
+                    return;
+                }
                 if prompts.try_send(line).is_ok() {
                     state.busy = true;
                 } else {
@@ -1104,9 +1114,215 @@ impl Driver {
     }
 }
 
+impl Ui {
+    /// The terminal and host tests use the same lease-checked overlay router.
+    /// Every branch consumes the event, including unknown keys and pastes.
+    pub fn overlay_input(
+        &self,
+        event: Event,
+        ticket: crate::overlay::TransitionTicket,
+        focus: crate::overlay::FocusLease,
+    ) {
+        use crate::overlay::InputEffect as Effect;
+        let effect = {
+            let mut state = self.lock();
+            if !state.overlays.accepts(ticket, focus) {
+                drop(state);
+                discard_input(event);
+                return;
+            }
+            if state
+                .plugin_dialog()
+                .is_some_and(|dialog| !dialog.handle.is_active())
+            {
+                drop(state);
+                discard_input(event);
+                return;
+            }
+            let settings_pending = state.settings().is_some() && state.settings_is_pending();
+            let Some(payload) = state.overlays.payload_mut() else {
+                drop(state);
+                discard_input(event);
+                return;
+            };
+            payload.input(event, settings_pending)
+        };
+        match effect {
+            Effect::None => {}
+            Effect::Close => self.close_overlay(ticket, focus),
+            Effect::CancelForm => self.cancel_workflow_at(ticket),
+            Effect::Resolve(approved) => self.resolve_modal_at(approved, ticket),
+            Effect::Submit => {
+                self.submit_workflow_at(ticket);
+            }
+            Effect::Choose => self.choose_plugin_dialog_at(ticket),
+            Effect::ApplySettings => {
+                self.apply_settings_at(ticket);
+            }
+            Effect::AddProvider => self.close_overlay_with_message(
+                ticket,
+                focus,
+                Some("Add provider not implemented yet"),
+            ),
+            Effect::DiscardSettings(pending) => self.close_overlay_with_message(
+                ticket,
+                focus,
+                Some(if pending {
+                    "Settings closed; the started write may still complete"
+                } else {
+                    "Settings discarded"
+                }),
+            ),
+        }
+        self.dirty.notify_one();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_area_draw_does_not_arm_approval_then_viable_draw_can_arm() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        use ratatui::{backend::TestBackend, widgets::Widget};
+
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let (identity, _) = {
+            let mut state = ui.lock();
+            let ticket = state.overlays.ticket();
+            let payload = Payload::Approval(crate::state::Modal::test_stub());
+            match state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload,
+                ticket,
+            }) {
+                crate::overlay::OpenOutcome::Opened { active, .. } => {
+                    (Some(state.overlays.snapshot().unwrap()), active.id)
+                }
+                _ => panic!("approval overlay opens"),
+            }
+        };
+        let backend = TestBackend::new(0, 0);
+        let mut terminal = Terminal::new(backend).unwrap();
+        assert!(!viewport_is_viable(Size::new(0, 0)));
+        terminal
+            .draw(|frame| {
+                Paragraph::new("zero area").render(frame.area(), frame.buffer_mut());
+            })
+            .unwrap();
+        assert!(!ui.lock().modal().unwrap().armed);
+
+        let backend = TestBackend::new(20, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        assert!(viewport_is_viable(Size::new(20, 8)));
+        terminal
+            .draw(|frame| {
+                Paragraph::new("Approval").render(frame.area(), frame.buffer_mut());
+            })
+            .unwrap();
+        assert!(!ui.lock().modal().unwrap().armed);
+        arm_approval_after_draw(&ui, identity);
+        assert!(ui.lock().modal().unwrap().armed);
+        ui.lock().modal_mut().unwrap().armed = false;
+        arm_approval_after_draw(&ui, None);
+        assert!(!ui.lock().modal().unwrap().armed);
+    }
+
+    #[tokio::test]
+    async fn render_snapshot_and_input_share_authority_and_redact_secrets() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        ui.dispatch_command("/settings");
+        let (ticket, focus) = {
+            let state = ui.lock();
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+        let before = View::snapshot(&ui.lock());
+        assert!(matches!(before.overlay, Some(OverlayView::Settings(_))));
+        ui.overlay_input(
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+            )),
+            ticket,
+            focus,
+        );
+        let after = View::snapshot(&ui.lock());
+        assert_eq!(after.overlay_identity, before.overlay_identity);
+        assert!(matches!(
+            after.overlay,
+            Some(OverlayView::Settings((_, _, _, 1, _)))
+        ));
+
+        let workflow = huginn_plugin_api::v1::Workflow::new(
+            "Login",
+            "Exact body",
+            vec![huginn_plugin_api::v1::Field {
+                id: "secret".into(),
+                label: "Credential".into(),
+                kind: huginn_plugin_api::v1::FieldKind::Secret,
+                initial: String::new(),
+            }],
+            Arc::new(|_, _| Box::pin(async { unreachable!() })),
+        )
+        .unwrap();
+        let mut form = crate::workflow::HostWorkflow::new(workflow);
+        form.insert("SNAPSHOT_SECRET_SENTINEL");
+        let outcome = {
+            let mut state = ui.lock();
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Login,
+                origin: Origin::Host,
+                operation: crate::event::OperationId(123),
+                payload: Payload::Workflow(form),
+                ticket,
+            })
+        };
+        drop(outcome);
+        let view = View::snapshot(&ui.lock());
+        assert_eq!(view.overlay_identity.unwrap().kind, OverlayKind::Login);
+        let Some(OverlayView::Workflow(title, body, fields, _, _)) = view.overlay else {
+            panic!("Login must render its actual form")
+        };
+        assert_eq!(title, "Login");
+        assert_eq!(body, "Exact body");
+        assert_eq!(fields, ["Credential: ********"]);
+        ui.overlay_input(Event::Paste("OLD_SETTINGS_PASTE".into()), ticket, focus);
+        assert_eq!(ui.lock().workflow().unwrap().snapshot().2, fields);
+        assert!(ui.lock().editor.text.is_empty());
+        let (ticket, focus) = {
+            let state = ui.lock();
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+        ui.overlay_input(
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            )),
+            ticket,
+            focus,
+        );
+        assert!(View::snapshot(&ui.lock()).overlay.is_none());
+        assert!(ui.lock().conversation.is_empty());
+    }
 
     #[test]
     fn wrapped_handles_width_newlines_tabs_and_unicode() {

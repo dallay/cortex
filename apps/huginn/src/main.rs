@@ -6,7 +6,9 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use config::{Config, ModelReadiness};
 use huginn_application::authorization::HostPolicy;
-use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
+use huginn_core::{
+    ApprovalPolicy, CancellationToken, EventSink, LoopService, Session, SessionStore,
+};
 use huginn_presentation::settings::UiConfig;
 use huginn_runtime::{
     composition, loop_engine::LoopConfig, mcp, sessions::SqliteSessions, tools::Registry,
@@ -473,6 +475,14 @@ async fn tui_chat(
         Arc::new(move |ui: &UiConfig| ui_settings::persist(ui, &save_path));
     supervisor.register(Box::new(
         RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))
+            .with_connection(
+                supervisor
+                    .resolve::<huginn_core::providers::ProvidersService>(
+                        &huginn_application::providers::providers_id(),
+                    )?
+                    .0
+                    .subscribe(),
+            )
             .with_settings(ui_config, save_ui_config),
     ))?;
     supervisor.register(Box::new(ConversationPlugin))?;
@@ -488,19 +498,21 @@ async fn tui_chat(
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
-        ui.begin(startup.clone());
+        let startup_operation = ui.begin(startup.clone());
         mcp::register_plugins(supervisor, &config.mcp, &session.workspace, policy.clone(), startup.clone(), config.tool_timeout_secs)?;
         interruptible(startup, supervisor.start()).await?;
         ui.synchronize(session);
+        ui.finish_operation(startup_operation);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
             if !router.is_configured() {
-                ui.notice("No model configured. Use /login to connect a provider, then /model. No restart needed.".into());
+                ui.notification("No model configured. Use /login to connect a provider, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
             }
             let cancel = CancellationToken::new();
-            ui.begin(cancel.clone());
+            let operation = ui.begin(cancel.clone());
+            let scoped_events = huginn_core::ScopedEventSink { sink: ui.as_ref(), operation };
             let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
                 let request = huginn_core::ApprovalRequest {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -511,12 +523,12 @@ async fn tui_chat(
                     Ok(true) => {
                         interruptible(
                             cancel.clone(),
-                            implementation.0.compact(session, ui.as_ref(), cancel),
+                            implementation.0.compact(session, &scoped_events, cancel),
                         )
                         .await
                     }
                     Ok(false) => {
-                        ui.notice("Compaction skipped.".into());
+                        ui.notification("Compaction skipped.".into());
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -526,14 +538,17 @@ async fn tui_chat(
                     cancel.clone(),
                     implementation
                         .0
-                        .run(session, prompt, policy.as_ref(), ui.as_ref(), cancel),
+                        .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
                 )
                 .await
             };
             ui.synchronize(session);
-            if let Err(error) = result {
-                ui.notice(error.to_string());
+            if let Err(error) = &result {
+                scoped_events.emit(huginn_core::Event::Error {
+                    message: error.to_string(),
+                });
             }
+            ui.finish_operation(operation);
         }
         Ok(())
     }

@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_core::{
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
-    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
-    ToolCall, ToolContext, ToolRegistry,
+    Message, ModelDelta, ModelProvider, ModelRequest, OperationId, Result, Role, ScopedEventSink,
+    Session, SessionStore, ToolCall, ToolContext, ToolRegistry,
 };
 use huginn_runtime::{
     loop_engine::{recover, LoopConfig, StandardLoop},
@@ -29,6 +29,18 @@ struct Events(Mutex<Vec<Event>>);
 impl EventSink for Events {
     fn emit(&self, event: Event) {
         self.0.lock().unwrap().push(event);
+    }
+}
+
+#[derive(Default)]
+struct CapturedScopes(Mutex<Vec<(OperationId, Event)>>);
+impl EventSink for CapturedScopes {
+    fn emit(&self, event: Event) {
+        self.0.lock().unwrap().push((OperationId::default(), event));
+    }
+
+    fn emit_for(&self, operation: OperationId, event: Event) {
+        self.0.lock().unwrap().push((operation, event));
     }
 }
 struct Script {
@@ -75,6 +87,71 @@ fn fixture(
         },
         sessions,
     )
+}
+
+#[tokio::test]
+async fn operation_scope_survives_tool_continuation_and_is_distinct_per_run() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![
+                call("shell", json!({"command":"printf continuation"})),
+                ModelDelta::Finished,
+            ],
+            vec![ModelDelta::Text("continued".into()), ModelDelta::Finished],
+            vec![ModelDelta::Text("next run".into()), ModelDelta::Finished],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (engine, _) = fixture(model, &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let captures = CapturedScopes::default();
+    let first = OperationId(41);
+    let scoped_first = ScopedEventSink {
+        sink: &captures,
+        operation: first,
+    };
+    engine
+        .run(
+            &mut session,
+            "run tool".into(),
+            &Policy(true),
+            &scoped_first,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let second = OperationId(42);
+    let scoped_second = ScopedEventSink {
+        sink: &captures,
+        operation: second,
+    };
+    engine
+        .run(
+            &mut session,
+            "next invocation".into(),
+            &Policy(true),
+            &scoped_second,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let events = captures.0.lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::ToolStarted { .. })));
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::ToolFinished { .. })));
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::TurnFinished)));
+    assert!(events.iter().any(|(id, _)| *id == second));
+    assert!(!events.iter().any(|(id, _)| *id == OperationId::default()));
+    assert!(!events.iter().any(|(id, _)| *id == OperationId(43)));
+    drop(events);
 }
 
 #[tokio::test]
