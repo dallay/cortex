@@ -155,7 +155,7 @@ Huginn is a Rust-powered coding assistant that runs locally with access to your 
 | Feature | Description |
 |---------|-------------|
 | 💻 **Native TUI** | Beautiful terminal interface with Ratatui |
-| 🔒 **Privacy First** | Code never leaves your machine |
+| 🔒 **Privacy First** | Your code stays local — only prompts go to providers |
 | 🛠️ **Native Tools** | File ops, terminal, git — all built-in |
 | 🔌 **MCP Integration** | Connect to any MCP stdio server |
 | 💾 **Session Memory** | SQLite-backed conversation history |

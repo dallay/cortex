@@ -42,7 +42,7 @@ Huginn is a **local coding agent** built in Rust that works with your codebase. 
 │   │   │ Your Code │ ◀── Read/Write/Execute                        │  │
 │   │   └───────────┘                                               │  │
 │   │                                                                 │  │
-│   │   🔒 Data never leaves your machine                            │  │
+│   │   🔒 Your code stays local — only prompts to providers         │  │
 │   │                                                                 │  │
 │   └─────────────────────────────────────────────────────────────────┘  │
 │                                                                         │
