@@ -106,7 +106,7 @@ cargo test -p rook-core -- --nocapture
 
 ### Tests E2E (requiere Docker)
 
-Ver [dev/README.md](dev/README.md) para detalles completos.
+Ver [dev/README.md](../dev/README.md) para detalles completos.
 
 ```bash
 # Preparar imagen Docker
