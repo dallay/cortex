@@ -419,11 +419,18 @@ impl Management {
                 record.settings.model.clone(),
             )
         } else {
-            choice(
+            let mut field = choice(
                 "model",
                 "Model",
                 descriptor.models.iter().map(|m| m.id.clone()).collect(),
-            )
+            );
+            field.initial = descriptor
+                .models
+                .iter()
+                .position(|model| model.id == record.settings.model)
+                .unwrap_or(0)
+                .to_string();
+            field
         };
         let management = self.clone();
         Ok(CommandResult::Workflow(Workflow::new("Next-turn model", "The current turn keeps its pinned connection/model. No remote availability is promised.", vec![field], Arc::new(move |mut input, _| {

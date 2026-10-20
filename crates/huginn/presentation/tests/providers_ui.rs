@@ -544,6 +544,36 @@ async fn update_preserves_public_model_http_and_ephemeral_storage_defaults() {
 }
 
 #[tokio::test]
+async fn model_picker_starts_on_the_saved_model_and_submits_it_unchanged() {
+    let (_supervisor, ui, manager) = setup().await;
+    login(&ui).await;
+    let id = *manager.records.lock().unwrap().keys().next().unwrap();
+    manager
+        .records
+        .lock()
+        .unwrap()
+        .get_mut(&id)
+        .unwrap()
+        .settings
+        .model = "beta".into();
+    ui.dispatch_command("/model");
+    settle(&ui).await;
+    submit(&ui).await; // choose the only connection, which opens the model form
+    {
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        assert_eq!(
+            form.snapshot().2[0],
+            "Model: beta",
+            "the picker must start on the stored model, not on the first catalog entry"
+        );
+        drop(state);
+    }
+    submit(&ui).await;
+    assert_eq!(*manager.selected.lock().unwrap(), Some((id, "beta".into())));
+}
+
+#[tokio::test]
 async fn providers_disconnect_keeps_real_confirm_callback_and_local_cancel_is_recoverable() {
     use huginn_presentation::overlay::OverlayKind as Surface;
     let (_supervisor, ui, manager) = setup().await;
