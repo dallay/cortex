@@ -4,7 +4,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::{
     rustls::{
@@ -101,9 +100,13 @@ async fn validated_tls_rejects_downgrade_and_destination_receives_nothing() {
     assert!(!error.to_string().contains("sentinel-secret"));
     task.await.unwrap();
     assert!(received.load(Ordering::SeqCst));
+    let target = target.into_std().unwrap();
+    target.set_nonblocking(true).unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(100), target.accept())
-            .await
-            .is_err()
+        matches!(
+            target.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ),
+        "redirect destination must not receive a connection"
     );
 }

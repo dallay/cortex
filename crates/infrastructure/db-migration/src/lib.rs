@@ -165,4 +165,34 @@ mod migration_tests {
         assert!(applied > 0);
         assert_eq!(run_on_connection(&mut conn).unwrap(), 0);
     }
+
+    #[test]
+    fn migration_runner_reports_status_after_applying_migrations() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("rook.sqlite");
+        let runner = MigrationRunner::new(db_path.to_string_lossy().into_owned());
+
+        let applied_count = runner.run().unwrap();
+        let status = runner.status().unwrap();
+
+        assert_eq!(status.applied.len(), applied_count);
+        assert!(status.current_version.is_some());
+        assert_eq!(
+            status.current_version,
+            status.applied.last().map(|m| m.version)
+        );
+    }
+
+    #[test]
+    fn run_migrations_applies_and_then_skips_current_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("rook.sqlite");
+        let db_path = db_path.to_string_lossy().into_owned();
+
+        let first_run = run_migrations(&db_path).unwrap();
+        let second_run = run_migrations(&db_path).unwrap();
+
+        assert!(first_run > 0);
+        assert_eq!(second_run, 0);
+    }
 }
