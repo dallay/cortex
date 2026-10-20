@@ -66,6 +66,7 @@
     {
       "matchPackagePatterns": ["^vue$"],
       "excludeVersionPrefixes": ["3.6.0-rc"],
+      "minimumReleaseAge": "7 days",
       "description": "Exclude Vue RC versions due to known SFC type resolution bugs with component prop types"
     }
   ]
