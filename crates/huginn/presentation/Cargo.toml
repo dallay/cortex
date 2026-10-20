@@ -39,8 +39,8 @@ zeroize = "1"
 rustix = { version = "1", features = ["event"] }
 
 [dev-dependencies]
-portable-pty = "0.9"
-tempfile = "3"
+portable-pty = "=0.9.0"
+tempfile = "=3.27.0"
 
 [lints]
 workspace = true
