@@ -9,7 +9,7 @@ Local Rust coding assistant with native tools and MCP integration
 [![MCP](https://img.shields.io/badge/MCP-ready-7C3AED?logo=modelcontextprotocol)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
 
-**Your local AI coding partner** — no data leaves your machine.
+**Your local AI coding partner** — runs locally with access to your codebase.
 
 [Huginn Architecture](#-architecture) · [Installation](#-installation) · [Usage](#-usage) · [TUI Guide](#-tui-guide) · [Providers](providers-ui.md)
 
@@ -42,7 +42,7 @@ Huginn is a **local coding agent** built in Rust that works with your codebase. 
 │   │   │ Your Code │ ◀── Read/Write/Execute                        │  │
 │   │   └───────────┘                                               │  │
 │   │                                                                 │  │
-│   │   🔒 Your code stays local — only prompts to providers         │  │
+│   │   🔒 Code stays local — prompts and context sent to providers  │  │
 │   │                                                                 │  │
 │   └─────────────────────────────────────────────────────────────────┘  │
 │                                                                         │
@@ -210,7 +210,7 @@ huginn --workspace /path/to/your/project run "Explain this codebase"
 |----------|----------|-------------|
 | `HUGINN_BASE_URL` | Yes | API endpoint (include `/v1`) |
 | `HUGINN_MODEL` | Yes | Model name |
-| `HUGINN_API_KEY` | Yes | API key |
+| `HUGINN_API_KEY` | For auth-required providers | API key (optional for mock/Ollama) |
 | `HUGINN_WORKSPACE` | No | Default workspace path |
 
 ---
@@ -329,24 +329,26 @@ The mock provider responds with predefined examples and does not perform real LL
 Connect Huginn to MCP servers for extended capabilities:
 
 ```bash
-# Run with an MCP server
-huginn --mcp "npx -y @modelcontextprotocol/server-filesystem" chat
+# Run with an MCP server (use pinned versions)
+huginn --mcp "npx -y @modelcontextprotocol/server-filesystem@0.6.1" chat
 
 # Multiple servers
 huginn \
-  --mcp "npx -y @modelcontextprotocol/server-filesystem" \
-  --mcp "npx -y @modelcontextprotocol/server-git" \
+  --mcp "npx -y @modelcontextprotocol/server-filesystem@0.6.1" \
+  --mcp "npx -y @modelcontextprotocol/server-git@0.5.0" \
   chat
 ```
 
+> ⚠️ **Security Notice:** MCP servers run with your OS permissions and are not sandboxed. Only connect to servers you trust.
+
 ### Available MCP Servers
 
-| Server | Purpose |
-|--------|---------|
-| `@modelcontextprotocol/server-filesystem` | File operations |
-| `@modelcontextprotocol/server-git` | Git operations |
-| `@modelcontextprotocol/server-brave` | Web search |
-| `@modelcontextprotocol/server-slack` | Slack integration |
+| Server | Version | Purpose |
+|--------|---------|---------|
+| `@modelcontextprotocol/server-filesystem` | 0.6.1 | File operations |
+| `@modelcontextprotocol/server-git` | 0.5.0 | Git operations |
+| `@modelcontextprotocol/server-brave` | latest | Web search |
+| `@modelcontextprotocol/server-slack` | latest | Slack integration |
 
 ---
 
@@ -410,9 +412,10 @@ cargo tarpaulin -p huginn
 | Concern | Mitigation |
 |---------|------------|
 | API keys | Use environment variables, not config files |
-| Code access | Huginn respects workspace boundaries |
-| Tool execution | Terminal commands require confirmation |
-| Session data | SQLite DB with optional encryption |
+| File access | Workspace-scoped — Huginn only accesses specified directory |
+| Shell execution | Terminal commands require explicit approval |
+| MCP tools | MCP calls require explicit approval |
+| Session data | SQLite DB stored locally (no built-in encryption) |
 
 ### Best Practices
 
@@ -429,8 +432,8 @@ cargo tarpaulin -p huginn
 |---------|-------------|
 | [Architecture](adr/README.md) | Design decisions and ADRs |
 | [Providers UI](providers-ui.md) | Provider configuration in TUI |
-| [Rook](docs/rook/README.md) | Companion AI proxy |
-| [Cortex](docs/README.md) | Full project documentation |
+| [Rook](../rook/README.md) | Companion AI proxy |
+| [Cortex](../README.md) | Full project documentation |
 
 ---
 

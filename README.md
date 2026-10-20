@@ -155,13 +155,13 @@ Huginn is a Rust-powered coding assistant that runs locally with access to your 
 | Feature | Description |
 |---------|-------------|
 | 💻 **Native TUI** | Beautiful terminal interface with Ratatui |
-| 🔒 **Privacy First** | Your code stays local — only prompts go to providers |
+| 🔒 **Privacy First** | With local providers, code stays local; remote providers receive prompts and file context |
 | 🛠️ **Native Tools** | File ops, terminal, git — all built-in |
 | 🔌 **MCP Integration** | Connect to any MCP stdio server |
 | 💾 **Session Memory** | SQLite-backed conversation history |
 | 📋 **Scoped Context** | Per-repo `AGENTS.md` for instructions |
 
-📖 [Docs](docs/huginn/README.md) · [TUI Guide](docs/huginn/README.md#-tui-guide) · [MCP Setup](docs/huginn/README.md#--mcp-integration)
+📖 [Docs](docs/huginn/README.md) · [TUI Guide](docs/huginn/README.md#-tui-guide) · [MCP Setup](docs/huginn/README.md#-mcp-integration)
 
 ---
 
@@ -283,7 +283,11 @@ curl http://localhost:3773/v1/chat/completions \
 
 ```bash
 # Dashboard is embedded at /dashboard/
+# macOS:
 open http://localhost:3773/dashboard/
+# Linux:
+xdg-open http://localhost:3773/dashboard/
+# Or just copy the URL to your browser
 
 # Login with admin credentials (set on first run)
 ```

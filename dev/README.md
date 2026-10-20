@@ -121,10 +121,11 @@ port = 3773
 
 | Feature | Available |
 |---------|-----------|
-| Backend API | ✅ Running |
+| Backend API | ✅ Running in `rook:e2e-api-keys` container |
 | Admin account | ✅ `admin@rook.local` / `rook-admin-123` |
 | Dashboard | ✅ Built and served |
-| Database | ✅ Persistent SQLite |
+| Audit data | ✅ In-memory (ephemeral) |
+| Database | ✅ SQLite at `/tmp/rook-e2e.db` (container tmpfs) |
 | E2E tests | ✅ Playwright |
 
 ### Architecture
@@ -183,8 +184,17 @@ pnpm exec playwright test --debug
 ### Manual Run
 
 ```bash
+# Use just recipes for E2E workflow
+just test-e2e           # Run full E2E suite
+just test-e2e-dev      # Development mode with watch
+just test-e2e-cleanup  # Clean up containers and volumes
+```
+
+For integration testing with `docker-compose.test.yml`:
+
+```bash
 # 1. Start Docker Compose
-docker compose -f dev/compose.e2e.yml up -d
+docker compose -f docker-compose.test.yml up -d
 
 # 2. Wait for services
 sleep 10
@@ -194,7 +204,7 @@ cd apps/rook/dashboard
 pnpm exec playwright test
 
 # 4. Cleanup
-docker compose -f dev/compose.e2e.yml down -v
+docker compose -f docker-compose.test.yml down -v
 ```
 
 ### Test Coverage
@@ -309,8 +319,8 @@ ldd target/release/rook  # Should show musl, not glibc
 |----------|-------------|
 | [Docker Docs](https://docs.docker.com) | Docker documentation |
 | [Playwright](https://playwright.dev) | E2E testing framework |
-| [Compose File](dev/compose.yml) | Docker Compose configuration |
-| [Rook Architecture](docs/rook/architecture.md) | Backend internals |
+| [Compose File](docker-compose.yml) | Docker Compose configuration |
+| [Rook Architecture](../docs/rook/architecture.md) | Backend internals |
 
 ---
 

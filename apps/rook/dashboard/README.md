@@ -203,7 +203,7 @@ just test-e2e-build  # Build Docker image
 just test-e2e        # Run tests
 ```
 
-📖 [E2E Testing Guide](dev/README.md#path-2--playwright-e2e-against-docker)
+📖 [E2E Testing Guide](../../../dev/README.md#path-2--playwright-e2e-against-docker)
 
 ### Quality Gate
 
