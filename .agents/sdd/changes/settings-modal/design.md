@@ -208,6 +208,7 @@ impl SettingsDialog {
     /// Build a `UiConfig` from the working copy. Caller uses this for
     /// the persistence projection.
     pub fn projected_ui_config(&self) -> UiConfig;
+    /// Standalone helper; host input uses `Ui::apply_settings_at` instead.
     /// Run the injected persistence closure exactly once. On success,
     /// returns `Ok(())` and the caller closes the dialog. On failure,
     /// records the formatted error in `last_error`.
@@ -272,6 +273,13 @@ state.rs needs to change** because we are not extending
    pub settings: Option<SettingsDialog>,
    pub settings_focus_epoch: u64,
    ```
+   The host also owns `settings_apply: Option<OverlayId>` for the pending
+   overlay, `settings_receipts: Vec<SettingsReceipt>` with each receipt's
+   `OverlayId`, projected `UiConfig`, and result receiver, and
+   `settings_write_tail: Option<oneshot::Receiver<()>>` to serialize writes
+   across overlay replacement. `settings_is_pending()` compares the active
+   overlay ID with `settings_apply`.
+
    `settings_focus_epoch` is bumped on dialog open, on close
    (Esc, Enter, `(+)` add), and on apply success/failure so the input
    lease can invalidate queued keys/pastes that belonged to a previous
@@ -401,68 +409,58 @@ Five edits:
    count low (the kind byte maps `0=Pick, 1=Bool, 2=Cycle, 3=Action`).
    Apply a small `Cow`→`String` conversion for label storage.
 
-3. **`Driver` struct** (`terminal.rs:187`): nothing changes; the
-   settings input lease is consumed through `state.settings` directly.
+3. **`Driver` struct**: route settings input through the host's
+   lease-checked overlay router, `Ui::overlay_input`.
 
-4. **`Driver::input`** (`terminal.rs:734`): add the settings branch.
-   Placement is **after** the modal/block check and **before** the
-   existing `plugin_dialog` branch. Concretely the new branch sits
-   between the `state.modal.is_none()` gate and the
-   `if let Some(dialog) = state.plugin_dialog.as_mut()` block at
-   `terminal.rs:808–828`.
+4. **Settings input**: use the host overlay router's captured transition
+   ticket and focus lease. Under the state lock, validate the lease and
+   reduce input to an effect. Esc yields `Effect::DiscardSettings(pending)`;
+   while pending, consume other keys without editing or submitting again.
+   Otherwise Enter yields `Effect::AddProvider` for the action row or
+   `Effect::ApplySettings` for other rows. Navigation remains local to the
+   dialog. Execute effects only after releasing the lock:
 
    Pseudocode:
    ```rust
-   if state.modal.is_none() {
-       if let Some(dialog) = state.settings.as_mut() {
-           match key.code {
-               KeyCode::Esc => {
-                   dialog.discard();
-                   state.settings = None;
-                   state.settings_focus_epoch =
-                       state.settings_focus_epoch.wrapping_add(1);
-                   drop(state);
-                   self.ui.notice("Settings discarded".into());
-                   return;
-               }
-               KeyCode::Left | KeyCode::BackTab => dialog.prev_tab(),
-               KeyCode::Right | KeyCode::Tab => dialog.next_tab(),
-               KeyCode::Up => dialog.select_prev(),
-               KeyCode::Down => dialog.select_next(),
-               KeyCode::Enter => {
-                   if dialog.handle_add_provider() {
-                       state.settings = None;
-                       state.settings_focus_epoch =
-                           state.settings_focus_epoch.wrapping_add(1);
-                       drop(state);
-                       self.ui.notice(
-                           "Add provider not implemented yet".into(),
-                       );
-                       return;
-                   }
-                   let mut save = (*self.ui.save_ui_config).clone();
-                   if dialog.apply(&mut save).is_err() {
-                       // last_error is rendered in the body; keep the working copy.
-                       return;
-                   }
-                   state.settings = None;
-                   state.settings_focus_epoch =
-                       state.settings_focus_epoch.wrapping_add(1);
-                   drop(state);
-                   self.ui.notice("Settings saved".into());
-                   return;
-               }
-               _ => {}
-           }
-           return;
+   // In Ui::overlay_input, after the scoped UiState guard is dropped:
+   match effect {
+       Effect::ApplySettings => {
+           self.apply_settings_at(ticket);
        }
-       // existing plugin_dialog branch follows...
+       Effect::DiscardSettings(pending) => self.close_overlay_with_message(
+           ticket,
+           focus,
+           Some(if pending {
+               "Settings closed; the started write may still complete"
+           } else {
+               "Settings discarded"
+           }),
+       ),
+       // Other effects handle AddProvider and the remaining overlays.
+       _ => {}
    }
    ```
 
-   The branch **always returns** after handling — Esc never falls
-   through to the cancel-turn branch at `terminal.rs:905–909`. Esc
-   also does NOT call `apply` (REQ-08, REQ-13).
+   `apply_settings_at(ticket)` revalidates the ticket and shutdown state,
+   suppresses duplicate submissions for the pending `OverlayId`, captures
+   `dialog.projected_ui_config()`, marks that ID pending, and appends one
+   receipt and a write-tail dependency under the lock. After releasing
+   `UiState`, its background task waits for the previous write, then invokes
+   `save_ui_config` through `spawn_blocking`. It sends the result to the
+   receipt before releasing the next write. The queue survives dismissal
+   and overlay replacement.
+
+   `poll_settings_receipts()` consumes receipts in submission order,
+   stopping at the first unfinished receipt. It clears pending only for
+   the matching ID. Success updates `saved_ui_config`; it closes the
+   overlay and notices `Settings saved` only if that ID is still current
+   and pending. Failure sets `last_error` and preserves the working copy
+   only for that same current ID, allowing retry. A late receipt cannot
+   close, mutate, or notify a replacement overlay.
+
+   The router consumes the event. Esc never reaches cancel-turn and
+   never starts persistence (REQ-08, REQ-13). It dismisses pending settings
+   immediately, while an already-submitted write may still complete.
 
 5. **`draw_frame`** (`terminal.rs:482`): add a settings rendering arm
    between the `workflow` arm (line 528) and the `plugin_dialog` arm
@@ -669,23 +667,26 @@ Navigation keys (input is consumed by the new arm of `Driver::input`):
 
 | Key | Action | Notes |
 |---|---|---|
-| `Esc` | discard + close + notice `Settings discarded` | Branch returns; never falls through to cancel-turn. |
+| `Esc` | dismiss + close | Notice `Settings discarded` when idle, or `Settings closed; the started write may still complete` when pending; never falls through to cancel-turn. |
 | `←` / `BackTab` | `dialog.prev_tab()` | wrap-around `integrations → theme` |
 | `→` / `Tab` | `dialog.next_tab()` | wrap-around `integrations → theme` |
 | `↑` | `dialog.select_prev()` | wrap-around within current tab |
 | `↓` | `dialog.select_next()` | wrap-around within current tab |
 | `Enter` on `(+)` | close + notice `Add provider not implemented yet` | no persistence call |
-| `Enter` on other rows | `apply` via the injected closure | success closes + notices `Settings saved`; failure keeps Settings open, preserves the working copy, and shows the error in the modal body |
+| `Enter` on other rows | `Effect::ApplySettings` → `apply_settings_at(ticket)` | Queue one background write and mark its overlay ID pending; ordered receipts close on success or show `last_error` on failure only for the current ID. |
+| Any key except dismissal while pending | consume without editing or submitting | Prevent duplicate Enter writes; Esc can still close. |
 
-On Apply failure, REQ-07 requires the Settings overlay to stay open
+On a failed receipt for the current overlay ID, REQ-07 requires Settings to stay open
 with its working copy intact. `SettingsDialog::last_error` stores the
 failure; `snapshot()` includes it and the renderer shows it in the
 modal body on the next frame. The user can retry Apply or press `Esc`
 to discard the working copy and close the overlay (REQ-08).
 
-`apply` is **idempotent** in the sense that it produces the same
-`UiConfig` from the same working copy, but it invokes the closure
-exactly once per Enter (the dialog does not retry on its own).
+Each accepted Enter captures one projection; repeated Enter while pending
+does not enqueue another write. Writes and receipts remain in submission
+order across dismissal and reopening. Esc discards the visible working
+copy but cannot undo an already-submitted write. Late successful receipts
+update the saved snapshot for future opens without changing a newer dialog.
 
 ## Persistence Strategy
 
@@ -742,24 +743,19 @@ argument to `Ui::new` resolves in favor of an extra argument on
   `Arc::new(UiConfig::default())` and a fake save closure that
   pushes to `Arc<Mutex<Vec<UiConfig>>>` — no plugin registry required.
 
-The closure type is `Arc<dyn Fn(&UiConfig) -> anyhow::Result<()>
-+ Send + Sync>`. `Send + Sync` is required because the input handler
-invokes it under the `Ui` mutex from the presentation thread; tests
+The closure type is `Arc<dyn Fn(&UiConfig) -> anyhow::Result<()> + Send + Sync>`.
+`Send + Sync` is required because the serialized background
+writer invokes it through `spawn_blocking` after releasing `UiState`; tests
 that want to assert against the closure's callsites must be able to
 share the recorder across the thread boundary.
 
-`Arc<UiConfig>` is a clone-on-write snapshot. The dialog reads from
-the snapshot on open (`SettingsDialog::new(&self.ui_config)`); the
-snapshot does not change while the dialog is open. After apply, the
-binary's `main.rs` updates `Arc<UiConfig>` with a fresh snapshot
-(replacing the `Arc` contents). This is the simplest model that
-keeps the dialog reading a stable value mid-flight and supports the
-"first save updates the snapshot" expectation without adding a
-notification channel.
+`Arc<UiConfig>` supplies the initial snapshot. Successful receipts update
+the host's `saved_ui_config` in submission order. Opening Settings uses
+that saved snapshot when present, falling back to the initial configuration.
+A receipt never replaces the working copy of an already-open dialog.
 
-**Decision**: replacing the `Arc` after apply is enough for v1
-because the dialog always closes on apply success. A future change
-that wires `[ui.theme]` into the renderer may need a
+**Decision**: retaining the saved snapshot in the host is enough for v1.
+A future change that wires `[ui.theme]` into the renderer may need a
 `watch::Sender<UiConfig>` instead — out of scope here.
 
 ## Input Lease Placement
@@ -807,11 +803,11 @@ and the `plugin_dialog` arm (line 530). Layout uses
 - **Body** (`Constraint::Min(1)`): a `Block::bordered()` titled
   `Settings` containing the items of the active tab. Each row is
   formatted as:
-  - `Pick`: `> name` (or ` ` if not selected), trailing ` ✓` when
+  - `Pick`: `> name` (or ` ` if not selected), trailing space + `✓` when
     `checked`.
-  - `Bool`: `> label` (or ` `), trailing ` ✓` when checked, no
+  - `Bool`: `> label` (or ` `), trailing space + `✓` when checked, no
     trailing mark when unchecked.
-  - `Cycle`: `> label: value` (or ` `), trailing ` ✓` when the cycle
+  - `Cycle`: `> label: value` (or ` `), trailing space + `✓` when the cycle
     value matches the working copy's projected default — for `toasts`
     that means `info` and `3` only.
   - `Action`: `> (+) Add provider…`.
@@ -881,7 +877,8 @@ value in the label (built in `snapshot()`) so the user sees
 
 | Failure | Behavior |
 |---|---|
-| Persistence closure returns `Err(_)` | Settings stays open with its working copy intact; `last_error` is shown in the modal body. The user can retry or press Esc to discard; the persisted file is untouched. |
+| Persistence closure returns `Err(_)` | The ordered receipt clears its matching pending state. If its overlay ID is still current, Settings stays open with its working copy intact and `last_error` in the modal body; the user can retry or dismiss. Otherwise the error does not affect the current overlay. |
+| Esc dismisses Settings during a pending write | Close immediately without cancelling the turn. The submitted write may complete; its receipt cannot close or set an error on a replacement overlay. |
 | `config.toml` does not exist on disk | `ui_settings::persist` creates it with the new `[ui]` table and a leading `# TUI settings` comment. Atomic via tmp+rename. |
 | `config.toml` exists but is unparseable | `toml_edit` returns a parser error. `persist` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact. |
 | Permission denied on write | `fs::write` returns the I/O error. `persist` propagates. The error is shown in the modal body; Settings stays open with its working copy intact. |
@@ -1059,9 +1056,9 @@ without the formal RED→GREEN→REFACTOR cycle.
   Tests construct `UiConfig::default()` and `SettingsDialog::new(&…)`
   without crossing crates. The binary's `config.rs` keeps a single
   `ui: UiConfig` field.
-- **`Arc<UiConfig>` replacement after apply.** No `watch` channel.
-  The dialog always closes on apply success, so the next open reads
-  the fresh snapshot. A future live-subscribers change will need a
+- **Saved snapshot after apply.** Ordered successful receipts update
+  `saved_ui_config`, so the next open reads the fresh snapshot. No
+  `watch` channel is needed. A future live-subscribers change will need a
   notification mechanism; out of scope here.
 - **`UiConfig` and sub-tables do NOT carry `deny_unknown_fields`.**
   Required by REQ-11. `Config` itself keeps `deny_unknown_fields`.
@@ -1135,9 +1132,10 @@ subsystem must explicitly modify the `ui-settings` capability.
   the version `toml 1.x` already pulls in transitively. Pulling
   `0.25` would duplicate the major version in the lockfile and grow
   compile time.
-- **Closure runs under the UI mutex.** A slow disk stalls the UI the
-  same way `choose_plugin_dialog` does today. Accepted as the v1
-  trade-off; a background task is the natural follow-up.
+- **Persistence runs outside the UI mutex.** Use the host's serialized
+  background write queue and ordered receipts keyed by `OverlayId`.
+  Dismissal must preserve queued writes while late receipts must leave
+  replacement overlays unchanged.
 - **Modal preempts settings on arrival.** Ensure
   `request_decision` (`state.rs:675`) is updated in the same
   patch as the new field. A missed `state.settings.take()` would
@@ -1146,9 +1144,8 @@ subsystem must explicitly modify the `ui-settings` capability.
   must live inside the `state.modal.is_none()` gate and **return**
   after handling; Esc inside settings must never reach the
   cancel-turn branch.
-- **`Arc<dyn Fn>` cloning.** The driver calls
-  `(*self.ui.save_ui_config).clone()` per apply, which is cheap but
-  not free. Acceptable for v1.
+- **`Arc<dyn Fn>` cloning.** The host clones
+  `self.save_ui_config` for each accepted background write.
 - **Catalog unconditional entry.** `refresh_completion` adds
   `/settings` outside the `if model_configured` block. A reviewer
   who moves it inside by accident will silently break REQ-16 in
