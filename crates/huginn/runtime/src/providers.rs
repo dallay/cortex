@@ -16,6 +16,10 @@ use std::{sync::Arc, time::Duration};
 
 pub use huginn_core::providers::{DiscoveredModel, ModelCatalog, ToolSupport};
 
+// Permite catálogos de agregadores sin eliminar el límite de entradas ni el de bytes.
+const MAX_DISCOVERED_MODELS: usize = 16_384;
+const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Clone, Copy)]
 enum Kind {
     OpenAi,
@@ -124,7 +128,7 @@ impl InferenceAdapter {
             let mut chunks = response.bytes_stream();
             while let Some(chunk) = chunks.next().await {
                 let chunk = chunk.map_err(|_| ProviderError::Unavailable)?;
-                if bytes.len() + chunk.len() > 1_048_576 {
+                if bytes.len() + chunk.len() > MAX_CATALOG_RESPONSE_BYTES {
                     return Err(ProviderError::InvalidMetadata.into());
                 }
                 bytes.extend_from_slice(&chunk);
@@ -169,7 +173,10 @@ impl InferenceAdapter {
             Kind::OpenAi => ("data", "id"),
             Kind::Ollama | Kind::OllamaCloud => ("models", "name"),
         };
-        let Some(items) = value[field].as_array().filter(|items| items.len() <= 1024) else {
+        let Some(items) = value[field]
+            .as_array()
+            .filter(|items| items.len() <= MAX_DISCOVERED_MODELS)
+        else {
             return Ok(ModelCatalog::Invalid);
         };
         let mut models = Vec::new();

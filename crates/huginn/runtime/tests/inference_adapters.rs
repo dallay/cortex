@@ -507,6 +507,140 @@ async fn persisted_connection_manager_drives_dynamic_adapter_and_revocation() {
 }
 
 #[tokio::test]
+async fn discovery_accepts_large_catalog_and_enforces_entry_limit() {
+    for count in [3179, 16_384, 16_385] {
+        for ollama in [false, true] {
+            let models: Vec<Value> = (0..count)
+                .map(|index| {
+                    let id = if index == 0 {
+                        "coding".to_owned()
+                    } else {
+                        format!("model-{index}")
+                    };
+                    if ollama {
+                        json!({"name": id})
+                    } else {
+                        json!({"id": id})
+                    }
+                })
+                .collect();
+            let (path, body, adapter, provider) = if ollama {
+                (
+                    "/api/tags",
+                    json!({"models": models}),
+                    InferenceAdapter::ollama(2),
+                    "ollama",
+                )
+            } else {
+                (
+                    "/models",
+                    json!({"data": models}),
+                    InferenceAdapter::openai_compatible(2),
+                    "openai",
+                )
+            };
+            let (endpoint, task) = server(Router::new().route(
+                path,
+                get(move |headers: HeaderMap| {
+                    let body = body.clone();
+                    async move {
+                        assert_eq!(headers["authorization"], format!("Bearer {SECRET}"));
+                        Json(body)
+                    }
+                }),
+            ))
+            .await;
+            let catalog = adapter
+                .discover_models(&material(provider, &endpoint), CancellationToken::new())
+                .await
+                .unwrap();
+            if count <= 16_384 {
+                let ModelCatalog::Available(models) = catalog else {
+                    panic!("se esperaba un catálogo de {count} modelos; ollama={ollama}");
+                };
+                assert_eq!(models.len(), count);
+                assert!(models.iter().any(|model| model.id == "coding"));
+            } else {
+                assert_eq!(catalog, ModelCatalog::Invalid);
+            }
+            task.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn discovery_accepts_large_catalog_with_realistic_metadata() {
+    let models: Vec<Value> = (0..3182)
+        .map(|index| {
+            json!({
+                "id": if index == 0 { "coding".to_owned() } else { format!("model-{index}") },
+                "object": "model",
+                "created": 1720000000,
+                "owned_by": "fixture-provider",
+                "name": format!("Fixture coding model {index}"),
+                "description": "A model for code generation, analysis and general assistance. ".repeat(4),
+                "context_length": 131072,
+                "architecture": {"modality": "text->text", "tokenizer": "fixture"},
+                "pricing": {"prompt": "0.000001", "completion": "0.000003"}
+            })
+        })
+        .collect();
+    let body = serde_json::to_string(&json!({"data": models})).unwrap();
+    assert!((1_600_000..1_900_000).contains(&body.len()));
+    let (endpoint, task) = server(Router::new().route(
+        "/models",
+        get(move || {
+            let body = body.clone();
+            async move { body }
+        }),
+    ))
+    .await;
+    let catalog = InferenceAdapter::openai_compatible(5)
+        .discover_models(&material("openai", &endpoint), CancellationToken::new())
+        .await
+        .unwrap();
+    let ModelCatalog::Available(models) = catalog else {
+        panic!("se esperaba un catálogo con metadatos grandes");
+    };
+    assert_eq!(models.len(), 3182);
+    assert!(models.iter().any(|model| model.id == "coding"));
+    task.abort();
+}
+
+#[tokio::test]
+async fn discovery_enforces_response_byte_limit_incrementally() {
+    for size in [4 * 1024 * 1024, 4 * 1024 * 1024 + 1] {
+        let mut body = r#"{"data":[{"id":"coding"}]}"#.to_owned();
+        body.extend(std::iter::repeat_n(' ', size - body.len()));
+        let (endpoint, task) = server(Router::new().route(
+            "/models",
+            get(move || {
+                let chunks: Vec<_> = body
+                    .as_bytes()
+                    .chunks(8192)
+                    .map(|chunk| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(chunk)))
+                    .collect();
+                async move { Body::from_stream(futures::stream::iter(chunks)) }
+            }),
+        ))
+        .await;
+        let catalog = InferenceAdapter::openai_compatible(5)
+            .discover_models(&material("openai", &endpoint), CancellationToken::new())
+            .await
+            .unwrap();
+        if size == 4 * 1024 * 1024 {
+            let ModelCatalog::Available(models) = catalog else {
+                panic!("se esperaba aceptar exactamente 4 MiB");
+            };
+            assert_eq!(models.len(), 1);
+        } else {
+            assert_eq!(catalog, ModelCatalog::Invalid);
+        }
+        task.abort();
+    }
+}
+
+#[tokio::test]
 async fn malformed_and_oversized_catalogs_are_invalid_not_unavailable() {
     for body in ["{".to_owned(), "x".repeat(1_048_577)] {
         let (endpoint, task) = server(Router::new().route(
