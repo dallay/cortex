@@ -124,7 +124,7 @@ fn ctrl_c_cancels_incomplete_secret_paste_and_discards_its_remaining_bytes() {
     pty.wait_for("Huginn");
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
-    pty.wait_for("During an incomplete paste, Ctrl+C cancels");
+    pty.wait_for("Ctrl+C cancels");
     pty.send(&format!("key\x1b\x1b[200~{PREFIX}"));
     std::thread::sleep(std::time::Duration::from_millis(200));
     pty.send("\x03");
@@ -831,6 +831,8 @@ fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
     assert!(!screen.contains("CONNECTION_SAVED"), "{screen}");
     assert!(!pty.output().contains("CONNECTION_SAVED"));
     pty.send("\x1b");
+    pty.wait_for("Connect provider");
+    pty.send("\x03");
     pty.wait_for("Form discarded.");
     pty.send("\x03");
     pty.finish(true);

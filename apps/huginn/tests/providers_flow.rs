@@ -402,6 +402,10 @@ async fn login_form(h: &Harness, endpoint: &str, secret: &str, mode: SecretMode)
         h.ui.lock().workflow_mut().unwrap().choice(true);
     }
     submit(&h.ui).await;
+    if h.ui.lock().workflow().unwrap().snapshot().0 == "Provider already configured" {
+        h.ui.lock().workflow_mut().unwrap().choice(true);
+        submit(&h.ui).await;
+    }
     h.ui.lock().workflow_mut().unwrap().choice(true); // API key within Custom
     submit(&h.ui).await;
     {
@@ -1017,6 +1021,7 @@ async fn core_login_has_three_entries_local_defaults_cloud_key_and_custom_discov
         drop(state);
     }
     submit(&h.ui).await;
+    submit(&h.ui).await;
     {
         let snapshot = h.ui.lock().workflow().unwrap().snapshot();
         assert!(snapshot.2[0].contains("http://127.0.0.1:11434"));
@@ -1026,6 +1031,7 @@ async fn core_login_has_three_entries_local_defaults_cloud_key_and_custom_discov
     h.ui.cancel_workflow();
     command(&h.ui, "/login").await;
     h.ui.lock().workflow_mut().unwrap().choice(true);
+    submit(&h.ui).await;
     submit(&h.ui).await;
     {
         let snapshot = h.ui.lock().workflow().unwrap().snapshot();
@@ -1097,6 +1103,7 @@ async fn local_onboarding_discovers_models_without_authentication_or_persisting_
         let root = tempfile::tempdir().unwrap();
         let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
         command(&h.ui, "/login").await;
+        submit(&h.ui).await;
         submit(&h.ui).await;
         {
             let mut state = h.ui.lock();

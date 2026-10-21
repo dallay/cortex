@@ -211,30 +211,20 @@ async fn setup_with_authentication(
 }
 
 #[tokio::test]
-async fn oauth_only_adapter_is_reported_as_unsupported_not_absent() {
-    for command in ["/login", "/providers"] {
-        let (_supervisor, ui, manager) =
-            setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
-        assert!(ui.dispatch_command(command));
-        settle(&ui).await;
-        let state = ui.lock();
-        assert!(
-            state.workflow().is_none(),
-            "OAuth must not expose an actionable form"
-        );
-        let output = state
-            .notifications
-            .iter()
-            .map(|event| event.summary.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(output.contains("Test provider"));
-        assert!(output.contains("OAuth: unsupported"));
-        assert!(!output.contains("No provider adapters available"));
-        drop(state);
-        assert!(manager.records.lock().unwrap().is_empty());
-        assert!(manager.selected.lock().unwrap().is_none());
-    }
+async fn oauth_only_adapter_is_discoverable_but_never_starts_authentication() {
+    let (_supervisor, ui, manager) =
+        setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    let snapshot = ui.lock().workflow().unwrap().snapshot();
+    assert!(snapshot.1.contains("OAuth: unsupported"));
+    assert!(snapshot.2.iter().any(|row| row.contains("Test provider")));
+    submit(&ui).await;
+    let snapshot = ui.lock().workflow().unwrap().snapshot();
+    assert!(snapshot.0.contains("Unsupported"));
+    assert!(snapshot.1.contains("No connection was created"));
+    assert!(manager.records.lock().unwrap().is_empty());
+    assert!(manager.selected.lock().unwrap().is_none());
 }
 
 #[tokio::test]
@@ -279,6 +269,12 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
         assert_eq!(form.snapshot().2, initial);
         drop(state);
     }
+    submit(&ui).await;
+    assert_eq!(
+        ui.lock().workflow().unwrap().snapshot().0,
+        "Provider already configured"
+    );
+    ui.lock().workflow_mut().unwrap().choice(true);
     submit(&ui).await;
     {
         let mut state = ui.lock();
@@ -334,6 +330,10 @@ async fn login(ui: &Ui) {
     settle(ui).await;
     assert_surface(ui, Surface::Login);
     submit(ui).await; // choose provider
+    if ui.lock().workflow().unwrap().snapshot().0 == "Provider already configured" {
+        ui.lock().workflow_mut().unwrap().choice(true);
+        submit(ui).await;
+    }
     if ui.lock().workflow().unwrap().snapshot().2[0].contains("Authentication") {
         submit(ui).await; // first supported method in this test catalog is API key
     }
@@ -708,4 +708,158 @@ async fn mixed_authentication_has_one_provider_then_authentication_inside_form()
         .2
         .iter()
         .any(|line| line.contains("Authentication")));
+}
+
+#[tokio::test]
+async fn onboarding_has_four_transient_stages_and_explicit_result_actions() {
+    let (_supervisor, ui, manager) = setup().await;
+    let before = ui.lock().conversation.len();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 1 of 4"));
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 2 of 4"));
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 3 of 4"));
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.insert("https://example.com/v1");
+        form.navigate(true);
+        form.insert("model");
+        form.navigate(true);
+        form.navigate(true);
+        form.navigate(true);
+        form.insert(SENTINEL);
+        drop(state);
+    }
+    submit(&ui).await;
+    {
+        let state = ui.lock();
+        let result = state.workflow().unwrap().snapshot();
+        assert_eq!(state.conversation.len(), before);
+        drop(state);
+        assert!(result.0.contains("Step 4 of 4"));
+        assert!(result.1.contains("not been verified"));
+        assert!(result.1.contains("active model is unchanged"));
+        assert!(!format!("{result:?}").contains(SENTINEL));
+    }
+    assert_eq!(manager.records.lock().unwrap().len(), 1);
+    assert!(manager.selected.lock().unwrap().is_none());
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.choice(true);
+        form.choice(true);
+        drop(state);
+    }
+    submit(&ui).await;
+    assert!(ui.lock().workflow().is_none());
+    assert_eq!(ui.lock().conversation.len(), before);
+}
+
+#[tokio::test]
+async fn existing_provider_requires_explicit_add_and_rows_distinguish_ids() {
+    let (_supervisor, ui, manager) = setup().await;
+    login(&ui).await;
+    let original = manager
+        .records
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    let snapshot = ui.lock().workflow().unwrap().snapshot();
+    assert_eq!(snapshot.0, "Provider already configured");
+    assert!(snapshot.1.contains(&original.id.to_string()));
+    ui.cancel_workflow();
+    assert_eq!(manager.records.lock().unwrap().len(), 1);
+    login(&ui).await;
+    assert_eq!(manager.records.lock().unwrap().len(), 2);
+    assert_eq!(
+        manager.records.lock().unwrap().get(&original.id),
+        Some(&original)
+    );
+    ui.dispatch_command("/providers");
+    settle(&ui).await;
+    let mut state = ui.lock();
+    let form = state.workflow_mut().unwrap();
+    let mut public = format!("{:?}", form.snapshot());
+    form.choice(true);
+    public.push_str(&format!("{:?}", form.snapshot()));
+    drop(state);
+    for id in manager.records.lock().unwrap().keys() {
+        assert!(public.contains(&id.to_string()));
+    }
+    assert!(public.contains("remote availability not checked"));
+}
+
+#[tokio::test]
+async fn provider_search_is_case_insensitive_and_empty_results_do_not_submit() {
+    let (_supervisor, ui, manager) = setup().await;
+    let before = ui.lock().conversation.len();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    ui.lock().workflow_mut().unwrap().insert("tEsT");
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 2 of 4"));
+    ui.cancel_workflow();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    ui.lock()
+        .workflow_mut()
+        .unwrap()
+        .insert("no-provider-matches-this");
+    assert!(!ui.submit_workflow());
+    ui.cancel_workflow();
+    assert!(ui.lock().workflow().is_none());
+    assert_eq!(ui.lock().conversation.len(), before);
+    assert!(manager.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn escape_from_initial_provider_search_closes_instead_of_reopening_loading() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let (_supervisor, ui, manager) = setup().await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    let (ticket, focus) = {
+        let state = ui.lock();
+        (state.overlays.ticket(), state.overlays.focus())
+    };
+    ui.overlay_input(
+        Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        ticket,
+        focus,
+    );
+    assert!(ui.lock().workflow().is_none());
+    assert!(manager.records.lock().unwrap().is_empty());
 }

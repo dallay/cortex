@@ -88,6 +88,7 @@ pub(crate) enum InputEffect {
     None,
     Close,
     CancelForm,
+    BackForm,
     Submit,
     Choose,
     Resolve(bool),
@@ -120,10 +121,15 @@ impl Payload {
         let cancel = key.code == KeyCode::Esc || (key.code == KeyCode::Char('c') && ctrl);
         match self {
             Self::Workflow(form) => {
+                if key.code == KeyCode::Esc && form.can_go_back() {
+                    return Effect::BackForm;
+                }
                 if cancel {
                     return Effect::CancelForm;
                 }
                 match key.code {
+                    KeyCode::Down if form.searching() => form.choice(true),
+                    KeyCode::Up if form.searching() => form.choice(false),
                     KeyCode::Tab | KeyCode::Down => form.navigate(true),
                     KeyCode::BackTab | KeyCode::Up => form.navigate(false),
                     KeyCode::Left => form.choice(false),

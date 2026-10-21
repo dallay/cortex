@@ -59,8 +59,15 @@ pub enum OverlayKind {
     Confirm,
 }
 
+/// Native contribution result. Statically linked authors rebuild with the host.
+///
+/// Adding variants is source-breaking for exhaustive matches: authors must handle
+/// `Dismiss` when upgrading to transient workflow support. This is not a stable
+/// dynamic ABI or a serialized wire contract (see ADR-0013).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandResult {
+    /// Close the current workflow without a transcript notice.
+    Dismiss,
     Notice(View),
     Overlay(OverlayKind),
     Dialog(String),
@@ -514,6 +521,7 @@ impl Command {
     pub fn run(&self, arguments: &str) -> Result<CommandResult> {
         self.registration
             .invoke(|| match (self.handler)(&text(arguments)?)? {
+                CommandResult::Dismiss => Ok(CommandResult::Dismiss),
                 CommandResult::Overlay(kind @ (OverlayKind::Help | OverlayKind::Settings)) => {
                     Ok(CommandResult::Overlay(kind))
                 }

@@ -51,7 +51,7 @@ impl Plugin for ProvidersUiPlugin {
         for (name, description) in [
             (
                 "/login",
-                "Connect a provider using a host-owned secret form",
+                "Search providers and connect with transient host-owned forms",
             ),
             ("/providers", "Manage connections and credential status"),
             ("/model", "Choose the model for the next turn"),
@@ -184,16 +184,7 @@ impl Management {
     }
     fn login(&self) -> Result<CommandResult> {
         let diagnostics = self.authentication_diagnostics();
-        let options: Vec<_> = self
-            .catalog
-            .adapters()
-            .into_iter()
-            .filter(|(_, d)| {
-                d.authentication
-                    .iter()
-                    .any(|a| !matches!(a, AuthenticationMethod::OAuth))
-            })
-            .collect();
+        let options = self.catalog.adapters();
         if options.is_empty() {
             if !diagnostics.is_empty() {
                 return Ok(notice(format!(
@@ -211,8 +202,8 @@ impl Management {
         let management = self.clone();
         Ok(CommandResult::Workflow(
             Workflow::new(
-                "Connect provider",
-                format!("Choose a provider.\n{diagnostics}"),
+                "Connect a provider — Step 1 of 4",
+                format!("Search the installed provider catalog.\n{diagnostics}"),
                 vec![choice("provider", "Provider", labels)],
                 Arc::new(move |input, _| {
                     let management = management.clone();
@@ -221,7 +212,70 @@ impl Management {
                         let Some((registration, descriptor)) = selected else {
                             return Ok(failure(ConnectionError::InvalidConfiguration));
                         };
-                        management.authentication_form(registration, descriptor)
+                        if let Err(error) = management.connections.recover().await {
+                            return Ok(failure(error));
+                        }
+                        let records = match management.connections.list().await {
+                            Ok(records) => records,
+                            Err(error) => return Ok(failure(error)),
+                        };
+                        if records.iter().any(|r| r.settings.provider == descriptor.id) {
+                            management.existing_provider(registration, descriptor, records)
+                        } else {
+                            management.authentication_form(registration, descriptor)
+                        }
+                    })
+                }),
+            )?
+            .searchable()
+            .with_overlay_kind(OverlayKind::Login)?,
+        ))
+    }
+    fn existing_provider(
+        &self,
+        registration: ProviderRegistration,
+        descriptor: ProviderDescriptor,
+        records: Vec<ConnectionRecord>,
+    ) -> Result<CommandResult> {
+        let owner = self.clone();
+        let summary = records
+            .iter()
+            .filter(|r| r.settings.provider == descriptor.id)
+            .map(|r| {
+                format!(
+                    "{} · {:?} · {}",
+                    r.id,
+                    r.mode,
+                    r.settings.endpoint.as_deref().unwrap_or("default endpoint")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(CommandResult::Workflow(
+            Workflow::new(
+                "Provider already configured",
+                format!(
+                    "{}\n{summary}\nChoose explicitly; adding never overwrites a connection.",
+                    descriptor.display_name
+                ),
+                vec![choice(
+                    "action",
+                    "Action",
+                    vec![
+                        "Manage existing connections".into(),
+                        "Add another connection".into(),
+                    ],
+                )],
+                Arc::new(move |input, _| {
+                    let owner = owner.clone();
+                    let registration = registration.clone();
+                    let descriptor = descriptor.clone();
+                    Box::pin(async move {
+                        if index(&input, "action") == 0 {
+                            owner.connections("/providers").await
+                        } else {
+                            owner.authentication_form(registration, descriptor)
+                        }
                     })
                 }),
             )?
@@ -243,18 +297,20 @@ impl Management {
             .filter(|a| !matches!(a, AuthenticationMethod::OAuth))
             .cloned()
             .collect();
-        if methods.len() == 1 {
-            return self.connection_form(
-                registration,
-                descriptor,
-                methods[0] == AuthenticationMethod::ApiKey,
-                None,
-            );
+        if methods.is_empty() {
+            return Ok(CommandResult::Workflow(Workflow::new(
+                "Unsupported authentication — Step 2 of 4",
+                format!("{}: OAuth: unsupported. No implemented API-key or no-authentication method is available. Esc returns; Ctrl+C cancels. No connection was created.", descriptor.display_name),
+                vec![choice("action", "Action", vec!["Back to provider catalog".into()])],
+                { let owner = self.clone(); Arc::new(move |_, _| {
+                    let result = owner.login(); Box::pin(async move { result })
+                }) },
+            )?.with_overlay_kind(OverlayKind::Login)?));
         }
         let owner = self.clone();
         Ok(CommandResult::Workflow(
             Workflow::new(
-                "New connection",
+                "Authentication method — Step 2 of 4",
                 format!(
                     "{}: choose authentication for this connection.",
                     descriptor.display_name
@@ -362,10 +418,10 @@ impl Management {
         let title = if previous.is_some() {
             "Update connection (rotates authorization)"
         } else {
-            "New connection"
+            "Connection settings — Step 3 of 4"
         };
         Ok(CommandResult::Workflow(Workflow::new(title,
-            "Public settings and secrets are separate. Leave Model ID empty to discover models. Cloud uses its fixed official endpoint. Esc discards unsubmitted values; after saving select with /model.", fields,
+            "Public settings and secrets are separate. Leave Model ID empty to discover models. Cloud uses its fixed official endpoint. Esc goes back and clears secrets; Ctrl+C cancels. After saving select with /model.", fields,
             Arc::new(move |mut input, cancel| {
                 let management = management.clone();
                 let descriptor = descriptor.clone();
@@ -452,13 +508,27 @@ impl Management {
             .save(previous, material.settings, material.secret, mode)
             .await
         {
-            Ok(_) => Ok(notice(
-                "Connection saved. Use /model to select it for the next turn; no restart needed.",
-            )),
+            Ok(_) => self.configured_result(),
             Err(error) => Ok(form_error(format!(
                 "Could not save the connection: {error}. Reopen /providers to check actual status; durable completion may be unknown."
             ))),
         }
+    }
+    fn configured_result(&self) -> Result<CommandResult> {
+        let owner = self.clone();
+        Ok(CommandResult::Workflow(Workflow::new(
+            "Connection configured — Step 4 of 4",
+            "Local configuration stored. Remote authorization and model discovery have not been verified. The active model is unchanged.",
+            vec![choice("action", "Next", vec!["Select model (/model)".into(), "Manage connections".into(), "Close".into()])],
+            Arc::new(move |input, _| {
+                let owner = owner.clone();
+                Box::pin(async move { match index(&input, "action") {
+                    0 => owner.connections("/model").await,
+                    1 => owner.connections("/providers").await,
+                    _ => Ok(CommandResult::Dismiss),
+                } })
+            }),
+        )?.without_history().with_overlay_kind(OverlayKind::Login)?))
     }
     async fn connections(&self, command: &'static str) -> Result<CommandResult> {
         if let Err(error) = self.connections.recover().await {

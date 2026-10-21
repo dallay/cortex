@@ -20,5 +20,5 @@ pub fn apply_result(
     ticket: TransitionTicket,
     operation: Option<crate::event::OperationId>,
 ) {
-    ui.apply_result(result, origin, ticket, operation);
+    ui.apply_result(result, origin, ticket, operation, Vec::new());
 }
