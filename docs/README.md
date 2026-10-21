@@ -33,6 +33,7 @@ docs/
 │
 ├── huginn/                ← Documentación de Huginn
 │   ├── README.md          ← Guía principal de Huginn
+│   ├── architecture.md    ← Arquitectura técnica
 │   ├── authoring.md
 │   ├── connections.md
 │   ├── implementation-plan.md
@@ -57,7 +58,8 @@ docs/
 2. [rook/configuration.md](rook/configuration.md) — Cómo configurar Rook
 3. [rook/api.md](rook/api.md) — Endpoints disponibles
 4. [rook/providers.md](rook/providers.md) — Configurar modelos de IA
-5. [rook/deployment.md](rook/deployment.md) — Producción y contenedores
+5. [Dashboard](../apps/rook/dashboard/README.md) — Interfaz visual de gestión
+6. [rook/deployment.md](rook/deployment.md) — Producción y contenedores
 
 ### Para usuarios de Huginn
 
