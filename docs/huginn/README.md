@@ -4,7 +4,8 @@
 
 Local Rust coding assistant with native tools and MCP integration
 
-[![Rust](https://img.shields.io/badge/rust-1.89%2B-DEA584?logo=rust)](https://www.rust-lang.org)
+[![Rust MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2Fapps%2Fhuginn%2FCargo.toml&query=%24.package%5B%27rust-version%27%5D&label=Rust%20MSRV&suffix=%2B&color=DEA584&logo=rust)](https://www.rust-lang.org)
+<!-- Huginn MSRV from apps/huginn/Cargo.toml -->
 [![SQLite](https://img.shields.io/badge/sqlite-3-003B57?logo=sqlite)](https://www.sqlite.org)
 [![MCP](https://img.shields.io/badge/MCP-ready-7C3AED?logo=modelcontextprotocol)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
