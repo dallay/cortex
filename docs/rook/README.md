@@ -35,6 +35,7 @@ rook/
 1. [Configuración](configuration.md) — Cómo configurar Rook
 2. [API Reference](api.md) — Endpoints disponibles
 3. [Providers](providers.md) — Configurar modelos de IA
+4. [Dashboard](../../apps/rook/dashboard/README.md) — Interfaz visual de gestión
 
 ### Desarrollo
 - [Arquitectura](architecture.md) — Diseño interno y capas
