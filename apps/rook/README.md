@@ -4,8 +4,9 @@
 
 AI Proxy & Router — The Core Binary
 
-[![Rust](https://img.shields.io/badge/rust-1.81%2B-DEA584?logo=rust&labelColor=4A4A4A)](https://www.rust-lang.org)
-[![Axum](https://img.shields.io/badge/axum-0.7-8B5CF6?logo=tokio)](https://github.com/tokio-rs/axum)
+[![Rust MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2FCargo.toml&query=%24.workspace.package%5B%27rust-version%27%5D&label=Rust%20MSRV&suffix=%2B&color=DEA584&logo=rust&labelColor=4A4A4A)](https://www.rust-lang.org)
+[![Axum](https://img.shields.io/badge/axum-0.8-8B5CF6?logo=tokio)](https://github.com/tokio-rs/axum)
+<!-- Axum version from Cargo.lock -->
 [![SQLite](https://img.shields.io/badge/sqlite-3-003B57?logo=sqlite)](https://www.sqlite.org)
 [![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
 
