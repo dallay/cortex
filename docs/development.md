@@ -178,13 +178,13 @@ Comprueba que no haya otro proceso usando la base de datos de prueba. No borres 
 
 ### Dashboard no carga
 
-1. Comprueba que Rook responde: `curl http://127.0.0.1:3773/health`
+1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health`
 2. Comprueba que la sesión de administración sea válida.
 3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
 
 ### Circuit breaker activo
 
-Consulta el estado actual con `GET /api/resilience`. Para el formato de respuesta y las operaciones disponibles, usa la [referencia de API](rook/api.md).
+Consulta el estado actual con `GET /api/resilience`. La petición requiere una sesión autenticada; no es un endpoint público. Para el formato de respuesta y las operaciones disponibles, usa la [referencia de API](rook/api.md).
 
 ### E2E con Docker falla o agota el tiempo
 

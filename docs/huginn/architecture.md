@@ -72,9 +72,14 @@ pub struct Manifest {
 pub trait Plugin: Send + Sync {
     fn manifest(&self) -> Manifest;
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()>;
-    async fn deactivate(&mut self) -> Result<()>;
+    async fn deactivate(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 ```
+
+`deactivate` is optional: it has a default implementation that succeeds, so a
+plugin only implements it when it needs cleanup work.
 
 This is a shortened excerpt of the contract. The implementation also defines
 lifecycle hooks for stopping, task completion and termination; consult
@@ -246,7 +251,6 @@ pub enum Event {
     Text { text: String },
     ToolStarted { call: ToolCall },
     ApprovalRequested { request: ApprovalRequest },
-    ApprovalResolved { id: String, approved: bool },
     ApprovalResolved { id: String, approved: bool },
     ToolFinished { id: String, output: String, is_error: bool },
     Usage { input_tokens: u64, output_tokens: u64 },
