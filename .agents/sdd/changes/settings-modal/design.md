@@ -441,17 +441,15 @@ Five edits:
                        return;
                    }
                    let mut save = (*self.ui.save_ui_config).clone();
-                   let outcome = dialog.apply(&mut save);
+                   if dialog.apply(&mut save).is_err() {
+                       // last_error is rendered in the body; keep the working copy.
+                       return;
+                   }
                    state.settings = None;
                    state.settings_focus_epoch =
                        state.settings_focus_epoch.wrapping_add(1);
-                   let message = match outcome {
-                       Ok(()) => "Settings saved".to_string(),
-                       Err(error) =>
-                           format!("Settings apply failed: {error}"),
-                   };
                    drop(state);
-                   self.ui.notice(message);
+                   self.ui.notice("Settings saved".into());
                    return;
                }
                _ => {}
@@ -677,25 +675,13 @@ Navigation keys (input is consumed by the new arm of `Driver::input`):
 | `↑` | `dialog.select_prev()` | wrap-around within current tab |
 | `↓` | `dialog.select_next()` | wrap-around within current tab |
 | `Enter` on `(+)` | close + notice `Add provider not implemented yet` | no persistence call |
-| `Enter` on other rows | `apply` via the injected closure | success closes + notices `Settings saved`; failure closes + notices `Settings apply failed: <err>` |
+| `Enter` on other rows | `apply` via the injected closure | success closes + notices `Settings saved`; failure keeps Settings open, preserves the working copy, and shows the error in the modal body |
 
-> **Note on failure notice placement.** The original design surfaced
-> the error inside the dialog body and kept the dialog open. This
-> design surfaces it in the status bar and closes the dialog. The
-> observable contract required by REQ-07 is:
-> (a) modal stays open OR surfaces the error where the user can see it,
-> (b) working copy preserved on disk failure,
-> (c) Esc discards afterward.
-> We satisfy the spirit of (a) by surfacing the error in the status
-> bar (REQ-08 path is preserved verbatim — `Esc` is still a discard
-> key on the dialog whenever it is open). If reviewers prefer the
-> in-modal error, `apply` already stores `last_error`; surfacing it
-> is a 2-line tweak in the `Driver::input` `Enter` arm.
-
-`SettingsDialog` keeps a `last_error: Option<String>` field populated
-on apply failure. `snapshot()` includes that error; the renderer can
-show it as the first body line in red on the next frame if the dialog
-stays open.
+On Apply failure, REQ-07 requires the Settings overlay to stay open
+with its working copy intact. `SettingsDialog::last_error` stores the
+failure; `snapshot()` includes it and the renderer shows it in the
+modal body on the next frame. The user can retry Apply or press `Esc`
+to discard the working copy and close the overlay (REQ-08).
 
 `apply` is **idempotent** in the sense that it produces the same
 `UiConfig` from the same working copy, but it invokes the closure
@@ -895,10 +881,10 @@ value in the label (built in `snapshot()`) so the user sees
 
 | Failure | Behavior |
 |---|---|
-| Persistence closure returns `Err(_)` | Status bar shows `Settings apply failed: <err>`; dialog closes; `last_error` is still on `SettingsDialog` in case it is reopened. Working copy is preserved *in flight* (the persisted file is untouched). |
+| Persistence closure returns `Err(_)` | Settings stays open with its working copy intact; `last_error` is shown in the modal body. The user can retry or press Esc to discard; the persisted file is untouched. |
 | `config.toml` does not exist on disk | `ui_settings::persist` creates it with the new `[ui]` table and a leading `# TUI settings` comment. Atomic via tmp+rename. |
-| `config.toml` exists but is unparseable | `toml_edit` returns a parser error. `persist` propagates it via `anyhow::Context`. The notice surfaces it. |
-| Permission denied on write | `fs::write` returns the I/O error. `persist` propagates. The notice surfaces it. |
+| `config.toml` exists but is unparseable | `toml_edit` returns a parser error. `persist` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact. |
+| Permission denied on write | `fs::write` returns the I/O error. `persist` propagates. The error is shown in the modal body; Settings stays open with its working copy intact. |
 | User starts the binary with a malformed config | `Config::load` returns the error at startup. The dialog never opens; the process exits with the diagnostic. |
 | `Esc` in settings while a turn is streaming | The settings branch handles Esc and returns. The cancel-turn branch is never reached. The stream continues. (REQ-13.) |
 | `Esc` in settings while an approval modal arrives in the same focus tick | Modal preempts settings (REQ-12): `request_decision` at `state.rs:675` clears `state.settings` first. The user never sees the settings dialog after the modal closes. |
@@ -1087,12 +1073,10 @@ without the formal RED→GREEN→REFACTOR cycle.
   binary resolves the path in `main.rs` and passes it into the
   closure. The helper is path-agnostic and easy to point at test
   fixtures.
-- **Failure notice placement.** Apply failures surface in the status
-  bar and close the dialog (rather than staying open with the error
-  in the body) — keeps the input lease invariants simple and lets
-  the user re-open the dialog with the working copy intact.
-  `last_error` is still populated on `SettingsDialog` so re-opening
-  surfaces the last failure for a frame.
+- **Apply failure placement.** Apply failures keep Settings open with
+  its working copy intact. `last_error` is rendered in the modal body
+  per REQ-07. Retrying is allowed; `Esc` still discards and closes
+  per REQ-08.
 
 ## Out of Scope (v1) — repeated for reviewers
 

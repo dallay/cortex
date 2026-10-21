@@ -900,3 +900,39 @@ async fn approval_preempts_secret_workflow_and_rejects_all_ordinary_requests() {
     assert!(h.ui.lock().conversation.is_empty());
     assert_eq!(h.calls.load(Ordering::SeqCst), 0);
 }
+
+#[cfg(feature = "test-driver")]
+#[tokio::test]
+async fn task_attachment_aborts_orphans_and_keeps_the_original_task() {
+    use huginn_presentation::workflow_test_support::{attach_task, prepare_submission};
+    let mut h = setup(false).await;
+    fill(&h.ui);
+
+    let missing = tokio::spawn(std::future::pending::<()>());
+    let missing_abort = missing.abort_handle();
+    attach_task(h.ui.lock().workflow_mut().unwrap(), missing);
+    tokio::task::yield_now().await;
+    assert!(missing_abort.is_finished());
+
+    let original = tokio::spawn(std::future::pending::<()>());
+    let original_abort = original.abort_handle();
+    let duplicate = tokio::spawn(std::future::pending::<()>());
+    let duplicate_abort = duplicate.abort_handle();
+    let prepared = {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        let prepared = prepare_submission(form).unwrap();
+        attach_task(form, original);
+        attach_task(form, duplicate);
+        drop(state);
+        prepared
+    };
+    tokio::task::yield_now().await;
+    assert!(duplicate_abort.is_finished());
+    assert!(!original_abort.is_finished());
+    h.ui.cancel_workflow();
+    tokio::task::yield_now().await;
+    assert!(original_abort.is_finished());
+    drop(prepared);
+    h.supervisor.shutdown().await;
+}

@@ -201,3 +201,7 @@ impl Plugin for RatatuiPlugin {
         Ok(())
     }
 }
+
+#[cfg(feature = "test-driver")]
+#[doc(hidden)]
+pub use workflow::test_support as workflow_test_support;

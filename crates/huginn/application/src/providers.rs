@@ -18,30 +18,6 @@ pub fn catalog_id() -> ServiceId {
     ServiceId::new("agent:provider-catalog", 1)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn last_observable_revision_is_reserved_for_fail_closed_absence() {
-        let mut state = State::new();
-        state
-            .observed
-            .send_modify(|snapshot| snapshot.revision = u64::MAX - 1);
-        state.observe(
-            ConnectionPhase::Selected,
-            Some(SelectionSnapshot {
-                provider: "p".into(),
-                connection: "c".into(),
-                model: "m".into(),
-                mode: SelectionMode::Unmanaged,
-            }),
-        );
-        assert_eq!(state.observed.borrow().phase, ConnectionPhase::Unavailable);
-        assert_eq!(state.observed.borrow().revision, u64::MAX);
-        assert!(state.observed.borrow().selection.is_none());
-    }
-}
-
 struct AdapterEntry {
     credential_backed: bool,
     registration: ProviderRegistration,
@@ -808,3 +784,7 @@ impl Plugin for ProvidersPlugin {
         )
     }
 }
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub mod test_support;

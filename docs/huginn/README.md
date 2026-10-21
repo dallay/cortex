@@ -264,12 +264,12 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 
 Open with `/settings` (chat mode only — `--line-mode` excludes the modal).
 The dialog hosts five tabs in the order `theme · indicators · sound · toasts · integrations`.
-Usa `Tab`/`BackTab` para cambiar de pestaña y `↑/↓` para mover el cursor.
-Espacio modifica la opción seleccionada; mover el cursor no cambia su valor.
-En `toasts`, `←/→` también modifica el valor. En las demás pestañas,
-`←/→` cambia de sección. Enter guarda la copia de trabajo en `[ui]` de
-`config.toml` mediante `toml_edit` y muestra `Settings saved`.
-Esc descarta la copia sin modificar el archivo y muestra `Settings discarded`. v1 persists the values only — none of the tabs is
+Use `Tab`/`BackTab` to switch tabs and `↑/↓` to move the cursor.
+Space changes the selected option; moving the cursor does not change its value.
+In `toasts`, `←/→` also changes the value. In the other tabs,
+`←/→` switches sections. Enter saves the working copy to `[ui]` in
+`config.toml` using `toml_edit` and shows `Settings saved`.
+Esc discards the copy without modifying the file and shows `Settings discarded`. v1 persists the values only — none of the tabs is
 wired into its runtime subsystem yet, so the dialog is a shell for
 follow-up changes. The `integrations` tab exposes a single
 `(+) Add provider…` row that surfaces `Add provider not implemented yet`.
@@ -282,8 +282,8 @@ rounds (`toml_edit::DocumentMut`). The active precedence chain is
 while the modal is open disposes of the settings dialog first, and Esc
 inside settings never reaches the cancel-turn branch.
 
-En terminales estrechas, el encabezado muestra la pestaña activa y su posición.
-La ayuda `/help` permite desplazarse con `↑/↓` y `PgUp`/`PgDn`.
+On narrow terminals, the header shows the active tab and its position.
+The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 
 ### Keyboard Shortcuts
 

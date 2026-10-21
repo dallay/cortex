@@ -223,8 +223,15 @@ impl HostWorkflow {
         })
     }
     pub(crate) fn attach_task(&mut self, task: tokio::task::JoinHandle<()>) {
-        // Called once for the prepared submission on this exact overlay.
-        self.pending.as_mut().expect("prepared submission").task = Some(task);
+        if let Some(pending) = self
+            .pending
+            .as_mut()
+            .filter(|pending| pending.task.is_none())
+        {
+            pending.task = Some(task);
+        } else {
+            task.abort();
+        }
     }
     pub fn completed(&mut self) -> Option<huginn_core::Result<CommandResult>> {
         let pending = self.pending.as_mut()?;
@@ -237,3 +244,7 @@ impl HostWorkflow {
         }
     }
 }
+
+#[cfg(feature = "test-driver")]
+#[doc(hidden)]
+pub mod test_support;
