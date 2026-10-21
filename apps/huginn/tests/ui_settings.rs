@@ -173,9 +173,10 @@ fn migrates_inline_ui_table_without_losing_keys() {
     );
     persist_seeded(&UiConfig::defaults(), &path, None).unwrap();
     let text = fs::read_to_string(&path).unwrap();
-    assert!(text.contains("unknown_user_key = true"), "{text}");
-    assert!(text.contains("[ui.theme]"), "{text}");
-    assert!(text.contains("name = \"one-dark\""), "{text}");
+    let text_for_msg = text.replace('\n', "\\n").replace('\r', "\\r");
+    assert!(text.contains("unknown_user_key = true"), "{text_for_msg}");
+    assert!(text.contains("[ui.theme]"), "{text_for_msg}");
+    assert!(text.contains("name = \"one-dark\""), "{text_for_msg}");
 }
 
 #[cfg(unix)]
