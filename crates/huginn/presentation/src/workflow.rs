@@ -9,6 +9,7 @@ pub struct HostWorkflow {
     pub selected: usize,
     values: Vec<Value>,
     pending: Option<Pending>,
+    error: Option<String>,
 }
 enum Value {
     Public(String),
@@ -18,13 +19,30 @@ enum Value {
 }
 struct Pending {
     cancel: CancellationToken,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<()>>,
     result: oneshot::Receiver<huginn_core::Result<CommandResult>>,
 }
 impl Drop for Pending {
     fn drop(&mut self) {
         self.cancel.cancel();
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+}
+
+pub struct PreparedSubmission {
+    workflow: Workflow,
+    input: FormInput,
+    token: CancellationToken,
+    sender: oneshot::Sender<huginn_core::Result<CommandResult>>,
+}
+impl PreparedSubmission {
+    pub fn start(self) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let result = self.workflow.execute(self.input, self.token).await;
+            let _ = self.sender.send(result);
+        })
     }
 }
 impl HostWorkflow {
@@ -43,6 +61,7 @@ impl HostWorkflow {
             selected: 0,
             values,
             pending: None,
+            error: None,
         }
     }
     pub const fn is_pending(&self) -> bool {
@@ -152,56 +171,82 @@ impl HostWorkflow {
             }
         }
     }
-    pub fn submit(&mut self) -> bool {
+    pub(crate) fn prepare_submission(&mut self) -> Option<PreparedSubmission> {
         if self.is_pending() || !self.workflow.is_active() {
-            return false;
+            return None;
         }
-        if self
-            .values
-            .iter()
-            .any(|v| matches!(v, Value::Secret(s) if s.is_empty()))
+        // A required secret is empty: report it inside the form instead of
+        // silently ignoring the submission.
+        if let Some(field) =
+            self.workflow
+                .fields()
+                .iter()
+                .zip(&self.values)
+                .find(|(field, value)| {
+                    matches!(field.kind, FieldKind::Secret)
+                        && matches!(value, Value::Secret(s) if s.is_empty())
+                })
         {
-            return false;
+            self.error = Some(format!("{} is required.", field.0.label));
+            return None;
         }
         let mut input = FormInput::default();
-        for (field, value) in self
-            .workflow
-            .fields()
-            .iter()
-            .zip(std::mem::take(&mut self.values))
-        {
+        for (field, value) in self.workflow.fields().iter().zip(&mut self.values) {
             match value {
                 Value::Public(value) => {
-                    input.public.insert(field.id.clone(), value);
+                    input.public.insert(field.id.clone(), value.clone());
                 }
                 Value::Choice(index) => {
                     input.public.insert(field.id.clone(), index.to_string());
                 }
-                Value::Secret(mut bytes) => {
+                Value::Secret(bytes) => {
                     // Valid UTF-8 was inserted above. Move the allocation; never clone it.
-                    let Ok(value) = String::from_utf8(std::mem::take(&mut *bytes)) else {
-                        return false;
+                    let Ok(value) = String::from_utf8(std::mem::take(&mut **bytes)) else {
+                        return None;
                     };
                     let Ok(secret) = Secret::new(value) else {
-                        return false;
+                        return None;
                     };
                     input.secrets.insert(field.id.clone(), secret);
                 }
             }
         }
+        // The previous error is cleared only once the submission is prepared.
+        self.error = None;
         let workflow = self.workflow.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         let (sender, result) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            let _ = sender.send(workflow.execute(input, token).await);
-        });
         self.pending = Some(Pending {
             cancel,
-            task,
+            task: None,
             result,
         });
-        true
+        Some(PreparedSubmission {
+            workflow,
+            input,
+            token,
+            sender,
+        })
+    }
+    pub(crate) fn attach_task(&mut self, task: tokio::task::JoinHandle<()>) {
+        if let Some(pending) = self
+            .pending
+            .as_mut()
+            .filter(|pending| pending.task.is_none())
+        {
+            pending.task = Some(task);
+        } else {
+            task.abort();
+        }
+    }
+    pub fn show_error(&mut self, message: String) {
+        self.pending.take();
+        self.error = Some(message);
+    }
+    /// The last failure, rendered beside the fields instead of replacing guidance.
+    pub fn error_message(&self) -> Option<&str> {
+        self.error.as_deref()
     }
     pub fn completed(&mut self) -> Option<huginn_core::Result<CommandResult>> {
         let pending = self.pending.as_mut()?;
@@ -214,3 +259,7 @@ impl HostWorkflow {
         }
     }
 }
+
+#[cfg(feature = "test-driver")]
+#[doc(hidden)]
+pub mod test_support;

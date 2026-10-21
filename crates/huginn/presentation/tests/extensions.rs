@@ -83,6 +83,8 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
         &Session::new(".".into()),
         registry,
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0;
     (supervisor, ui)
@@ -91,16 +93,16 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
 async fn command_dialog_and_widget_cleanup_is_host_projected() {
     let (mut supervisor, ui) = setup().await;
     assert!(ui.dispatch_command("/select with arguments"));
-    assert!(ui.lock().plugin_dialog.is_some());
+    assert!(ui.lock().plugin_dialog().is_some());
     assert!(
-        ui.lock().modal.is_none(),
+        ui.lock().modal().is_none(),
         "plugin selection has no approval authority"
     );
     ui.refresh_contributions();
     assert_eq!(ui.lock().widgets.len(), 1);
     supervisor.remove("extension").await.unwrap();
     ui.refresh_contributions();
-    assert!(ui.lock().plugin_dialog.is_none());
+    assert!(ui.lock().plugin_dialog().is_none());
     assert!(ui.lock().widgets.is_empty());
     assert!(!ui.dispatch_command("/select"));
 }
@@ -120,7 +122,7 @@ async fn tool_renderer_dispatches_by_call_id_for_live_and_resumed_results() {
     });
     assert!(ui.lock().tail.contains("CUSTOM live"));
     assert!(
-        ui.lock().status_error,
+        ui.lock().status.diagnostic,
         "renderer cannot hide authoritative failure"
     );
     let mut session = Session::new(".".into());
@@ -133,10 +135,10 @@ async fn tool_renderer_dispatches_by_call_id_for_live_and_resumed_results() {
     ui.synchronize(&session);
     assert!(ui
         .lock()
-        .committed
+        .conversation
         .iter()
         .any(|text| text.contains("CUSTOM resumed")));
-    let count = ui.lock().committed.len();
+    let count = ui.lock().conversation.len();
     ui.synchronize(&session);
-    assert_eq!(ui.lock().committed.len(), count);
+    assert_eq!(ui.lock().conversation.len(), count);
 }

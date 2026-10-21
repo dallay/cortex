@@ -12,6 +12,145 @@ use std::sync::{
 use support::*;
 
 #[tokio::test]
+async fn staged_selection_requires_exact_commit_and_snapshot_is_safe() {
+    let (mut supervisor, management, catalog, router) = start().await;
+    let mut watch = management.0.subscribe();
+    let initial = watch.borrow_and_update().clone();
+    assert_eq!(initial.phase, ConnectionPhase::Unconfigured);
+    assert!(initial.selection.is_none());
+    supervisor
+        .register(Box::new(AdapterPlugin::text("a", "a", "a")))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let connection = connect(&management, &catalog, "a", "one").await;
+    let selection = ModelSelection {
+        connection,
+        model: "alpha".into(),
+    };
+    management
+        .0
+        .execute(
+            ProviderAction::StageSelection(selection.clone()),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let staged = watch.borrow_and_update().clone();
+    assert_eq!(staged.phase, ConnectionPhase::Candidate);
+    assert!(staged.selection.is_none());
+    assert!(!router.0.is_configured());
+    let mut wrong = selection.clone();
+    wrong.model = "beta".into();
+    assert!(management
+        .0
+        .publish_selection(
+            &wrong,
+            SelectionMode::Managed(huginn_core::connections::SecretMode::Secure)
+        )
+        .is_err());
+    assert_eq!(*watch.borrow(), staged);
+    management
+        .0
+        .publish_selection(
+            &selection,
+            SelectionMode::Managed(huginn_core::connections::SecretMode::Secure),
+        )
+        .unwrap();
+    let confirmed = watch.borrow_and_update().clone();
+    assert_eq!(confirmed.source, initial.source);
+    assert!(confirmed.revision > staged.revision && staged.revision > initial.revision);
+    assert_eq!(confirmed.phase, ConnectionPhase::Selected);
+    assert_eq!(confirmed.selection.as_ref().unwrap().model, "alpha");
+    assert!(router.0.is_configured());
+    let json = serde_json::to_value(&confirmed).unwrap();
+    assert_eq!(json["selection"].as_object().unwrap().len(), 4);
+    assert_eq!(
+        serde_json::from_value::<ConnectionSnapshot>(json).unwrap(),
+        confirmed
+    );
+    assert!(management
+        .0
+        .publish_selection(&selection, SelectionMode::Unmanaged)
+        .is_err());
+    supervisor.shutdown().await;
+    assert_eq!(watch.borrow().phase, ConnectionPhase::Unavailable);
+    assert!(watch.borrow().selection.is_none());
+}
+
+#[tokio::test]
+async fn revoked_selection_is_absent_from_public_diagnostics() {
+    let (mut supervisor, management, catalog, _) = start().await;
+    supervisor
+        .register(Box::new(AdapterPlugin::text("a", "a", "a")))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let connection = connect(&management, &catalog, "a", "one").await;
+    select(&management, &connection, "alpha").await;
+    management
+        .0
+        .execute(ProviderAction::Revoke(connection), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        management.0.diagnostic().unwrap().selection.is_none(),
+        "revoked identity must not remain advertised as selected"
+    );
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn selection_watch_tracks_exact_teardown_and_activation_source() {
+    let (mut supervisor, management, catalog, _) = start().await;
+    let watch = management.0.subscribe();
+    let source = watch.borrow().source;
+    supervisor
+        .register(Box::new(AdapterPlugin::text("a", "a", "a")))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let a = connect(&management, &catalog, "a", "one").await;
+    let b = connect(&management, &catalog, "a", "two").await;
+    select(&management, &a, "alpha").await;
+    let selected = watch.borrow().clone();
+    management
+        .0
+        .execute(ProviderAction::Revoke(b), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *watch.borrow(),
+        selected,
+        "unrelated revocation must not clear selection"
+    );
+    management
+        .0
+        .execute(
+            ProviderAction::Replace {
+                connection: a,
+                adapter: catalog.0.adapters()[0].0.clone(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(watch.borrow().phase, ConnectionPhase::Revoked);
+    assert!(watch.borrow().selection.is_none());
+    let c = connect(&management, &catalog, "a", "three").await;
+    select(&management, &c, "alpha").await;
+    supervisor.remove("a").await.unwrap();
+    assert_eq!(watch.borrow().phase, ConnectionPhase::Revoked);
+    assert!(watch.borrow().selection.is_none());
+    supervisor.shutdown().await;
+    assert_eq!(watch.borrow().phase, ConnectionPhase::Unavailable);
+    supervisor.start().await.unwrap();
+    let current = supervisor
+        .resolve::<ProvidersService>(&huginn_application::providers::providers_id())
+        .unwrap();
+    assert_ne!(current.0.subscribe().borrow().source, source);
+    assert!(watch.borrow().selection.is_none());
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn unconfigured_core_has_diagnostics_but_no_inference() {
     let (mut supervisor, management, catalog, router) = start().await;
     assert!(catalog.0.adapters().is_empty());
@@ -353,6 +492,53 @@ async fn handles_from_another_supervisor_cannot_alias_same_generation() {
 }
 
 struct ForeignCatalogPlugin(Arc<ProviderCatalogService>);
+
+struct SelfCancellingAdapter(Arc<std::sync::Mutex<Option<CancellationToken>>>);
+#[async_trait]
+impl huginn_core::kernel::Plugin for SelfCancellingAdapter {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: "self-cancel".into(),
+            provides: vec![],
+            requires: vec![huginn_application::providers::catalog_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        *self.0.lock().unwrap() = Some(ctx.cancellation.clone());
+        ctx.resolve::<ProviderCatalogService>(&huginn_application::providers::catalog_id())?
+            .0
+            .register(
+                ctx,
+                Arc::new(Adapter {
+                    id: "a",
+                    model: Arc::new(TextModel("a")),
+                }),
+            )?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn adapter_self_cancellation_publishes_absence_before_unload() {
+    let (mut supervisor, management, catalog, _) = start().await;
+    let cancel = Arc::new(std::sync::Mutex::new(None));
+    supervisor
+        .register(Box::new(SelfCancellingAdapter(cancel.clone())))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let connection = connect(&management, &catalog, "a", "one").await;
+    select(&management, &connection, "alpha").await;
+    let mut watch = management.0.subscribe();
+    watch.borrow_and_update();
+    cancel.lock().unwrap().as_ref().unwrap().cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(5), watch.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(watch.borrow().phase, ConnectionPhase::Revoked);
+    assert!(watch.borrow().selection.is_none());
+    supervisor.shutdown().await;
+}
 #[async_trait]
 impl huginn_core::kernel::Plugin for ForeignCatalogPlugin {
     fn manifest(&self) -> huginn_core::kernel::Manifest {

@@ -27,6 +27,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
+tempfile.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
@@ -34,7 +36,6 @@ axum.workspace = true
 futures.workspace = true
 huginn-plugin-api = { path = "../../crates/huginn/plugin-api" }
 portable-pty = "=0.9.0"
-tempfile = "=3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "process", "time"] }
 
 [lints]

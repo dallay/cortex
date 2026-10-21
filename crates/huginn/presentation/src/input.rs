@@ -154,6 +154,9 @@ struct Parser {
     // survives: a later fragment beginning '[' cannot become public text.
     escape_emitted: bool,
     revoked: bool,
+    // An over-budget CSI/SS3 remains framed until its final byte. Clearing the
+    // buffer alone would reinterpret its suffix as editor/secret-field text.
+    discarded_control: bool,
     paste: Option<Paste>,
     overflow: bool,
 }
@@ -165,6 +168,7 @@ impl Parser {
             owner: (0, 0),
             escape_emitted: false,
             revoked: false,
+            discarded_control: false,
             paste: None,
             overflow: false,
         }
@@ -255,6 +259,12 @@ impl Parser {
     }
 
     fn feed_sequence(&mut self, byte: u8, owner: Lease, current: Lease) -> Option<(Event, Lease)> {
+        if self.discarded_control {
+            if (0x40..=0x7e).contains(&byte) {
+                self.discarded_control = false;
+            }
+            return None;
+        }
         if self.pending.as_slice() == b"\x1b" {
             if byte == 0x1b {
                 let old = self.owner;
@@ -325,6 +335,7 @@ impl Parser {
         if !(0x40..=0x7e).contains(&byte) {
             if bytes.len() >= 64 {
                 self.clear();
+                self.discarded_control = true;
             }
             return None;
         }

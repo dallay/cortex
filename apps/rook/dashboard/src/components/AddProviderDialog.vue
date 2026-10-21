@@ -566,7 +566,6 @@ onUnmounted(stopOAuthPolling);
         <div v-if="showKindSelector" class="space-y-2">
           <Label for="kind">{{ t('providers.form.selectProvider') }}</Label>
           <Select
-            id="kind"
             :model-value="kind"
             @update:model-value="(v) => v && (kind = v as ProviderKind)"
           >
@@ -686,7 +685,6 @@ onUnmounted(stopOAuthPolling);
               {{ t('providers.oauth.flowType') }}
             </Label>
             <Select
-              id="oauthFlowType"
               v-model="form.oauthFlowType"
               :disabled="oauthBusy"
             >

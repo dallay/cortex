@@ -125,6 +125,9 @@ pub trait ModelProvider: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    ConnectionChanged {
+        snapshot: providers::ConnectionSnapshot,
+    },
     TurnStarted {
         session_id: String,
     },
@@ -160,6 +163,28 @@ pub enum Event {
 }
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: Event);
+
+    fn emit_for(&self, _operation: OperationId, event: Event) {
+        self.emit(event);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct OperationId(pub u64);
+
+pub struct ScopedEventSink<'a> {
+    pub sink: &'a dyn EventSink,
+    pub operation: OperationId,
+}
+
+impl EventSink for ScopedEventSink<'_> {
+    fn emit(&self, event: Event) {
+        self.sink.emit_for(self.operation, event);
+    }
+
+    fn emit_for(&self, _operation: OperationId, event: Event) {
+        self.sink.emit_for(self.operation, event);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

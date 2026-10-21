@@ -80,7 +80,7 @@ fn fixture(capture: Arc<Mutex<Vec<(String, Value)>>>, tools: bool) -> Router {
         .route("/v1/chat/completions", post(move |headers: HeaderMap, Json(body): Json<Value>| {
             let capture = capture.clone();
             async move {
-                capture.lock().unwrap().push((headers["authorization"].to_str().unwrap().into(), body));
+                capture.lock().unwrap().push((headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").into(), body));
                 ([("content-type", "text/event-stream")], streaming())
             }
         }))
@@ -143,16 +143,21 @@ async fn missing_failed_and_absent_catalogs_are_explicit_without_inference() {
                 .unwrap(),
             expected
         );
-        let error = adapter
+        let result = adapter
             .create_connection_model(
                 &selection("openai"),
                 material("openai", &endpoint),
                 CancellationToken::new(),
             )
-            .await
-            .err()
-            .unwrap();
-        assert!(!error.to_string().contains(SECRET));
+            .await;
+        if expected == ModelCatalog::Unsupported {
+            assert!(
+                result.is_ok(),
+                "manual Custom model is permitted only for unsupported discovery"
+            );
+        } else {
+            assert!(!result.err().unwrap().to_string().contains(SECRET));
+        }
         task.abort();
     }
     let capture = Arc::new(Mutex::new(vec![]));
@@ -465,7 +470,9 @@ async fn persisted_connection_manager_drives_dynamic_adapter_and_revocation() {
     )
     .await
     .unwrap();
-    let material = material("ollama", &endpoint);
+    let mut material = material("ollama", &endpoint);
+    material.settings.requires_secret = false;
+    material.secret = None;
     let record = manager
         .create(material.settings, material.secret)
         .await
@@ -497,6 +504,140 @@ async fn persisted_connection_manager_drives_dynamic_adapter_and_revocation() {
     assert_eq!(capture.lock().unwrap().len(), 1);
     supervisor.shutdown().await;
     task.abort();
+}
+
+#[tokio::test]
+async fn discovery_accepts_large_catalog_and_enforces_entry_limit() {
+    for count in [3179, 16_384, 16_385] {
+        for ollama in [false, true] {
+            let models: Vec<Value> = (0..count)
+                .map(|index| {
+                    let id = if index == 0 {
+                        "coding".to_owned()
+                    } else {
+                        format!("model-{index}")
+                    };
+                    if ollama {
+                        json!({"name": id})
+                    } else {
+                        json!({"id": id})
+                    }
+                })
+                .collect();
+            let (path, body, adapter, provider) = if ollama {
+                (
+                    "/api/tags",
+                    json!({"models": models}),
+                    InferenceAdapter::ollama(2),
+                    "ollama",
+                )
+            } else {
+                (
+                    "/models",
+                    json!({"data": models}),
+                    InferenceAdapter::openai_compatible(2),
+                    "openai",
+                )
+            };
+            let (endpoint, task) = server(Router::new().route(
+                path,
+                get(move |headers: HeaderMap| {
+                    let body = body.clone();
+                    async move {
+                        assert_eq!(headers["authorization"], format!("Bearer {SECRET}"));
+                        Json(body)
+                    }
+                }),
+            ))
+            .await;
+            let catalog = adapter
+                .discover_models(&material(provider, &endpoint), CancellationToken::new())
+                .await
+                .unwrap();
+            if count <= 16_384 {
+                let ModelCatalog::Available(models) = catalog else {
+                    panic!("se esperaba un catálogo de {count} modelos; ollama={ollama}");
+                };
+                assert_eq!(models.len(), count);
+                assert!(models.iter().any(|model| model.id == "coding"));
+            } else {
+                assert_eq!(catalog, ModelCatalog::Invalid);
+            }
+            task.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn discovery_accepts_large_catalog_with_realistic_metadata() {
+    let models: Vec<Value> = (0..3182)
+        .map(|index| {
+            json!({
+                "id": if index == 0 { "coding".to_owned() } else { format!("model-{index}") },
+                "object": "model",
+                "created": 1720000000,
+                "owned_by": "fixture-provider",
+                "name": format!("Fixture coding model {index}"),
+                "description": "A model for code generation, analysis and general assistance. ".repeat(4),
+                "context_length": 131072,
+                "architecture": {"modality": "text->text", "tokenizer": "fixture"},
+                "pricing": {"prompt": "0.000001", "completion": "0.000003"}
+            })
+        })
+        .collect();
+    let body = serde_json::to_string(&json!({"data": models})).unwrap();
+    assert!((1_600_000..1_900_000).contains(&body.len()));
+    let (endpoint, task) = server(Router::new().route(
+        "/models",
+        get(move || {
+            let body = body.clone();
+            async move { body }
+        }),
+    ))
+    .await;
+    let catalog = InferenceAdapter::openai_compatible(5)
+        .discover_models(&material("openai", &endpoint), CancellationToken::new())
+        .await
+        .unwrap();
+    let ModelCatalog::Available(models) = catalog else {
+        panic!("se esperaba un catálogo con metadatos grandes");
+    };
+    assert_eq!(models.len(), 3182);
+    assert!(models.iter().any(|model| model.id == "coding"));
+    task.abort();
+}
+
+#[tokio::test]
+async fn discovery_enforces_response_byte_limit_incrementally() {
+    for size in [4 * 1024 * 1024, 4 * 1024 * 1024 + 1] {
+        let mut body = r#"{"data":[{"id":"coding"}]}"#.to_owned();
+        body.extend(std::iter::repeat_n(' ', size - body.len()));
+        let (endpoint, task) = server(Router::new().route(
+            "/models",
+            get(move || {
+                let chunks: Vec<_> = body
+                    .as_bytes()
+                    .chunks(8192)
+                    .map(|chunk| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(chunk)))
+                    .collect();
+                async move { Body::from_stream(futures::stream::iter(chunks)) }
+            }),
+        ))
+        .await;
+        let catalog = InferenceAdapter::openai_compatible(5)
+            .discover_models(&material("openai", &endpoint), CancellationToken::new())
+            .await
+            .unwrap();
+        if size == 4 * 1024 * 1024 {
+            let ModelCatalog::Available(models) = catalog else {
+                panic!("se esperaba aceptar exactamente 4 MiB");
+            };
+            assert_eq!(models.len(), 1);
+        } else {
+            assert_eq!(catalog, ModelCatalog::Invalid);
+        }
+        task.abort();
+    }
 }
 
 #[tokio::test]
@@ -597,5 +738,205 @@ async fn fragmented_stream_errors_do_not_reflect_remote_secrets() {
     let error = stream.next().await.unwrap().unwrap_err();
     assert!(!format!("{error:?} {error}").contains(SECRET));
     assert!(stream.next().await.is_none());
+    task.abort();
+}
+
+#[test]
+fn builtin_provider_plugins_have_independent_identities_and_authentication() {
+    use huginn_core::kernel::Plugin;
+    use huginn_runtime::providers::{CustomProviderPlugin, OllamaCloudPlugin, OllamaLocalPlugin};
+    let plugins: Vec<Box<dyn Plugin>> = vec![
+        Box::new(CustomProviderPlugin { timeout_secs: 2 }),
+        Box::new(OllamaLocalPlugin { timeout_secs: 2 }),
+        Box::new(OllamaCloudPlugin { timeout_secs: 2 }),
+    ];
+    let ids: std::collections::BTreeSet<_> = plugins.iter().map(|p| p.manifest().id).collect();
+    assert_eq!(ids.len(), 3);
+    assert_eq!(
+        InferenceAdapter::ollama(2).onboarding().authentication,
+        Some(vec![AuthenticationMethod::None])
+    );
+    let cloud = InferenceAdapter::ollama_cloud(2).descriptor();
+    assert_eq!(cloud.id, "ollama-cloud");
+    assert_eq!(cloud.authentication, vec![AuthenticationMethod::ApiKey]);
+    assert_eq!(
+        InferenceAdapter::openai_compatible(2).descriptor().id,
+        "openai"
+    );
+}
+
+#[tokio::test]
+async fn onboarding_defaults_and_cloud_destination_are_explicit() {
+    let local = InferenceAdapter::ollama(2);
+    assert_eq!(
+        local.onboarding().default_endpoint.as_deref(),
+        Some("http://127.0.0.1:11434")
+    );
+    let cloud = InferenceAdapter::ollama_cloud(2);
+    assert_eq!(
+        cloud.onboarding().default_endpoint.as_deref(),
+        Some("https://ollama.com")
+    );
+    assert!(!cloud.onboarding().allow_endpoint_edit);
+    assert!(cloud
+        .validate_connection(&material("ollama-cloud", "https://example.com"))
+        .is_err());
+    assert!(cloud
+        .validate_connection(&material("ollama-cloud", "http://127.0.0.1:11434"))
+        .is_err());
+    assert!(cloud
+        .validate_connection(&material("ollama-cloud", "https://ollama.com"))
+        .is_ok());
+    let mut missing = material("ollama-cloud", "https://ollama.com");
+    missing.secret = None;
+    assert!(cloud.validate_connection(&missing).is_err());
+    assert_eq!(
+        InferenceAdapter::openai_compatible(2)
+            .onboarding()
+            .default_endpoint,
+        None
+    );
+}
+
+#[tokio::test]
+async fn custom_without_model_catalog_uses_explicit_model_but_auth_failures_do_not() {
+    for status in [
+        StatusCode::NOT_FOUND,
+        StatusCode::METHOD_NOT_ALLOWED,
+        StatusCode::UNAUTHORIZED,
+    ] {
+        let capture = Arc::new(Mutex::new(vec![]));
+        let (endpoint, task) = server(
+            Router::new()
+                .route("/v1/models", get(move || async move { status }))
+                .route(
+                    "/v1/chat/completions",
+                    post({
+                        let capture = capture.clone();
+                        move || {
+                            let capture = capture.clone();
+                            async move {
+                                capture.lock().unwrap().push((String::new(), Value::Null));
+                                ([("content-type", "text/event-stream")], streaming())
+                            }
+                        }
+                    }),
+                ),
+        )
+        .await;
+        let result = InferenceAdapter::openai_compatible(2)
+            .create_connection_model(
+                &selection("openai"),
+                material("openai", &format!("{endpoint}/v1")),
+                CancellationToken::new(),
+            )
+            .await;
+        if status == StatusCode::UNAUTHORIZED {
+            assert!(result.is_err());
+        } else {
+            let deltas = result
+                .expect("explicit model must work without model discovery")
+                .stream(request(), CancellationToken::new())
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            assert!(deltas.iter().all(Result::is_ok));
+            assert_eq!(capture.lock().unwrap().len(), 1);
+        }
+        task.abort();
+    }
+}
+
+#[tokio::test]
+async fn removing_one_core_provider_does_not_revoke_the_others() {
+    use huginn_runtime::providers::{CustomProviderPlugin, OllamaCloudPlugin, OllamaLocalPlugin};
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(ProvidersPlugin::default()))
+        .unwrap();
+    supervisor
+        .register(Box::new(OllamaLocalPlugin { timeout_secs: 2 }))
+        .unwrap();
+    supervisor
+        .register(Box::new(OllamaCloudPlugin { timeout_secs: 2 }))
+        .unwrap();
+    supervisor
+        .register(Box::new(CustomProviderPlugin { timeout_secs: 2 }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let catalog = supervisor
+        .resolve::<ProviderCatalogService>(&huginn_application::providers::catalog_id())
+        .unwrap()
+        .0
+        .clone();
+    let before = catalog.adapters();
+    assert_eq!(before.len(), 3);
+    supervisor
+        .remove("builtin.inference.ollama-local")
+        .await
+        .unwrap();
+    let after = catalog.adapters();
+    assert_eq!(after.len(), 2);
+    for (registration, _) in after {
+        assert!(before.iter().any(|(old, _)| *old == registration));
+    }
+    let local = before.iter().find(|(r, _)| r.provider == "ollama").unwrap();
+    assert!(catalog.onboarding(&local.0).is_err());
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn discovery_is_cancelled_when_its_plugin_is_removed() {
+    use huginn_runtime::providers::CustomProviderPlugin;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let signal = entered.clone();
+    let (endpoint, task) = server(Router::new().route(
+        "/v1/models",
+        get(move || {
+            let signal = signal.clone();
+            async move {
+                signal.notify_one();
+                std::future::pending::<StatusCode>().await
+            }
+        }),
+    ))
+    .await;
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(ProvidersPlugin::default()))
+        .unwrap();
+    supervisor
+        .register(Box::new(CustomProviderPlugin { timeout_secs: 30 }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let catalog = supervisor
+        .resolve::<ProviderCatalogService>(&huginn_application::providers::catalog_id())
+        .unwrap()
+        .0
+        .clone();
+    let registration = catalog.adapters()[0].0.clone();
+    let caller = CancellationToken::new();
+    let cancel = caller.clone();
+    let discovery = tokio::spawn(async move {
+        catalog
+            .discover_models(
+                &registration,
+                &material("openai", &format!("{endpoint}/v1")),
+                cancel,
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    supervisor.remove("builtin.inference.custom").await.unwrap();
+    let result = tokio::time::timeout(Duration::from_millis(300), discovery)
+        .await
+        .expect("revocation must stop discovery, not wait for network timeout")
+        .unwrap();
+    assert!(result.is_err());
+    assert!(!caller.is_cancelled());
+    supervisor.shutdown().await;
     task.abort();
 }

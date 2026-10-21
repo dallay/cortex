@@ -12,7 +12,7 @@ fn start(mode: &str, cursor: bool) -> Pty {
 
 fn approval_code(pty: &Pty) -> String {
     pty.wait_for("Type ");
-    let output = pty.output();
+    let output = pty.screen_text();
     let start = output.rfind("Type ").expect("approval challenge is shown") + 5;
     let code = output
         .get(start..start + 8)
@@ -62,7 +62,11 @@ fn secret_form_masks_keys_and_pastes_and_async_error_does_not_echo_credentials()
     pty.wait_for("Host-owned input");
     pty.send(&format!("\x1b[200~{SENTINEL}\x1b[201~"));
     pty.send("\t\x1b[C\r");
-    pty.wait_for("UI action failed");
+    // A failed form stays open and shows the error inside it.
+    pty.wait_for("Error:");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Error:");
+    pty.send("\x03");
     pty.send("\x03");
     let output = pty.finish(true);
     assert!(!output.contains(SENTINEL));
@@ -78,8 +82,10 @@ fn secret_action_panic_payload_is_not_written_to_terminal_and_pending_action_can
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
     pty.send(&format!("{SENTINEL}\t\x1b[C\x1b[C\r"));
-    pty.wait_for("UI action failed");
+    pty.wait_for("Error:");
     assert!(!pty.output().contains(SENTINEL));
+    pty.send("\x1b");
+    pty.wait_for("Form discarded.");
     pty.send("/secret-form\r");
     pty.wait_for("Host-owned input");
     pty.send(&format!("{SENTINEL}\r"));
@@ -217,25 +223,14 @@ fn resizing_during_incomplete_secret_paste_does_not_start_another_reader() {
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
     pty.send("\x1b[200~RESIZED_SECRET_PREFIX");
-    pty.master
-        .resize(portable_pty::PtySize {
-            rows: 25,
-            cols: 90,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    // The prefix is intentionally never rendered. Let the host frame it as an
+    // incomplete paste before resizing, otherwise this only tests input timing.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    pty.resize(25, 90);
     pty.send("\x03");
-    // Ratatui's resize clears the old inline viewport after the cancellation
-    // notice was committed. Observe that transition in the protocol capture.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !pty.output().contains("Form discarded.") {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "cancellation was not processed during resize"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    // Raw ANSI output may interleave cursor movements between adjacent cells;
+    // assert against the reconstructed resized screen, not its byte transcript.
+    pty.wait_for("Form discarded.");
     pty.send("RESIZED_SECRET_SUFFIX\x1b[201~fresh-after-resize");
     pty.wait_for("fresh-after-resize");
     pty.send("\x03");
@@ -325,7 +320,7 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     let mut stale = start("normal", true);
     stale.wait_for("Huginn");
     stale.send("approve\r");
-    stale.wait_for("END_OF_DIFF");
+    stale.wait_for("PREVIEW_FIRST");
     let stale_code = approval_code(&stale);
     stale.send("\x1b");
     stale.wait_for("DENIED");
@@ -337,7 +332,7 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    pty.wait_for("END_OF_DIFF");
+    pty.wait_for("PREVIEW_FIRST");
     let ordinary_current_code = approval_code(&pty);
     assert_ne!(
         stale_code, ordinary_current_code,
@@ -354,7 +349,7 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    pty.wait_for("END_OF_DIFF");
+    pty.wait_for("PREVIEW_FIRST");
     let paste_current_code = approval_code(&pty);
     assert_ne!(
         stale_code, paste_current_code,
@@ -370,7 +365,7 @@ fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    pty.wait_for("END_OF_DIFF");
+    pty.wait_for("PREVIEW_FIRST");
     let fresh = approval_code(&pty);
     pty.send(&format!("{fresh}\r"));
     pty.wait_for("APPROVED");
@@ -526,12 +521,212 @@ fn assert_revoked_selection(mode: &str, enter: &str, approval: bool) {
     // A subsequent different command proves the event queue was processed.
     pty.send("\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f/help\r");
     pty.wait_for("Enter sends;");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Enter sends;");
     pty.send("\x03");
     let output = pty.finish(true);
     assert!(
         !output.contains("NEW_COMMAND_EXECUTED"),
         "revoked selection executed replacement"
     );
+}
+
+#[test]
+fn overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback() {
+    const SECRET: &str = "OVERLAY_SECRET_NEVER_HISTORY";
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("bar");
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("fixture/alpha");
+    let history = (0..45)
+        .map(|index| format!("HISTORY{index:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pty.send(&format!("\x1b[200~{history}\x1b[201~\r"));
+    pty.wait_for("STREAM_COMPLETE");
+    pty.send("hold\r");
+    pty.wait_for("STREAM_HELD");
+    // A sent turn is shown as soon as it is sent, so the baseline is taken
+    // once that echo reached the scrollback.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !pty.screen_text().contains("User: hold") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sent turn was not rendered: {}",
+            pty.screen_text()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The app owns the transcript: it is rendered in the frame, not in the
+    // terminal scrollback.
+    assert!(
+        pty.screen_text().contains("HISTORY"),
+        "history positive control missing: {}",
+        pty.screen_text()
+    );
+    assert!(
+        !pty.scrollback_text().contains("HISTORY00"),
+        "the transcript must not reach the terminal scrollback"
+    );
+    let baseline = pty.scrollback_text();
+    for (input, marker) in [
+        ("/help\r", "┌Help"),
+        ("/settings\r", "┌Settings"),
+        ("/bar-provider\r", "┌Bar Provider"),
+        ("/bar-login\r", "┌Bar Login"),
+        ("/bar-model\r", "┌Bar Model"),
+        ("/bar-confirm\r", "┌Bar Confirm"),
+    ] {
+        pty.send(input);
+        pty.wait_for(marker);
+        if input.starts_with("/bar-") {
+            pty.send(&format!("\x1b[200~{SECRET}\x1b[201~"));
+            pty.wait_for("********");
+        }
+        pty.send("\x1b");
+        pty.wait_until_screen_not_contains(marker);
+        assert_eq!(
+            pty.scrollback_text(),
+            baseline,
+            "{input} changed scrollback"
+        );
+        assert!(!pty.screen_text().contains(SECRET));
+        assert!(!pty.output().contains(SECRET));
+    }
+    // Esc closed each overlay without cancelling the held turn.
+    pty.wait_for("STREAM_HELD");
+    pty.send("\x1b");
+    pty.wait_for("operation cancelled");
+    pty.send("\x03");
+    let output = pty.finish(true);
+    assert!(!output.contains(SECRET));
+    let scrollback = pty.scrollback_text();
+    for ui_text in [
+        "┌Help",
+        "┌Settings",
+        "Bar Provider",
+        "Bar Login",
+        "Bar Model",
+        "Bar Confirm",
+        SECRET,
+    ] {
+        assert!(!scrollback.contains(ui_text), "UI in scrollback: {ui_text}");
+    }
+}
+
+#[test]
+fn actual_terminal_resize_preserves_bar_and_restores_overlay_surface() {
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("bar");
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("fixture/alpha");
+    let initial = pty.screen_text();
+    assert!(initial.contains("fixture/alpha"), "bar missing:\n{initial}");
+
+    pty.send("/bar-provider\r");
+    pty.wait_for("Bar Provider");
+    // The workflow and watch receiver update independently. Opening the form
+    // does not imply the connection task has consumed the published snapshot.
+    pty.wait_for("Idle|fixture/Bar-Provider");
+    assert!(
+        pty.screen_text().contains("Idle|fixture/Bar-Provider"),
+        "bar hidden by workflow:\n{}",
+        pty.screen_text()
+    );
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Bar Provider");
+    pty.resize(8, 20);
+    pty.wait_for("I|fixt");
+    let narrow = pty.screen_text();
+    assert!(
+        narrow.contains("I|fixt"),
+        "status absent at 20x8:\n{narrow}"
+    );
+
+    pty.resize(30, 100);
+    pty.wait_for("Idle|fixture/Bar-Provider");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn overlays_keep_status_visible_at_minimum_inline_size() {
+    for (rows, cols) in [(30, 100), (8, 20)] {
+        let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+        command.arg("bar");
+        let mut pty = Pty::start_sized(command, true, rows, cols);
+        pty.wait_for("Huginn");
+        for (input, marker, close_marker) in [
+            ("/help\r", "Enter sends;", "┌Help"),
+            ("/settings\r", "┌Settings", "┌Settings"),
+            ("/bar-provider\r", "Bar Provider", "┌Bar Provider"),
+            ("/bar-login\r", "Bar Login", "┌Bar Login"),
+            ("/bar-model\r", "Bar Model", "┌Bar Model"),
+            ("/bar-confirm\r", "Bar Confirm", "┌Bar Confirm"),
+        ] {
+            pty.send(input);
+            pty.wait_for(marker);
+            let screen = pty.screen_text();
+            let status_marker = if cols >= 100 {
+                "Idle|fixture/"
+            } else {
+                "I|fixt"
+            };
+            assert!(
+                screen.contains(status_marker),
+                "status bar missing at {cols}x{rows}:\n{screen}"
+            );
+            pty.send("\x1b");
+            pty.wait_until_screen_not_contains(close_marker);
+        }
+        pty.send("\x03");
+        pty.finish(true);
+    }
+}
+
+#[test]
+fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    let mut pty = Pty::start_sized(command, true, 8, 20);
+    pty.wait_for("Huginn");
+    pty.send("approve\r");
+    pty.wait_for("Permission #");
+    let screen = pty.screen_text();
+    let challenge = screen
+        .find("Approve: ")
+        .map(|start| start + "Approve: ".len())
+        .expect("approval challenge is shown");
+    let stale_code = screen[challenge..challenge + 8].to_string();
+    assert!(
+        stale_code.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "{screen}"
+    );
+
+    // A valid code submitted while the terminal is below the viable inline
+    // viewport must not authorize the request.
+    pty.resize(1, 1);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    pty.send(&format!("{stale_code}\r"));
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(
+        !pty.output().contains("APPROVED"),
+        "approval was accepted while viewport was below minimum:\n{}",
+        pty.output()
+    );
+
+    // Restore the viewport and confirm a fresh draw re-arms the same request.
+    pty.resize(8, 20);
+    pty.wait_for("Approve: ");
+    let screen = pty.screen_text();
+    assert!(
+        screen.contains("Code:"),
+        "approval code field missing:\n{screen}"
+    );
+    pty.send(&format!("{stale_code}\r"));
+    pty.wait_output_for("APPROVED");
+    pty.send("\x03");
+    pty.finish(true);
 }
 
 #[test]
@@ -618,4 +813,48 @@ fn unrecovered_panic_after_callbacks_still_restores_terminal() {
         format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"),
         "raw mode not restored"
     );
+}
+
+#[test]
+fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
+    let mut pty = start("provider-select", true);
+    pty.wait_for("Huginn");
+    pty.send("/provider-select\r");
+    pty.wait_for("Connect provider");
+    pty.send("\r");
+    pty.wait_for("New connection");
+    // A single Enter must not submit the form that follows the selection.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let screen = pty.screen_text();
+    assert!(screen.contains("New connection"), "{screen}");
+    assert!(screen.contains("http://127.0.0.1:11434"), "{screen}");
+    assert!(!screen.contains("CONNECTION_SAVED"), "{screen}");
+    assert!(!pty.output().contains("CONNECTION_SAVED"));
+    pty.send("\x1b");
+    pty.wait_for("Form discarded.");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn the_transcript_survives_a_terminal_resize() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("stream\r");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    assert!(
+        pty.screen_text().contains("User: stream"),
+        "the sent turn is rendered: {}",
+        pty.screen_text()
+    );
+    // Enlarging the terminal must not take the history away.
+    pty.resize(40, 120);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let screen = pty.screen_text();
+    assert!(
+        screen.contains("User: stream"),
+        "the transcript must survive a resize: {screen}"
+    );
+    pty.send("\x03");
+    pty.finish(true);
 }

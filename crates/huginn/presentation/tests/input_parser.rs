@@ -168,3 +168,17 @@ fn keyboard_sequences_used_by_host_keep_modifiers_and_release_kind() {
         )]
     );
 }
+
+#[test]
+fn oversized_unknown_control_sequence_never_releases_suffix_to_new_focus() {
+    let mut parser = Parser::default();
+    let mut prefix = b"\x1b[".to_vec();
+    prefix.extend(std::iter::repeat_n(b';', 70));
+    assert!(feed(&mut parser, &prefix, OLD, OLD).is_empty());
+    parser.focus(NEW);
+    assert!(feed(&mut parser, b"1;2;3u", NEW, NEW).is_empty());
+    assert_eq!(
+        feed(&mut parser, b"x", NEW, NEW),
+        vec![(key(KeyCode::Char('x')), NEW)]
+    );
+}

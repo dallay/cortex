@@ -272,7 +272,6 @@ function scopeSlug(value: string): string {
     <div class="space-y-2">
       <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
       <Select
-        id="api-key-tier"
         :model-value="modelValue.tier"
         @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >

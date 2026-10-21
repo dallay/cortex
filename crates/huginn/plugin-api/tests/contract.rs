@@ -6,6 +6,47 @@ use huginn_plugin_api::{
 };
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn naked_command_overlay_allowlist_is_enforced_at_invocation() {
+    let cases = [
+        (OverlayKind::Help, "overlay-help", true),
+        (OverlayKind::Settings, "overlay-settings", true),
+        (OverlayKind::Provider, "overlay-provider", false),
+        (OverlayKind::Login, "overlay-login", false),
+        (OverlayKind::ModelPicker, "overlay-model", false),
+        (OverlayKind::Confirm, "overlay-confirm", false),
+    ];
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (_supervisor, ui, _) = rt.block_on(setup(false));
+    let command = ui.command("/alpha").expect("registered command");
+    for (kind, argument, allowed) in cases {
+        let result = command.run(argument);
+        assert_eq!(
+            result.is_ok(),
+            allowed,
+            "unexpected naked result for {kind:?}"
+        );
+        if !allowed {
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("host-provided payload"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn command_dialog_compatibility_validates_identifiers() {
+    let (_supervisor, ui, _) = setup(false).await;
+    let command = ui.command("/alpha").unwrap();
+    assert_eq!(
+        command.run("dialog").unwrap(),
+        CommandResult::Dialog("alpha.dialog".into())
+    );
+    assert!(command.run("invalid-dialog").is_err());
+}
+
 struct Host(Arc<Contributions>);
 #[async_trait]
 impl Plugin for Host {
@@ -41,7 +82,27 @@ impl Plugin for Author {
             format!("{}.command", self.id),
             Contribution::Command {
                 name: format!("/{}", self.id),
-                handler: Arc::new(|args| Ok(CommandResult::Notice(View::text(args)))),
+                handler: Arc::new(|args| {
+                    if args == "dialog" {
+                        return Ok(CommandResult::Dialog("alpha.dialog".into()));
+                    }
+                    if args == "invalid-dialog" {
+                        return Ok(CommandResult::Dialog("not a dialog id".into()));
+                    }
+                    let kind = match args {
+                        "overlay-help" => Some(OverlayKind::Help),
+                        "overlay-settings" => Some(OverlayKind::Settings),
+                        "overlay-provider" => Some(OverlayKind::Provider),
+                        "overlay-login" => Some(OverlayKind::Login),
+                        "overlay-model" => Some(OverlayKind::ModelPicker),
+                        "overlay-confirm" => Some(OverlayKind::Confirm),
+                        _ => None,
+                    };
+                    Ok(kind.map_or_else(
+                        || CommandResult::Notice(View::text(args)),
+                        CommandResult::Overlay,
+                    ))
+                }),
             },
         )?;
         assert!(

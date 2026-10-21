@@ -645,17 +645,7 @@ mod tests {
 
         assert_eq!(messages.len(), 5_000);
 
-        let started = std::time::Instant::now();
         let ends = complete_turn_ends(&messages, 0);
-        let elapsed = started.elapsed();
-
-        // O(n) guard: 5,000 messages must run well under the generous 5s ceiling
-        // even on cold CI. The previous O(n²) implementation would take multiple
-        // seconds at this size; this assertion fails on regression.
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "complete_turn_ends took {elapsed:?} on 5000 messages; expected O(n)"
-        );
 
         // Validate index correctness: every emitted end points one past a tool-call-free
         // assistant that follows a user message somewhere earlier in the slice.

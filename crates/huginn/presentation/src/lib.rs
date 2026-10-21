@@ -8,8 +8,12 @@ mod input;
 #[cfg(all(unix, feature = "test-driver"))]
 #[doc(hidden)]
 pub use input::test_support as input_test_support;
+pub mod event;
+pub mod overlay;
 pub mod providers;
+pub mod settings;
 pub mod state;
+pub mod status_bar;
 mod terminal;
 mod workflow;
 
@@ -31,9 +35,14 @@ pub fn presentation_id() -> ServiceId {
 #[async_trait]
 pub trait Interaction: ApprovalPrompt + EventSink {
     async fn prompt(&self) -> Option<String>;
-    fn begin(&self, cancel: CancellationToken);
+    fn begin(&self, cancel: CancellationToken) -> crate::event::OperationId;
+    fn finish_operation(&self, operation: crate::event::OperationId);
     fn synchronize(&self, session: &Session);
-    fn notice(&self, text: String);
+    fn conversation(&self, text: String);
+    fn overlay(&self, text: String);
+    fn notification(&self, text: String);
+    fn status(&self, text: String);
+    fn diagnostic(&self, text: String);
 }
 
 #[async_trait]
@@ -84,9 +93,12 @@ impl Drop for Connection {
 }
 
 pub struct RatatuiPlugin {
+    connection: Option<tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot>>,
     lifecycle: Option<CancellationToken>,
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ui_config: Option<Arc<crate::settings::UiConfig>>,
+    save_ui_config: Option<crate::settings::SaveUiConfig>,
 }
 impl Default for RatatuiPlugin {
     fn default() -> Self {
@@ -96,17 +108,41 @@ impl Default for RatatuiPlugin {
 impl RatatuiPlugin {
     pub const fn new(model_configured: bool) -> Self {
         Self {
+            connection: None,
             lifecycle: None,
             model_configured,
             readiness: None,
+            ui_config: None,
+            save_ui_config: None,
         }
     }
     pub fn with_readiness(readiness: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
         Self {
+            connection: None,
             lifecycle: None,
             model_configured: false,
             readiness: Some(readiness),
+            ui_config: None,
+            save_ui_config: None,
         }
+    }
+    /// Inject the host-owned UI config and a persistence closure. The
+    /// plugin pipes both into the `Ui` via `Ratatui`.
+    pub fn with_settings(
+        mut self,
+        ui_config: Arc<crate::settings::UiConfig>,
+        save_ui_config: crate::settings::SaveUiConfig,
+    ) -> Self {
+        self.ui_config = Some(ui_config);
+        self.save_ui_config = Some(save_ui_config);
+        self
+    }
+    pub fn with_connection(
+        mut self,
+        connection: tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot>,
+    ) -> Self {
+        self.connection = Some(connection);
+        self
     }
 }
 #[async_trait]
@@ -147,11 +183,14 @@ impl Plugin for RatatuiPlugin {
         ctx.provide(
             presentation_id(),
             PresentationService(Arc::new(terminal::Ratatui {
+                connection: self.connection.clone(),
                 contributions,
                 lifecycle: ctx.cancellation.clone(),
                 drivers,
                 model_configured: self.model_configured,
                 readiness: self.readiness.clone(),
+                ui_config: self.ui_config.clone(),
+                save_ui_config: self.save_ui_config.clone(),
             })),
         )
     }
@@ -162,3 +201,7 @@ impl Plugin for RatatuiPlugin {
         Ok(())
     }
 }
+
+#[cfg(feature = "test-driver")]
+#[doc(hidden)]
+pub use workflow::test_support as workflow_test_support;

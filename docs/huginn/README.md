@@ -204,6 +204,31 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 | `/clear` | Clear current conversation |
 | `/quit` | Exit Huginn |
 
+### `/settings` modal
+
+Open with `/settings` (chat mode only — `--line-mode` excludes the modal).
+The dialog hosts five tabs in the order `theme · indicators · sound · toasts · integrations`.
+Use `Tab`/`BackTab` to switch tabs and `↑/↓` to move the cursor.
+Space changes the selected option; moving the cursor does not change its value.
+In `toasts`, `←/→` also changes the value. In the other tabs,
+`←/→` switches sections. Enter saves the working copy to `[ui]` in
+`config.toml` using `toml_edit` and shows `Settings saved`.
+Esc discards the copy without modifying the file and shows `Settings discarded`. v1 persists the values only — none of the tabs is
+wired into its runtime subsystem yet, so the dialog is a shell for
+follow-up changes. The `integrations` tab exposes a single
+`(+) Add provider…` row that surfaces `Add provider not implemented yet`.
+
+The `[ui]` schema lives at the bottom of
+[config.example.toml](../../apps/huginn/config.example.toml).
+Hand-added keys under `[ui]` are tolerated on load and preserved across
+rounds (`toml_edit::DocumentMut`). The active precedence chain is
+`Modal > Settings > PluginDialog > completion`: an approval arriving
+while the modal is open disposes of the settings dialog first, and Esc
+inside settings never reaches the cancel-turn branch.
+
+On narrow terminals, the header shows the active tab and its position.
+The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -216,6 +241,22 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 ---
 
 ## 🔧 Configuration
+
+### Configuration file
+
+See [config.example.toml](../../apps/huginn/config.example.toml) for every
+setting. The default location follows the OS configuration directory: on
+macOS, `~/Library/Application Support/cortex/huginn/config.toml`; on Linux,
+`~/.config/cortex/huginn/config.toml` (or the XDG override). If a new
+install runs on a host that only has the legacy
+`~/.../cortex/agent/config.toml`, Huginn reads it and
+prints a warning suggesting the migration; it never overwrites the legacy
+file. Saving from `/settings` copies that file to the new location and
+patches `[ui]` there, so the provider, model, database and MCP settings
+survive the move. CLI options override the file; environment variables provide
+defaults for the endpoint and model. API keys are loaded from a named
+environment variable. Set `api_key_env = ""` for a local endpoint
+without authentication.
 
 ### AGENTS.md
 
@@ -237,6 +278,17 @@ This is a Rust monorepo with Rook (AI proxy) and Huginn (coding agent).
 - `just test` - Run tests
 - `just ci-local` - Full CI locally
 ```
+
+Huginn discovers instructions along the **project chain**: from the workspace up to
+the project root (the nearest ancestor with a `.git` marker), it loads the
+`AGENTS.md` of every directory, from general to specific. Subtrees outside that
+chain are never visited, so a large repository, a vendored copy or a directory
+full of third-party files cannot widen the trusted context. If the workspace has no
+project marker, only its own `AGENTS.md` is loaded.
+
+An optional `.agents/rules/` directory under the workspace adds extra rule files:
+Markdown only, two levels deep, and only when the directory exists. Its existence
+is the configuration; nothing is scanned when it is absent.
 
 ### Provider Configuration
 
@@ -403,3 +455,38 @@ MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
 **Rust** · **Privacy-first** · **Local-first** · **MCP-native**
 
 </div>
+
+## Plugins core de proveedores
+
+`cargo run -p huginn -- chat` incluye tres plugins core independientes. `/login`
+muestra una sola entrada por proveedor:
+
+- **Ollama local** (`ollama`): endpoint inicial `http://127.0.0.1:11434`, sin clave
+  ni selección de almacén de secretos. Autoriza HTTP local explícitamente. La
+  excepción solo permite direcciones loopback literales, no `localhost` ni hosts
+  remotos.
+- **Ollama Cloud** (`ollama-cloud`): requiere una API key y usa el endpoint oficial
+  fijo `https://ollama.com`. No requiere un daemon local. El formulario no permite
+  enviar la clave Cloud a otro host.
+- **Custom — OpenAI-compatible** (`openai`): introduce la URL base del servicio
+  (incluye `/v1` si el servicio lo requiere). Elige autenticación dentro del flujo;
+  la API key es opcional. No implementa el protocolo Anthropic. Conserva el ID
+  `openai` para reutilizar las conexiones guardadas.
+
+Deja `Model ID` vacío para consultar el catálogo y elegir un modelo antes de
+persistir la conexión. Si introduces un ID, se comprueba contra el catálogo cuando
+está disponible. Si el alta falla, el formulario permanece abierto con el motivo
+concreto y conserva los valores públicos; el secreto enviado se descarta y hay que
+reintroducirlo. Un catálogo vacío o un error de conexión/autenticación no guarda una
+conexión incompleta. Si Custom no implementa el catálogo
+(`/models` devuelve 404 o 405), introduce el ID manualmente: el servicio comprobará
+ese modelo al recibir la solicitud de inferencia. Otros fallos no activan este
+fallback. Después de guardar, usa `/model` para seleccionar la conexión para chat.
+No se descargan modelos ni se arranca Ollama automáticamente.
+
+El catálogo y las capacidades de Ollama usan `/api/tags` y `/api/show`; la
+inferencia usa `/v1`. Las conexiones locales previas con clave siguen siendo
+compatibles, pero las nuevas altas locales no solicitan clave. Cada plugin posee
+su propio registro y puede retirarse sin retirar los otros proveedores. Para
+agregar un proveedor core, registra otro `ProviderAdapter` desde un plugin con su
+propia identidad. El selector usa el catálogo; no necesita una rama por proveedor.

@@ -83,19 +83,66 @@ impl Pty {
         writer.write_all(text.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
+    pub fn resize(&self, rows: u16, cols: u16) {
+        let mut screen = self.screen.lock().unwrap();
+        let scrollback = std::mem::take(&mut screen.scrollback);
+        *screen = Screen::new(usize::from(rows), usize::from(cols));
+        screen.scrollback = scrollback;
+        self.master
+            .resize(portable_pty::PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        // Redraw bytes must reach the replacement model only after the resize.
+        drop(screen);
+    }
     pub fn output(&self) -> String {
         self.output.lock().unwrap().clone()
     }
-    fn screen_text(&self) -> String {
+    pub fn wait_output_for(&self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.output().contains(needle) {
+            assert!(Instant::now() < deadline, "missing {needle:?} in output");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pub fn screen_text(&self) -> String {
         self.screen.lock().unwrap().text()
+    }
+    pub fn scrollback_text(&self) -> String {
+        self.screen.lock().unwrap().scrollback.join("\n")
     }
     pub fn wait_for(&self, needle: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !self.screen_text().contains(needle) {
             assert!(
                 Instant::now() < deadline,
-                "missing {needle:?} on screen:\n{}",
-                self.screen_text()
+                "missing {needle:?} on screen:\n{}\nraw PTY output:\n{}",
+                self.screen_text(),
+                self.output()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pub fn wait_for_output_change(&self, previous_len: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.output().len() == previous_len {
+            assert!(
+                Instant::now() < deadline,
+                "terminal emitted no redraw after input"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pub fn wait_for_screen_change(&self, previous: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.screen_text() == previous {
+            assert!(
+                Instant::now() < deadline,
+                "screen did not redraw after input"
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -142,10 +189,11 @@ impl Pty {
 /// protocol, not pixels: Ratatui rewrites only changed cells, so a label split
 /// across diff frames never appears contiguously in raw bytes. This tracks
 /// cursor-addressed writes into a fixed grid; assertions search the grid.
-/// Stale cells are possible (no scrollback model), so only wait for text that
-/// has not appeared before in the same session.
+/// Bottom-row line feeds retain displaced rows as scrollback. This covers the
+/// stock inline backend's append_lines protocol, not a general terminal emulator.
 struct Screen {
     cells: Vec<Vec<char>>,
+    scrollback: Vec<String>,
     rows: usize,
     cols: usize,
     row: usize,
@@ -156,6 +204,7 @@ impl Screen {
     fn new(rows: usize, cols: usize) -> Self {
         Self {
             cells: vec![vec![' '; cols]; rows],
+            scrollback: Vec::new(),
             rows,
             cols,
             row: 0,
@@ -217,7 +266,13 @@ impl Screen {
             }
             match character {
                 '\n' => {
-                    self.row = (self.row + 1).min(self.rows - 1);
+                    if self.row + 1 == self.rows {
+                        let displaced = self.cells.remove(0);
+                        self.scrollback.push(displaced.iter().collect());
+                        self.cells.push(vec![' '; self.cols]);
+                    } else {
+                        self.row += 1;
+                    }
                     self.col = 0;
                 }
                 '\r' => self.col = 0,
@@ -308,6 +363,15 @@ impl Drop for Pty {
     fn drop(&mut self) {
         let _ = self.child.kill();
     }
+}
+
+#[test]
+fn screen_line_feed_at_bottom_scrolls_instead_of_overwriting() {
+    let mut screen = Screen::new(3, 20);
+    screen.feed(b"FIRST\r\nSECOND\r\nTHIRD\r\nFOURTH");
+    assert_eq!(screen.text().lines().next().unwrap().trim(), "SECOND");
+    assert_eq!(screen.text().lines().nth(2).unwrap().trim(), "FOURTH");
+    assert_eq!(screen.scrollback, ["FIRST               "]);
 }
 
 #[test]
