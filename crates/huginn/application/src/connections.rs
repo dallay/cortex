@@ -1,6 +1,19 @@
 //! Serialized headless management with durable write intents and revision-bound access.
 use async_trait::async_trait;
-use huginn_core::{connections::*, providers::*, CancellationToken};
+use huginn_core::{
+    connections::{
+        connections_id, ConnectionChoice, ConnectionCredentials, ConnectionError, ConnectionInputs,
+        ConnectionManagement, ConnectionMaterial, ConnectionMetadata, ConnectionProvenance,
+        ConnectionRecord, ConnectionResult, ConnectionSettings, ConnectionStore,
+        ConnectionsService, Secret, SecretMode, SecretReference, SecretStore,
+    },
+    providers::{
+        AuthenticationMethod, ConnectionIdentity, ModelSelection, ProviderAction,
+        ProviderActionOutput, ProviderCatalog, ProviderCatalogService, ProviderManagement,
+        ProvidersService,
+    },
+    CancellationToken,
+};
 use std::{
     collections::BTreeMap,
     future::{poll_fn, Future},

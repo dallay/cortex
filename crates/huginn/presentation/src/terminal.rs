@@ -483,159 +483,11 @@ impl Driver {
         let mut last_scroll = 0;
         self.screen.draw(|frame| {
             let area = frame.area();
-            if let Some((preview, number, code, typed, scroll)) = &view.modal {
-                let [body, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-                let lines = wrapped(preview, body.width.saturating_sub(2));
-                let last = lines
-                    .len()
-                    .saturating_sub(usize::from(body.height.saturating_sub(2)));
-                last_scroll = last;
-                let visible: Vec<_> = lines
-                    .into_iter()
-                    .skip((*scroll).min(last))
-                    .take(usize::from(body.height.saturating_sub(2)))
-                    .collect();
-                frame.render_widget(
-                    Paragraph::new(visible.join("\n")).block(
-                        Block::bordered()
-                            .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-                    ),
-                    body,
-                );
-                frame.render_widget(
-                    Paragraph::new(format!(
-                        "Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}"
-                    )),
-                    footer,
-                );
-                return;
+            if let Some(scroll) = draw_modal(frame, area, view) {
+                last_scroll = scroll;
+            } else if !draw_workflow(frame, area, view) && !draw_plugin_dialog(frame, area, view) {
+                draw_main(frame, area, view);
             }
-            if let Some((title, body, fields, selected, pending)) = &view.workflow {
-                let [heading, content, footer] = Layout::vertical([
-                    Constraint::Length(2), Constraint::Min(1), Constraint::Length(2),
-                ]).areas(area);
-                frame.render_widget(Paragraph::new(safe(body)), heading);
-                let rows = usize::from(content.height.saturating_sub(2)).max(1);
-                let start = selected.saturating_sub(rows.saturating_sub(1));
-                let text = if *pending { "Waiting… Esc cancels locally; completion may be unknown".into() } else {
-                    fields.iter().enumerate().skip(start).take(rows)
-                        .map(|(i, field)| format!("{} {}", if i == *selected { ">" } else { " " }, safe(field)))
-                        .collect::<Vec<_>>().join("\n")
-                };
-                frame.render_widget(Paragraph::new(text).block(Block::bordered().title(safe(title))), content);
-                frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
-                return;
-            }
-            if let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog {
-                let [body_area, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-                let body = safe(body);
-                // Window the body too: a long body must never push every choice
-                // out of view. One content row is always reserved so the
-                // selected choice stays visible and actionable.
-                let height = usize::from(body_area.height).saturating_sub(2);
-                let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
-                let body_lines: Vec<&str> = body.lines().collect();
-                let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
-                let mut text = String::new();
-                for line in body_lines.into_iter().skip(first).take(body_rows) {
-                    text.push_str(line);
-                    text.push('\n');
-                }
-                // Keep the selected choice visible: window the list like the
-                // approval preview does, preserving marker and safe rendering.
-                let rows = height.saturating_sub(body_rows);
-                let start = selected
-                    .saturating_sub(rows.saturating_sub(1))
-                    .min(choices.len().saturating_sub(rows));
-                for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
-                    text.push_str(&format!(
-                        "{} {}\n",
-                        if index == *selected { ">" } else { " " },
-                        safe(choice)
-                    ));
-                }
-                frame.render_widget(
-                    Paragraph::new(text)
-                        .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
-                    body_area,
-                );
-                frame.render_widget(
-                    Paragraph::new(
-                        "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
-                    ),
-                    footer,
-                );
-                return;
-            }
-            let [tail, composer, status] = Layout::vertical([
-                Constraint::Min(1),
-                Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 { 3 } else { 4 }),
-                Constraint::Length(1),
-            ])
-            .areas(area);
-            let popup_height = if view.completion.items.is_empty() { 0 } else { (view.completion.items.len() as u16 + 2).min(7).min(tail.height) };
-            let [tail, popup] = Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
-            let lines = wrapped(&view.tail, tail.width);
-            let offset = lines.len().saturating_sub(usize::from(tail.height));
-            frame.render_widget(
-                Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
-                tail,
-            );
-            if popup_height > 0 {
-                let name_width = view.completion.items.iter().map(|item| unicode_width::UnicodeWidthStr::width(item.label.as_str())).max().unwrap_or(0).min(usize::from(popup.width / 2));
-                let items: Vec<_> = view.completion.items.iter().map(|item| {
-                    let label = safe(&item.label);
-                    let padding = name_width.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
-                    ListItem::new(Line::from(vec![Span::raw(label), Span::raw(" ".repeat(padding + 2)), Span::styled(safe(&item.description).replace(['\n', '\t'], " "), Style::default().fg(Color::DarkGray))]))
-                }).collect();
-                let list = List::new(items).block(Block::bordered().title(format!("{} — ↑↓ · Tab · Enter · Esc", view.completion.title())))
-                    .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black))
-                    .highlight_symbol("› ");
-                let mut selection = ListState::default().with_selected(Some(view.completion.selected));
-                frame.render_stateful_widget(list, popup, &mut selection);
-            }
-            let editor_width = composer.width.saturating_sub(2).max(1);
-            let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
-            let row = before.len().saturating_sub(1);
-            let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
-            let lines = wrapped(&view.editor.text, editor_width);
-            frame.render_widget(
-                Paragraph::new(
-                    lines
-                        .into_iter()
-                        .skip(offset)
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-                .block(Block::bordered().title(if view.busy {
-                    "Compose next prompt — Esc cancels turn"
-                } else {
-                    "Huginn — Enter sends / Alt+Enter newline / /help"
-                })),
-                composer,
-            );
-            let column: usize = before.last().map_or(0, |line| {
-                line.chars().map(|ch| ch.width().unwrap_or(0)).sum()
-            });
-            frame.set_cursor_position((
-                composer.x + 1 + (column as u16).min(editor_width.saturating_sub(1)),
-                composer.y + 1 + (row - offset) as u16,
-            ));
-            frame.render_widget(
-                Paragraph::new(if view.widgets.is_empty() {
-                    safe(&view.status)
-                } else {
-                    format!("{} | {}", safe(&view.status), view.widgets)
-                })
-                .style(if view.status_error {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default()
-                }),
-                status,
-            );
         })?;
         Ok(last_scroll)
     }
@@ -739,44 +591,27 @@ impl Driver {
             return;
         }
         if state.modal.is_none() {
-            if let Some(form) = state.workflow.as_mut() {
-                match event {
-                    Event::Paste(mut text) => {
-                        form.insert(&text);
-                        use zeroize::Zeroize;
-                        text.zeroize();
-                    }
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('c')
-                                if key.code == KeyCode::Esc || ctrl =>
-                            {
-                                drop(state);
-                                self.ui.cancel_workflow();
-                            }
-                            KeyCode::Tab | KeyCode::Down => form.navigate(true),
-                            KeyCode::BackTab | KeyCode::Up => form.navigate(false),
-                            KeyCode::Left => form.choice(false),
-                            KeyCode::Right => form.choice(true),
-                            KeyCode::Backspace => form.backspace(),
-                            KeyCode::Char(ch) if !ctrl => {
-                                let mut bytes = [0; 4];
-                                form.insert(ch.encode_utf8(&mut bytes));
-                                use zeroize::Zeroize;
-                                bytes.zeroize();
-                            }
-                            KeyCode::Enter => {
-                                form.submit();
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+            match handle_workflow_input(&mut state, event) {
+                WorkflowInput::NotHandled(event) => {
+                    self.input_after_workflow(event, state, prompts);
                 }
-                return;
+                WorkflowInput::Handled => {}
+                WorkflowInput::Cancel => {
+                    drop(state);
+                    self.ui.cancel_workflow();
+                }
             }
+            return;
         }
+        self.input_after_workflow(event, state, prompts);
+    }
+
+    fn input_after_workflow(
+        &self,
+        event: Event,
+        mut state: std::sync::MutexGuard<'_, crate::state::UiState>,
+        prompts: &tokio::sync::mpsc::Sender<String>,
+    ) {
         if let Event::Paste(text) = &event {
             if state.modal.is_none() && state.plugin_dialog.is_none() {
                 state.editor.insert(text);
@@ -951,6 +786,289 @@ impl Driver {
             _ => {}
         }
     }
+}
+
+enum WorkflowInput {
+    NotHandled(Event),
+    Handled,
+    Cancel,
+}
+
+fn handle_workflow_input(state: &mut crate::state::UiState, event: Event) -> WorkflowInput {
+    let Some(form) = state.workflow.as_mut() else {
+        return WorkflowInput::NotHandled(event);
+    };
+    match event {
+        Event::Paste(mut text) => {
+            form.insert(&text);
+            use zeroize::Zeroize;
+            text.zeroize();
+            WorkflowInput::Handled
+        }
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('c') if key.code == KeyCode::Esc || ctrl => {
+                    WorkflowInput::Cancel
+                }
+                KeyCode::Tab | KeyCode::Down => {
+                    form.navigate(true);
+                    WorkflowInput::Handled
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.navigate(false);
+                    WorkflowInput::Handled
+                }
+                KeyCode::Left => {
+                    form.choice(false);
+                    WorkflowInput::Handled
+                }
+                KeyCode::Right => {
+                    form.choice(true);
+                    WorkflowInput::Handled
+                }
+                KeyCode::Backspace => {
+                    form.backspace();
+                    WorkflowInput::Handled
+                }
+                KeyCode::Char(ch) if !ctrl => {
+                    let mut bytes = [0; 4];
+                    form.insert(ch.encode_utf8(&mut bytes));
+                    use zeroize::Zeroize;
+                    bytes.zeroize();
+                    WorkflowInput::Handled
+                }
+                KeyCode::Enter => {
+                    form.submit();
+                    WorkflowInput::Handled
+                }
+                _ => WorkflowInput::Handled,
+            }
+        }
+        _ => WorkflowInput::Handled,
+    }
+}
+
+fn draw_modal(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    view: &View,
+) -> Option<usize> {
+    let (preview, number, code, typed, scroll) = view.modal.as_ref()?;
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
+    let lines = wrapped(preview, body.width.saturating_sub(2));
+    let last = lines
+        .len()
+        .saturating_sub(usize::from(body.height.saturating_sub(2)));
+    let visible: Vec<_> = lines
+        .into_iter()
+        .skip((*scroll).min(last))
+        .take(usize::from(body.height.saturating_sub(2)))
+        .collect();
+    frame.render_widget(
+        Paragraph::new(visible.join("\n")).block(
+            Block::bordered().title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
+        ),
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}"
+        )),
+        footer,
+    );
+    Some(last)
+}
+
+fn draw_workflow(frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect, view: &View) -> bool {
+    let Some((title, body, fields, selected, pending)) = &view.workflow else {
+        return false;
+    };
+    let [heading, content, footer] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(2),
+    ])
+    .areas(area);
+    frame.render_widget(Paragraph::new(safe(body)), heading);
+    let rows = usize::from(content.height.saturating_sub(2)).max(1);
+    let start = selected.saturating_sub(rows.saturating_sub(1));
+    let text = if *pending {
+        "Waiting… Esc cancels locally; completion may be unknown".into()
+    } else {
+        fields
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(rows)
+            .map(|(i, field)| format!("{} {}", if i == *selected { ">" } else { " " }, safe(field)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    frame.render_widget(
+        Paragraph::new(text).block(Block::bordered().title(safe(title))),
+        content,
+    );
+    frame.render_widget(Paragraph::new("Tab/↑↓ field · ←→ choice · Enter submits · Esc cancels\nDuring an incomplete paste, Ctrl+C cancels; secrets are never copied to history."), footer);
+    true
+}
+
+fn draw_plugin_dialog(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    view: &View,
+) -> bool {
+    let Some((title, body, choices, selected, body_scroll)) = &view.plugin_dialog else {
+        return false;
+    };
+    let [body_area, footer] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    let body = safe(body);
+    // Window the body too: a long body must never push every choice
+    // out of view. One content row is always reserved so the
+    // selected choice stays visible and actionable.
+    let height = usize::from(body_area.height).saturating_sub(2);
+    let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+    let body_lines: Vec<&str> = body.lines().collect();
+    let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
+    let mut text = String::new();
+    for line in body_lines.into_iter().skip(first).take(body_rows) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    // Keep the selected choice visible: window the list like the
+    // approval preview does, preserving marker and safe rendering.
+    let rows = height.saturating_sub(body_rows);
+    let start = selected
+        .saturating_sub(rows.saturating_sub(1))
+        .min(choices.len().saturating_sub(rows));
+    for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
+        text.push_str(&format!(
+            "{} {}\n",
+            if index == *selected { ">" } else { " " },
+            safe(choice)
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(text).block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
+        body_area,
+    );
+    frame.render_widget(
+        Paragraph::new(
+            "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
+        ),
+        footer,
+    );
+    true
+}
+
+fn draw_main(frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect, view: &View) {
+    let [tail, composer, status] = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 {
+            3
+        } else {
+            4
+        }),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    let popup_height = if view.completion.items.is_empty() {
+        0
+    } else {
+        (view.completion.items.len() as u16 + 2)
+            .min(7)
+            .min(tail.height)
+    };
+    let [tail, popup] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
+    let lines = wrapped(&view.tail, tail.width);
+    let offset = lines.len().saturating_sub(usize::from(tail.height));
+    frame.render_widget(
+        Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
+        tail,
+    );
+    if popup_height > 0 {
+        let name_width = view
+            .completion
+            .items
+            .iter()
+            .map(|item| unicode_width::UnicodeWidthStr::width(item.label.as_str()))
+            .max()
+            .unwrap_or(0)
+            .min(usize::from(popup.width / 2));
+        let items: Vec<_> = view
+            .completion
+            .items
+            .iter()
+            .map(|item| {
+                let label = safe(&item.label);
+                let padding = name_width
+                    .saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
+                ListItem::new(Line::from(vec![
+                    Span::raw(label),
+                    Span::raw(" ".repeat(padding + 2)),
+                    Span::styled(
+                        safe(&item.description).replace(['\n', '\t'], " "),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]))
+            })
+            .collect();
+        let list = List::new(items)
+            .block(Block::bordered().title(format!(
+                "{} — ↑↓ · Tab · Enter · Esc",
+                view.completion.title()
+            )))
+            .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black))
+            .highlight_symbol("› ");
+        let mut selection = ListState::default().with_selected(Some(view.completion.selected));
+        frame.render_stateful_widget(list, popup, &mut selection);
+    }
+    draw_composer(frame, composer, view);
+    frame.render_widget(
+        Paragraph::new(if view.widgets.is_empty() {
+            safe(&view.status)
+        } else {
+            format!("{} | {}", safe(&view.status), view.widgets)
+        })
+        .style(if view.status_error {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default()
+        }),
+        status,
+    );
+}
+
+fn draw_composer(frame: &mut ratatui::Frame<'_>, composer: ratatui::layout::Rect, view: &View) {
+    let editor_width = composer.width.saturating_sub(2).max(1);
+    let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
+    let row = before.len().saturating_sub(1);
+    let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
+    let lines = wrapped(&view.editor.text, editor_width);
+    frame.render_widget(
+        Paragraph::new(
+            lines
+                .into_iter()
+                .skip(offset)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .block(Block::bordered().title(if view.busy {
+            "Compose next prompt — Esc cancels turn"
+        } else {
+            "Huginn — Enter sends / Alt+Enter newline / /help"
+        })),
+        composer,
+    );
+    let column: usize = before.last().map_or(0, |line| {
+        line.chars().map(|ch| ch.width().unwrap_or(0)).sum()
+    });
+    frame.set_cursor_position((
+        composer.x + 1 + (column as u16).min(editor_width.saturating_sub(1)),
+        composer.y + 1 + (row - offset) as u16,
+    ));
 }
 
 #[cfg(test)]

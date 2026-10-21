@@ -3,7 +3,12 @@ use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_core::{
     kernel::{Activation, Manifest, Plugin, PluginContext, ServiceId},
-    providers::*,
+    providers::{
+        ConnectionIdentity, ModelDescriptor, ModelSelection, ProviderAction, ProviderActionOutput,
+        ProviderAdapter, ProviderCatalog, ProviderCatalogService, ProviderDescriptor,
+        ProviderError, ProviderManagement, ProviderRegistration, ProvidersDiagnostic,
+        ProvidersService,
+    },
     AgentError, CancellationToken, ModelDelta, ModelProvider, ModelRequest, ModelService, Result,
 };
 use std::{

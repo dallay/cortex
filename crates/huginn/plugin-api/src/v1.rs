@@ -183,7 +183,8 @@ impl Contribution {
                 dialog.choices = dialog
                     .choices
                     .iter()
-                    .map(|choice| text(choice))
+                    .map(String::as_str)
+                    .map(text)
                     .collect::<Result<_>>()?;
                 Ok(Self::Dialog(dialog))
             }
@@ -246,9 +247,7 @@ thread_local! {
 /// disturb other threads or the active terminal. Always false outside `invoke`.
 /// Host-only coordination; extensions never call this.
 pub fn in_recovered_callback() -> bool {
-    RECOVERED_CALLBACK
-        .try_with(|active| active.get())
-        .unwrap_or(false)
+    RECOVERED_CALLBACK.try_with(Cell::get).unwrap_or(false)
 }
 
 /// Record the panic report for the current recovered callback. Host hooks only;

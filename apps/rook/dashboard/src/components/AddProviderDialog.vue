@@ -566,6 +566,7 @@ onUnmounted(stopOAuthPolling);
         <div v-if="showKindSelector" class="space-y-2">
           <Label for="kind">{{ t('providers.form.selectProvider') }}</Label>
           <Select
+            id="kind"
             :model-value="kind"
             @update:model-value="(v) => v && (kind = v as ProviderKind)"
           >
@@ -586,10 +587,13 @@ onUnmounted(stopOAuthPolling);
 
         <!-- Auth type toggle (OAuth disabled when kind doesn't support it) -->
         <div class="space-y-2">
-          <Label>{{ t('providers.form.authType') }}</Label>
+          <span id="provider-auth-type-label" class="text-sm font-medium">
+            {{ t('providers.form.authType') }}
+          </span>
           <ToggleGroup
             v-model="authType"
             type="single"
+            aria-labelledby="provider-auth-type-label"
             class="justify-start"
             data-testid="auth-type-toggle"
           >
@@ -682,6 +686,7 @@ onUnmounted(stopOAuthPolling);
               {{ t('providers.oauth.flowType') }}
             </Label>
             <Select
+              id="oauthFlowType"
               v-model="form.oauthFlowType"
               :disabled="oauthBusy"
             >

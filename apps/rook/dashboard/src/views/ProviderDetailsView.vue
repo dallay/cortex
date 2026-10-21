@@ -26,7 +26,6 @@ import LoadingState from "@/components/LoadingState.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
-import {useProviderCatalog} from "@/composables/useProviderCatalog";
 import {useProviders} from "@/composables/useProviders";
 import {
   findCatalogEntry,
@@ -70,7 +69,6 @@ const providerName = computed(() =>
 const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
   useProviders();
 const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
-const {byKind} = useProviderCatalog();
 
 onMounted(() => {
   fetch();
@@ -185,22 +183,14 @@ function openEditDialog(id: string) {
   editDialogOpen.value = true;
 }
 
-function onDialogSaved() {
+function closeProviderDialog() {
   addDialogOpen.value = false;
   editDialogOpen.value = false;
   editingId.value = null;
   fetch();
 }
 
-function onDialogDeleted() {
-  addDialogOpen.value = false;
-  editDialogOpen.value = false;
-  editingId.value = null;
-  fetch();
-}
 
-// Suppress unused byKind reference (kept for future per-kind stats).
-void byKind;
 </script>
 
 <template>
@@ -298,8 +288,8 @@ void byKind;
       v-model:open="addDialogOpen"
       :provider-kind="providerKindParam ?? undefined"
       mode="create"
-      @saved="onDialogSaved"
-      @deleted="onDialogDeleted"
+      @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
 
     <AddProviderDialog
@@ -308,8 +298,8 @@ void byKind;
       :provider-kind="providerKindParam ?? undefined"
       mode="edit"
       @update:open="editDialogOpen = $event"
-      @saved="onDialogSaved"
-      @deleted="onDialogDeleted"
+      @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
   </div>
 </template>

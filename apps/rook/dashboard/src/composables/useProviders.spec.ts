@@ -157,7 +157,7 @@ describe("useProviders OAuth paths", () => {
     await store.fetch();
 
     expect(store.error.value).toBe("Network failed");
-    expect(store.providers.value.length).toBe(1);
+    expect(store.providers.value).toHaveLength(1);
     expect(store.loading.value).toBe(false);
   });
 

@@ -420,85 +420,89 @@ async fn same_connection_model_change_is_deferred_through_tools_and_compaction()
     for provider in ["openai", "ollama"] {
         // Exercise an iteration boundary and both compaction entry points separately.
         for phase in ["tool", "automatic", "manual"] {
-            let gate = Gate::default();
-            let mut replies = if phase == "tool" {
-                vec![Reply::Tool, Reply::Text("alpha continuation")]
-            } else {
-                let mut replies = vec![Reply::Summary(gate.clone())];
-                if phase == "automatic" {
-                    replies.push(Reply::Text("alpha after summary"));
-                }
-                replies
-            };
-            let active_count = replies.len();
-            replies.push(Reply::Text("beta next turn"));
-            let mut fixture = Fixture::new(provider, replies, vec![]).await;
-            let initial = fixture.manager.select(fixture.records[0].id).await.unwrap();
-            let mut engine = fixture.engine((phase == "tool").then(|| gate.clone()));
-            engine.config.context_tokens = if phase == "automatic" { 5000 } else { 10000 };
-            engine.config.max_output_tokens = 100;
-            let mut session = if phase == "tool" {
-                fixture.session()
-            } else {
-                history(fixture.session())
-            };
-            let task = tokio::spawn(async move {
-                if phase == "manual" {
-                    engine
-                        .compact(&mut session, &Events::default(), CancellationToken::new())
-                        .await
-                        .unwrap();
-                } else {
-                    run(&engine, &mut session, "continue", &Events::default())
-                        .await
-                        .unwrap();
-                }
-                (engine, session)
-            });
-            wait(&gate.entered).await;
-            let selected = fixture
-                .manager
-                .select_model(fixture.records[0].id, "beta".into())
-                .await
-                .unwrap();
-            // Model selection must not rotate the identity/credential generation.
-            assert_eq!(selected.connection, initial.connection);
-            assert_eq!(initial.model, "alpha");
-            assert_eq!(selected.model, "beta");
-            gate.release.notify_one();
-            let (engine, mut session) = task.await.unwrap();
-            fixture.assert_requests(0, active_count, SECRETS[0], "alpha");
-            fixture.assert_requests(1, 0, SECRETS[1], "beta");
-            if phase == "tool" {
-                assert!(session
-                    .messages
-                    .iter()
-                    .any(|m| m.role == Role::Tool && m.content == "switch complete"));
-            } else {
-                assert!(session.summary.is_some());
-            }
-            run(&engine, &mut session, "next turn", &Events::default())
-                .await
-                .unwrap();
-            assert_eq!(session.messages.last().unwrap().content, "beta next turn");
-            let requests = fixture.endpoints[0].requests.lock().unwrap().clone();
-            assert_eq!(requests.len(), active_count + 1);
-            assert_eq!(requests[active_count].body["model"], "beta");
-            for request in requests {
-                assert_eq!(request.auth, format!("Bearer {}", SECRETS[0]));
-                assert_clean(&request.body.to_string());
-            }
-            fixture.assert_requests(1, 0, SECRETS[1], "beta");
-            // Metadata also continues using the original credential after the model-only change.
-            let metadata = fixture.endpoints[0].metadata.lock().unwrap().clone();
-            assert!(!metadata.is_empty());
-            for request in metadata {
-                assert_eq!(request.auth, format!("Bearer {}", SECRETS[0]));
-                assert_clean(&request.body.to_string());
-            }
-            fixture.supervisor.shutdown().await;
+            test_deferred_model_change(provider, phase).await;
         }
     }
+}
+
+async fn test_deferred_model_change(provider: &'static str, phase: &'static str) {
+    let gate = Gate::default();
+    let mut replies = if phase == "tool" {
+        vec![Reply::Tool, Reply::Text("alpha continuation")]
+    } else {
+        let mut replies = vec![Reply::Summary(gate.clone())];
+        if phase == "automatic" {
+            replies.push(Reply::Text("alpha after summary"));
+        }
+        replies
+    };
+    let active_count = replies.len();
+    replies.push(Reply::Text("beta next turn"));
+    let mut fixture = Fixture::new(provider, replies, vec![]).await;
+    let initial = fixture.manager.select(fixture.records[0].id).await.unwrap();
+    let mut engine = fixture.engine((phase == "tool").then(|| gate.clone()));
+    engine.config.context_tokens = if phase == "automatic" { 5000 } else { 10000 };
+    engine.config.max_output_tokens = 100;
+    let mut session = if phase == "tool" {
+        fixture.session()
+    } else {
+        history(fixture.session())
+    };
+    let task = tokio::spawn(async move {
+        if phase == "manual" {
+            engine
+                .compact(&mut session, &Events::default(), CancellationToken::new())
+                .await
+                .unwrap();
+        } else {
+            run(&engine, &mut session, "continue", &Events::default())
+                .await
+                .unwrap();
+        }
+        (engine, session)
+    });
+    wait(&gate.entered).await;
+    let selected = fixture
+        .manager
+        .select_model(fixture.records[0].id, "beta".into())
+        .await
+        .unwrap();
+    // Model selection must not rotate the identity/credential generation.
+    assert_eq!(selected.connection, initial.connection);
+    assert_eq!(initial.model, "alpha");
+    assert_eq!(selected.model, "beta");
+    gate.release.notify_one();
+    let (engine, mut session) = task.await.unwrap();
+    fixture.assert_requests(0, active_count, SECRETS[0], "alpha");
+    fixture.assert_requests(1, 0, SECRETS[1], "beta");
+    if phase == "tool" {
+        assert!(session
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Tool && m.content == "switch complete"));
+    } else {
+        assert!(session.summary.is_some());
+    }
+    run(&engine, &mut session, "next turn", &Events::default())
+        .await
+        .unwrap();
+    assert_eq!(session.messages.last().unwrap().content, "beta next turn");
+    let requests = fixture.endpoints[0].requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), active_count + 1);
+    assert_eq!(requests[active_count].body["model"], "beta");
+    for request in requests {
+        assert_eq!(request.auth, format!("Bearer {}", SECRETS[0]));
+        assert_clean(&request.body.to_string());
+    }
+    fixture.assert_requests(1, 0, SECRETS[1], "beta");
+    // Metadata also continues using the original credential after the model-only change.
+    let metadata = fixture.endpoints[0].metadata.lock().unwrap().clone();
+    assert!(!metadata.is_empty());
+    for request in metadata {
+        assert_eq!(request.auth, format!("Bearer {}", SECRETS[0]));
+        assert_clean(&request.body.to_string());
+    }
+    fixture.supervisor.shutdown().await;
 }
 
 #[tokio::test]

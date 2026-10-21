@@ -234,13 +234,16 @@ function scopeSlug(value: string): string {
             <label
               v-for="scope in entry.scopes"
               :key="scope.value"
+              :for="`scope-checkbox-${scopeSlug(scope.value)}`"
               :data-testid="`scope-row-${scopeSlug(scope.value)}`"
               :data-scope-value="scope.value"
               class="flex items-start gap-3 rounded-md border p-3 hover:bg-muted/30 cursor-pointer"
               :class="scope.danger ? 'border-destructive/30 bg-destructive/5' : ''"
             >
               <Checkbox
+                :id="`scope-checkbox-${scopeSlug(scope.value)}`"
                 :model-value="isScopeChecked(scope)"
+                :aria-label="scope.label"
                 :data-testid="`scope-checkbox-${scopeSlug(scope.value)}`"
                 @update:model-value="(v) => toggleScope(scope.value, v === true)"
               />
@@ -269,6 +272,7 @@ function scopeSlug(value: string): string {
     <div class="space-y-2">
       <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
       <Select
+        id="api-key-tier"
         :model-value="modelValue.tier"
         @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >
@@ -334,10 +338,13 @@ function scopeSlug(value: string): string {
               <label
                 v-for="provider in kindProviders"
                 :key="provider.id"
+                :for="`provider-checkbox-${provider.id}`"
                 class="flex items-center gap-2 cursor-pointer"
                 :data-testid="`provider-row-${provider.id}`"
               >
                 <Checkbox
+                  :id="`provider-checkbox-${provider.id}`"
+                  :aria-label="provider.name"
                   :model-value="isProviderChecked(provider.id)"
                   :data-testid="`provider-checkbox-${provider.id}`"
                   @update:model-value="(v) => toggleProvider(provider.id, v === true)"
@@ -374,10 +381,13 @@ function scopeSlug(value: string): string {
             <label
               v-for="model in entry.models"
               :key="model"
+              :for="`model-checkbox-${entry.provider.id}-${model}`"
               class="flex items-center gap-2"
               :data-testid="`model-row-${entry.provider.id}-${model}`"
             >
               <Checkbox
+                :id="`model-checkbox-${entry.provider.id}-${model}`"
+                :aria-label="model"
                 :model-value="isModelChecked(model)"
                 :data-testid="`model-checkbox-${entry.provider.id}-${model}`"
                 @update:model-value="(v) => toggleModel(model, v === true)"

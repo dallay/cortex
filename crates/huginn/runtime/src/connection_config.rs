@@ -1,5 +1,8 @@
 //! Atomic headless CLI/TOML/environment inputs. Lower tiers never fill a choice.
-use huginn_core::connections::*;
+use huginn_core::connections::{
+    ConnectionChoice, ConnectionError, ConnectionInputs, ConnectionProvenance, ConnectionResult,
+    ConnectionSettings, Secret,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
