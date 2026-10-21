@@ -4,12 +4,13 @@
 
 Vue 3 Management Interface for Rook AI Proxy
 
-[![Vue](https://img.shields.io/badge/vue-3.4-4FC08D?logo=vuedotjs)](https://vuejs.org)
-[![TypeScript](https://img.shields.io/badge/typescript-5.0-3178C6?logo=typescript)](https://www.typescriptlang.org)
-[![Vite](https://img.shields.io/badge/vite-5.0-646CFF?logo=vite)](https://vitejs.dev)
-[![Vitest](https://img.shields.io/badge/vitest-2.0-6E9F18?logo=vitest)](https://vitest.dev)
-[![Playwright](https://img.shields.io/badge/playwright-1.40-2EAD33?logo=playwright)](https://playwright.dev)
-[![pnpm](https://img.shields.io/badge/pnpm-C867F2?logo=pnpm)](https://pnpm.io)
+[![Vue](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/vue/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=vuedotjs&color=4FC08D)](https://vuejs.org)
+[![TypeScript](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/dev/typescript/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=typescript&color=3178C6)](https://www.typescriptlang.org)
+[![Vite](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/dev/vite/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=vite&color=646CFF)](https://vitejs.dev)
+[![Vitest](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/dev/vitest/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=vitest&color=6E9F18)](https://vitest.dev)
+[![Playwright](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/dev/@playwright%2Ftest/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=playwright&color=2EAD33)](https://playwright.dev)
+[![pnpm](https://img.shields.io/static/v1?label=pnpm&message=12.14.0&color=C867F2&logo=pnpm)](https://pnpm.io)
+<!-- pnpm version from root package.json -->
 [![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
 
 </div>
