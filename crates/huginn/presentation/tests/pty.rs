@@ -667,8 +667,13 @@ fn overlays_keep_status_visible_at_minimum_inline_size() {
             pty.send(input);
             pty.wait_for(marker);
             let screen = pty.screen_text();
+            let status_marker = if cols >= 100 {
+                "Idle|fixture/"
+            } else {
+                "I|fixt"
+            };
             assert!(
-                screen.contains("|"),
+                screen.contains(status_marker),
                 "status bar missing at {cols}x{rows}:\n{screen}"
             );
             pty.send("\x1b");

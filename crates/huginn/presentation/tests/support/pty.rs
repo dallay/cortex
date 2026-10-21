@@ -84,6 +84,10 @@ impl Pty {
         writer.flush().unwrap();
     }
     pub fn resize(&self, rows: u16, cols: u16) {
+        let mut screen = self.screen.lock().unwrap();
+        let scrollback = std::mem::take(&mut screen.scrollback);
+        *screen = Screen::new(usize::from(rows), usize::from(cols));
+        screen.scrollback = scrollback;
         self.master
             .resize(portable_pty::PtySize {
                 rows,
@@ -92,10 +96,8 @@ impl Pty {
                 pixel_height: 0,
             })
             .unwrap();
-        let mut screen = self.screen.lock().unwrap();
-        let scrollback = std::mem::take(&mut screen.scrollback);
-        *screen = Screen::new(usize::from(rows), usize::from(cols));
-        screen.scrollback = scrollback;
+        // Redraw bytes must reach the replacement model only after the resize.
+        drop(screen);
     }
     pub fn output(&self) -> String {
         self.output.lock().unwrap().clone()

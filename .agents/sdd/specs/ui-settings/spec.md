@@ -54,7 +54,7 @@ The system SHALL render a bordered modal with three regions:
 
 ### REQ-03 — Tab navigation
 
-The system SHALL switch the active tab on `←`, `→`, `Tab`, and `BackTab`. Wrap-around is permitted: pressing `→` on the last tab returns to the first; pressing `←` on the first tab returns to the last. When the active tab changes, the selected item resets to index `0` unless the new tab was previously visited in this dialog session and still has a remembered selection (implementation choice — the **observable contract** is that the body shows the items of the new tab with exactly one `▶` row, and `Esc` still discards the entire working copy).
+The system SHALL always switch the active tab on `Tab` and `BackTab`. When a toast picker is focused, `←` and `→` change its selected value without switching tabs. For other controls, `←` and `→` switch tabs as before. Wrap-around is permitted: tab navigation forward on the last tab returns to the first; tab navigation backward on the first tab returns to the last. When the active tab changes, the selected item resets to index `0` unless the new tab was previously visited in this dialog session and still has a remembered selection (implementation choice — the **observable contract** is that the body shows the items of the new tab with exactly one `▶` row, and `Esc` still discards the entire working copy).
 
 #### Scenario: tab cycles to indicators with right arrow
 
@@ -473,8 +473,8 @@ The `apps/huginn` binary builds the closure `Box<dyn Fn(&UiConfig) -> anyhow::Re
 
 ## Acceptance Criteria
 
-- [ ] `cargo test -p huginn-presentation --test settings` passes (state machine: tabs, selections, apply, esc-not-mutate).
-- [ ] `cargo test -p huginn-presentation --test pty` adds a render test for the header + items + marker + footer.
+- [ ] `cargo test -p huginn-presentation --test settings --test state` passes (state machine: tabs, selections, apply, esc-not-mutate, and input dispatch).
+- [ ] `cargo test -p huginn-presentation --features test-driver --test pty` adds a render test for the header + items + marker + footer.
 - [ ] `cargo test -p huginn-presentation --test plugins` confirms `/settings` appears in the catalog with description `TUI settings` alongside `/help`, `/compact`, `/summarize`, `/quit`.
 - [ ] `cargo test -p huginn --test config_compat` (or a new `tests/ui_settings.rs`) loads a fixture without `[ui]`, applies defaults; loads a partial `[ui]`, fills defaults; loads a fixture with inner unknowns, loads without error.
 - [ ] A round-trip test loads a fixture with `[provider]`, `[model]`, and a hand-written comment, applies `[ui.theme] = "catppuccin"`, and asserts the bytes outside `[ui]` are byte-identical.

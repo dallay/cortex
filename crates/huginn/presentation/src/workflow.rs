@@ -230,8 +230,15 @@ impl HostWorkflow {
         })
     }
     pub(crate) fn attach_task(&mut self, task: tokio::task::JoinHandle<()>) {
-        // Called once for the prepared submission on this exact overlay.
-        self.pending.as_mut().expect("prepared submission").task = Some(task);
+        if let Some(pending) = self
+            .pending
+            .as_mut()
+            .filter(|pending| pending.task.is_none())
+        {
+            pending.task = Some(task);
+        } else {
+            task.abort();
+        }
     }
     pub fn show_error(&mut self, message: String) {
         self.pending.take();
@@ -252,3 +259,7 @@ impl HostWorkflow {
         }
     }
 }
+
+#[cfg(feature = "test-driver")]
+#[doc(hidden)]
+pub mod test_support;

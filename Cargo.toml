@@ -121,5 +121,7 @@ aes-gcm = "0.10.3"
 argon2 = "0.5.3"
 base64 = "0.23"
 
+tempfile = "=3.27.0"
+
 # Dev tools (installed via cargo install or as dependencies)
 # cargo install cargo-hack cargo-udeps cargo-audit cargo-outdated cargo-llvm-cov cargo-spellcheck

@@ -4,7 +4,8 @@
 
 Local Rust coding assistant with native tools and MCP integration
 
-[![Rust](https://img.shields.io/badge/rust-1.89%2B-DEA584?logo=rust)](https://www.rust-lang.org)
+[![Rust MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2Fapps%2Fhuginn%2FCargo.toml&query=%24.package%5B%27rust-version%27%5D&label=Rust%20MSRV&suffix=%2B&color=DEA584&logo=rust)](https://www.rust-lang.org)
+<!-- Huginn MSRV from apps/huginn/Cargo.toml -->
 [![SQLite](https://img.shields.io/badge/sqlite-3-003B57?logo=sqlite)](https://www.sqlite.org)
 [![MCP](https://img.shields.io/badge/MCP-ready-7C3AED?logo=modelcontextprotocol)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/github/license/dallay/cortex)](https://github.com/dallay/cortex/blob/main/LICENSE)
@@ -78,70 +79,13 @@ Huginn is a **local coding agent** built in Rust that works with your codebase. 
 
 ## 🏗️ Architecture
 
-```
-huginn/
-│
-├── src/
-│   ├── main.rs              # Entry point, CLI parsing
-│   │
-│   ├── cli/                 # Command handlers
-│   │   ├── chat.rs          # Interactive chat mode
-│   │   ├── run.rs           # Single command mode
-│   │   └── sessions.rs      # Session management
-│   │
-│   └── runtime/
-│       ├── mod.rs           # Core runtime
-│       ├── provider.rs      # LLM provider abstraction
-│       ├── tools/           # Native tools
-│       │   ├── file.rs      # File operations
-│       │   ├── terminal.rs  # Shell commands
-│       │   ├── git.rs       # Git operations
-│       │   └── mod.rs       # Tool registry
-│       │
-│       ├── mcp/             # MCP client
-│       │   ├── client.rs    # Stdio client
-│       │   └── protocol.rs  # MCP protocol
-│       │
-│       ├── session.rs       # SQLite session storage
-│       ├── context.rs       # Context building
-│       └── ui/              # Ratatui UI components
-│
-├── runtime/                 # Huginn runtime crate (shared)
-│   ├── src/
-│   │   ├── service_kernel.rs
-│   │   ├── streaming_adapter.rs  # OpenAI-compatible streaming
-│   │   ├── tools.rs
-│   │   └── sessions.rs
-│   │
-│   └── tests/
-│       └── fixtures/
-│
-└── AGENTS.md               # Per-repo agent instructions
-```
+Huginn is composed from separate Rust crates. `apps/huginn` is the composition
+root; `application` defines use cases and ports; `runtime` and `presentation`
+provide concrete capabilities; `core` owns shared contracts and the plugin
+kernel. The plugin API supports trusted, statically linked extensions.
 
-### Runtime Flow
-
-```
-User Input
-    │
-    ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Parser    │ ──▶ │   Provider   │ ──▶ │  Response   │
-│  (Command)  │     │  (LLM Call)  │     │  (Streaming)│
-└─────────────┘     └──────┬───────┘     └──────┬──────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │   Tool Call   │
-                    │  Execution    │
-                    └──────┬───────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ File System  │   │   Terminal   │   │     Git      │
-└──────────────┘   └──────────────┘   └──────────────┘
-```
+See [Huginn architecture](architecture.md) for the crate boundaries, lifecycle,
+and component details.
 
 ---
 
@@ -264,12 +208,12 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 
 Open with `/settings` (chat mode only — `--line-mode` excludes the modal).
 The dialog hosts five tabs in the order `theme · indicators · sound · toasts · integrations`.
-Usa `Tab`/`BackTab` para cambiar de pestaña y `↑/↓` para mover el cursor.
-Espacio modifica la opción seleccionada; mover el cursor no cambia su valor.
-En `toasts`, `←/→` también modifica el valor. En las demás pestañas,
-`←/→` cambia de sección. Enter guarda la copia de trabajo en `[ui]` de
-`config.toml` mediante `toml_edit` y muestra `Settings saved`.
-Esc descarta la copia sin modificar el archivo y muestra `Settings discarded`. v1 persists the values only — none of the tabs is
+Use `Tab`/`BackTab` to switch tabs and `↑/↓` to move the cursor.
+Space changes the selected option; moving the cursor does not change its value.
+In `toasts`, `←/→` also changes the value. In the other tabs,
+`←/→` switches sections. Enter saves the working copy to `[ui]` in
+`config.toml` using `toml_edit` and shows `Settings saved`.
+Esc discards the copy without modifying the file and shows `Settings discarded`. v1 persists the values only — none of the tabs is
 wired into its runtime subsystem yet, so the dialog is a shell for
 follow-up changes. The `integrations` tab exposes a single
 `(+) Add provider…` row that surfaces `Add provider not implemented yet`.
@@ -282,8 +226,8 @@ rounds (`toml_edit::DocumentMut`). The active precedence chain is
 while the modal is open disposes of the settings dialog first, and Esc
 inside settings never reaches the cancel-turn branch.
 
-En terminales estrechas, el encabezado muestra la pestaña activa y su posición.
-La ayuda `/help` permite desplazarse con `↑/↓` y `PgUp`/`PgDn`.
+On narrow terminals, the header shows the active tab and its position.
+The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 
 ### Keyboard Shortcuts
 

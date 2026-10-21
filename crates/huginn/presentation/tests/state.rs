@@ -375,6 +375,7 @@ fn resume_and_synchronize_commit_messages_once_not_mutable_tail() {
     session.interrupted = true;
     state.synchronize(&session);
     assert!(state.status.notice.contains("nothing replayed"));
+    assert!(state.status.diagnostic);
 }
 #[tokio::test]
 async fn stalled_renderer_keeps_all_transitions_and_composer_responsive() {
@@ -1322,4 +1323,163 @@ async fn watch_attachment_initial_read_coalesces_concurrent_updates_without_gap(
     drop(sender);
     assert!(receiver.changed().await.is_err());
     assert!(state.close_connection(attachment));
+}
+
+#[cfg(feature = "test-driver")]
+mod lock_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use huginn_core::Result;
+    use huginn_plugin_api::v1::{CommandResult, View};
+    use huginn_presentation::{overlay::Origin, settings::UiConfig, state::test_support};
+    use std::sync::Mutex;
+
+    #[test]
+    fn typed_status_snapshot_is_single_authority_for_notices_and_diagnostics() {
+        let mut state = UiState::default();
+        assert!(state.status.notice.is_empty());
+        assert!(!state.status.diagnostic);
+
+        state.project_ui_event(
+            huginn_presentation::event::EventKind::Notification,
+            "connected locally".into(),
+        );
+        assert_eq!(state.status.notice, "connected locally");
+        assert!(!state.status.diagnostic);
+
+        state.project_ui_event(
+            huginn_presentation::event::EventKind::Diagnostic,
+            "request failed".into(),
+        );
+        assert_eq!(state.status.notice, "request failed");
+        assert!(state.status.diagnostic);
+
+        state.project_ui_event(
+            huginn_presentation::event::EventKind::Status,
+            "Ready".into(),
+        );
+        assert_eq!(state.status.notice, "Ready");
+        assert!(!state.status.diagnostic);
+        assert!(
+            state.connection.is_none(),
+            "status must not imply connection availability"
+        );
+    }
+    use huginn_core::kernel::{Manifest, Plugin, PluginContext, Supervisor};
+    use huginn_plugin_api::v1::{contributions_id, Contribution, UiService};
+
+    #[test]
+    fn stale_result_does_not_allocate_an_operation_or_mutate_owner() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let stale = ui.lock().overlays.ticket();
+        ui.dispatch_command("/settings");
+        let before = ui.lock().overlays.snapshot();
+        let sequence = test_support::operation_sequence(&ui.lock());
+        test_support::apply_result(
+            &ui,
+            CommandResult::Overlay(huginn_plugin_api::v1::OverlayKind::Help),
+            Origin::Host,
+            stale,
+            None,
+        );
+        assert_eq!(
+            test_support::operation_sequence(&ui.lock()),
+            sequence,
+            "stale results must not mutate operation allocation"
+        );
+        assert_eq!(ui.lock().overlays.snapshot(), before);
+    }
+
+    struct RendererPlugin(
+        Arc<Contributions>,
+        Arc<std::sync::Mutex<std::sync::Weak<Ui>>>,
+    );
+    struct Host(Arc<Contributions>);
+    #[async_trait]
+    impl Plugin for Host {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "render-host".into(),
+                provides: vec![contributions_id()],
+                requires: vec![],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            ctx.provide(contributions_id(), UiService(self.0.clone()))
+        }
+    }
+    #[async_trait]
+    impl Plugin for RendererPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "render-lock-test".into(),
+                provides: vec![],
+                requires: vec![contributions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let slot = self.1.clone();
+            self.0.register(
+                ctx,
+                "renderer".into(),
+                Contribution::Renderer {
+                    tool: "reentrant".into(),
+                    handler: Arc::new(move |_| {
+                        let ui = slot.lock().unwrap().upgrade().unwrap();
+                        // Return observable content rather than panic: plugin API
+                        // intentionally catches callback panics.
+                        let outside = test_support::host_mutexes_available(&ui);
+                        Ok(View::text(if outside { "unlocked" } else { "locked" }))
+                    }),
+                },
+            )?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn renderer_runs_outside_every_host_mutex() {
+        let registry = Arc::new(Contributions::default());
+        let slot = Arc::new(Mutex::new(std::sync::Weak::new()));
+        let mut supervisor = Supervisor::default();
+        supervisor
+            .register(Box::new(Host(registry.clone())))
+            .unwrap();
+        supervisor
+            .register(Box::new(RendererPlugin(registry.clone(), slot.clone())))
+            .unwrap();
+        supervisor.start().await.unwrap();
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            registry,
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        *slot.lock().unwrap() = Arc::downgrade(&ui);
+        ui.emit(Event::ToolStarted {
+            call: huginn_core::ToolCall {
+                id: "call".into(),
+                name: "reentrant".into(),
+                arguments: Default::default(),
+            },
+        });
+        ui.emit(Event::ToolFinished {
+            id: "call".into(),
+            output: "payload".into(),
+            is_error: false,
+        });
+        assert!(
+            ui.lock().tail.contains("unlocked"),
+            "renderer must run outside every host mutex"
+        );
+    }
 }

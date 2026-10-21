@@ -1,10 +1,11 @@
-mod config;
 mod terminal;
-mod ui_settings;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use config::{Config, ModelReadiness};
+use huginn::{
+    config::{Config, ModelReadiness},
+    ui_settings,
+};
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
     ApprovalPolicy, CancellationToken, EventSink, LoopService, Session, SessionStore,
