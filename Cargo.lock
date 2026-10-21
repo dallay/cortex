@@ -1830,6 +1830,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 1.1.8+spec-1.1.0",
+ "toml_edit 0.22.27",
  "uuid",
 ]
 
@@ -1875,6 +1876,8 @@ dependencies = [
 name = "huginn-presentation"
 version = "0.0.1"
 dependencies = [
+ "aes-gcm",
+ "anyhow",
  "async-trait",
  "cap-std",
  "crossterm",
@@ -1886,7 +1889,9 @@ dependencies = [
  "portable-pty",
  "ratatui",
  "rustix",
+ "serde",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "unicode-width",
  "uuid",

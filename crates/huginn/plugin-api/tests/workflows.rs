@@ -12,6 +12,30 @@ use std::sync::{
 };
 
 #[test]
+fn overlay_metadata_preserves_workflow_payload_and_registration() {
+    let workflow = Workflow::new(
+        "Provider login",
+        "Enter credentials",
+        vec![Field {
+            id: "token".into(),
+            label: "Token".into(),
+            kind: FieldKind::Secret,
+            initial: String::new(),
+        }],
+        Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Notice(View::text("ok"))) })),
+    )
+    .unwrap();
+    assert_eq!(workflow.overlay_kind(), None);
+    let tagged = workflow
+        .clone()
+        .with_overlay_kind(OverlayKind::Login)
+        .unwrap();
+    assert_eq!(tagged.overlay_kind(), Some(OverlayKind::Login));
+    assert_eq!(tagged.title(), workflow.title());
+    assert_eq!(tagged.fields(), workflow.fields());
+}
+
+#[test]
 fn public_choice_defaults_are_validated_without_allowing_secret_defaults() {
     let make = |kind, initial: &str| {
         Workflow::new(
@@ -195,4 +219,292 @@ fn secret_defaults_and_duplicate_fields_are_rejected() {
         ..secret
     };
     assert!(Workflow::new("Form", "", vec![public.clone(), public], handler).is_err());
+}
+
+struct ResultsAuthor {
+    handler: CommandHandler,
+    registrations: Arc<std::sync::Mutex<Vec<Registration>>>,
+}
+#[async_trait]
+impl Plugin for ResultsAuthor {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "results".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+        for (id, name) in [("results.first", "/first"), ("results.second", "/second")] {
+            let registration = ui.register(
+                ctx,
+                id.into(),
+                Contribution::Command {
+                    name: name.into(),
+                    handler: self.handler.clone(),
+                },
+            )?;
+            self.registrations.lock().unwrap().push(registration);
+        }
+        Ok(())
+    }
+}
+
+async fn results_host(
+    handler: CommandHandler,
+) -> (
+    Supervisor,
+    Arc<Contributions>,
+    Arc<std::sync::Mutex<Vec<Registration>>>,
+) {
+    let ui = Arc::new(Contributions::default());
+    let registrations = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut supervisor = Supervisor::default();
+    supervisor.register(Box::new(Host(ui.clone()))).unwrap();
+    supervisor
+        .register(Box::new(ResultsAuthor {
+            handler,
+            registrations: registrations.clone(),
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    (supervisor, ui, registrations)
+}
+
+#[tokio::test]
+async fn workflow_result_validation_is_exhaustive_and_notices_are_checked() {
+    let (_supervisor, ui, _) = results_host(Arc::new(|argument| {
+        let result = match argument {
+            "help" => CommandResult::Overlay(OverlayKind::Help),
+            "settings" => CommandResult::Overlay(OverlayKind::Settings),
+            "provider" => CommandResult::Overlay(OverlayKind::Provider),
+            "login" => CommandResult::Overlay(OverlayKind::Login),
+            "model" => CommandResult::Overlay(OverlayKind::ModelPicker),
+            "confirm" => CommandResult::Overlay(OverlayKind::Confirm),
+            "dialog" => CommandResult::Dialog("results.dialog".into()),
+            "large" => CommandResult::Notice(View::text("x".repeat(65_537))),
+            _ => CommandResult::Notice(View::text("safe\u{202e}\x1b")),
+        };
+        Ok(CommandResult::Workflow(Workflow::new(
+            "Action",
+            "",
+            vec![],
+            Arc::new(move |_, _| {
+                let result = result.clone();
+                Box::pin(async move { Ok(result) })
+            }),
+        )?))
+    }))
+    .await;
+    for (argument, allowed) in [
+        ("help", true),
+        ("settings", true),
+        ("provider", false),
+        ("login", false),
+        ("model", false),
+        ("confirm", false),
+        ("dialog", false),
+        ("large", false),
+        ("notice", true),
+    ] {
+        let CommandResult::Workflow(workflow) =
+            ui.command("/first").unwrap().run(argument).unwrap()
+        else {
+            panic!()
+        };
+        let result = workflow
+            .execute(FormInput::default(), CancellationToken::new())
+            .await;
+        assert_eq!(result.is_ok(), allowed, "{argument}: {result:?}");
+        if argument == "notice" {
+            assert_eq!(result.unwrap(), CommandResult::Notice(View::text("safe")));
+        }
+    }
+}
+
+#[tokio::test]
+async fn tagged_continuation_keeps_own_metadata_payload_callback_and_exact_registration() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let callback_calls = calls.clone();
+    let next = Workflow::new(
+        "Choose model",
+        "Original body",
+        vec![
+            Field {
+                id: "model".into(),
+                label: "Model".into(),
+                kind: FieldKind::Text,
+                initial: "default".into(),
+            },
+            Field {
+                id: "token".into(),
+                label: "Token".into(),
+                kind: FieldKind::Secret,
+                initial: String::new(),
+            },
+        ],
+        Arc::new(move |input, _| {
+            callback_calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(input.public["model"], "chosen");
+            assert_eq!(input.secrets["token"].expose(), "overlay-secret-sentinel");
+            assert!(!input.public.contains_key("token"));
+            Box::pin(async { Ok(CommandResult::Notice(View::text("selected"))) })
+        }),
+    )
+    .unwrap()
+    .with_overlay_kind(OverlayKind::ModelPicker)
+    .unwrap();
+    let expected = next.clone();
+    let (mut supervisor, ui, registrations) = results_host(Arc::new(move |_| {
+        let next = next.clone();
+        Ok(CommandResult::Workflow(
+            Workflow::new(
+                "Login",
+                "",
+                vec![],
+                Arc::new(move |_, _| {
+                    let next = next.clone();
+                    Box::pin(async move { Ok(CommandResult::Workflow(next)) })
+                }),
+            )?
+            .with_overlay_kind(OverlayKind::Login)?,
+        ))
+    }))
+    .await;
+    let CommandResult::Workflow(first) = ui.command("/first").unwrap().run("").unwrap() else {
+        panic!()
+    };
+    let CommandResult::Workflow(next) = first
+        .execute(FormInput::default(), CancellationToken::new())
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(next, expected);
+    assert_eq!(first.overlay_kind(), Some(OverlayKind::Login));
+    assert_eq!(next.overlay_kind(), Some(OverlayKind::ModelPicker));
+    assert_eq!(next.body(), "Original body");
+    let retagged = next
+        .clone()
+        .with_overlay_kind(OverlayKind::Confirm)
+        .unwrap();
+    assert!(retagged.is_active());
+    assert_eq!(retagged.fields(), next.fields());
+    assert_eq!(next.overlay_kind(), Some(OverlayKind::ModelPicker));
+    let input = || FormInput {
+        public: [("model".into(), "chosen".into())].into(),
+        secrets: [(
+            "token".into(),
+            huginn_core::connections::Secret::new("overlay-secret-sentinel".into()).unwrap(),
+        )]
+        .into(),
+    };
+    assert!(next
+        .execute(input(), CancellationToken::new())
+        .await
+        .is_ok());
+    supervisor.remove("results").await.unwrap();
+    assert!(!registrations.lock().unwrap()[0].is_active());
+    supervisor
+        .register(Box::new(ResultsAuthor {
+            handler: Arc::new(|_| Ok(CommandResult::Notice(View::text("replacement")))),
+            registrations: Arc::default(),
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    assert!(ui.command("/second").unwrap().is_active());
+    assert!(next
+        .execute(input(), CancellationToken::new())
+        .await
+        .is_err());
+    assert!(retagged
+        .execute(input(), CancellationToken::new())
+        .await
+        .is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn workflow_metadata_builder_only_accepts_payload_backed_surfaces() {
+    let workflow = Workflow::new(
+        "Form",
+        "",
+        vec![],
+        Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Notice(View::text("ok"))) })),
+    )
+    .unwrap();
+    for kind in [
+        OverlayKind::Provider,
+        OverlayKind::Login,
+        OverlayKind::ModelPicker,
+        OverlayKind::Confirm,
+    ] {
+        assert_eq!(
+            workflow
+                .clone()
+                .with_overlay_kind(kind)
+                .unwrap()
+                .overlay_kind(),
+            Some(kind)
+        );
+    }
+    for kind in [OverlayKind::Help, OverlayKind::Settings] {
+        assert!(workflow.clone().with_overlay_kind(kind).is_err());
+    }
+    assert_eq!(workflow.overlay_kind(), None);
+}
+
+#[tokio::test]
+async fn every_payload_backed_surface_binds_and_untagged_continuation_stays_untagged() {
+    for kind in [
+        OverlayKind::Provider,
+        OverlayKind::Login,
+        OverlayKind::ModelPicker,
+        OverlayKind::Confirm,
+    ] {
+        let next = Workflow::new(
+            "Next",
+            "",
+            vec![],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Notice(View::text("done"))) })),
+        )
+        .unwrap();
+        let (_supervisor, ui, _) = results_host(Arc::new(move |_| {
+            let next = next.clone();
+            Ok(CommandResult::Workflow(
+                Workflow::new(
+                    "Form",
+                    "",
+                    vec![],
+                    Arc::new(move |_, _| {
+                        let next = next.clone();
+                        Box::pin(async move { Ok(CommandResult::Workflow(next)) })
+                    }),
+                )?
+                .with_overlay_kind(kind)?,
+            ))
+        }))
+        .await;
+        let CommandResult::Workflow(first) = ui.command("/first").unwrap().run("").unwrap() else {
+            panic!()
+        };
+        assert_eq!(first.overlay_kind(), Some(kind));
+        assert!(first.is_active());
+        let CommandResult::Workflow(next) = first
+            .execute(FormInput::default(), CancellationToken::new())
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(next.overlay_kind(), None);
+        assert_eq!(
+            next.execute(FormInput::default(), CancellationToken::new())
+                .await
+                .unwrap(),
+            CommandResult::Notice(View::text("done"))
+        );
+    }
 }

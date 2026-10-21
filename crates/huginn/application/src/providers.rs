@@ -41,17 +41,70 @@ impl Connection {
         self.adapter.active() && !self.revoked.is_cancelled()
     }
 }
-#[derive(Default)]
 struct State {
     adapters: BTreeMap<String, Arc<AdapterEntry>>,
     connections: BTreeMap<String, Arc<Connection>>,
     selected: Option<(Arc<Connection>, String)>,
+    candidate: Option<ModelSelection>,
+    observed: tokio::sync::watch::Sender<ConnectionSnapshot>,
     revision: u64,
     request_id: u64,
     requests: BTreeMap<u64, (Arc<Connection>, CancellationToken)>,
 }
 impl State {
-    fn revoke_connection(&self, connection: &Arc<Connection>) {
+    fn new() -> Self {
+        let (observed, _) = tokio::sync::watch::channel(ConnectionSnapshot {
+            source: uuid::Uuid::new_v4(),
+            revision: 0,
+            phase: ConnectionPhase::Unconfigured,
+            selection: None,
+        });
+        Self {
+            adapters: BTreeMap::new(),
+            connections: BTreeMap::new(),
+            selected: None,
+            candidate: None,
+            observed,
+            revision: 0,
+            request_id: 0,
+            requests: BTreeMap::new(),
+        }
+    }
+    fn observe(&mut self, phase: ConnectionPhase, selection: Option<SelectionSnapshot>) -> bool {
+        let mut snapshot = self.observed.borrow().clone();
+        // Exhaustion permanently closes admission rather than reusing a revision.
+        if let Some(revision) = snapshot.revision.checked_add(1).filter(|r| *r < u64::MAX) {
+            snapshot.revision = revision;
+            snapshot.phase = phase;
+            snapshot.selection = selection;
+        } else {
+            self.selected = None;
+            self.candidate = None;
+            snapshot.revision = u64::MAX;
+            snapshot.phase = ConnectionPhase::Unavailable;
+            snapshot.selection = None;
+        }
+        let available = snapshot.revision < u64::MAX;
+        self.observed.send_replace(snapshot);
+        available
+    }
+    fn clear(&mut self, phase: ConnectionPhase) {
+        self.selected = None;
+        self.candidate = None;
+        self.observe(phase, None);
+    }
+    fn revoke_connection(&mut self, connection: &Arc<Connection>) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|(entry, _)| Arc::ptr_eq(entry, connection))
+            || self
+                .candidate
+                .as_ref()
+                .is_some_and(|s| s.connection == connection.identity)
+        {
+            self.clear(ConnectionPhase::Revoked);
+        }
         connection.revoked.cancel();
         for (entry, cancel) in self.requests.values() {
             if Arc::ptr_eq(entry, connection) {
@@ -59,7 +112,18 @@ impl State {
             }
         }
     }
-    fn revoke_adapter(&self, adapter: &Arc<AdapterEntry>) {
+    fn revoke_adapter(&mut self, adapter: &Arc<AdapterEntry>) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|(entry, _)| Arc::ptr_eq(&entry.adapter, adapter))
+            || self
+                .candidate
+                .as_ref()
+                .is_some_and(|s| s.connection.adapter == adapter.registration)
+        {
+            self.clear(ConnectionPhase::Revoked);
+        }
         adapter.revoked.cancel();
         for (entry, cancel) in self.requests.values() {
             if Arc::ptr_eq(&entry.adapter, adapter) {
@@ -71,10 +135,11 @@ impl State {
 struct CoreLease(Arc<Mutex<State>>);
 impl Drop for CoreLease {
     fn drop(&mut self) {
-        let state = self
+        let mut state = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.clear(ConnectionPhase::Unavailable);
         for (_, cancel) in state.requests.values() {
             cancel.cancel();
         }
@@ -218,7 +283,43 @@ impl Providers {
         ))
     }
 }
+#[async_trait]
 impl ProviderCatalog for Providers {
+    fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
+        self.check()?;
+        let entry = {
+            let state = self.lock()?;
+            Self::adapter(&state, registration)?
+        };
+        Ok(entry.implementation.onboarding())
+    }
+    async fn discover_models(
+        &self,
+        registration: &ProviderRegistration,
+        material: &huginn_core::connections::ConnectionMaterial,
+        cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        self.check()?;
+        let entry = {
+            let state = self.lock()?;
+            Self::adapter(&state, registration)?
+        };
+        if material.settings.provider != registration.provider {
+            return Err(ProviderError::Unavailable.into());
+        }
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ProviderError::Unavailable.into()),
+            _ = self.cancellation.cancelled() => return Err(ProviderError::Revoked.into()),
+            _ = entry.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
+            result = entry.implementation.discover_models(material, cancel.clone()) => result?,
+        };
+        self.check()?;
+        if !entry.active() {
+            return Err(ProviderError::Revoked.into());
+        }
+        Ok(result)
+    }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         if self.check().is_err() {
             return vec![];
@@ -322,10 +423,45 @@ impl Providers {
 }
 #[async_trait]
 impl ProviderManagement for Providers {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<ConnectionSnapshot> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observed
+            .subscribe()
+    }
+    fn publish_selection(&self, selection: &ModelSelection, mode: SelectionMode) -> Result<()> {
+        let mut state = self.lock()?;
+        self.check()?;
+        if state.candidate.as_ref() != Some(selection) {
+            return Err(ProviderError::Unavailable.into());
+        }
+        let connection = Self::connection(&state, &selection.connection)?;
+        if !connection.active() {
+            return Err(ProviderError::Revoked.into());
+        }
+        state.selected = Some((connection, selection.model.clone()));
+        state.candidate = None;
+        let available = state.observe(
+            ConnectionPhase::Selected,
+            Some(SelectionSnapshot {
+                provider: selection.connection.adapter.provider.clone(),
+                connection: selection.connection.id.clone(),
+                model: selection.model.clone(),
+                mode,
+            }),
+        );
+        drop(state);
+        if available {
+            Ok(())
+        } else {
+            Err(ProviderError::Unavailable.into())
+        }
+    }
     fn clear_selection(&self) -> Result<()> {
         let mut state = self.lock()?;
         self.check()?;
-        state.selected = None;
+        state.clear(ConnectionPhase::Unavailable);
         drop(state);
         Ok(())
     }
@@ -385,13 +521,14 @@ impl ProviderManagement for Providers {
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
+        let direct_select = matches!(&action, ProviderAction::Select(_));
         let output = match action {
             ProviderAction::Diagnose => unreachable!(),
             ProviderAction::Connect { id, adapter } => {
                 let adapter = Self::adapter(&state, &adapter)?;
                 Self::connect(&mut state, id, adapter).map(ProviderActionOutput::Connected)
             }
-            ProviderAction::Select(selection) => {
+            ProviderAction::Select(selection) | ProviderAction::StageSelection(selection) => {
                 let connection = Self::connection(&state, &selection.connection)?;
                 if !connection.active() {
                     return Err(ProviderError::Revoked.into());
@@ -407,14 +544,38 @@ impl ProviderManagement for Providers {
                 {
                     return Err(ProviderError::InvalidModel.into());
                 }
-                state.selected = Some((connection, selection.model.clone()));
-                Ok(ProviderActionOutput::Selected(selection))
+                if direct_select {
+                    state.selected = Some((connection, selection.model.clone()));
+                    state.candidate = None;
+                    let available = state.observe(
+                        ConnectionPhase::Selected,
+                        Some(SelectionSnapshot {
+                            provider: selection.connection.adapter.provider.clone(),
+                            connection: selection.connection.id.clone(),
+                            model: selection.model.clone(),
+                            mode: SelectionMode::Unmanaged,
+                        }),
+                    );
+                    if available {
+                        Ok(ProviderActionOutput::Selected(selection))
+                    } else {
+                        Err(ProviderError::Unavailable.into())
+                    }
+                } else {
+                    state.selected = None;
+                    state.candidate = Some(selection.clone());
+                    if state.observe(ConnectionPhase::Candidate, None) {
+                        Ok(ProviderActionOutput::Staged(selection))
+                    } else {
+                        Err(ProviderError::Unavailable.into())
+                    }
+                }
             }
             ProviderAction::Revoke(identity) => {
                 let connection = Self::connection(&state, &identity)?;
                 state.revoke_connection(&connection);
                 state.connections.remove(&identity.id);
-                // Retain the selected identity as revoked, never silently substitute it.
+                // Revocation publishes absence, never a replacement identity.
                 Ok(ProviderActionOutput::Revoked)
             }
             ProviderAction::Replace {
@@ -628,7 +789,7 @@ impl Plugin for ProvidersPlugin {
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         let providers = Arc::new(Providers {
-            state: Arc::new(Mutex::new(State::default())),
+            state: Arc::new(Mutex::new(State::new())),
             activation: ctx.activation(),
             cancellation: ctx.cancellation.clone(),
             credentials: self.credentials.clone(),
@@ -641,6 +802,15 @@ impl Plugin for ProvidersPlugin {
             let adapter = state.adapters[&handle.provider].clone();
             let identity = Providers::connect(&mut state, "legacy".into(), adapter)?;
             state.selected = Some((state.connections[&identity.id].clone(), "configured".into()));
+            state.observe(
+                ConnectionPhase::Selected,
+                Some(SelectionSnapshot {
+                    provider: "legacy".into(),
+                    connection: identity.id,
+                    model: "configured".into(),
+                    mode: SelectionMode::Legacy,
+                }),
+            );
         }
         ctx.provide(catalog_id(), ProviderCatalogService(providers.clone()))?;
         ctx.provide(providers_id(), ProvidersService(providers.clone()))?;
@@ -650,3 +820,7 @@ impl Plugin for ProvidersPlugin {
         )
     }
 }
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub mod test_support;

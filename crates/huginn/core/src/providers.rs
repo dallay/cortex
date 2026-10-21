@@ -1,6 +1,7 @@
 //! Non-secret, headless provider contracts. Native adapters remain trusted code.
 use crate::{kernel::PluginContext, CancellationToken, ModelProvider, Result};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +59,37 @@ pub struct ModelSelection {
     pub model: String,
 }
 
+/// Local preparation only; none of these phases asserts remote connectivity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionPhase {
+    Unconfigured,
+    Candidate,
+    Selected,
+    Revoked,
+    Unavailable,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelectionMode {
+    Managed(crate::connections::SecretMode),
+    Unmanaged,
+    Legacy,
+}
+/// Deliberately excludes endpoints, credentials, references and capabilities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionSnapshot {
+    pub provider: String,
+    pub connection: String,
+    pub model: String,
+    pub mode: SelectionMode,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionSnapshot {
+    pub source: uuid::Uuid,
+    pub revision: u64,
+    pub phase: ConnectionPhase,
+    pub selection: Option<SelectionSnapshot>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
     #[error("no model configured; connect a provider and select a model")]
@@ -74,11 +106,58 @@ pub enum ProviderError {
     InvalidMetadata,
 }
 
+/// Public onboarding hints. Secret values must never occur in this metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderOnboarding {
+    /// None uses descriptor methods. An override narrows interactive onboarding only.
+    pub authentication: Option<Vec<AuthenticationMethod>>,
+    pub default_endpoint: Option<String>,
+    pub allow_endpoint_edit: bool,
+}
+impl Default for ProviderOnboarding {
+    fn default() -> Self {
+        Self {
+            authentication: None,
+            default_endpoint: None,
+            allow_endpoint_edit: true,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolSupport {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredModel {
+    pub id: String,
+    pub tools: ToolSupport,
+}
+/// An unsupported catalog is different from an unavailable or empty catalog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelCatalog {
+    Available(Vec<DiscoveredModel>),
+    Unsupported,
+    Unavailable,
+    Invalid,
+}
+
 /// Factories receive identity and model, never terminal ownership or raw secrets.
 /// P0.1 uses in-memory doubles; credential-backed connections are a later port.
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
+    fn onboarding(&self) -> ProviderOnboarding {
+        ProviderOnboarding::default()
+    }
+    async fn discover_models(
+        &self,
+        _material: &crate::connections::ConnectionMaterial,
+        _cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        Ok(ModelCatalog::Unsupported)
+    }
     /// An empty static model list is permitted only for adapters that validate
     /// the selected model against a connection-scoped catalog during pinning.
     fn has_connection_catalog(&self) -> bool {
@@ -104,7 +183,19 @@ pub trait ProviderAdapter: Send + Sync {
     }
 }
 
+#[async_trait]
 pub trait ProviderCatalog: Send + Sync {
+    fn onboarding(&self, _registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
+        Ok(ProviderOnboarding::default())
+    }
+    async fn discover_models(
+        &self,
+        _registration: &ProviderRegistration,
+        _material: &crate::connections::ConnectionMaterial,
+        _cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        Ok(ModelCatalog::Unsupported)
+    }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)>;
     /// Reserve invisibly, then publish only when the host commits activation.
     fn register(
@@ -131,6 +222,8 @@ pub enum ProviderAction {
         adapter: ProviderRegistration,
     },
     Select(ModelSelection),
+    /// Installs an exact candidate, never a confirmed selection or new admission.
+    StageSelection(ModelSelection),
     Revoke(ConnectionIdentity),
     Replace {
         connection: ConnectionIdentity,
@@ -143,6 +236,7 @@ pub enum ProviderActionOutput {
     Diagnostic(ProvidersDiagnostic),
     Connected(ConnectionIdentity),
     Selected(ModelSelection),
+    Staged(ModelSelection),
     Revoked,
 }
 
@@ -158,6 +252,9 @@ pub enum ProviderActionState {
 
 #[async_trait]
 pub trait ProviderManagement: Send + Sync {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<ConnectionSnapshot>;
+    /// Synchronous commit under the router's serialization point.
+    fn publish_selection(&self, selection: &ModelSelection, mode: SelectionMode) -> Result<()>;
     fn diagnostic(&self) -> Result<ProvidersDiagnostic>;
     /// Stop new selected admission without revoking already pinned turns.
     fn clear_selection(&self) -> Result<()>;

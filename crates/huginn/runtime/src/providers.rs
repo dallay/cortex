@@ -7,39 +7,24 @@ use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext},
     providers::{
         AuthenticationMethod, ModelSelection, ProviderAdapter, ProviderCatalogService,
-        ProviderDescriptor, ProviderError,
+        ProviderDescriptor, ProviderError, ProviderOnboarding,
     },
     AgentError, CancellationToken, ModelDelta, ModelProvider, ModelRequest, Result,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToolSupport {
-    Unknown,
-    Supported,
-    Unsupported,
-}
+pub use huginn_core::providers::{DiscoveredModel, ModelCatalog, ToolSupport};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiscoveredModel {
-    pub id: String,
-    pub tools: ToolSupport,
-}
-
-/// A missing/failed catalog is never treated as an empty successful catalog.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ModelCatalog {
-    Available(Vec<DiscoveredModel>),
-    Unsupported,
-    Unavailable,
-    Invalid,
-}
+// Permite catálogos de agregadores sin eliminar el límite de entradas ni el de bytes.
+const MAX_DISCOVERED_MODELS: usize = 16_384;
+const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum Kind {
     OpenAi,
     Ollama,
+    OllamaCloud,
 }
 
 pub struct InferenceAdapter {
@@ -59,11 +44,21 @@ impl InferenceAdapter {
             timeout_secs,
         }
     }
+    pub const fn ollama_cloud(timeout_secs: u64) -> Self {
+        Self {
+            kind: Kind::OllamaCloud,
+            timeout_secs,
+        }
+    }
     const fn id(&self) -> &'static str {
         match self.kind {
             Kind::OpenAi => "openai",
             Kind::Ollama => "ollama",
+            Kind::OllamaCloud => "ollama-cloud",
         }
+    }
+    pub fn validate_connection(&self, material: &ConnectionMaterial) -> Result<()> {
+        self.endpoint(material).map(|_| ())
     }
     fn endpoint<'a>(&self, material: &'a ConnectionMaterial) -> Result<&'a str> {
         material.settings.validate()?;
@@ -77,6 +72,16 @@ impl InferenceAdapter {
                 AgentError::Configuration("connection endpoint is required".into())
             })?;
         // The local adapter cannot silently become a remote Ollama/cloud adapter.
+        if matches!(self.kind, Kind::OllamaCloud) {
+            let url = reqwest::Url::parse(endpoint).map_err(|_| ProviderError::Unavailable)?;
+            // A cloud key must never be sent to a user-supplied host or path.
+            if url.as_str() != "https://ollama.com/"
+                || !material.settings.requires_secret
+                || material.secret.is_none()
+            {
+                return Err(ProviderError::Unavailable.into());
+            }
+        }
         if matches!(self.kind, Kind::Ollama) {
             let url = reqwest::Url::parse(endpoint).map_err(|_| ProviderError::InvalidMetadata)?;
             if !huginn_core::connections::is_loopback_endpoint(&url)
@@ -123,7 +128,7 @@ impl InferenceAdapter {
             let mut chunks = response.bytes_stream();
             while let Some(chunk) = chunks.next().await {
                 let chunk = chunk.map_err(|_| ProviderError::Unavailable)?;
-                if bytes.len() + chunk.len() > 1_048_576 {
+                if bytes.len() + chunk.len() > MAX_CATALOG_RESPONSE_BYTES {
                     return Err(ProviderError::InvalidMetadata.into());
                 }
                 bytes.extend_from_slice(&chunk);
@@ -147,7 +152,7 @@ impl InferenceAdapter {
         self.endpoint(material)?;
         let path = match self.kind {
             Kind::OpenAi => "/models",
-            Kind::Ollama => "/api/tags",
+            Kind::Ollama | Kind::OllamaCloud => "/api/tags",
         };
         let (status, value) = match self.json(material, path, None, &cancel).await {
             Ok(value) => value,
@@ -166,9 +171,12 @@ impl InferenceAdapter {
         let value = value.unwrap_or(Value::Null);
         let (field, id) = match self.kind {
             Kind::OpenAi => ("data", "id"),
-            Kind::Ollama => ("models", "name"),
+            Kind::Ollama | Kind::OllamaCloud => ("models", "name"),
         };
-        let Some(items) = value[field].as_array().filter(|items| items.len() <= 1024) else {
+        let Some(items) = value[field]
+            .as_array()
+            .filter(|items| items.len() <= MAX_DISCOVERED_MODELS)
+        else {
             return Ok(ModelCatalog::Invalid);
         };
         let mut models = Vec::new();
@@ -193,17 +201,46 @@ impl InferenceAdapter {
 
 #[async_trait]
 impl ProviderAdapter for InferenceAdapter {
+    fn onboarding(&self) -> ProviderOnboarding {
+        ProviderOnboarding {
+            authentication: if matches!(self.kind, Kind::Ollama) {
+                Some(vec![AuthenticationMethod::None])
+            } else {
+                None
+            },
+            default_endpoint: match self.kind {
+                Kind::OpenAi => None,
+                Kind::Ollama => Some("http://127.0.0.1:11434".into()),
+                Kind::OllamaCloud => Some("https://ollama.com".into()),
+            },
+            allow_endpoint_edit: !matches!(self.kind, Kind::OllamaCloud),
+        }
+    }
+    async fn discover_models(
+        &self,
+        material: &ConnectionMaterial,
+        cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        Self::discover_models(self, material, cancel).await
+    }
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
             id: self.id().into(),
             display_name: match self.kind {
-                Kind::OpenAi => "OpenAI-compatible",
-                Kind::Ollama => "Local Ollama",
+                Kind::OpenAi => "Custom — OpenAI-compatible",
+                Kind::Ollama => "Ollama local",
+                Kind::OllamaCloud => "Ollama Cloud",
             }
             .into(),
             // Dynamic per connection, not a fabricated global model inventory.
             models: vec![],
-            authentication: vec![AuthenticationMethod::None, AuthenticationMethod::ApiKey],
+            authentication: match self.kind {
+                // Retain the headless capability for existing local connections with
+                // credentials. Interactive onboarding deliberately offers no key.
+                Kind::Ollama => vec![AuthenticationMethod::None, AuthenticationMethod::ApiKey],
+                Kind::OllamaCloud => vec![AuthenticationMethod::ApiKey],
+                Kind::OpenAi => vec![AuthenticationMethod::None, AuthenticationMethod::ApiKey],
+            },
         }
     }
     fn has_connection_catalog(&self) -> bool {
@@ -232,6 +269,14 @@ impl ProviderAdapter for InferenceAdapter {
         let endpoint = self.endpoint(&material)?.to_owned();
         let models = match self.discover_models(&material, cancel.clone()).await? {
             ModelCatalog::Available(models) => models,
+            ModelCatalog::Unsupported if matches!(self.kind, Kind::OpenAi) => {
+                // Only a genuinely unsupported catalog permits an explicit manual
+                // model. Authentication and transport failures remain fail-closed.
+                vec![DiscoveredModel {
+                    id: selection.model.clone(),
+                    tools: ToolSupport::Unknown,
+                }]
+            }
             ModelCatalog::Unsupported => {
                 return Err(AgentError::Model(
                     "model catalog unsupported; selection not validated".into(),
@@ -251,7 +296,7 @@ impl ProviderAdapter for InferenceAdapter {
         if !models.iter().any(|model| model.id == selection.model) {
             return Err(ProviderError::InvalidModel.into());
         }
-        let tools = if matches!(self.kind, Kind::Ollama) {
+        let tools = if matches!(self.kind, Kind::Ollama | Kind::OllamaCloud) {
             let (status, info) = self
                 .json(
                     &material,
@@ -287,7 +332,7 @@ impl ProviderAdapter for InferenceAdapter {
         };
         let base = match self.kind {
             Kind::OpenAi => endpoint,
-            Kind::Ollama => format!("{endpoint}/v1"),
+            Kind::Ollama | Kind::OllamaCloud => format!("{}/v1", endpoint.trim_end_matches('/')),
         };
         let inner = crate::model::OpenAiProvider::with_transport(
             &base,
@@ -324,6 +369,9 @@ impl ModelProvider for CapabilityModel {
 }
 
 /// Registers adapters only; ProvidersPlugin remains the sole model publisher.
+///
+/// Compatibility aggregate for existing embedders. The executable registers the
+/// three provider plugins separately so their lifetimes remain independent.
 pub struct BuiltinInferencePlugin {
     pub timeout_secs: u64,
 }
@@ -346,6 +394,48 @@ impl Plugin for BuiltinInferencePlugin {
             Arc::new(InferenceAdapter::openai_compatible(self.timeout_secs)),
         )?;
         catalog.register(ctx, Arc::new(InferenceAdapter::ollama(self.timeout_secs)))?;
+        catalog.register(
+            ctx,
+            Arc::new(InferenceAdapter::ollama_cloud(self.timeout_secs)),
+        )?;
         Ok(())
     }
 }
+
+// Each provider owns its own catalog registration and activation lifetime.
+macro_rules! provider_plugin {
+    ($name:ident, $id:literal, $adapter:ident) => {
+        pub struct $name {
+            pub timeout_secs: u64,
+        }
+        #[async_trait]
+        impl Plugin for $name {
+            fn manifest(&self) -> Manifest {
+                Manifest {
+                    id: $id.into(),
+                    provides: vec![],
+                    requires: vec![catalog_id()],
+                }
+            }
+            async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+                let catalog = ctx
+                    .resolve::<ProviderCatalogService>(&catalog_id())?
+                    .0
+                    .clone();
+                catalog.register(ctx, Arc::new(InferenceAdapter::$adapter(self.timeout_secs)))?;
+                Ok(())
+            }
+        }
+    };
+}
+provider_plugin!(OllamaLocalPlugin, "builtin.inference.ollama-local", ollama);
+provider_plugin!(
+    OllamaCloudPlugin,
+    "builtin.inference.ollama-cloud",
+    ollama_cloud
+);
+provider_plugin!(
+    CustomProviderPlugin,
+    "builtin.inference.custom",
+    openai_compatible
+);

@@ -126,12 +126,16 @@ fn non_tty_default_fails_clearly_and_explicit_line_recovery_works() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"hello\n/quit\n")
+        .write_all(b"/settings\nhello\n/quit\n")
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Offline mock: hello"));
     assert!(!output.stdout.contains(&0x1b));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains("TUI settings"));
+    assert!(!text.contains("Settings saved"));
+    assert!(!text.contains("Settings discarded"));
 }
 #[test]
 fn json_chat_accepts_piped_stdin_without_tty_or_line_mode() {

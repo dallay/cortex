@@ -473,19 +473,31 @@ impl ConnectionManager {
         }
     }
     async fn select_runtime(&self, record: &ConnectionRecord) -> ConnectionResult<ModelSelection> {
+        let mut publication = ModelPublication {
+            manager: self,
+            armed: true,
+        };
         self.check_secret(record).await?;
         let identity = self.access.identity(record.id)?;
         let selection = ModelSelection {
             connection: identity,
             model: record.settings.model.clone(),
         };
-        self.providers
+        let staged = self
+            .providers
             .execute(
-                ProviderAction::Select(selection.clone()),
+                ProviderAction::StageSelection(selection.clone()),
                 CancellationToken::new(),
             )
             .await
             .map_err(|_| ConnectionError::InvalidSelection)?;
+        if staged != ProviderActionOutput::Staged(selection.clone()) {
+            return Err(ConnectionError::InvalidSelection);
+        }
+        self.providers
+            .publish_selection(&selection, SelectionMode::Managed(record.mode))
+            .map_err(|_| ConnectionError::InvalidSelection)?;
+        publication.armed = false;
         Ok(selection)
     }
     pub async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
@@ -908,6 +920,10 @@ impl ConnectionManager {
                 let id = match choice {
                     ConnectionChoice::Stored(id) => id,
                     ConnectionChoice::Explicit { settings, secret } => {
+                        let mut publication = ModelPublication {
+                            manager: self,
+                            armed: true,
+                        };
                         // Clear before validation/I/O too: an invalid winner must never
                         // leave a lower-precedence connection usable for new turns.
                         let state = self.state.lock().await;
@@ -935,13 +951,24 @@ impl ConnectionManager {
                             connection: identity,
                             model: settings.model,
                         };
-                        self.providers
+                        let staged = self
+                            .providers
                             .execute(
-                                ProviderAction::Select(selection.clone()),
+                                ProviderAction::StageSelection(selection.clone()),
                                 CancellationToken::new(),
                             )
                             .await
                             .map_err(|_| ConnectionError::InvalidSelection)?;
+                        if staged != ProviderActionOutput::Staged(selection.clone()) {
+                            return Err(ConnectionError::InvalidSelection);
+                        }
+                        self.providers
+                            .publish_selection(
+                                &selection,
+                                SelectionMode::Managed(SecretMode::Ephemeral),
+                            )
+                            .map_err(|_| ConnectionError::InvalidSelection)?;
+                        publication.armed = false;
                         return Ok(ResolvedConnection {
                             selection: Some(selection),
                             provenance,
@@ -975,6 +1002,9 @@ impl ConnectionManager {
 
 #[async_trait]
 impl ConnectionManagement for ConnectionManager {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<ConnectionSnapshot> {
+        self.providers.subscribe()
+    }
     async fn recover(&self) -> ConnectionResult<()> {
         self.recover().await
     }

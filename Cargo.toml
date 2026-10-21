@@ -104,6 +104,7 @@ reqwest = { version = "0.13", features = ["form", "json", "rustls"], default-fea
 
 # Config
 toml = "1.1"
+toml_edit = "0.22"
 figment = { version = "0.10", features = ["toml"] }
 
 # Utils
@@ -119,6 +120,8 @@ clap = { version = "4", features = ["derive", "env"] }
 aes-gcm = "0.10.3"
 argon2 = "0.5.3"
 base64 = "0.23"
+
+tempfile = "=3.27.0"
 
 # Dev tools (installed via cargo install or as dependencies)
 # cargo install cargo-hack cargo-udeps cargo-audit cargo-outdated cargo-llvm-cov cargo-spellcheck

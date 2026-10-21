@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_core::{
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
-    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
-    ToolCall, ToolContext, ToolRegistry,
+    Message, ModelDelta, ModelProvider, ModelRequest, OperationId, Result, Role, ScopedEventSink,
+    Session, SessionStore, ToolCall, ToolContext, ToolRegistry,
 };
 use huginn_runtime::{
     loop_engine::{recover, LoopConfig, StandardLoop},
@@ -29,6 +29,18 @@ struct Events(Mutex<Vec<Event>>);
 impl EventSink for Events {
     fn emit(&self, event: Event) {
         self.0.lock().unwrap().push(event);
+    }
+}
+
+#[derive(Default)]
+struct CapturedScopes(Mutex<Vec<(OperationId, Event)>>);
+impl EventSink for CapturedScopes {
+    fn emit(&self, event: Event) {
+        self.0.lock().unwrap().push((OperationId::default(), event));
+    }
+
+    fn emit_for(&self, operation: OperationId, event: Event) {
+        self.0.lock().unwrap().push((operation, event));
     }
 }
 struct Script {
@@ -75,6 +87,71 @@ fn fixture(
         },
         sessions,
     )
+}
+
+#[tokio::test]
+async fn operation_scope_survives_tool_continuation_and_is_distinct_per_run() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([
+            vec![
+                call("shell", json!({"command":"printf continuation"})),
+                ModelDelta::Finished,
+            ],
+            vec![ModelDelta::Text("continued".into()), ModelDelta::Finished],
+            vec![ModelDelta::Text("next run".into()), ModelDelta::Finished],
+        ])),
+        requests: Mutex::new(vec![]),
+    });
+    let (engine, _) = fixture(model, &data.path().join("sessions.db"));
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let captures = CapturedScopes::default();
+    let first = OperationId(41);
+    let scoped_first = ScopedEventSink {
+        sink: &captures,
+        operation: first,
+    };
+    engine
+        .run(
+            &mut session,
+            "run tool".into(),
+            &Policy(true),
+            &scoped_first,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let second = OperationId(42);
+    let scoped_second = ScopedEventSink {
+        sink: &captures,
+        operation: second,
+    };
+    engine
+        .run(
+            &mut session,
+            "next invocation".into(),
+            &Policy(true),
+            &scoped_second,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let events = captures.0.lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::ToolStarted { .. })));
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::ToolFinished { .. })));
+    assert!(events
+        .iter()
+        .any(|(id, event)| *id == first && matches!(event, Event::TurnFinished)));
+    assert!(events.iter().any(|(id, _)| *id == second));
+    assert!(!events.iter().any(|(id, _)| *id == OperationId::default()));
+    assert!(!events.iter().any(|(id, _)| *id == OperationId(43)));
+    drop(events);
 }
 
 #[tokio::test]
@@ -873,25 +950,43 @@ async fn cancellation_keeps_an_interrupted_record_and_does_not_execute_tools() {
 #[cfg(unix)]
 #[test]
 fn root_and_nested_instructions_are_scoped_and_symlinks_are_contained() {
-    let workspace = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::create_dir(workspace.path().join("src")).unwrap();
-    std::fs::write(workspace.path().join("AGENTS.md"), "root instruction").unwrap();
-    std::fs::write(workspace.path().join("nested.md"), "nested instruction").unwrap();
-    std::os::unix::fs::symlink("../nested.md", workspace.path().join("src/AGENTS.md")).unwrap();
-    let text = huginn_runtime::instructions::load(workspace.path()).unwrap();
-    assert!(text.contains("root instruction"));
-    assert!(text.contains("Instructions for src:"));
-    assert!(text.contains("nested instruction"));
-    assert!(text.contains("cannot grant permissions"));
-    std::fs::remove_file(workspace.path().join("src/AGENTS.md")).unwrap();
-    std::fs::write(outside.path().join("AGENTS.md"), "outside").unwrap();
-    std::os::unix::fs::symlink(
-        outside.path().join("AGENTS.md"),
-        workspace.path().join("src/AGENTS.md"),
+    // The project chain is the workspace and its ancestors up to the project
+    // root; subtrees outside that chain are never trusted.
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".git")).unwrap();
+    std::fs::write(project.path().join("AGENTS.md"), "root instruction").unwrap();
+    let nested = project.path().join("crates/huginn");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "nested instruction").unwrap();
+    std::fs::create_dir(project.path().join("vendor")).unwrap();
+    std::fs::write(
+        project.path().join("vendor/AGENTS.md"),
+        "vendor instruction",
     )
     .unwrap();
-    assert!(huginn_runtime::instructions::load(workspace.path()).is_err());
+
+    let text = huginn_runtime::instructions::load(&nested).unwrap();
+    assert!(text.contains("root instruction"));
+    assert!(text.contains("nested instruction"));
+    assert!(text.contains("Instructions for crates/huginn:"));
+    assert!(!text.contains("vendor instruction"));
+    assert!(text.contains("cannot grant permissions"));
+
+    // A subtree of the workspace is not on the chain, so it is not loaded.
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("AGENTS.md"), "root instruction").unwrap();
+    std::fs::create_dir(workspace.path().join("src")).unwrap();
+    std::fs::write(workspace.path().join("src/AGENTS.md"), "subtree rule").unwrap();
+    let text = huginn_runtime::instructions::load(workspace.path()).unwrap();
+    assert!(text.contains("root instruction"));
+    assert!(!text.contains("subtree rule"));
+
+    // A linked instruction that leaves the project is refused.
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("AGENTS.md"), "outside").unwrap();
+    std::fs::remove_file(nested.join("AGENTS.md")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("AGENTS.md"), nested.join("AGENTS.md")).unwrap();
+    assert!(huginn_runtime::instructions::load(&nested).is_err());
 }
 
 #[test]

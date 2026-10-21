@@ -1,0 +1,16 @@
+change: huginn-overlay-system
+current_phase: archived
+completed:
+  - init
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+  - qa
+  - archive
+next: none
+archived_to: .agents/sdd/changes/archive/2026-10-20-huginn-overlay-system
+updated: 2026-10-20

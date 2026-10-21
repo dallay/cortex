@@ -223,3 +223,33 @@ async fn unloading_presentation_invalidates_host_grants_too() {
         .await
         .is_err());
 }
+#[test]
+fn connection_event_is_additive_safe_and_old_session_needs_no_backfill() {
+    use huginn_core::{
+        providers::{ConnectionPhase, ConnectionSnapshot},
+        Event, Session,
+    };
+    let event = Event::ConnectionChanged {
+        snapshot: ConnectionSnapshot {
+            source: uuid::Uuid::new_v4(),
+            revision: 1,
+            phase: ConnectionPhase::Unconfigured,
+            selection: None,
+        },
+    };
+    let encoded = serde_json::to_value(event).unwrap();
+    assert_eq!(encoded["type"], "connection_changed");
+    assert_eq!(encoded["snapshot"].as_object().unwrap().len(), 4);
+    assert!(matches!(
+        serde_json::from_value::<Event>(encoded).unwrap(),
+        Event::ConnectionChanged { .. }
+    ));
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "id": "old", "workspace": ".", "messages": [],
+        "events": [{"type": "turn_finished"}], "summary": null,
+        "summary_through": 0, "interrupted": false
+    }))
+    .unwrap();
+    assert_eq!(session.events.len(), 1);
+    assert!(matches!(session.events[0], Event::TurnFinished));
+}

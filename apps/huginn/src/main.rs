@@ -1,11 +1,16 @@
-mod config;
 mod terminal;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use config::{Config, ModelReadiness};
+use huginn::{
+    config::{Config, ModelReadiness},
+    ui_settings,
+};
 use huginn_application::authorization::HostPolicy;
-use huginn_core::{ApprovalPolicy, CancellationToken, LoopService, Session, SessionStore};
+use huginn_core::{
+    ApprovalPolicy, CancellationToken, EventSink, LoopService, Session, SessionStore,
+};
+use huginn_presentation::settings::UiConfig;
 use huginn_runtime::{
     composition, loop_engine::LoopConfig, mcp, sessions::SqliteSessions, tools::Registry,
 };
@@ -221,11 +226,15 @@ async fn main() -> anyhow::Result<()> {
                 connections::ConnectionStore,
                 providers::{ProviderAction, ProviderCatalogService, ProvidersService},
             };
-            supervisor.register(Box::new(
-                huginn_runtime::providers::BuiltinInferencePlugin {
-                    timeout_secs: config.timeout_secs,
-                },
-            ))?;
+            supervisor.register(Box::new(huginn_runtime::providers::OllamaLocalPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
+            supervisor.register(Box::new(huginn_runtime::providers::OllamaCloudPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
+            supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
             supervisor.start().await?;
             let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
             let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
@@ -288,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
     if tui {
         let result = tui_chat(
             &config,
+            cli.config.as_deref(),
             &mut session,
             &mut supervisor,
             allowed,
@@ -444,6 +454,7 @@ async fn run_compact(
 
 async fn tui_chat(
     config: &Config,
+    cli_config: Option<&std::path::Path>,
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
@@ -454,9 +465,30 @@ async fn tui_chat(
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
     let readiness = router.clone();
-    supervisor.register(Box::new(RatatuiPlugin::with_readiness(Arc::new(
-        move || readiness.is_configured(),
-    ))))?;
+    // Reading may fall back to the legacy layout; writing never does. The
+    // legacy file seeds the new one, so a save cannot hide provider, model or
+    // database settings and the deprecated file stays untouched.
+    let read_path = Config::resolve_path(cli_config);
+    let write_path = cli_config.map_or_else(Config::primary_config_path, |path| path.to_path_buf());
+    let seed_path = (read_path != write_path).then(|| read_path.clone());
+    let ui_config = Arc::new(config.ui.clone());
+    let save_path = write_path.clone();
+    let save_ui_config: huginn_presentation::settings::SaveUiConfig =
+        Arc::new(move |ui: &UiConfig| {
+            ui_settings::persist_seeded(ui, &save_path, seed_path.as_deref())
+        });
+    supervisor.register(Box::new(
+        RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))
+            .with_connection(
+                supervisor
+                    .resolve::<huginn_core::providers::ProvidersService>(
+                        &huginn_application::providers::providers_id(),
+                    )?
+                    .0
+                    .subscribe(),
+            )
+            .with_settings(ui_config, save_ui_config),
+    ))?;
     supervisor.register(Box::new(ConversationPlugin))?;
     if connection_management {
         supervisor.register(Box::new(huginn_presentation::providers::ProvidersUiPlugin))?;
@@ -470,19 +502,21 @@ async fn tui_chat(
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
-        ui.begin(startup.clone());
+        let startup_operation = ui.begin(startup.clone());
         mcp::register_plugins(supervisor, &config.mcp, &session.workspace, policy.clone(), startup.clone(), config.tool_timeout_secs)?;
         interruptible(startup, supervisor.start()).await?;
         ui.synchronize(session);
+        ui.finish_operation(startup_operation);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
             if !router.is_configured() {
-                ui.notice("No model configured. Use /login to connect a provider, then /model. No restart needed.".into());
+                ui.notification("No model configured. Use /login, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
             }
             let cancel = CancellationToken::new();
-            ui.begin(cancel.clone());
+            let operation = ui.begin(cancel.clone());
+            let scoped_events = huginn_core::ScopedEventSink { sink: ui.as_ref(), operation };
             let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
                 let request = huginn_core::ApprovalRequest {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -493,12 +527,12 @@ async fn tui_chat(
                     Ok(true) => {
                         interruptible(
                             cancel.clone(),
-                            implementation.0.compact(session, ui.as_ref(), cancel),
+                            implementation.0.compact(session, &scoped_events, cancel),
                         )
                         .await
                     }
                     Ok(false) => {
-                        ui.notice("Compaction skipped.".into());
+                        ui.notification("Compaction skipped.".into());
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -508,14 +542,17 @@ async fn tui_chat(
                     cancel.clone(),
                     implementation
                         .0
-                        .run(session, prompt, policy.as_ref(), ui.as_ref(), cancel),
+                        .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
                 )
                 .await
             };
             ui.synchronize(session);
-            if let Err(error) = result {
-                ui.notice(error.to_string());
+            if let Err(error) = &result {
+                scoped_events.emit(huginn_core::Event::Error {
+                    message: error.to_string(),
+                });
             }
+            ui.finish_operation(operation);
         }
         Ok(())
     }

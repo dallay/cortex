@@ -22,3 +22,22 @@ max_output_tokens = 4096
 # args = ["--stdio"]
 # env = { PATH = "/usr/local/bin:/usr/bin:/bin" }
 # env_from = { SERVICE_TOKEN = "MY_SERVICE_TOKEN" }
+
+# Optional TUI preferences. The settings dialog (open with `/settings`)
+# writes the user's choices here on Enter and discards on Esc. Defaults
+# are shown below. v1 is shell + persistence only — none of these values
+# are wired into their runtime subsystems yet.
+# [ui.theme]
+# name = "one-dark"
+# [ui.sound]
+# bell = false
+# [ui.toasts]
+# level = "info"   # info | warn | error
+# duration_secs = 3 # 3 | 5 | 10 | off (0)
+# [ui.indicators]
+# scrollbar = true
+# breadcrumbs = true
+# line_numbers = true
+# [ui.integrations]
+# entries = []
+
