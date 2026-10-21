@@ -117,7 +117,7 @@ cargo test -p rook-core -- --nocapture
 # Solo tests unitarios (sin integración)
 cargo test --lib
 
-# Solo tests de integración
+# Tests unitarios y de integración
 cargo test --workspace --tests --all-features
 ```
 
@@ -178,7 +178,7 @@ Comprueba que no haya otro proceso usando la base de datos de prueba. No borres 
 
 ### Dashboard no carga
 
-1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`, o `curl http://127.0.0.1:3773/health` con `cargo run -p rook`.
+1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`. Con `cargo run -p rook`, usa el puerto definido en `ServerConfig` (sección `[server]` del archivo indicado por `ROOK_CONFIG` o, si no está definido, `~/.config/cortex/rook.toml`): `curl http://127.0.0.1:3773/health` solo si contiene `port = 3773`; en otro caso, sustituye `3773` por el puerto configurado.
 2. Comprueba que la sesión de administración sea válida.
 3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
 
