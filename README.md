@@ -216,7 +216,7 @@ Building with AI is fragile:
 ├──────────────┼───────────┼────────────────────────────────────┤
 │  Rust        │  1.81+   │  curl --proto '=https' -sSf \       │
 │              │          │    https://sh.rustup.rs | sh        │
-│  Node.js     │  20+     │  nvm install 20                     │
+│  Node.js     │  24+     │  nvm install 24                     │
 │  pnpm        │  latest  │  npm i -g pnpm                      │
 │  Docker      │  latest  │  docker.com/get-started             │
 └────────────────────────────────────────────────────────────────┘

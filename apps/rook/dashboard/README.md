@@ -69,7 +69,7 @@ The Rook Dashboard is a **Vue 3 SPA** that provides a visual interface for manag
 
 | Requirement | Version |
 |-------------|---------|
-| Node.js | 20+ |
+| Node.js | 24+ |
 | pnpm | latest |
 | Running Rook backend | port 3773 |
 
