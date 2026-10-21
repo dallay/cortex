@@ -56,45 +56,62 @@ fn scan_inner(
                 break;
             }
             visited += 1;
-            let Ok(entry) = entry else { continue };
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            let relative = if prefix.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_symlink() {
-                continue;
-            }
-            if kind.is_dir() {
-                if matches!(
-                    name,
-                    ".git" | "target" | "node_modules" | ".pnpm-store" | ".cache"
-                ) {
-                    continue;
-                }
+            process_entry(
+                entry,
+                &prefix,
+                &mut index,
+                &mut children,
                 #[cfg(test)]
-                before_open_directory(&relative);
-                match entry.open_dir() {
-                    Ok(child) => children.push((child, relative, false)),
-                    Err(_) => index.skipped_directories += 1,
-                }
-            } else if kind.is_file()
-                && !relative.chars().any(char::is_control)
-                && safe(&relative) == relative
-            {
-                index.paths.push(relative);
-            }
+                &mut before_open_directory,
+            );
         }
         children.sort_by(|a, b| a.1.cmp(&b.1));
         pending.extend(children);
     }
     index.paths.sort();
     Ok(index)
+}
+
+fn process_entry(
+    entry: io::Result<cap_std::fs::DirEntry>,
+    prefix: &str,
+    index: &mut FileIndex,
+    children: &mut Vec<(cap_std::fs::Dir, String, bool)>,
+    #[cfg(test)] before_open_directory: &mut impl FnMut(&str),
+) {
+    let Ok(entry) = entry else { return };
+    let name = entry.file_name();
+    let Some(name) = name.to_str() else { return };
+    let relative = if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}/{name}")
+    };
+    let Ok(kind) = entry.file_type() else {
+        return;
+    };
+    if kind.is_symlink() {
+        return;
+    }
+    if kind.is_dir() {
+        if matches!(
+            name,
+            ".git" | "target" | "node_modules" | ".pnpm-store" | ".cache"
+        ) {
+            return;
+        }
+        #[cfg(test)]
+        before_open_directory(&relative);
+        match entry.open_dir() {
+            Ok(child) => children.push((child, relative, false)),
+            Err(_) => index.skipped_directories += 1,
+        }
+    } else if kind.is_file()
+        && !relative.chars().any(char::is_control)
+        && safe(&relative) == relative
+    {
+        index.paths.push(relative);
+    }
 }
 
 #[cfg(all(test, unix))]

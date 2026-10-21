@@ -190,6 +190,24 @@ impl Supervisor {
     }
     pub async fn start(&mut self) -> Result<()> {
         let order_start = self.order.len();
+        let owners = self.provider_owners()?;
+        self.validate_dependency_cycles(&owners)?;
+
+        loop {
+            let ready = self.ready_plugins();
+            if ready.is_empty() {
+                break;
+            }
+            for id in ready {
+                self.activate_plugin(&id, order_start).await?;
+            }
+        }
+
+        self.mark_blocked_plugins();
+        Ok(())
+    }
+
+    fn provider_owners(&self) -> Result<BTreeMap<ServiceId, String>> {
         let mut owners = BTreeMap::new();
         for (id, entry) in &self.plugins {
             for service in &entry.diagnostic.manifest.provides {
@@ -201,7 +219,10 @@ impl Supervisor {
                 }
             }
         }
-        // Validate cycles even when another dependency is missing.
+        Ok(owners)
+    }
+
+    fn validate_dependency_cycles(&self, owners: &BTreeMap<ServiceId, String>) -> Result<()> {
         fn visit(
             id: &str,
             entries: &BTreeMap<String, Entry>,
@@ -224,100 +245,108 @@ impl Supervisor {
             visited.insert(id.into());
             Ok(())
         }
+
         let mut visited = BTreeSet::new();
         for id in self.plugins.keys() {
             visit(
                 id,
                 &self.plugins,
-                &owners,
+                owners,
                 &mut BTreeSet::new(),
                 &mut visited,
             )?;
         }
-        loop {
-            let ready: Vec<_> = self
-                .plugins
-                .iter()
-                .filter(|(_, e)| {
-                    !matches!(e.diagnostic.state, State::Active | State::Failed)
-                        && e.diagnostic
-                            .manifest
-                            .requires
-                            .iter()
-                            .all(|r| self.services.contains_key(r))
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            if ready.is_empty() {
-                break;
-            }
-            for id in ready {
-                self.generation += 1;
-                let e = self.plugins.get_mut(&id).expect("registered plugin");
-                e.diagnostic.generation = self.generation;
-                e.diagnostic.last_error = None;
-                let mut ctx = PluginContext {
-                    generation: self.generation,
-                    services: self
-                        .services
+        Ok(())
+    }
+
+    fn ready_plugins(&self) -> Vec<String> {
+        self.plugins
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(entry.diagnostic.state, State::Active | State::Failed)
+                    && entry
+                        .diagnostic
+                        .manifest
+                        .requires
                         .iter()
-                        .filter(|(service, _)| e.diagnostic.manifest.requires.contains(service))
-                        .map(|(id, value)| (id.clone(), value.clone()))
-                        .collect(),
-                    staged: BTreeMap::new(),
-                    cancellation: CancellationToken::new(),
-                    tasks: vec![],
-                    published: Arc::new(AtomicBool::new(false)),
-                    resources: vec![],
-                    commits: vec![],
-                };
-                let result = e.plugin.activate(&mut ctx).await.and_then(|()| {
-                    let declared: BTreeSet<_> =
-                        e.diagnostic.manifest.provides.iter().cloned().collect();
-                    let actual: BTreeSet<_> = ctx.staged.keys().cloned().collect();
-                    if declared == actual {
-                        Ok(())
-                    } else {
-                        Err(AgentError::Composition(
-                            "registrations differ from manifest".into(),
-                        ))
-                    }
-                });
-                match result {
-                    Ok(()) => {
-                        for publish in ctx.commits.drain(..) {
-                            publish();
-                        }
-                        self.services.extend(ctx.staged.clone());
-                        ctx.published.store(true, Ordering::Release);
-                        e.context = Some(ctx);
-                        e.diagnostic.state = State::Active;
-                        self.order.push(id);
-                    }
-                    Err(err) => {
-                        ctx.cleanup().await;
-                        e.diagnostic.state = State::Failed;
-                        e.diagnostic.last_error = Some(err.to_string());
-                        let activated: Vec<_> =
-                            self.order[order_start..].iter().rev().cloned().collect();
-                        for activated in activated {
-                            self.stop_entry(&activated, State::Blocked).await;
-                        }
-                        self.order.truncate(order_start);
-                        for entry in self.plugins.values_mut() {
-                            if !matches!(entry.diagnostic.state, State::Active | State::Failed) {
-                                entry.diagnostic.state = State::Blocked;
-                            }
-                        }
-                        return Err(err);
-                    }
+                        .all(|requirement| self.services.contains_key(requirement))
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    async fn activate_plugin(&mut self, id: &str, order_start: usize) -> Result<()> {
+        self.generation += 1;
+        let entry = self.plugins.get_mut(id).expect("registered plugin");
+        entry.diagnostic.generation = self.generation;
+        entry.diagnostic.last_error = None;
+        let mut ctx = PluginContext {
+            generation: self.generation,
+            services: self
+                .services
+                .iter()
+                .filter(|(service, _)| entry.diagnostic.manifest.requires.contains(service))
+                .map(|(id, value)| (id.clone(), value.clone()))
+                .collect(),
+            staged: BTreeMap::new(),
+            cancellation: CancellationToken::new(),
+            tasks: vec![],
+            published: Arc::new(AtomicBool::new(false)),
+            resources: vec![],
+            commits: vec![],
+        };
+        let result = entry.plugin.activate(&mut ctx).await.and_then(|()| {
+            let declared: BTreeSet<_> =
+                entry.diagnostic.manifest.provides.iter().cloned().collect();
+            let actual: BTreeSet<_> = ctx.staged.keys().cloned().collect();
+            if declared == actual {
+                Ok(())
+            } else {
+                Err(AgentError::Composition(
+                    "registrations differ from manifest".into(),
+                ))
+            }
+        });
+        match result {
+            Ok(()) => {
+                for publish in ctx.commits.drain(..) {
+                    publish();
                 }
+                self.services.extend(ctx.staged.clone());
+                ctx.published.store(true, Ordering::Release);
+                entry.context = Some(ctx);
+                entry.diagnostic.state = State::Active;
+                self.order.push(id.to_string());
+                Ok(())
+            }
+            Err(err) => {
+                ctx.cleanup().await;
+                entry.diagnostic.state = State::Failed;
+                entry.diagnostic.last_error = Some(err.to_string());
+                self.rollback_start(order_start).await;
+                Err(err)
             }
         }
-        for e in self.plugins.values_mut() {
-            if e.diagnostic.state != State::Active && e.diagnostic.state != State::Failed {
-                e.diagnostic.state = State::Blocked;
-                let missing: Vec<_> = e
+    }
+
+    async fn rollback_start(&mut self, order_start: usize) {
+        let activated: Vec<_> = self.order[order_start..].iter().rev().cloned().collect();
+        for activated in activated {
+            self.stop_entry(&activated, State::Blocked).await;
+        }
+        self.order.truncate(order_start);
+        for entry in self.plugins.values_mut() {
+            if !matches!(entry.diagnostic.state, State::Active | State::Failed) {
+                entry.diagnostic.state = State::Blocked;
+            }
+        }
+    }
+
+    fn mark_blocked_plugins(&mut self) {
+        for entry in self.plugins.values_mut() {
+            if entry.diagnostic.state != State::Active && entry.diagnostic.state != State::Failed {
+                entry.diagnostic.state = State::Blocked;
+                let missing: Vec<_> = entry
                     .diagnostic
                     .manifest
                     .requires
@@ -325,7 +354,7 @@ impl Supervisor {
                     .filter(|requirement| !self.services.contains_key(*requirement))
                     .map(|requirement| requirement.0.clone())
                     .collect();
-                e.diagnostic.last_error = Some(if missing.is_empty() {
+                entry.diagnostic.last_error = Some(if missing.is_empty() {
                     "blocked: dependencies could not be activated".into()
                 } else {
                     format!(
@@ -335,7 +364,6 @@ impl Supervisor {
                 });
             }
         }
-        Ok(())
     }
     async fn stop_entry(&mut self, id: &str, state: State) {
         if let Some(e) = self.plugins.get_mut(id) {

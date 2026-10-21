@@ -307,7 +307,7 @@ fn build_bootstrap_banner(sanitized_token: &str) -> String {
         )
     };
 
-    let banner = format!(
+    format!(
         "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{0}",
         border,
         center_pad(header),
@@ -316,8 +316,7 @@ fn build_bootstrap_banner(sanitized_token: &str) -> String {
         left_pad(instruction),
         left_pad(dash_url),
         left_pad("along with your desired admin password."),
-    );
-    banner
+    )
 }
 
 fn load_config() -> anyhow::Result<config::RookConfig> {

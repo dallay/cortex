@@ -76,7 +76,9 @@ export function useProviderCatalog(): UseProviderCatalog {
       }
       const out = new Map<ProviderKind, readonly string[]>();
       for (const [kind, set] of acc) {
-        out.set(kind, [...set].sort());
+        // `localeCompare` keeps the ordering alphabetical and locale-aware
+        // instead of relying on the default UTF-16 code-unit order.
+        out.set(kind, [...set].sort((a, b) => a.localeCompare(b)));
       }
       return out;
     },

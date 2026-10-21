@@ -35,187 +35,6 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
     ends
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use huginn_core::ToolCall;
-    use serde_json::json;
-
-    fn assistant_text(content: &str) -> Message {
-        Message::text(Role::Assistant, content)
-    }
-
-    fn assistant_with_tool_call(id: &str) -> Message {
-        Message {
-            role: Role::Assistant,
-            content: String::new(),
-            tool_calls: vec![ToolCall {
-                id: id.to_string(),
-                name: "read".into(),
-                arguments: json!({}),
-            }],
-            tool_call_id: None,
-        }
-    }
-
-    #[test]
-    fn empty_input_returns_no_ends() {
-        assert!(complete_turn_ends(&[], 0).is_empty());
-    }
-
-    #[test]
-    fn single_user_only_session_emits_nothing() {
-        let messages = vec![Message::text(Role::User, "hi")];
-        assert!(complete_turn_ends(&messages, 0).is_empty());
-    }
-
-    #[test]
-    fn complete_turn_with_user_emits_end_after_assistant() {
-        let messages = vec![
-            Message::text(Role::User, "request"),
-            assistant_text("response"),
-        ];
-        assert_eq!(complete_turn_ends(&messages, 0), vec![2]);
-    }
-
-    #[test]
-    fn tool_calling_assistant_is_skipped() {
-        let messages = vec![
-            Message::text(Role::User, "request"),
-            assistant_with_tool_call("call-1"),
-            Message::tool("call-1".to_string(), "result".into()),
-            assistant_text("final"),
-        ];
-        // Tool-call assistant at index 1 must be ignored; final assistant at index 3 qualifies.
-        assert_eq!(complete_turn_ends(&messages, 0), vec![4]);
-    }
-
-    #[test]
-    fn boundary_at_from_without_user_emits_nothing() {
-        // Slice from=2 begins after every user message; the only assistant left must be skipped
-        // because its window has no user in it. This matches the boundary behavior of the
-        // previous implementation exactly.
-        let messages = vec![
-            Message::text(Role::User, "ignored"),
-            assistant_text("pre-from"),
-            Message::text(Role::System, "tool result marker"),
-            assistant_text("post-from"),
-        ];
-        assert!(complete_turn_ends(&messages, 2).is_empty());
-    }
-
-    #[test]
-    fn from_past_end_is_safe() {
-        let messages = vec![Message::text(Role::User, "hi")];
-        assert!(complete_turn_ends(&messages, 5).is_empty());
-    }
-
-    #[test]
-    fn long_alternating_session_is_o_n_and_matches_expected_ends() {
-        // Synthetic 5,000-message session alternating user / tool-call-free assistant turns
-        // plus interleaved tool-call pairs to exercise the skip branch. Each "user+assistant"
-        // pair at the tail of a turn must produce exactly one end index at index + 1.
-        const TURNS: usize = 1_250;
-        const PREFIX_ASSISTANTS: usize = 1_666;
-        let mut messages: Vec<Message> = Vec::with_capacity(5_000);
-        // Leading tool-call-free assistants with no user in their window: they emit
-        // no ends but force the legacy O(n²) scan to walk windows without a user
-        // (no early `.any()` exit), so this fixture actually exercises the slow path.
-        for index in 0..PREFIX_ASSISTANTS {
-            messages.push(assistant_text(&format!("prefix {index}")));
-        }
-
-        for turn in 0..TURNS {
-            messages.push(Message::text(Role::User, format!("request {turn}")));
-            // Tool-call turn every third turn to verify the O(n) skip path is exercised.
-            if turn % 3 == 0 {
-                messages.push(assistant_with_tool_call(&format!("call-{turn}")));
-                messages.push(Message::tool(
-                    format!("call-{turn}"),
-                    format!("result {turn}"),
-                ));
-            }
-            messages.push(assistant_text(&format!("done {turn}")));
-        }
-
-        assert_eq!(messages.len(), 5_000);
-
-        let started = std::time::Instant::now();
-        let ends = complete_turn_ends(&messages, 0);
-        let elapsed = started.elapsed();
-
-        // O(n) guard: 5,000 messages must run well under the generous 5s ceiling
-        // even on cold CI. The previous O(n²) implementation would take multiple
-        // seconds at this size; this assertion fails on regression.
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "complete_turn_ends took {elapsed:?} on 5000 messages; expected O(n)"
-        );
-
-        // Validate index correctness: every emitted end points one past a tool-call-free
-        // assistant that follows a user message somewhere earlier in the slice.
-        let mut last_user: Option<usize> = None;
-        let mut expected: Vec<usize> = Vec::new();
-        for (index, message) in messages.iter().enumerate() {
-            match message.role {
-                Role::User => last_user = Some(index),
-                Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
-                    expected.push(index + 1);
-                }
-                _ => {}
-            }
-        }
-        assert_eq!(ends, expected);
-        // Sanity: every turn contributes at least one complete-turn end (the final assistant).
-        assert_eq!(ends.len(), TURNS);
-        // End indices must be strictly increasing (assistant messages are never re-emitted).
-        for window in ends.windows(2) {
-            assert!(window[0] < window[1]);
-        }
-    }
-
-    #[test]
-    fn equivalent_to_legacy_walk_on_repeating_pattern() {
-        // Cross-check the new helper against the original two-pass walk on a small mixed
-        // pattern (user, tool-call assistant, tool result, assistant, user, assistant).
-        let messages = vec![
-            Message::text(Role::User, "u0"),
-            assistant_with_tool_call("c0"),
-            Message::tool("c0".to_string(), "r0".into()),
-            assistant_text("a0"),
-            Message::text(Role::User, "u1"),
-            assistant_with_tool_call("c1"),
-            Message::tool("c1".to_string(), "r1".into()),
-            assistant_text("a1"),
-        ];
-
-        let legacy = |messages: &[Message], from: usize| -> Vec<usize> {
-            messages
-                .iter()
-                .enumerate()
-                .skip(from)
-                .filter_map(|(index, message)| {
-                    if message.role != Role::Assistant || !message.tool_calls.is_empty() {
-                        return None;
-                    }
-                    let has_user = messages[from..=index]
-                        .iter()
-                        .any(|candidate| candidate.role == Role::User);
-                    has_user.then_some(index + 1)
-                })
-                .collect()
-        };
-
-        for from in [0usize, 1, 2, 3, 4, 5, 6, 7, 8] {
-            assert_eq!(
-                complete_turn_ends(&messages, from),
-                legacy(&messages, from),
-                "drift at from={from}"
-            );
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct LoopConfig {
     pub max_iterations: usize,
@@ -395,22 +214,151 @@ impl StandardLoop {
             .await
     }
 
-    /// Process a user prompt through model responses and sequential tool calls.
-    ///
-    /// Saves the prompt and each validated, completed assistant response before
-    /// executing its tools. Text deltas go only to `sink`; partial text from an
-    /// unfinished response is not persisted. Returns success once a completed
-    /// response has no tool calls. Earlier saved messages survive later failures.
-    ///
-    /// # Errors
-    ///
-    /// Returns cancellation errors from `cancel`, the lifecycle token, or tool
-    /// handling, and model errors for incomplete or invalid responses and exceeded
-    /// context, response, or iteration limits. Propagates instruction-loading,
-    /// serialization, model-provider, and session-save errors, except within tool
-    /// handling: non-cancellation errors during lookup, preparation, approval
-    /// (including approval-event saves), or execution become tool error results
-    /// for the next model response. Approval denial also becomes a tool error result.
+    async fn collect_response(
+        &self,
+        model: &dyn ModelProvider,
+        request: ModelRequest,
+        session: &mut Session,
+        cancel: CancellationToken,
+        sink: &dyn EventSink,
+    ) -> Result<Message> {
+        let model_request = model.stream(request, cancel.clone());
+        let mut stream = tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+            result = model_request => result?,
+        };
+        let mut response = Message::text(Role::Assistant, "");
+        let mut finished = false;
+        let mut count = 0;
+        loop {
+            let item = tokio::select! {
+                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                item = stream.next() => item,
+            };
+            let Some(delta) = item else {
+                break;
+            };
+            let delta = delta?;
+            count += 1;
+            if count > 20_000 || response.content.len() > 1_048_576 {
+                return Err(AgentError::Model("response exceeds limits".into()));
+            }
+            match delta {
+                ModelDelta::Text(text) => {
+                    if response.content.len().saturating_add(text.len()) > 1_048_576 {
+                        return Err(AgentError::Model("response exceeds text limit".into()));
+                    }
+                    response.content.push_str(&text);
+                    // Text deltas are live-only; the completed response is saved below.
+                    // Incomplete or cancelled turns intentionally lose partial text.
+                    sink.emit(Event::Text { text });
+                }
+                ModelDelta::ToolCall(call) => {
+                    if response.tool_calls.len() >= 64 {
+                        return Err(AgentError::Model("response exceeds tool limit".into()));
+                    }
+                    response.tool_calls.push(call);
+                }
+                ModelDelta::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    self.record(
+                        session,
+                        Event::Usage {
+                            input_tokens,
+                            output_tokens,
+                        },
+                        sink,
+                    )
+                    .await?;
+                }
+                ModelDelta::Finished => finished = true,
+            }
+        }
+        if !finished {
+            return Err(AgentError::Model(
+                "model returned an incomplete turn".into(),
+            ));
+        }
+        Ok(response)
+    }
+
+    async fn execute_tool(
+        &self,
+        call: huginn_core::ToolCall,
+        session: &mut Session,
+        approvals: &dyn ApprovalPolicy,
+        cancel: CancellationToken,
+        sink: &dyn EventSink,
+    ) -> Result<()> {
+        self.record(session, Event::ToolStarted { call: call.clone() }, sink)
+            .await?;
+        let ctx = ToolContext {
+            workspace: session.workspace.clone(),
+            cancellation: cancel.clone(),
+        };
+        let execution = async {
+            let tool = self
+                .tools
+                .get(&call.name)
+                .ok_or_else(|| AgentError::Tool(format!("unknown tool {}", call.name)))?;
+            let action = tool.prepare(&call, &ctx).await?;
+            if let Some(request) = &action.approval {
+                self.record(
+                    session,
+                    Event::ApprovalRequested {
+                        request: request.clone(),
+                    },
+                    sink,
+                )
+                .await?;
+                let approved = approvals.approve(request, cancel.clone()).await?;
+                self.record(
+                    session,
+                    Event::ApprovalResolved {
+                        id: request.id.clone(),
+                        approved,
+                    },
+                    sink,
+                )
+                .await?;
+                if !approved {
+                    return Err(AgentError::Tool(
+                        "action denied by user; do not retry without a new user request".into(),
+                    ));
+                }
+            }
+            tool.execute(action, &ctx).await
+        };
+        let output = tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+            output = execution => output,
+        };
+        let (output, is_error) = match output {
+            Ok(output) => (crate::output::bounded_text(output), false),
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
+            Err(error) => (error.to_string(), true),
+        };
+        session
+            .messages
+            .push(Message::tool(call.id.clone(), output.clone()));
+        self.record(
+            session,
+            Event::ToolFinished {
+                id: call.id,
+                output,
+                is_error,
+            },
+            sink,
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn turn(
         &self,
         model: Result<Arc<dyn ModelProvider>>,
@@ -447,74 +395,19 @@ impl StandardLoop {
                     sink,
                 )
                 .await?;
-            let model_request = model.stream(
-                ModelRequest {
-                    messages: context,
-                    tools,
-                    max_tokens: self.config.max_output_tokens,
-                },
-                cancel.clone(),
-            );
-            let mut stream = tokio::select! {
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
-                result = model_request => result?,
-            };
-            let mut response = Message::text(Role::Assistant, "");
-            let mut finished = false;
-            let mut count = 0;
-            loop {
-                let item = tokio::select! {
-                    _=cancel.cancelled()=>return Err(AgentError::Cancelled),
-                    _=self.lifecycle.cancelled()=>return Err(AgentError::Cancelled),
-                    item=stream.next()=>item,
-                };
-                let Some(delta) = item else {
-                    break;
-                };
-                let delta = delta?;
-                count += 1;
-                if count > 20_000 || response.content.len() > 1_048_576 {
-                    return Err(AgentError::Model("response exceeds limits".into()));
-                }
-                match delta {
-                    ModelDelta::Text(text) => {
-                        if response.content.len().saturating_add(text.len()) > 1_048_576 {
-                            return Err(AgentError::Model("response exceeds text limit".into()));
-                        }
-                        response.content.push_str(&text);
-                        // Text deltas are live-only; the completed response is saved below.
-                        // Incomplete or cancelled turns intentionally lose partial text.
-                        sink.emit(Event::Text { text });
-                    }
-                    ModelDelta::ToolCall(call) => {
-                        if response.tool_calls.len() >= 64 {
-                            return Err(AgentError::Model("response exceeds tool limit".into()));
-                        }
-                        response.tool_calls.push(call);
-                    }
-                    ModelDelta::Usage {
-                        input_tokens,
-                        output_tokens,
-                    } => {
-                        self.record(
-                            session,
-                            Event::Usage {
-                                input_tokens,
-                                output_tokens,
-                            },
-                            sink,
-                        )
-                        .await?
-                    }
-                    ModelDelta::Finished => finished = true,
-                }
-            }
-            if !finished {
-                return Err(AgentError::Model(
-                    "model returned an incomplete turn".into(),
-                ));
-            }
+            let response = self
+                .collect_response(
+                    model.as_ref(),
+                    ModelRequest {
+                        messages: context,
+                        tools,
+                        max_tokens: self.config.max_output_tokens,
+                    },
+                    session,
+                    cancel.clone(),
+                    sink,
+                )
+                .await?;
             let mut ids: BTreeSet<_> = session
                 .messages
                 .iter()
@@ -536,69 +429,8 @@ impl StandardLoop {
                 return Ok(());
             }
             for call in calls {
-                self.record(session, Event::ToolStarted { call: call.clone() }, sink)
+                self.execute_tool(call, session, approvals, cancel.clone(), sink)
                     .await?;
-                let ctx = ToolContext {
-                    workspace: session.workspace.clone(),
-                    cancellation: cancel.clone(),
-                };
-                let execution = async {
-                    let tool = self
-                        .tools
-                        .get(&call.name)
-                        .ok_or_else(|| AgentError::Tool(format!("unknown tool {}", call.name)))?;
-                    let action = tool.prepare(&call, &ctx).await?;
-                    if let Some(request) = &action.approval {
-                        self.record(
-                            session,
-                            Event::ApprovalRequested {
-                                request: request.clone(),
-                            },
-                            sink,
-                        )
-                        .await?;
-                        let approved = approvals.approve(request, cancel.clone()).await?;
-                        self.record(
-                            session,
-                            Event::ApprovalResolved {
-                                id: request.id.clone(),
-                                approved,
-                            },
-                            sink,
-                        )
-                        .await?;
-                        if !approved {
-                            return Err(AgentError::Tool(
-                                "action denied by user; do not retry without a new user request"
-                                    .into(),
-                            ));
-                        }
-                    }
-                    tool.execute(action, &ctx).await
-                };
-                let output = tokio::select! {
-                    _=cancel.cancelled()=>return Err(AgentError::Cancelled),
-                    _=self.lifecycle.cancelled()=>return Err(AgentError::Cancelled),
-                    output=execution=>output,
-                };
-                let (output, is_error) = match output {
-                    Ok(output) => (crate::output::bounded_text(output), false),
-                    Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
-                    Err(error) => (error.to_string(), true),
-                };
-                session
-                    .messages
-                    .push(Message::tool(call.id.clone(), output.clone()));
-                self.record(
-                    session,
-                    Event::ToolFinished {
-                        id: call.id,
-                        output,
-                        is_error,
-                    },
-                    sink,
-                )
-                .await?;
             }
         }
         Err(AgentError::Model(
@@ -705,5 +537,176 @@ impl AgentLoop for StandardLoop {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use huginn_core::ToolCall;
+    use serde_json::json;
+
+    fn assistant_text(content: &str) -> Message {
+        Message::text(Role::Assistant, content)
+    }
+
+    fn assistant_with_tool_call(id: &str) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: id.to_string(),
+                name: "read".into(),
+                arguments: json!({}),
+            }],
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn empty_input_returns_no_ends() {
+        assert!(complete_turn_ends(&[], 0).is_empty());
+    }
+
+    #[test]
+    fn single_user_only_session_emits_nothing() {
+        let messages = vec![Message::text(Role::User, "hi")];
+        assert!(complete_turn_ends(&messages, 0).is_empty());
+    }
+
+    #[test]
+    fn complete_turn_with_user_emits_end_after_assistant() {
+        let messages = vec![
+            Message::text(Role::User, "request"),
+            assistant_text("response"),
+        ];
+        assert_eq!(complete_turn_ends(&messages, 0), vec![2]);
+    }
+
+    #[test]
+    fn tool_calling_assistant_is_skipped() {
+        let messages = vec![
+            Message::text(Role::User, "request"),
+            assistant_with_tool_call("call-1"),
+            Message::tool("call-1".to_string(), "result".into()),
+            assistant_text("final"),
+        ];
+        // Tool-call assistant at index 1 must be ignored; final assistant at index 3 qualifies.
+        assert_eq!(complete_turn_ends(&messages, 0), vec![4]);
+    }
+
+    #[test]
+    fn boundary_at_from_without_user_emits_nothing() {
+        // Slice from=2 begins after every user message; the only assistant left must be skipped
+        // because its window has no user in it. This matches the boundary behavior of the
+        // previous implementation exactly.
+        let messages = vec![
+            Message::text(Role::User, "ignored"),
+            assistant_text("pre-from"),
+            Message::text(Role::System, "tool result marker"),
+            assistant_text("post-from"),
+        ];
+        assert!(complete_turn_ends(&messages, 2).is_empty());
+    }
+
+    #[test]
+    fn from_past_end_is_safe() {
+        let messages = vec![Message::text(Role::User, "hi")];
+        assert!(complete_turn_ends(&messages, 5).is_empty());
+    }
+
+    #[test]
+    fn long_alternating_session_is_o_n_and_matches_expected_ends() {
+        // Synthetic 5,000-message session alternating user / tool-call-free assistant turns
+        // plus interleaved tool-call pairs to exercise the skip branch. Each "user+assistant"
+        // pair at the tail of a turn must produce exactly one end index at index + 1.
+        const TURNS: usize = 1_250;
+        const PREFIX_ASSISTANTS: usize = 1_666;
+        let mut messages: Vec<Message> = Vec::with_capacity(5_000);
+        // Leading tool-call-free assistants with no user in their window: they emit
+        // no ends but force the legacy O(n²) scan to walk windows without a user
+        // (no early `.any()` exit), so this fixture actually exercises the slow path.
+        for index in 0..PREFIX_ASSISTANTS {
+            messages.push(assistant_text(&format!("prefix {index}")));
+        }
+
+        for turn in 0..TURNS {
+            messages.push(Message::text(Role::User, format!("request {turn}")));
+            // Tool-call turn every third turn to verify the O(n) skip path is exercised.
+            if turn % 3 == 0 {
+                messages.push(assistant_with_tool_call(&format!("call-{turn}")));
+                messages.push(Message::tool(
+                    format!("call-{turn}"),
+                    format!("result {turn}"),
+                ));
+            }
+            messages.push(assistant_text(&format!("done {turn}")));
+        }
+
+        assert_eq!(messages.len(), 5_000);
+
+        let ends = complete_turn_ends(&messages, 0);
+
+        // Validate index correctness: every emitted end points one past a tool-call-free
+        // assistant that follows a user message somewhere earlier in the slice.
+        let mut last_user: Option<usize> = None;
+        let mut expected: Vec<usize> = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            match message.role {
+                Role::User => last_user = Some(index),
+                Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
+                    expected.push(index + 1);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(ends, expected);
+        // Sanity: every turn contributes at least one complete-turn end (the final assistant).
+        assert_eq!(ends.len(), TURNS);
+        // End indices must be strictly increasing (assistant messages are never re-emitted).
+        for window in ends.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+
+    #[test]
+    fn equivalent_to_legacy_walk_on_repeating_pattern() {
+        // Cross-check the new helper against the original two-pass walk on a small mixed
+        // pattern (user, tool-call assistant, tool result, assistant, user, assistant).
+        let messages = vec![
+            Message::text(Role::User, "u0"),
+            assistant_with_tool_call("c0"),
+            Message::tool("c0".to_string(), "r0".into()),
+            assistant_text("a0"),
+            Message::text(Role::User, "u1"),
+            assistant_with_tool_call("c1"),
+            Message::tool("c1".to_string(), "r1".into()),
+            assistant_text("a1"),
+        ];
+
+        let legacy = |messages: &[Message], from: usize| -> Vec<usize> {
+            messages
+                .iter()
+                .enumerate()
+                .skip(from)
+                .filter_map(|(index, message)| {
+                    if message.role != Role::Assistant || !message.tool_calls.is_empty() {
+                        return None;
+                    }
+                    let has_user = messages[from..=index]
+                        .iter()
+                        .any(|candidate| candidate.role == Role::User);
+                    has_user.then_some(index + 1)
+                })
+                .collect()
+        };
+
+        for from in [0usize, 1, 2, 3, 4, 5, 6, 7, 8] {
+            assert_eq!(
+                complete_turn_ends(&messages, from),
+                legacy(&messages, from),
+                "drift at from={from}"
+            );
+        }
     }
 }

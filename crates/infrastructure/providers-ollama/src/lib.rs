@@ -507,9 +507,8 @@ impl ProviderPort for OllamaProvider {
                         retry_secs,
                         reset,
                     ));
-                } else {
-                    return Err(CortexError::rate_limited(provider_id, retry_secs));
                 }
+                return Err(CortexError::rate_limited(provider_id, retry_secs));
             }
 
             // Map non-success status to typed error (handles 400, 401, etc.)
@@ -582,9 +581,8 @@ impl ProviderPort for OllamaProvider {
                         retry_secs,
                         reset,
                     ));
-                } else {
-                    return Err(CortexError::rate_limited(provider_id, retry_secs));
                 }
+                return Err(CortexError::rate_limited(provider_id, retry_secs));
             }
 
             // Map non-success status to typed error (handles 400, 401, etc.)
