@@ -1,5 +1,5 @@
 #[cfg(feature = "test-driver")]
-use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::rand_core::Rng;
 #[cfg(feature = "test-driver")]
 use aes_gcm::aead::OsRng;
 #[cfg(feature = "test-driver")]
@@ -200,10 +200,8 @@ fn dedup_instances_keep_independent_caches() {
 #[test]
 fn dedup_decryption_requires_the_matching_key_even_with_the_same_nonce() {
     let clock = Arc::new(FakeClock::at(0));
-    let mut first_key = [0u8; 32];
-    let mut second_key = [0u8; 32];
-    OsRng.fill_bytes(&mut first_key);
-    OsRng.fill_bytes(&mut second_key);
+    let first_key: [u8; 32] = OsRng.gen();
+    let second_key: [u8; 32] = OsRng.gen();
     assert_ne!(first_key, second_key);
 
     let mut first = test_support::with_key(clock.clone(), first_key);
