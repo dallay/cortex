@@ -1,4 +1,8 @@
 #[cfg(feature = "test-driver")]
+use aes_gcm::aead::rand_core::RngCore;
+#[cfg(feature = "test-driver")]
+use aes_gcm::aead::OsRng;
+#[cfg(feature = "test-driver")]
 use huginn_presentation::event::test_support;
 use huginn_presentation::event::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -196,8 +200,14 @@ fn dedup_instances_keep_independent_caches() {
 #[test]
 fn dedup_decryption_requires_the_matching_key_even_with_the_same_nonce() {
     let clock = Arc::new(FakeClock::at(0));
-    let mut first = test_support::with_key(clock.clone(), [1; 32]);
-    let mut second = test_support::with_key(clock, [2; 32]);
+    let mut first_key = [0u8; 32];
+    let mut second_key = [0u8; 32];
+    OsRng.fill_bytes(&mut first_key);
+    OsRng.fill_bytes(&mut second_key);
+    assert_ne!(first_key, second_key);
+
+    let mut first = test_support::with_key(clock.clone(), first_key);
+    let mut second = test_support::with_key(clock, second_key);
     assert!(first.should_emit(OperationId(1), "same"));
     assert!(second.should_emit(OperationId(1), "same"));
     let first_fingerprint = test_support::last_fingerprint(&first);
