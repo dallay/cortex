@@ -39,7 +39,7 @@ artifact and no `CommandResult::Settings`.
                                     (binary: apps/huginn)
        +------------------+         +--------------------------+
        |  main.rs         | ----->  | ui_settings.rs (new)    |
-       |  (builds closure |   builds | persist(&UiConfig, &Path)|
+       |  (builds closure |   builds | persist_seeded(...)      |
        |   + Arc<UiConfig>)|   shell  +--------------------------+
        +------------------+   open         ^
               |                                  |
@@ -183,7 +183,7 @@ pub struct WorkingCopy {
     pub indicators: IndicatorsWorking, // 3 booleans
     pub sound: SoundWorking,         // 1 boolean
     pub toasts: ToastsWorking,       // level + duration cycle indices
-    pub integrations: IntegrationsWorking, // empty list + (+) action
+    pub integrations: IntegrationsWorking, // preserved entries + (+) action
 }
 
 pub struct SettingsDialog {
@@ -206,7 +206,7 @@ impl SettingsDialog {
     /// working copy's current value. No-ops on `Action`.
     pub fn toggle_selected(&mut self);
     /// Build a `UiConfig` from the working copy. Caller uses this for
-    /// the persistence projection.
+    /// the persistence projection, carrying integration entries forward unchanged.
     pub fn projected_ui_config(&self) -> UiConfig;
     /// Standalone helper; host input uses `Ui::apply_settings_at` instead.
     /// Run the injected persistence closure exactly once. On success,
@@ -233,8 +233,8 @@ pub enum ApplyError {
 ```
 
 The five working structs use `bool` for booleans, `usize` cycle indices
-for the toast pickers, and `String` only where the spec needs the name
-(theme).
+for the toast pickers, `String` for the theme name, and `Vec<String>` for
+the integration entries carried forward from the loaded configuration.
 
 ```rust
 pub struct ThemeWorking { pub name: String }
@@ -248,8 +248,15 @@ pub struct ToastsWorking {
     pub level: usize, // 0=info, 1=warn, 2=error
     pub duration: usize, // 0=3s, 1=5s, 2=10s, 3=off
 }
-pub struct IntegrationsWorking { /* empty in v1 */ }
+pub struct IntegrationsWorking { pub entries: Vec<String> }
 ```
+
+`SettingsDialog::new(current)` clones `current.integrations.entries` into
+`working.integrations.entries`. In v1 the integrations tab exposes only
+the `(+) Add provider…` action; existing entries are read-only.
+`projected_ui_config()` clones those entries into `UiIntegrations`, so
+applying any other tab preserves them. An empty list is only the default
+when no entries were loaded, never a reset performed by Apply.
 
 **Why the structs live here, not in `apps/huginn/src/config.rs`.** The
 binary already imports `presentation` (it depends on
@@ -258,7 +265,7 @@ Moving the structs into `presentation` keeps the dependency arrow one-way
 **and** lets tests in `crates/huginn/presentation/tests/settings.rs`
 construct a `UiConfig::default()` without crossing a crate boundary.
 The binary's `Config::load` simply does `ui: huginn_presentation::settings::UiConfig`,
-and `ui_settings::persist` takes `&UiConfig` from the same module.
+and `ui_settings::persist_seeded` takes `&UiConfig` from the same module.
 **There is no circular import** because the only direction is
 `apps/huginn` → `huginn-presentation`.
 
@@ -517,12 +524,19 @@ use std::fs;
 use std::path::Path;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
-/// Apply `ui` to the file at `path`, preserving comments and unknown
-/// tables outside `[ui]`. Atomic via tmp+rename.
-pub fn persist(ui: &UiConfig, path: &Path) -> anyhow::Result<()> {
-    let mut doc = load_or_init(path)?;
+/// Apply `ui` to `target`, preserving comments and unknown tables.
+/// If the target is absent, seed it from the selected legacy config.
+/// Atomic via tmp+rename; the seed file is never modified.
+pub fn persist_seeded(ui: &UiConfig, target: &Path, seed: Option<&Path>) -> Result<()> {
+    let mut doc = if target.exists() {
+        load_or_init(target)?
+    } else if let Some(seed) = seed.filter(|seed| seed.exists()) {
+        load_or_init(seed)?
+    } else {
+        DocumentMut::new()
+    };
     write_ui(&mut doc, ui);
-    atomic_write(&doc.to_string(), path)
+    atomic_write(&doc.to_string(), target)
 }
 
 fn load_or_init(path: &Path) -> Result<DocumentMut> {
@@ -609,18 +623,23 @@ registration, then pass both through a new builder method.
 ```rust
 use huginn_presentation::settings::UiConfig;
 
-// Resolve the config path the same way Config::load does.
-let config_path = cli.config.clone()
-    .unwrap_or_else(|| dirs::config_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("cortex/huginn/config.toml"));
+// Use the same resolution as Config::load; migrate a legacy file on save.
+let read_path = Config::resolve_path(cli.config.as_deref());
+let write_path = cli.config.clone().unwrap_or_else(Config::primary_config_path);
+let seed_path = (read_path != write_path).then_some(read_path);
 let ui_config = Arc::new(config.ui.clone()); // config already loaded
 let save_ui_config: Arc<dyn Fn(&UiConfig) -> anyhow::Result<()>
-                       + Send + Sync> = {
-    let path = config_path.clone();
-    Arc::new(move |ui: &UiConfig| ui_settings::persist(ui, &path))
-};
+                       + Send + Sync> = Arc::new(move |ui: &UiConfig| {
+    ui_settings::persist_seeded(ui, &write_path, seed_path.as_deref())
+});
 ```
+
+When `Config::load` selects the legacy file, the callback carries that
+same path as its seed. The first Apply creates the canonical file from
+the legacy document before patching `[ui]`, preserving provider, model,
+database settings, and comments. The legacy file remains untouched.
+An explicit `--config` is both the read and write path; an existing
+canonical file takes precedence over the seed on later saves.
 
 `RatatuiPlugin` gains a new setter that stores both:
 
@@ -713,10 +732,12 @@ keys (documented in the round-trip test).
 
 Error handling:
 
-- File missing → start from `DocumentMut::new()`, ensure `[ui]`
-  exists, write the header comment, persist. Result: a brand-new file
-  with only `[ui]` and a leading comment.
-- File present but unparseable → `toml_edit` returns the parser
+- Target missing after a legacy load → parse the selected legacy seed,
+  patch `[ui]`, and atomically create the canonical file without changing
+  the legacy file. Preserve all other settings and comments.
+- Target and legacy seed missing → start from `DocumentMut::new()`,
+  ensure `[ui]` exists, and persist a new file with only `[ui]`.
+- Target or selected seed present but unparseable → `toml_edit` returns the parser
   error wrapped in `anyhow::Context`. The closure returns the error;
   the caller surfaces it via the notice path.
 - Disk full / permission denied → `fs::write` returns the I/O
@@ -879,9 +900,10 @@ value in the label (built in `snapshot()`) so the user sees
 |---|---|
 | Persistence closure returns `Err(_)` | The ordered receipt clears its matching pending state. If its overlay ID is still current, Settings stays open with its working copy intact and `last_error` in the modal body; the user can retry or dismiss. Otherwise the error does not affect the current overlay. |
 | Esc dismisses Settings during a pending write | Close immediately without cancelling the turn. The submitted write may complete; its receipt cannot close or set an error on a replacement overlay. |
-| `config.toml` does not exist on disk | `ui_settings::persist` creates it with the new `[ui]` table and a leading `# TUI settings` comment. Atomic via tmp+rename. |
-| `config.toml` exists but is unparseable | `toml_edit` returns a parser error. `persist` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact. |
-| Permission denied on write | `fs::write` returns the I/O error. `persist` propagates. The error is shown in the modal body; Settings stays open with its working copy intact. |
+| Canonical `config.toml` is absent and `Config::load` selected the legacy file | `ui_settings::persist_seeded` seeds the canonical document from that same legacy path, then patches `[ui]`. Provider, model, database settings, and comments survive; the legacy file is untouched. |
+| `config.toml` and a legacy seed are both absent | `ui_settings::persist_seeded` creates the file with the new `[ui]` table. Atomic via tmp+rename. |
+| Selected target or seed exists but is unparseable | `toml_edit` returns a parser error. `persist_seeded` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact. |
+| Permission denied on write | The writer returns the I/O error. `persist_seeded` propagates. The error is shown in the modal body; Settings stays open with its working copy intact. |
 | User starts the binary with a malformed config | `Config::load` returns the error at startup. The dialog never opens; the process exits with the diagnostic. |
 | `Esc` in settings while a turn is streaming | The settings branch handles Esc and returns. The cancel-turn branch is never reached. The stream continues. (REQ-13.) |
 | `Esc` in settings while an approval modal arrives in the same focus tick | Modal preempts settings (REQ-12): `request_decision` at `state.rs:675` clears `state.settings` first. The user never sees the settings dialog after the modal closes. |
@@ -908,6 +930,7 @@ closure.
 | `settings_item_cycling` | `select_next()` wraps at the last item of the active tab; `select_prev()` wraps at index 0. | REQ-04 |
 | `settings_toggle_advances_cycle` | On `toasts.level` row, `toggle_selected()` advances the cycle `info → warn → error → info`. | REQ-05 |
 | `settings_apply_invokes_closure` | `apply(&mut save)` calls the closure exactly once with the projected `UiConfig`. | REQ-07 |
+| `touching_a_cycle_overrides_only_that_value` | Editing theme or toast values leaves loaded integration entries unchanged in `projected_ui_config()`. | REQ-07, REQ-14 |
 | `settings_apply_failure_keeps_dialog` | When `save` returns `Err(anyhow!("disk full"))`, the dialog retains its working copy and `last_error == Some("disk full".into())`. | REQ-07 |
 | `settings_esc_does_not_invoke_closure` | `discard()` does not call `save`. | REQ-06, REQ-08 |
 | `settings_add_provider_shows_notice` | When the active tab is `integrations` and `selected` is on `(+)` row, `handle_add_provider()` returns `true`. The `apply` path is not invoked. | REQ-14 |
@@ -957,7 +980,7 @@ host `/settings` and mirrors the `extension` mode already present
 
 ### Unit tests in `apps/huginn/tests/ui_settings.rs` (NEW)
 
-The TOML round-trip family, exercising `ui_settings::persist` against
+The TOML round-trip family, exercising `ui_settings::persist_seeded` against
 the `UiConfig` from `huginn_presentation::settings`.
 
 | Test | Asserts | REQ |
@@ -965,8 +988,9 @@ the `UiConfig` from `huginn_presentation::settings`.
 | `config_load_no_ui_section` | `Config::load` on a `config.toml` with no `[ui]` returns `UiConfig::default()`. | REQ-10 |
 | `config_load_partial_ui_section` | `[ui.theme]\nname = "dracula"` loads with `theme.name == "dracula"` and all other sub-tables default-filled. | REQ-10 |
 | `config_load_with_inner_unknown_key` | `[ui]\nunknown_user_key = true\n[ui.theme]\nname = "dracula"` loads without error. | REQ-11 |
-| `persist_round_trip_byte_stable_outside_ui` | A fixture with `[provider]`, `[model]`, and a hand-written comment, after `persist(&UiConfig { theme: { name: "catppuccin" }, .. }, path)`, has `[provider]`, `[model]`, and the comment byte-identical to the input. | REQ-09 |
-| `persist_creates_missing_file` | Calling `persist` on a path that does not exist creates the file with the new `[ui]` table. | REQ-09 |
+| `persist_round_trip_byte_stable_outside_ui` | A fixture with `[provider]`, `[model]`, and a hand-written comment, after `persist_seeded(&UiConfig { theme: { name: "catppuccin" }, .. }, path, None)`, has `[provider]`, `[model]`, and the comment byte-identical to the input. | REQ-09 |
+| `legacy_load_then_apply_preserves_configuration` | With only the legacy file present, `Config::load(None)` selects it. Apply through the seeded callback creates the canonical file, preserves provider, model, database settings, comments, and integration entries, saves the edited UI value, and leaves the legacy file byte-identical. The next load selects the canonical file. | REQ-07, REQ-09, REQ-10 |
+| `persist_creates_missing_file` | Calling `persist_seeded` on a path that does not exist with no seed creates the file with the new `[ui]` table. | REQ-09 |
 | `persist_preserves_unknown_inner_keys` | The round-trip with `unknown_user_key = true` under `[ui]` keeps the key in the output. | REQ-11 |
 | `persist_atomic_write_failure_preserves_original` | (Optional, deferred) Stub test ensuring the original file survives a forced write failure. | — |
 
@@ -1011,7 +1035,7 @@ without the formal RED→GREEN→REFACTOR cycle.
 - `apps/huginn/src/config.rs` — add `ui: UiConfig` field to `Config`
   with `#[serde(default)]`, importing `UiConfig` from
   `huginn_presentation::settings`.
-- `apps/huginn/src/ui_settings.rs` — new file with `persist`.
+- `apps/huginn/src/ui_settings.rs` — new file with `persist_seeded`.
 - `apps/huginn/src/main.rs` — construct `Arc<UiConfig>` and the save
   closure; pass both into `RatatuiPlugin::with_settings(...)`.
 - `Cargo.toml` (workspace) — add `toml_edit = "0.22"` under
@@ -1064,7 +1088,7 @@ without the formal RED→GREEN→REFACTOR cycle.
   Required by REQ-11. `Config` itself keeps `deny_unknown_fields`.
 - **No `Config::save`.** The proposal mentions `Config::save` for
   round-trip tests only; v1 does not implement it. The runtime
-  writer is `ui_settings::persist` exclusively. If a future change
+  writer is `ui_settings::persist_seeded` exclusively. If a future change
   needs a full rewrite, it adds `Config::save` then.
 - **No `dirs::config_dir()` resolution in `ui_settings`.** The
   binary resolves the path in `main.rs` and passes it into the

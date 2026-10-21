@@ -12,6 +12,72 @@ fn write_file(path: &Path, body: &str) {
 
 #[cfg(unix)]
 #[test]
+fn legacy_load_then_apply_preserves_configuration() {
+    use huginn::config::Config;
+    use huginn_presentation::settings::{SettingsDialog, TAB_SOUND};
+
+    // Isolate platform config resolution without changing the environment
+    // shared by concurrently running tests.
+    const CHILD: &str = "HUGINN_TEST_LEGACY_APPLY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "legacy_load_then_apply_preserves_configuration",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("XDG_DATA_HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let legacy = Config::legacy_config_path();
+    let target = Config::primary_config_path();
+    let body = "# Keep my provider and database settings\n\
+        provider = \"openai\"\nmodel = \"legacy-model\"\ndb = \"legacy-sessions.db\"\n\
+        [ui.integrations]\nentries = [\"github\", \"linear\"]\n";
+    write_file(&legacy, body);
+    assert!(!target.exists());
+    let loaded = Config::load(None).unwrap();
+    let read_path = Config::resolve_path(None);
+    assert_eq!(read_path, legacy);
+    let seed_path = (read_path != target).then_some(read_path);
+    let mut dialog = SettingsDialog::new(&loaded.ui);
+    dialog.active_tab = TAB_SOUND;
+    dialog.toggle_selected();
+    dialog
+        .apply(&mut |ui| persist_seeded(ui, &target, seed_path.as_deref()))
+        .unwrap();
+
+    assert_eq!(Config::resolve_path(None), target);
+    let reloaded = Config::load(None).unwrap();
+    assert!(reloaded.ui.sound.bell);
+    assert_eq!(reloaded.provider, loaded.provider);
+    assert_eq!(reloaded.model, loaded.model);
+    assert_eq!(reloaded.db, loaded.db);
+    assert_eq!(
+        reloaded.ui.integrations.entries,
+        loaded.ui.integrations.entries
+    );
+    assert!(fs::read_to_string(&target)
+        .unwrap()
+        .contains("# Keep my provider and database settings"));
+    assert_eq!(fs::read_to_string(&legacy).unwrap(), body);
+}
+
+#[cfg(unix)]
+#[test]
 fn persist_leaves_preexisting_temp_symlink_and_victim_intact() {
     use std::os::unix::fs::symlink;
 
