@@ -9,6 +9,7 @@ pub struct HostWorkflow {
     pub selected: usize,
     values: Vec<Value>,
     pending: Option<Pending>,
+    error: Option<String>,
 }
 enum Value {
     Public(String),
@@ -60,6 +61,7 @@ impl HostWorkflow {
             selected: 0,
             values,
             pending: None,
+            error: None,
         }
     }
     pub const fn is_pending(&self) -> bool {
@@ -173,30 +175,33 @@ impl HostWorkflow {
         if self.is_pending() || !self.workflow.is_active() {
             return None;
         }
-        if self
-            .values
-            .iter()
-            .any(|v| matches!(v, Value::Secret(s) if s.is_empty()))
+        // A required secret is empty: report it inside the form instead of
+        // silently ignoring the submission.
+        if let Some(field) =
+            self.workflow
+                .fields()
+                .iter()
+                .zip(&self.values)
+                .find(|(field, value)| {
+                    matches!(field.kind, FieldKind::Secret)
+                        && matches!(value, Value::Secret(s) if s.is_empty())
+                })
         {
+            self.error = Some(format!("{} is required.", field.0.label));
             return None;
         }
         let mut input = FormInput::default();
-        for (field, value) in self
-            .workflow
-            .fields()
-            .iter()
-            .zip(std::mem::take(&mut self.values))
-        {
+        for (field, value) in self.workflow.fields().iter().zip(&mut self.values) {
             match value {
                 Value::Public(value) => {
-                    input.public.insert(field.id.clone(), value);
+                    input.public.insert(field.id.clone(), value.clone());
                 }
                 Value::Choice(index) => {
                     input.public.insert(field.id.clone(), index.to_string());
                 }
-                Value::Secret(mut bytes) => {
+                Value::Secret(bytes) => {
                     // Valid UTF-8 was inserted above. Move the allocation; never clone it.
-                    let Ok(value) = String::from_utf8(std::mem::take(&mut *bytes)) else {
+                    let Ok(value) = String::from_utf8(std::mem::take(&mut **bytes)) else {
                         return None;
                     };
                     let Ok(secret) = Secret::new(value) else {
@@ -206,6 +211,8 @@ impl HostWorkflow {
                 }
             }
         }
+        // The previous error is cleared only once the submission is prepared.
+        self.error = None;
         let workflow = self.workflow.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
@@ -225,6 +232,14 @@ impl HostWorkflow {
     pub(crate) fn attach_task(&mut self, task: tokio::task::JoinHandle<()>) {
         // Called once for the prepared submission on this exact overlay.
         self.pending.as_mut().expect("prepared submission").task = Some(task);
+    }
+    pub fn show_error(&mut self, message: String) {
+        self.pending.take();
+        self.error = Some(message);
+    }
+    /// The last failure, rendered beside the fields instead of replacing guidance.
+    pub fn error_message(&self) -> Option<&str> {
+        self.error.as_deref()
     }
     pub fn completed(&mut self) -> Option<huginn_core::Result<CommandResult>> {
         let pending = self.pending.as_mut()?;

@@ -62,7 +62,11 @@ fn secret_form_masks_keys_and_pastes_and_async_error_does_not_echo_credentials()
     pty.wait_for("Host-owned input");
     pty.send(&format!("\x1b[200~{SENTINEL}\x1b[201~"));
     pty.send("\t\x1b[C\r");
-    pty.wait_for("UI action failed");
+    // A failed form stays open and shows the error inside it.
+    pty.wait_for("Error:");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Error:");
+    pty.send("\x03");
     pty.send("\x03");
     let output = pty.finish(true);
     assert!(!output.contains(SENTINEL));
@@ -78,8 +82,10 @@ fn secret_action_panic_payload_is_not_written_to_terminal_and_pending_action_can
     pty.send("/secret-form\r");
     pty.wait_for("Secret form fixture");
     pty.send(&format!("{SENTINEL}\t\x1b[C\x1b[C\r"));
-    pty.wait_for("UI action failed");
+    pty.wait_for("Error:");
     assert!(!pty.output().contains(SENTINEL));
+    pty.send("\x1b");
+    pty.wait_for("Form discarded.");
     pty.send("/secret-form\r");
     pty.wait_for("Host-owned input");
     pty.send(&format!("{SENTINEL}\r"));
@@ -538,13 +544,31 @@ fn overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback() {
         .join("\n");
     pty.send(&format!("\x1b[200~{history}\x1b[201~\r"));
     pty.wait_for("STREAM_COMPLETE");
-    let baseline = pty.scrollback_text();
-    assert!(
-        baseline.contains("HISTORY00"),
-        "scrollback positive control missing: {baseline}"
-    );
     pty.send("hold\r");
     pty.wait_for("STREAM_HELD");
+    // A sent turn is shown as soon as it is sent, so the baseline is taken
+    // once that echo reached the scrollback.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !pty.screen_text().contains("User: hold") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sent turn was not rendered: {}",
+            pty.screen_text()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The app owns the transcript: it is rendered in the frame, not in the
+    // terminal scrollback.
+    assert!(
+        pty.screen_text().contains("HISTORY"),
+        "history positive control missing: {}",
+        pty.screen_text()
+    );
+    assert!(
+        !pty.scrollback_text().contains("HISTORY00"),
+        "the transcript must not reach the terminal scrollback"
+    );
+    let baseline = pty.scrollback_text();
     for (input, marker) in [
         ("/help\r", "┌Help"),
         ("/settings\r", "┌Settings"),
@@ -784,4 +808,48 @@ fn unrecovered_panic_after_callbacks_still_restores_terminal() {
         format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"),
         "raw mode not restored"
     );
+}
+
+#[test]
+fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
+    let mut pty = start("provider-select", true);
+    pty.wait_for("Huginn");
+    pty.send("/provider-select\r");
+    pty.wait_for("Connect provider");
+    pty.send("\r");
+    pty.wait_for("New connection");
+    // A single Enter must not submit the form that follows the selection.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let screen = pty.screen_text();
+    assert!(screen.contains("New connection"), "{screen}");
+    assert!(screen.contains("http://127.0.0.1:11434"), "{screen}");
+    assert!(!screen.contains("CONNECTION_SAVED"), "{screen}");
+    assert!(!pty.output().contains("CONNECTION_SAVED"));
+    pty.send("\x1b");
+    pty.wait_for("Form discarded.");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn the_transcript_survives_a_terminal_resize() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("stream\r");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    assert!(
+        pty.screen_text().contains("User: stream"),
+        "the sent turn is rendered: {}",
+        pty.screen_text()
+    );
+    // Enlarging the terminal must not take the history away.
+    pty.resize(40, 120);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let screen = pty.screen_text();
+    assert!(
+        screen.contains("User: stream"),
+        "the transcript must survive a resize: {screen}"
+    );
+    pty.send("\x03");
+    pty.finish(true);
 }

@@ -113,6 +113,41 @@ impl ConnectionSettings {
     }
 }
 
+/// Identifiers accepted for provider and model metadata.
+pub fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:/".contains(&byte))
+}
+
+/// Why an endpoint is rejected, so callers can explain the exact fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointProblem {
+    Malformed,
+    /// HTTP towards a host that is not a literal loopback address.
+    RemoteHttp,
+    /// HTTP loopback without the explicit per-connection exception.
+    LoopbackHttpDisabled,
+}
+pub fn endpoint_problem(settings: &ConnectionSettings) -> Option<EndpointProblem> {
+    let endpoint = settings.endpoint.as_deref()?;
+    let Ok(url) = url::Url::parse(endpoint) else {
+        return Some(EndpointProblem::Malformed);
+    };
+    if url.scheme() != "http" {
+        return None;
+    }
+    if !is_loopback_endpoint(&url) {
+        return Some(EndpointProblem::RemoteHttp);
+    }
+    if !settings.allow_loopback_http {
+        return Some(EndpointProblem::LoopbackHttpDisabled);
+    }
+    None
+}
+
 /// Literal loopback addresses only: no DNS name can change a local exception
 /// into a request to a remote host. Use `127.0.0.1` or `[::1]`, not a LAN address.
 pub fn is_loopback_endpoint(url: &url::Url) -> bool {
@@ -291,5 +326,53 @@ impl ConnectionInputs {
                 self.environment
                     .map(|v| (v, ConnectionProvenance::Environment))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(endpoint: Option<&str>, allow_loopback_http: bool) -> ConnectionSettings {
+        ConnectionSettings {
+            provider: "ollama".into(),
+            endpoint: endpoint.map(str::to_owned),
+            model: "model".into(),
+            requires_secret: false,
+            allow_loopback_http,
+        }
+    }
+
+    #[test]
+    fn identifiers_accept_only_bounded_safe_characters() {
+        assert!(valid_identifier("llama3.2:8b-instruct"));
+        assert!(!valid_identifier(""));
+        assert!(!valid_identifier("has space"));
+        assert!(!valid_identifier(&"a".repeat(257)));
+    }
+
+    #[test]
+    fn endpoint_problem_names_the_exact_failure() {
+        assert_eq!(
+            endpoint_problem(&settings(Some("not a url"), false)),
+            Some(EndpointProblem::Malformed)
+        );
+        assert_eq!(
+            endpoint_problem(&settings(Some("http://192.168.1.2:11434"), true)),
+            Some(EndpointProblem::RemoteHttp)
+        );
+        assert_eq!(
+            endpoint_problem(&settings(Some("http://127.0.0.1:11434"), false)),
+            Some(EndpointProblem::LoopbackHttpDisabled)
+        );
+        assert_eq!(
+            endpoint_problem(&settings(Some("http://127.0.0.1:11434"), true)),
+            None
+        );
+        assert_eq!(
+            endpoint_problem(&settings(Some("https://ollama.com"), false)),
+            None
+        );
+        assert_eq!(endpoint_problem(&settings(None, false)), None);
     }
 }

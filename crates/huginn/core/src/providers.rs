@@ -106,11 +106,58 @@ pub enum ProviderError {
     InvalidMetadata,
 }
 
+/// Public onboarding hints. Secret values must never occur in this metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderOnboarding {
+    /// None uses descriptor methods. An override narrows interactive onboarding only.
+    pub authentication: Option<Vec<AuthenticationMethod>>,
+    pub default_endpoint: Option<String>,
+    pub allow_endpoint_edit: bool,
+}
+impl Default for ProviderOnboarding {
+    fn default() -> Self {
+        Self {
+            authentication: None,
+            default_endpoint: None,
+            allow_endpoint_edit: true,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolSupport {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredModel {
+    pub id: String,
+    pub tools: ToolSupport,
+}
+/// An unsupported catalog is different from an unavailable or empty catalog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelCatalog {
+    Available(Vec<DiscoveredModel>),
+    Unsupported,
+    Unavailable,
+    Invalid,
+}
+
 /// Factories receive identity and model, never terminal ownership or raw secrets.
 /// P0.1 uses in-memory doubles; credential-backed connections are a later port.
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
+    fn onboarding(&self) -> ProviderOnboarding {
+        ProviderOnboarding::default()
+    }
+    async fn discover_models(
+        &self,
+        _material: &crate::connections::ConnectionMaterial,
+        _cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        Ok(ModelCatalog::Unsupported)
+    }
     /// An empty static model list is permitted only for adapters that validate
     /// the selected model against a connection-scoped catalog during pinning.
     fn has_connection_catalog(&self) -> bool {
@@ -136,7 +183,19 @@ pub trait ProviderAdapter: Send + Sync {
     }
 }
 
+#[async_trait]
 pub trait ProviderCatalog: Send + Sync {
+    fn onboarding(&self, _registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
+        Ok(ProviderOnboarding::default())
+    }
+    async fn discover_models(
+        &self,
+        _registration: &ProviderRegistration,
+        _material: &crate::connections::ConnectionMaterial,
+        _cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        Ok(ModelCatalog::Unsupported)
+    }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)>;
     /// Reserve invisibly, then publish only when the host commits activation.
     fn register(

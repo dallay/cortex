@@ -121,11 +121,11 @@ impl ConnectionManagement for Manager {
         Ok(())
     }
 }
-struct Catalog(Vec<AuthenticationMethod>);
+struct Catalog(Vec<AuthenticationMethod>, ProviderRegistration);
 impl ProviderCatalog for Catalog {
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         vec![(
-            ProviderRegistration::new("double".into(), 1),
+            self.1.clone(),
             ProviderDescriptor {
                 id: "double".into(),
                 display_name: "Test provider".into(),
@@ -174,7 +174,10 @@ impl Plugin for Host {
         ctx.provide(connections_id(), ConnectionsService(self.manager.clone()))?;
         ctx.provide(
             ServiceId::new("agent:provider-catalog", 1),
-            ProviderCatalogService(Arc::new(Catalog(self.authentication.clone()))),
+            ProviderCatalogService(Arc::new(Catalog(
+                self.authentication.clone(),
+                ProviderRegistration::new("double".into(), 1),
+            ))),
         )
     }
 }
@@ -270,26 +273,26 @@ async fn mixed_authentication_keeps_key_and_local_forms_without_oauth_choices() 
         let mut state = ui.lock();
         let form = state.workflow_mut().unwrap();
         assert!(form.snapshot().1.contains("OAuth: unsupported"));
-        assert!(form.snapshot().2[0].contains("API key"));
+        assert!(form.snapshot().2[0].contains("Test provider"));
+        let initial = form.snapshot().2;
         form.choice(true);
-        assert!(form.snapshot().2[0].contains("no authentication"));
-        form.choice(true);
-        assert!(
-            form.snapshot().2[0].contains("API key"),
-            "OAuth must not be a choice"
-        );
-        form.choice(true);
+        assert_eq!(form.snapshot().2, initial);
         drop(state);
     }
     submit(&ui).await;
     {
         let mut state = ui.lock();
         let form = state.workflow_mut().unwrap();
-        assert_eq!(
-            form.snapshot().2.len(),
-            3,
-            "local form has no secret or storage field"
-        );
+        assert!(form.snapshot().2[0].contains("API key"));
+        form.choice(true);
+        assert!(form.snapshot().2[0].contains("No authentication"));
+        drop(state);
+    }
+    submit(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        assert_eq!(form.snapshot().2.len(), 3, "no secret or storage field");
         form.insert("http://127.0.0.1:11434");
         form.navigate(true);
         form.navigate(true);
@@ -330,7 +333,10 @@ async fn login(ui: &Ui) {
     assert_surface(ui, Surface::Login); // loading is a real autoexecuted workflow
     settle(ui).await;
     assert_surface(ui, Surface::Login);
-    submit(ui).await; // choose provider/authentication
+    submit(ui).await; // choose provider
+    if ui.lock().workflow().unwrap().snapshot().2[0].contains("Authentication") {
+        submit(ui).await; // first supported method in this test catalog is API key
+    }
     assert_surface(ui, Surface::Login);
     {
         let mut state = ui.lock();
@@ -670,4 +676,36 @@ async fn locked_status_is_actionable_and_cancelled_login_does_not_save() {
         1,
         "headless service survives optional UI removal"
     );
+}
+
+#[tokio::test]
+async fn mixed_authentication_has_one_provider_then_authentication_inside_form() {
+    let (_supervisor, ui, _) = setup_with_authentication(vec![
+        AuthenticationMethod::None,
+        AuthenticationMethod::ApiKey,
+    ])
+    .await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        let initial = form.snapshot().2;
+        form.choice(true);
+        assert_eq!(
+            form.snapshot().2,
+            initial,
+            "one provider must not expand into authentication entries"
+        );
+        drop(state);
+    }
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .2
+        .iter()
+        .any(|line| line.contains("Authentication")));
 }

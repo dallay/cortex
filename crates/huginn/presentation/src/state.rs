@@ -172,13 +172,19 @@ pub struct UiState {
     tool_names: BTreeMap<String, String>,
     pub busy: bool,
     pub turn_cancel: Option<CancellationToken>,
+    /// The complete transcript. The app owns it, so a resize can redraw it.
     pub conversation: Vec<String>,
+    /// Lines scrolled up from the newest message.
+    pub history_scroll: usize,
     /// Non-conversational notifications are rendered separately from history.
     pub notifications: crate::event::UiEventBuffer,
     pub overlays: crate::overlay::OverlayMachine<crate::overlay::Payload>,
     pub events: Vec<Event>,
     pub session_id: String,
     pub message_count: usize,
+    /// The user's own turn is shown as soon as it is sent. The session
+    /// reports the same message when the turn ends, and that copy is dropped.
+    pub echoed_user: bool,
     pub epoch: u64,
     /// Per-turn approval counter. Reset by `begin()` so each turn numbers
     /// its first approval `#1`, mirroring the line adapter policy.
@@ -279,6 +285,16 @@ impl UiState {
     }
     pub fn conversation(&mut self, text: String) {
         self.conversation.push(safe(&text));
+    }
+
+    /// Show the user's own turn right away. A slow model must not hide what
+    /// was already sent. The session repeats this message when the turn ends;
+    /// `synchronize_views` drops that copy.
+    pub fn echo_user_turn(&mut self, text: &str) {
+        self.conversation(format!("{:?}: {}", huginn_core::Role::User, safe(text)));
+        self.echoed_user = true;
+        // A new turn returns the view to the newest message.
+        self.history_scroll = 0;
     }
 
     pub fn project_ui_event(&mut self, kind: crate::event::EventKind, text: String) {
@@ -393,6 +409,11 @@ impl UiState {
             let content = views
                 .get(&index)
                 .map_or_else(|| message.content.clone(), View::plain_text);
+            if self.echoed_user && message.role == huginn_core::Role::User {
+                // Already shown when the turn was sent; do not repeat it.
+                self.echoed_user = false;
+                continue;
+            }
             let mut text = format!("{:?}: {}", message.role, safe(&content));
             for call in &message.tool_calls {
                 self.tool_names.insert(call.id.clone(), call.name.clone());
@@ -887,13 +908,38 @@ impl Ui {
             } else {
                 state.workflow_mut().and_then(|form| form.completed())
             };
+            // Only a user-submitted form stays open on error. An auto-executed
+            // workflow has no fields to correct and closes with a notice.
+            let form_is_editable = state
+                .workflow()
+                .is_some_and(|form| !form.workflow.fields().is_empty());
+            let recoverable_error = if form_is_editable {
+                match &result {
+                    Some(Ok(CommandResult::Notice(view))) if view.is_error => Some(view.body.clone()),
+                    Some(Err(_)) => Some("Action failed; check the fields or cancel. Durable completion may be unknown.".into()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(message) = recoverable_error.as_ref() {
+                if let Some(form) = state.workflow_mut() {
+                    form.show_error(message.clone());
+                }
+            }
+            let result = if recoverable_error.is_some() {
+                None
+            } else {
+                result
+            };
             let retired = if expired || result.is_some() {
                 let id = state.overlays.snapshot().map(|active| active.id);
                 id.and_then(|id| state.overlays.close(id))
             } else {
                 None
             };
-            let changed = retired.is_some() || state.widgets != widgets;
+            let changed =
+                recoverable_error.is_some() || retired.is_some() || state.widgets != widgets;
             state.widgets = widgets;
             if expired && retired.is_some() {
                 state.notification("UI action no longer available".into());
@@ -1322,6 +1368,10 @@ impl Interaction for Ui {
         let mut prompts = self.prompts.lock().await;
         let prompt = tokio::select! { biased; _ = self.stop.cancelled() => None, prompt = prompts.recv() => prompt };
         drop(prompts);
+        if let Some(text) = prompt.as_ref() {
+            // Show the turn before the model answers; the wait is not feedback.
+            self.lock().echo_user_turn(text);
+        }
         prompt
     }
     fn begin(&self, cancel: CancellationToken) -> crate::event::OperationId {

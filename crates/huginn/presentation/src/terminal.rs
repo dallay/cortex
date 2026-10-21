@@ -36,7 +36,9 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
-const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+/// Lines the transcript moves per page when scrolling the history.
+const HISTORY_PAGE: usize = 10;
+const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 type Screen = Terminal<HostBackend>;
 
@@ -293,7 +295,9 @@ impl Presentation for Ratatui {
                 cursor: None,
             },
             TerminalOptions {
-                viewport: Viewport::Inline(13.min(height - 1)),
+                // The frame owns the screen: the transcript is rendered inside
+                // it, so a resize cannot take the history away.
+                viewport: Viewport::Inline(height),
             },
         )?;
         let stop = CancellationToken::new();
@@ -418,7 +422,7 @@ type SettingsView = (
 enum OverlayView {
     Approval(String, u64, String, String, usize),
     Dialog(String, String, Vec<String>, usize, usize),
-    Workflow(String, String, Vec<String>, usize, bool),
+    Workflow(String, String, Vec<String>, usize, bool, Option<String>),
     Settings(SettingsView),
     Help(usize),
 }
@@ -427,6 +431,10 @@ struct View {
     bar: crate::status_bar::StatusBar,
     editor: Editor,
     completion: Suggestions,
+    /// The complete transcript, owned by the app.
+    history: Vec<String>,
+    /// Lines scrolled up from the newest message.
+    history_scroll: usize,
     tail: String,
     busy: bool,
     overlay: Option<OverlayView>,
@@ -438,6 +446,8 @@ impl View {
             bar: crate::status_bar::StatusBar::from_state(state),
             editor: state.editor.clone(),
             completion: state.completion.clone(),
+            history: state.conversation.clone(),
+            history_scroll: state.history_scroll,
             tail: state.tail.clone(),
             busy: state.busy,
             overlay_identity: state.overlays.snapshot(),
@@ -447,7 +457,14 @@ impl View {
                 .map(|active| match active.payload() {
                     crate::overlay::Payload::Workflow(form) => {
                         let (a, b, c, d, e) = form.snapshot();
-                        OverlayView::Workflow(a, b, c, d, e)
+                        OverlayView::Workflow(
+                            a,
+                            b,
+                            c,
+                            d,
+                            e,
+                            form.error_message().map(str::to_owned),
+                        )
                     }
                     crate::overlay::Payload::PluginDialog(dialog) => OverlayView::Dialog(
                         dialog.handle.title().into(),
@@ -544,14 +561,10 @@ impl Driver {
         // shown. A wrapped-line cache invalidated on width change is tracked
         // in DALLAY-665 with the load/latency measurements; the coalesced
         // 33 ms tick only bounds how often this runs, not the work per run.
-        let (conversation, view) = {
-            let mut state = self.ui.lock();
-            (
-                std::mem::take(&mut state.conversation),
-                View::snapshot(&state),
-            )
+        let view = {
+            let state = self.ui.lock();
+            View::snapshot(&state)
         };
-        self.commit_messages(conversation)?;
         let last_scroll = self.draw_frame(&view)?;
         self.update_modal_scroll(&view, last_scroll);
         // Only a completed paint in a viable viewport may arm an approval.
@@ -587,21 +600,6 @@ impl Driver {
                 }
             }
         }
-    }
-
-    fn commit_messages(&mut self, conversation: Vec<String>) -> Result<()> {
-        let width = self.screen.size()?.width;
-        for block in conversation {
-            let lines = markdown(wrapped(&block, width));
-            // Stock inline insertion commits complete messages once, never streaming tails.
-            for chunk in lines.chunks(usize::from(self.screen.size()?.height.max(1))) {
-                self.screen.insert_before(chunk.len() as u16, |buffer| {
-                    use ratatui::widgets::Widget;
-                    Paragraph::new(chunk.to_vec()).render(buffer.area, buffer);
-                })?;
-            }
-        }
-        Ok(())
     }
 
     fn draw_frame(&mut self, view: &View) -> Result<usize> {
@@ -672,7 +670,9 @@ impl Driver {
             frame.render_widget(Paragraph::new(instructions), footer);
             return last_scroll;
         }
-        if let Some(OverlayView::Workflow(title, body, fields, selected, pending)) = &view.overlay {
+        if let Some(OverlayView::Workflow(title, body, fields, selected, pending, error)) =
+            &view.overlay
+        {
             let [heading, content, footer] = Layout::vertical([
                 Constraint::Length(2),
                 Constraint::Min(1),
@@ -682,20 +682,30 @@ impl Driver {
             frame.render_widget(Paragraph::new(safe(body)), heading);
             let rows = usize::from(content.height.saturating_sub(2)).max(1);
             let start = selected.saturating_sub(rows.saturating_sub(1));
-            let text = if *pending {
-                "Waiting… Esc cancels locally; completion may be unknown".into()
+            let mut text = String::new();
+            if let Some(message) = error {
+                // The error keeps its own lines: a long message never hides a field.
+                text.push_str(&format!(
+                    "Error: {}\nCorrect the fields and submit again. Re-enter any API key.\n\n",
+                    safe(message)
+                ));
+            }
+            if *pending {
+                text.push_str("Waiting… Esc cancels locally; completion may be unknown");
             } else {
-                fields
-                    .iter()
-                    .enumerate()
-                    .skip(start)
-                    .take(rows)
-                    .map(|(i, field)| {
-                        format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
+                text.push_str(
+                    &fields
+                        .iter()
+                        .enumerate()
+                        .skip(start)
+                        .take(rows)
+                        .map(|(i, field)| {
+                            format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
             frame.render_widget(
                 Paragraph::new(text).block(Block::bordered().title(safe(title))),
                 content,
@@ -842,12 +852,19 @@ Enter save Esc close"
         };
         let [tail, popup] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
-        let lines = wrapped(&view.tail, tail.width);
-        let offset = lines.len().saturating_sub(usize::from(tail.height));
-        frame.render_widget(
-            Paragraph::new(markdown(lines.into_iter().skip(offset).collect())),
-            tail,
-        );
+        // The transcript is rendered by the app: history first, then the text
+        // still in flight, windowed to the area and to the scroll position.
+        let mut lines = view
+            .history
+            .iter()
+            .flat_map(|block| wrapped(block, tail.width))
+            .collect::<Vec<String>>();
+        lines.extend(wrapped(&view.tail, tail.width));
+        let height = usize::from(tail.height);
+        let scroll = view.history_scroll.min(lines.len().saturating_sub(height));
+        let start = lines.len().saturating_sub(height + scroll);
+        let visible = lines.into_iter().skip(start).collect::<Vec<String>>();
+        frame.render_widget(Paragraph::new(markdown(visible)), tail);
         if popup_height > 0 {
             let name_width = view
                 .completion
@@ -1169,6 +1186,13 @@ Enter save Esc close"
                 }
                 state.editor = Editor::default();
             }
+            KeyCode::PageUp => {
+                // Scroll the transcript up; the composer keeps its own focus.
+                state.history_scroll = state.history_scroll.saturating_add(HISTORY_PAGE);
+            }
+            KeyCode::PageDown => {
+                state.history_scroll = state.history_scroll.saturating_sub(HISTORY_PAGE);
+            }
             KeyCode::Char(ch) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
                 state.editor.insert(&ch.to_string())
             }
@@ -1293,6 +1317,8 @@ mod tests {
                 widgets: String::new(),
             },
             editor: Editor::default(),
+            history: Vec::new(),
+            history_scroll: 0,
             tail: String::new(),
             busy: false,
             overlay: Some(overlay),
@@ -1562,7 +1588,7 @@ mod tests {
         drop(outcome);
         let view = View::snapshot(&ui.lock());
         assert_eq!(view.overlay_identity.unwrap().kind, OverlayKind::Login);
-        let Some(OverlayView::Workflow(title, body, fields, _, _)) = view.overlay else {
+        let Some(OverlayView::Workflow(title, body, fields, _, _, _)) = view.overlay else {
             panic!("Login must render its actual form")
         };
         assert_eq!(title, "Login");

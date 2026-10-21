@@ -307,7 +307,43 @@ impl Providers {
         ))
     }
 }
+#[async_trait]
 impl ProviderCatalog for Providers {
+    fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
+        self.check()?;
+        let entry = {
+            let state = self.lock()?;
+            Self::adapter(&state, registration)?
+        };
+        Ok(entry.implementation.onboarding())
+    }
+    async fn discover_models(
+        &self,
+        registration: &ProviderRegistration,
+        material: &huginn_core::connections::ConnectionMaterial,
+        cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        self.check()?;
+        let entry = {
+            let state = self.lock()?;
+            Self::adapter(&state, registration)?
+        };
+        if material.settings.provider != registration.provider {
+            return Err(ProviderError::Unavailable.into());
+        }
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ProviderError::Unavailable.into()),
+            _ = self.cancellation.cancelled() => return Err(ProviderError::Revoked.into()),
+            _ = entry.revoked.cancelled() => return Err(ProviderError::Revoked.into()),
+            result = entry.implementation.discover_models(material, cancel.clone()) => result?,
+        };
+        self.check()?;
+        if !entry.active() {
+            return Err(ProviderError::Revoked.into());
+        }
+        Ok(result)
+    }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         if self.check().is_err() {
             return vec![];

@@ -225,11 +225,15 @@ async fn main() -> anyhow::Result<()> {
                 connections::ConnectionStore,
                 providers::{ProviderAction, ProviderCatalogService, ProvidersService},
             };
-            supervisor.register(Box::new(
-                huginn_runtime::providers::BuiltinInferencePlugin {
-                    timeout_secs: config.timeout_secs,
-                },
-            ))?;
+            supervisor.register(Box::new(huginn_runtime::providers::OllamaLocalPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
+            supervisor.register(Box::new(huginn_runtime::providers::OllamaCloudPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
+            supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
+                timeout_secs: config.timeout_secs,
+            }))?;
             supervisor.start().await?;
             let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
             let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;

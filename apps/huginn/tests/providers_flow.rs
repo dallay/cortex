@@ -24,7 +24,9 @@ use huginn_core::{
 use huginn_plugin_api::v1::{contributions_id, Contributions, UiService};
 use huginn_presentation::{providers::ProvidersUiPlugin, state::Ui};
 use huginn_runtime::{
-    connections::SqliteConnections, providers::BuiltinInferencePlugin, sessions::SqliteSessions,
+    connections::SqliteConnections,
+    providers::{CustomProviderPlugin, OllamaCloudPlugin, OllamaLocalPlugin},
+    sessions::SqliteSessions,
 };
 use serde_json::{json, Value};
 use std::{
@@ -196,7 +198,13 @@ async fn open(root: &std::path::Path, secrets: Arc<dyn SecretStore>) -> Harness 
         .register(Box::new(ProvidersPlugin::with_credentials(access.clone())))
         .unwrap();
     supervisor
-        .register(Box::new(BuiltinInferencePlugin { timeout_secs: 2 }))
+        .register(Box::new(OllamaLocalPlugin { timeout_secs: 2 }))
+        .unwrap();
+    supervisor
+        .register(Box::new(OllamaCloudPlugin { timeout_secs: 2 }))
+        .unwrap();
+    supervisor
+        .register(Box::new(CustomProviderPlugin { timeout_secs: 2 }))
         .unwrap();
     supervisor
         .register(Box::new(UiHost(contributions.clone())))
@@ -388,12 +396,13 @@ async fn login_form(h: &Harness, endpoint: &str, secret: &str, mode: SecretMode)
         .0
         .adapters()
         .into_iter()
-        .flat_map(|(_, d)| d.authentication.into_iter().map(move |a| (d.id.clone(), a)))
-        .position(|(id, a)| id == "openai" && a == AuthenticationMethod::ApiKey)
+        .position(|(_, d)| d.id == "openai")
         .unwrap();
     for _ in 0..index {
         h.ui.lock().workflow_mut().unwrap().choice(true);
     }
+    submit(&h.ui).await;
+    h.ui.lock().workflow_mut().unwrap().choice(true); // API key within Custom
     submit(&h.ui).await;
     {
         let mut state = h.ui.lock();
@@ -790,16 +799,23 @@ async fn failed_secret_write_rolls_back_and_cancelled_form_cannot_publish() {
         submit(&h.ui).await;
         assert!(h.manager.list().await.unwrap().is_empty());
         assert!(secrets.values.lock().unwrap().is_empty());
-        assert!(h.ui.lock().workflow().is_none());
-        assert!(h
-            .ui
-            .lock()
-            .notifications
-            .iter()
-            .last()
-            .unwrap()
-            .summary
-            .contains("Connection action failed"));
+        // A rejected form stays open with an actionable inline error.
+        let state = h.ui.lock();
+        let error = state
+            .workflow()
+            .expect("the form stays editable")
+            .error_message()
+            .expect("the failure stays visible")
+            .to_owned();
+        drop(state);
+        assert!(
+            error.contains(if invalid_model {
+                "The model ID may only contain"
+            } else {
+                "HTTP is only allowed for a literal loopback address"
+            }),
+            "unexpected error: {error}"
+        );
     }
     secrets.fail_write.store(true, Ordering::SeqCst);
     assert!(login(
@@ -810,12 +826,18 @@ async fn failed_secret_write_rolls_back_and_cancelled_form_cannot_publish() {
     )
     .await
     .is_none());
-    assert!(h
-        .ui
-        .lock()
-        .notifications
-        .iter()
-        .any(|event| event.summary.contains("Connection action failed")));
+    {
+        let state = h.ui.lock();
+        let error = state
+            .workflow()
+            .expect("the form stays editable")
+            .error_message()
+            .expect("the failure stays visible")
+            .to_owned();
+        assert!(error.contains("Could not save the connection"), "{error}");
+        assert!(!error.contains(A), "the key must never reach the message");
+        drop(state);
+    }
     command(&h.ui, "/providers").await;
     assert!(h.manager.list().await.unwrap().is_empty());
     // A failed secret write retains an orphan cleanup intent until reopen.
@@ -974,4 +996,207 @@ async fn ui_credential_rotation_retires_pinned_authorization_until_explicit_rese
         [B]
     );
     assert_surfaces(&h, root.path()).await;
+}
+
+#[tokio::test]
+async fn core_login_has_three_entries_local_defaults_cloud_key_and_custom_discovery() {
+    let root = tempfile::tempdir().unwrap();
+    let service = service().await;
+    let h = open(root.path(), Secrets::new(SecretMode::Ephemeral)).await;
+    command(&h.ui, "/login").await;
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        assert!(form.snapshot().2[0].contains("Ollama local"));
+        form.choice(true);
+        assert!(form.snapshot().2[0].contains("Ollama Cloud"));
+        form.choice(true);
+        assert!(form.snapshot().2[0].contains("Custom"));
+        form.choice(true);
+        assert!(form.snapshot().2[0].contains("Ollama local"));
+        drop(state);
+    }
+    submit(&h.ui).await;
+    {
+        let snapshot = h.ui.lock().workflow().unwrap().snapshot();
+        assert!(snapshot.2[0].contains("http://127.0.0.1:11434"));
+        assert_eq!(snapshot.2.len(), 3, "local has no key/storage form");
+        assert!(snapshot.2[2].ends_with(": No"));
+    }
+    h.ui.cancel_workflow();
+    command(&h.ui, "/login").await;
+    h.ui.lock().workflow_mut().unwrap().choice(true);
+    submit(&h.ui).await;
+    {
+        let snapshot = h.ui.lock().workflow().unwrap().snapshot();
+        assert!(format!("{snapshot:?}").contains("https://ollama.com"));
+        assert!(snapshot.2.iter().any(|line| line.contains("API key")));
+    }
+    h.ui.cancel_workflow();
+    // Custom no-auth uses its own form; an empty model opens discovered choices.
+    command(&h.ui, "/login").await;
+    h.ui.lock().workflow_mut().unwrap().choice(true);
+    h.ui.lock().workflow_mut().unwrap().choice(true);
+    submit(&h.ui).await;
+    submit(&h.ui).await; // no authentication
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.insert(&format!("{}/a/v1", service.endpoint));
+        form.navigate(true); // leave model empty
+        form.navigate(true);
+        form.choice(true); // explicit loopback HTTP
+        drop(state);
+    }
+    submit(&h.ui).await;
+    assert!(
+        h.manager.list().await.unwrap().is_empty(),
+        "discovering does not persist a candidate"
+    );
+    assert_eq!(
+        h.ui.lock().workflow().unwrap().snapshot().0,
+        "Connection model"
+    );
+    submit(&h.ui).await;
+    let records = h.manager.list().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].settings.provider, "openai");
+    assert_eq!(records[0].settings.model, "alpha");
+    assert!(!records[0].settings.requires_secret);
+    assert!(records[0].secret.is_none());
+    assert_public(&format!("{:?}", h.ui.lock().notifications));
+    drop(h);
+    service.task.abort();
+}
+
+#[tokio::test]
+async fn local_onboarding_discovers_models_without_authentication_or_persisting_empty_catalogs() {
+    for empty in [false, true] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let router = Router::new().route(
+            "/api/tags",
+            get(move |headers: HeaderMap| {
+                let captured = captured.clone();
+                async move {
+                    captured
+                        .lock()
+                        .unwrap()
+                        .push(headers.contains_key("authorization"));
+                    Json(if empty {
+                        json!({"models":[]})
+                    } else {
+                        json!({"models":[{"name":"fixture"}]})
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
+        command(&h.ui, "/login").await;
+        submit(&h.ui).await;
+        {
+            let mut state = h.ui.lock();
+            let form = state.workflow_mut().unwrap();
+            for _ in 0.."http://127.0.0.1:11434".len() {
+                form.backspace();
+            }
+            form.insert(&endpoint);
+            form.navigate(true);
+            form.navigate(true);
+            form.choice(true);
+            drop(state);
+        }
+        submit(&h.ui).await;
+        assert!(h.manager.list().await.unwrap().is_empty());
+        if empty {
+            let state = h.ui.lock();
+            let error = state
+                .workflow()
+                .expect("the form stays editable")
+                .error_message()
+                .expect("the failure stays visible")
+                .to_owned();
+            drop(state);
+            assert!(error.contains("No models available"), "{error}");
+        } else {
+            assert_eq!(
+                h.ui.lock().workflow().unwrap().snapshot().0,
+                "Connection model"
+            );
+            submit(&h.ui).await;
+            let records = h.manager.list().await.unwrap();
+            assert_eq!(records[0].settings.provider, "ollama");
+            assert_eq!(records[0].settings.model, "fixture");
+            assert!(records[0].secret.is_none());
+        }
+        assert_eq!(*requests.lock().unwrap(), vec![false]);
+        drop(h);
+        task.abort();
+    }
+}
+
+#[tokio::test]
+async fn updating_a_connection_reports_the_same_precise_endpoint_problem() {
+    let root = tempfile::tempdir().unwrap();
+    let service = service().await;
+    let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
+    let id = login(
+        &h,
+        &format!("{}/a/v1", service.endpoint),
+        A,
+        SecretMode::Secure,
+    )
+    .await
+    .expect("the connection is saved");
+    command(&h.ui, "/providers").await;
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.navigate(true); // action field
+        form.choice(true); // Update settings/credentials
+        drop(state);
+    }
+    submit(&h.ui).await;
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        for _ in 0..80 {
+            form.backspace();
+        }
+        form.insert("http://192.168.1.2:11434");
+        form.navigate(true); // model
+        form.navigate(true); // http
+        form.navigate(true); // storage
+        form.navigate(true); // credential
+        form.insert(A);
+        drop(state);
+    }
+    submit(&h.ui).await;
+    {
+        let state = h.ui.lock();
+        let error = state
+            .workflow()
+            .expect("the update form stays editable")
+            .error_message()
+            .expect("the failure stays visible")
+            .to_owned();
+        drop(state);
+        assert!(
+            error.contains("HTTP is only allowed for a literal loopback address"),
+            "{error}"
+        );
+        assert!(!error.contains(A), "the key must never reach the message");
+    }
+    let records = h.manager.list().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, id);
+    assert_eq!(
+        records[0].settings.endpoint.as_deref(),
+        Some(format!("{}/a/v1", service.endpoint).as_str())
+    );
+    drop(h);
 }

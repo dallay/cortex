@@ -207,16 +207,20 @@ async fn action_error_is_generic_and_does_not_render_secret_source_errors() {
     for _ in 0..20 {
         tokio::task::yield_now().await;
         h.ui.refresh_contributions();
-        if h.ui.lock().workflow().is_none() {
+        if h.ui
+            .lock()
+            .workflow()
+            .is_some_and(|form| !form.is_pending())
+        {
             break;
         }
     }
     let state = h.ui.lock();
-    assert!(state.workflow().is_none());
-    assert!(state
-        .notifications
-        .iter()
-        .any(|event| event.summary.contains("UI action failed")));
+    let form = state.workflow().expect("a failed form stays editable");
+    let (_, _, _, _, _) = form.snapshot();
+    let error = form.error_message().expect("the failure stays visible");
+    assert!(error.contains("Action failed"));
+    assert!(!error.contains(SENTINEL));
     assert!(!state.conversation.join("\n").contains(SENTINEL));
     assert!(state.events.is_empty());
     drop(state);
@@ -899,4 +903,37 @@ async fn approval_preempts_secret_workflow_and_rejects_all_ordinary_requests() {
     assert!(h.ui.lock().overlays.snapshot().is_none());
     assert!(h.ui.lock().conversation.is_empty());
     assert_eq!(h.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn failed_form_keeps_public_values_and_focus_but_clears_submitted_secret() {
+    let h = setup(true).await;
+    fill(&h.ui);
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.navigate(false);
+        form.insert("https://example.invalid/v1");
+        form.navigate(true);
+        drop(state);
+    }
+    assert!(h.ui.submit_workflow());
+    h.entered.notified().await;
+    h.release.notify_one();
+    for _ in 0..30 {
+        tokio::task::yield_now().await;
+        h.ui.refresh_contributions();
+    }
+    let state = h.ui.lock();
+    let form = state
+        .workflow()
+        .expect("a failed form must remain editable");
+    assert!(!form.is_pending());
+    let (_, _, fields, selected, _) = form.snapshot();
+    assert_eq!(selected, 1);
+    assert!(fields[0].contains("https://example.invalid/v1"));
+    assert!(!fields[1].contains('*'));
+    let error = form.error_message().expect("the failure stays visible");
+    assert!(!error.contains(SENTINEL));
+    drop(state);
 }

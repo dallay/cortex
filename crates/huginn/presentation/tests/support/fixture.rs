@@ -174,6 +174,91 @@ impl Plugin for LongDialogPlugin {
     }
 }
 /// Test-only recovered panic through the normal command-dispatch path.
+/// Mirrors the provider onboarding chain: a selector returns a second form.
+struct ProviderSelectPlugin;
+#[async_trait]
+impl Plugin for ProviderSelectPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "fixture.provider-select".into(),
+            provides: vec![],
+            requires: vec![contributions_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        use huginn_plugin_api::v1::{Field, FieldKind, OverlayKind, Workflow};
+        ctx.resolve::<UiService>(&contributions_id())?
+            .0
+            .clone()
+            .register(
+                ctx,
+                "fixture.provider-select".into(),
+                Contribution::Command {
+                    name: "/provider-select".into(),
+                    handler: Arc::new(|_| {
+                        // Mirrors /login: an auto-executed workflow returns the
+                        // provider selector, whose continuation returns the form.
+                        Ok(CommandResult::Workflow(
+                            Workflow::new("Providers", "Loading…", vec![], Arc::new(|_, _| {
+                                Box::pin(async {
+                                    Ok(CommandResult::Workflow(
+                                        Workflow::new(
+                                            "Connect provider",
+                                            "Choose a provider.",
+                                            vec![Field {
+                                                id: "provider".into(),
+                                                label: "Provider".into(),
+                                                kind: FieldKind::Choice(vec!["Ollama local".into()]),
+                                                initial: String::new(),
+                                            }],
+                                            Arc::new(|_, _| {
+                                                Box::pin(async {
+                                                    Ok(CommandResult::Workflow(
+                                                        Workflow::new(
+                                                            "New connection",
+                                                            "Public settings and secrets are separate.",
+                                                            vec![
+                                                                Field {
+                                                                    id: "endpoint".into(),
+                                                                    label: "Endpoint".into(),
+                                                                    kind: FieldKind::Text,
+                                                                    initial: "http://127.0.0.1:11434".into(),
+                                                                },
+                                                                Field {
+                                                                    id: "http".into(),
+                                                                    label: "Allow HTTP on literal loopback only".into(),
+                                                                    kind: FieldKind::Choice(vec![
+                                                                        "No".into(),
+                                                                        "Yes, explicitly allow local HTTP".into(),
+                                                                    ]),
+                                                                    initial: String::new(),
+                                                                },
+                                                            ],
+                                                            Arc::new(|_, _| {
+                                                                Box::pin(async {
+                                                                    Ok(CommandResult::Notice(View::text(
+                                                                        "CONNECTION_SAVED",
+                                                                    )))
+                                                                })
+                                                            }),
+                                                        )?
+                                                        .with_overlay_kind(OverlayKind::Login)?,
+                                                    ))
+                                                })
+                                            }),
+                                        )?
+                                        .with_overlay_kind(OverlayKind::Login)?,
+                                    ))
+                                })
+                            }))?
+                            .with_overlay_kind(OverlayKind::Login)?,
+                        ))
+                    }),
+                },
+            )?;
+        Ok(())
+    }
+}
 struct BoomPlugin;
 struct BarPlugin(tokio::sync::watch::Sender<huginn_core::providers::ConnectionSnapshot>);
 #[async_trait]
@@ -389,6 +474,9 @@ async fn main() -> Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("panic-after-callback") {
         supervisor.register(Box::new(BoomPlugin))?;
+    }
+    if std::env::args().nth(1).as_deref() == Some("provider-select") {
+        supervisor.register(Box::new(ProviderSelectPlugin))?;
     }
     if matches!(
         std::env::args().nth(1).as_deref(),

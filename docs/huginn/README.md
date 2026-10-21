@@ -335,6 +335,17 @@ This is a Rust monorepo with Rook (AI proxy) and Huginn (coding agent).
 - `just ci-local` - Full CI locally
 ```
 
+Huginn discovers instructions along the **project chain**: from the workspace up to
+the project root (the nearest ancestor with a `.git` marker), it loads the
+`AGENTS.md` of every directory, from general to specific. Subtrees outside that
+chain are never visited, so a large repository, a vendored copy or a directory
+full of third-party files cannot widen the trusted context. If the workspace has no
+project marker, only its own `AGENTS.md` is loaded.
+
+An optional `.agents/rules/` directory under the workspace adds extra rule files:
+Markdown only, two levels deep, and only when the directory exists. Its existence
+is the configuration; nothing is scanned when it is absent.
+
 ### Provider Configuration
 
 Huginn supports OpenAI-compatible APIs:
@@ -500,3 +511,38 @@ MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
 **Rust** · **Privacy-first** · **Local-first** · **MCP-native**
 
 </div>
+
+## Plugins core de proveedores
+
+`cargo run -p huginn -- chat` incluye tres plugins core independientes. `/login`
+muestra una sola entrada por proveedor:
+
+- **Ollama local** (`ollama`): endpoint inicial `http://127.0.0.1:11434`, sin clave
+  ni selección de almacén de secretos. Autoriza HTTP local explícitamente. La
+  excepción solo permite direcciones loopback literales, no `localhost` ni hosts
+  remotos.
+- **Ollama Cloud** (`ollama-cloud`): requiere una API key y usa el endpoint oficial
+  fijo `https://ollama.com`. No requiere un daemon local. El formulario no permite
+  enviar la clave Cloud a otro host.
+- **Custom — OpenAI-compatible** (`openai`): introduce la URL base del servicio
+  (incluye `/v1` si el servicio lo requiere). Elige autenticación dentro del flujo;
+  la API key es opcional. No implementa el protocolo Anthropic. Conserva el ID
+  `openai` para reutilizar las conexiones guardadas.
+
+Deja `Model ID` vacío para consultar el catálogo y elegir un modelo antes de
+persistir la conexión. Si introduces un ID, se comprueba contra el catálogo cuando
+está disponible. Si el alta falla, el formulario permanece abierto con el motivo
+concreto y conserva los valores públicos; el secreto enviado se descarta y hay que
+reintroducirlo. Un catálogo vacío o un error de conexión/autenticación no guarda una
+conexión incompleta. Si Custom no implementa el catálogo
+(`/models` devuelve 404 o 405), introduce el ID manualmente: el servicio comprobará
+ese modelo al recibir la solicitud de inferencia. Otros fallos no activan este
+fallback. Después de guardar, usa `/model` para seleccionar la conexión para chat.
+No se descargan modelos ni se arranca Ollama automáticamente.
+
+El catálogo y las capacidades de Ollama usan `/api/tags` y `/api/show`; la
+inferencia usa `/v1`. Las conexiones locales previas con clave siguen siendo
+compatibles, pero las nuevas altas locales no solicitan clave. Cada plugin posee
+su propio registro y puede retirarse sin retirar los otros proveedores. Para
+agregar un proveedor core, registra otro `ProviderAdapter` desde un plugin con su
+propia identidad. El selector usa el catálogo; no necesita una rama por proveedor.
