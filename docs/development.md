@@ -118,7 +118,7 @@ cargo test -p rook-core -- --nocapture
 cargo test --lib
 
 # Solo tests de integración
-cargo test --test '*'
+cargo test --workspace --tests --all-features
 ```
 
 ### Tests del Dashboard
@@ -178,7 +178,7 @@ Comprueba que no haya otro proceso usando la base de datos de prueba. No borres 
 
 ### Dashboard no carga
 
-1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health`
+1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`, o `curl http://127.0.0.1:3773/health` con `cargo run -p rook`.
 2. Comprueba que la sesión de administración sea válida.
 3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
 
