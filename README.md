@@ -7,7 +7,7 @@ The AI Infrastructure Stack for Production
 [![CI](https://img.shields.io/github/actions/workflow/status/dallay/cortex/ci.yml?branch=main&label=CI&logo=github)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/dallay/cortex)](LICENSE)
 [![Rust MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2FCargo.toml&query=%24.workspace.package%5B%27rust-version%27%5D&label=Rust%20MSRV&suffix=%2B&color=DEA584&logo=rust&labelColor=4A4A4A)](https://www.rust-lang.org)
-[![Node](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/dev/pnpm/main?logo=nodedotjs&color=339933&labelColor=4A4A4A)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2Fpackage.json&query=%24.engines.node&label=Node&color=339933&logo=nodedotjs&labelColor=4A4A4A)](https://nodejs.org)
 [![Vue](https://img.shields.io/github/package-json/dependency-version/dallay/cortex/vue/main?filename=apps%2Frook%2Fdashboard%2Fpackage.json&logo=vuedotjs&color=4FC08D&labelColor=4A4A4A)](https://vuejs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&labelColor=4A4A4A)](https://www.docker.com)
 [![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex/main?label=last%20commit)](https://github.com/dallay/cortex/commits/main)
