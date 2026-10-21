@@ -30,14 +30,14 @@ just --list
 # Build
 cargo build
 
-# Tests unitarios
-cargo test -p rook-core
-cargo test -p rook-usecases
-# ... (o simplemente)
-cargo test
+# Tests del workspace
+cargo test --workspace --all-features
 
-# Tests de integración
-cargo test -p rook-usecases --test integration
+# Paquete específico
+cargo test -p rook-core
+
+# Test de integración específico
+cargo test -p rook-usecases --test route_request_restrictions
 
 # Run con logging
 RUST_LOG=debug cargo run --bin rook
@@ -91,50 +91,104 @@ just huginn-run
 
 ## Testing
 
+### Tipos de Tests
+
+| Tipo | Comando | Cuándo usar |
+|------|---------|-------------|
+| Tests Rust | `cargo test --workspace --all-features` | Verificación de los crates del workspace |
+| Dashboard | `pnpm --filter @dallay/rook-dashboard exec vitest run` | Tests de UI/Vue |
+| E2E con Docker | `just test-e2e` | Flujos integrados del dashboard y API |
+| E2E multi-distribución | [Dev Testing Guide](../dev/README.md) | Validación del binario en varias distribuciones |
+
+Para escoger el flujo Docker adecuado, consulta la tabla de decisión de [Dev Testing Guide](../dev/README.md).
+
 ### Tests unitarios y de integración
 
 ```bash
 # Todo el workspace
-cargo test
+cargo test --workspace --all-features
 
 # Paquete específico
 cargo test -p rook-core
 
 # Con output detallado
 cargo test -p rook-core -- --nocapture
+
+# Solo tests unitarios (sin integración)
+cargo test --lib
+
+# Solo tests de integración
+cargo test --test '*'
+```
+
+### Tests del Dashboard
+
+```bash
+# Todos los tests
+pnpm --filter @dallay/rook-dashboard exec vitest run
+
+# Test específico
+pnpm --filter @dallay/rook-dashboard exec vitest run src/views/LoginView.spec.ts
 ```
 
 ### Tests E2E (requiere Docker)
 
-Ver [dev/README.md](dev/README.md) para detalles completos.
-
 ```bash
-# Preparar imagen Docker
+# 1. Preparar imagen Docker
 just test-e2e-build
 
-# Smoke test (backend only)
+# 2a. Smoke test (backend only) - ~2 min
 just dev-build && just dev-up
 curl http://127.0.0.1:8090/health
 
-# Full E2E con Playwright
+# 2b. Full E2E con Playwright - ~10 min
 just test-e2e
 ```
 
+Para detalles completos de arquitectura Docker y troubleshooting, ver [dev/README.md](../dev/README.md).
+
 ## Validación pre-PR
 
+### `just ci-local` vs `just ci-ci`
+
+| Comando | Lint | Arquitectura Huginn | Tests Rust | Tests Dashboard | Docs Rust | Auditoría | E2E Docker |
+|---------|------|---------------------|------------|-----------------|-----------|-----------|------------|
+| `just ci-local` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `just ci-ci` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+
 ```bash
-# Local completo (lint + tests + dashboard)
+# Validación local completa (recomendado antes de PR)
 just ci-local
 
-# Solo linting
+# Solo linting (fast feedback)
 just ci-lint
 
-# CI simulado (omite E2E)
+# Simulación de CI (sin E2E, para iteración rápida)
 just ci-ci
 ```
 
-> **Nota:** `just ci-ci` no es equivalente a `just ci-local`. La versión CI omite E2E.
-> Consulta `dev/README.md` para requisitos de E2E completos.
+> **Nota:** `just ci-ci` omite la validación de arquitectura Huginn y E2E.
+> `just ci-local` incluye ambos pasos. Consulta `justfile` para la secuencia exacta.
+
+## Troubleshooting
+
+### Tests reportan un bloqueo de SQLite
+
+Comprueba que no haya otro proceso usando la base de datos de prueba. No borres la base de datos de desarrollo sin autorización; consulta `just db-reset` y su alcance antes de usarlo.
+
+### Dashboard no carga
+
+1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health`
+2. Comprueba que la sesión de administración sea válida.
+3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
+
+### Circuit breaker activo
+
+Consulta el estado actual con `GET /api/resilience`. La petición requiere una sesión autenticada; no es un endpoint público. Para el formato de respuesta y las operaciones disponibles, usa la [referencia de API](rook/api.md).
+
+### E2E con Docker falla o agota el tiempo
+
+Consulta el [Troubleshooting de Dev Testing Guide](../dev/README.md), que cubre los contenedores, puertos y la suite Playwright.
 
 ## Git hooks
 
@@ -172,24 +226,9 @@ Los workflows de GitHub están en `.github/workflows/`:
 - `release.yml` — Publicación de releases
 - `labeler.yml` — Auto-labeling de PRs
 
-## Troubleshooting
+### Troubleshooting de Docker
 
-### Problemas comunes
-
-### `cargo test` falla con errores de SQLite
-
-- Asegúrate de no tener un proceso Rook corriendo que lockea la DB
-- Para reset: `just db-reset`
-
-### Dashboard no carga
-
-- Verifica que Rook esté corriendo en puerto 3773
-- El dashboard necesita autenticación para flows de management
-
-### E2E tests flaky
-
-- Limpia contenedores: `just dev-clean`
-- Reconstruye imagen: `just test-e2e-build`
+Para problemas específicos de E2E y Docker, consulta la sección **Troubleshooting** de [Dev Testing Guide](../dev/README.md).
 
 ### `just doctor` reporta herramientas faltantes
 - Instala lo que falte según la salida del comando

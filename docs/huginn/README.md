@@ -78,70 +78,13 @@ Huginn is a **local coding agent** built in Rust that works with your codebase. 
 
 ## 🏗️ Architecture
 
-```
-huginn/
-│
-├── src/
-│   ├── main.rs              # Entry point, CLI parsing
-│   │
-│   ├── cli/                 # Command handlers
-│   │   ├── chat.rs          # Interactive chat mode
-│   │   ├── run.rs           # Single command mode
-│   │   └── sessions.rs      # Session management
-│   │
-│   └── runtime/
-│       ├── mod.rs           # Core runtime
-│       ├── provider.rs      # LLM provider abstraction
-│       ├── tools/           # Native tools
-│       │   ├── file.rs      # File operations
-│       │   ├── terminal.rs  # Shell commands
-│       │   ├── git.rs       # Git operations
-│       │   └── mod.rs       # Tool registry
-│       │
-│       ├── mcp/             # MCP client
-│       │   ├── client.rs    # Stdio client
-│       │   └── protocol.rs  # MCP protocol
-│       │
-│       ├── session.rs       # SQLite session storage
-│       ├── context.rs       # Context building
-│       └── ui/              # Ratatui UI components
-│
-├── runtime/                 # Huginn runtime crate (shared)
-│   ├── src/
-│   │   ├── service_kernel.rs
-│   │   ├── streaming_adapter.rs  # OpenAI-compatible streaming
-│   │   ├── tools.rs
-│   │   └── sessions.rs
-│   │
-│   └── tests/
-│       └── fixtures/
-│
-└── AGENTS.md               # Per-repo agent instructions
-```
+Huginn is composed from separate Rust crates. `apps/huginn` is the composition
+root; `application` defines use cases and ports; `runtime` and `presentation`
+provide concrete capabilities; `core` owns shared contracts and the plugin
+kernel. The plugin API supports trusted, statically linked extensions.
 
-### Runtime Flow
-
-```
-User Input
-    │
-    ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Parser    │ ──▶ │   Provider   │ ──▶ │  Response   │
-│  (Command)  │     │  (LLM Call)  │     │  (Streaming)│
-└─────────────┘     └──────┬───────┘     └──────┬──────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │   Tool Call   │
-                    │  Execution    │
-                    └──────┬───────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ File System  │   │   Terminal   │   │     Git      │
-└──────────────┘   └──────────────┘   └──────────────┘
-```
+See [Huginn architecture](architecture.md) for the crate boundaries, lifecycle,
+and component details.
 
 ---
 

@@ -323,6 +323,16 @@ ldd target/release/rook  # Should show musl, not glibc
 | [Playwright](https://playwright.dev) | E2E testing framework |
 | [Compose File](docker-compose.yml) | Docker Compose configuration |
 | [Rook Architecture](../docs/rook/architecture.md) | Backend internals |
+| [Development Guide](../docs/development.md) | General dev setup and troubleshooting |
+
+---
+
+## 🔗 CI Integration
+
+`just ci-local` runs the complete local validation sequence, including the
+Docker E2E stage. `just ci-ci` omits E2E and the Huginn architecture guard.
+Consult the [Development Guide](../docs/development.md) for the command
+breakdown; this guide documents the Docker test paths.
 
 ---
 
