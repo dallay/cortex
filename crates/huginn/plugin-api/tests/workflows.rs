@@ -276,6 +276,7 @@ async fn results_host(
 async fn workflow_result_validation_is_exhaustive_and_notices_are_checked() {
     let (_supervisor, ui, _) = results_host(Arc::new(|argument| {
         let result = match argument {
+            "dismiss" => CommandResult::Dismiss,
             "help" => CommandResult::Overlay(OverlayKind::Help),
             "settings" => CommandResult::Overlay(OverlayKind::Settings),
             "provider" => CommandResult::Overlay(OverlayKind::Provider),
@@ -298,6 +299,7 @@ async fn workflow_result_validation_is_exhaustive_and_notices_are_checked() {
     }))
     .await;
     for (argument, allowed) in [
+        ("dismiss", true),
         ("help", true),
         ("settings", true),
         ("provider", false),
@@ -319,6 +321,8 @@ async fn workflow_result_validation_is_exhaustive_and_notices_are_checked() {
         assert_eq!(result.is_ok(), allowed, "{argument}: {result:?}");
         if argument == "notice" {
             assert_eq!(result.unwrap(), CommandResult::Notice(View::text("safe")));
+        } else if argument == "dismiss" {
+            assert_eq!(result.unwrap(), CommandResult::Dismiss);
         }
     }
 }
@@ -353,6 +357,8 @@ async fn tagged_continuation_keeps_own_metadata_payload_callback_and_exact_regis
         }),
     )
     .unwrap()
+    .searchable()
+    .without_history()
     .with_overlay_kind(OverlayKind::ModelPicker)
     .unwrap();
     let expected = next.clone();
@@ -385,12 +391,16 @@ async fn tagged_continuation_keeps_own_metadata_payload_callback_and_exact_regis
     assert_eq!(next, expected);
     assert_eq!(first.overlay_kind(), Some(OverlayKind::Login));
     assert_eq!(next.overlay_kind(), Some(OverlayKind::ModelPicker));
+    assert!(next.is_searchable());
+    assert!(!next.retains_history());
     assert_eq!(next.body(), "Original body");
     let retagged = next
         .clone()
         .with_overlay_kind(OverlayKind::Confirm)
         .unwrap();
     assert!(retagged.is_active());
+    assert!(retagged.is_searchable());
+    assert!(!retagged.retains_history());
     assert_eq!(retagged.fields(), next.fields());
     assert_eq!(next.overlay_kind(), Some(OverlayKind::ModelPicker));
     let input = || FormInput {
@@ -506,5 +516,110 @@ async fn every_payload_backed_surface_binds_and_untagged_continuation_stays_unta
                 .unwrap(),
             CommandResult::Notice(View::text("done"))
         );
+    }
+}
+
+#[test]
+fn workflow_navigation_metadata_is_opt_in_and_does_not_mutate_clones() {
+    let original = Workflow::new(
+        "Catalog",
+        "Choose a provider",
+        vec![Field {
+            id: "provider".into(),
+            label: "Provider".into(),
+            kind: FieldKind::Choice(vec!["Local".into(), "Cloud".into()]),
+            initial: "1".into(),
+        }],
+        Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+    )
+    .unwrap();
+    let searchable = original.clone().searchable();
+    let transient = searchable.clone().without_history();
+    let barrier = original.clone().without_history();
+
+    assert!(!original.is_searchable());
+    assert!(original.retains_history());
+    assert!(searchable.is_searchable());
+    assert!(searchable.retains_history());
+    assert!(transient.is_searchable());
+    assert!(!transient.retains_history());
+    assert!(!barrier.is_searchable());
+    assert!(!barrier.retains_history());
+    for variant in [searchable, transient, barrier] {
+        assert_eq!(variant.title(), original.title());
+        assert_eq!(variant.body(), original.body());
+        assert_eq!(variant.fields(), original.fields());
+        assert!(!variant.is_active(), "metadata cannot authorize a workflow");
+    }
+}
+
+#[tokio::test]
+async fn synchronous_dismiss_obeys_command_revocation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let (mut supervisor, ui, _) = results_host(Arc::new(move |_| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CommandResult::Dismiss)
+    }))
+    .await;
+    let command = ui.command("/first").unwrap();
+    assert_eq!(command.run("").unwrap(), CommandResult::Dismiss);
+    supervisor.remove("results").await.unwrap();
+    assert!(command.run("").is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancellation_and_revocation_prevent_pending_dismiss() {
+    for revoke in [false, true] {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let handler_entered = entered.clone();
+        let handler_release = release.clone();
+        let (mut supervisor, ui, _) = results_host(Arc::new(move |_| {
+            let entered = handler_entered.clone();
+            let release = handler_release.clone();
+            Ok(CommandResult::Workflow(
+                Workflow::new(
+                    "Finish",
+                    "",
+                    vec![],
+                    Arc::new(move |_, _| {
+                        let entered = entered.clone();
+                        let release = release.clone();
+                        Box::pin(async move {
+                            entered.notify_one();
+                            release.notified().await;
+                            Ok(CommandResult::Dismiss)
+                        })
+                    }),
+                )?
+                .searchable()
+                .without_history(),
+            ))
+        }))
+        .await;
+        let CommandResult::Workflow(workflow) = ui.command("/first").unwrap().run("").unwrap()
+        else {
+            panic!("expected workflow");
+        };
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let task =
+            tokio::spawn(async move { workflow.execute(FormInput::default(), task_cancel).await });
+        tokio::time::timeout(std::time::Duration::from_secs(1), entered.notified())
+            .await
+            .unwrap();
+        if revoke {
+            supervisor.remove("results").await.unwrap();
+        } else {
+            cancel.cancel();
+        }
+        release.notify_one();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, Err(huginn_core::AgentError::Cancelled)));
     }
 }

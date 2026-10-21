@@ -863,3 +863,308 @@ async fn escape_from_initial_provider_search_closes_instead_of_reopening_loading
     assert!(ui.lock().workflow().is_none());
     assert!(manager.records.lock().unwrap().is_empty());
 }
+
+fn onboarding_key(
+    ui: &Ui,
+    code: crossterm::event::KeyCode,
+    modifiers: crossterm::event::KeyModifiers,
+) {
+    let (ticket, focus) = {
+        let state = ui.lock();
+        (state.overlays.ticket(), state.overlays.focus())
+    };
+    ui.overlay_input(
+        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(code, modifiers)),
+        ticket,
+        focus,
+    );
+}
+async fn open_onboarding_settings(ui: &Ui) {
+    assert!(ui.dispatch_command("/login"));
+    settle(ui).await;
+    submit(ui).await;
+    submit(ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 3 of 4"));
+}
+fn edit_onboarding_settings(ui: &Ui) {
+    let mut state = ui.lock();
+    let form = state.workflow_mut().unwrap();
+    form.insert("https://draft.example.invalid/v1");
+    form.navigate(true);
+    form.choice(true); // beta
+    form.navigate(true);
+    form.choice(true); // explicit loopback HTTP consent
+    form.navigate(true);
+    form.choice(true); // ephemeral storage
+    form.navigate(true);
+    form.insert(SENTINEL);
+}
+
+#[tokio::test]
+async fn back_and_forward_restore_search_and_public_drafts_but_require_a_fresh_secret() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let (_supervisor, ui, manager) = setup().await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    ui.lock().workflow_mut().unwrap().insert("tEsT");
+    submit(&ui).await;
+    submit(&ui).await;
+    edit_onboarding_settings(&ui);
+    let draft = ui.lock().workflow().unwrap().snapshot();
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    {
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        assert_eq!(form.search_query(), "tEsT");
+        assert_eq!(form.search_rows(), vec![("Test provider".into(), true)]);
+    }
+    submit(&ui).await;
+    submit(&ui).await;
+    {
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        let restored = form.snapshot();
+        assert_eq!(restored.2[..4], draft.2[..4]);
+        assert_eq!(restored.3, 4);
+        assert_eq!(restored.2[4], "API key: ");
+    }
+    assert!(!ui.submit_workflow(), "Back must not restore an API key");
+    assert!(manager.records.lock().unwrap().is_empty());
+    ui.lock().workflow_mut().unwrap().insert(SENTINEL);
+    submit(&ui).await;
+    assert!(!ui.lock().workflow().unwrap().can_go_back());
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(
+        ui.lock().workflow().is_none(),
+        "saved settings cannot be reopened with Esc"
+    );
+    let records = manager.records.lock().unwrap();
+    assert_eq!(records.len(), 1);
+    let record = records.values().next().unwrap();
+    assert_eq!(
+        record.settings.endpoint.as_deref(),
+        Some("https://draft.example.invalid/v1")
+    );
+    assert_eq!(record.settings.model, "beta");
+    assert!(record.settings.allow_loopback_http);
+    assert_eq!(record.mode, SecretMode::Ephemeral);
+    assert!(ui.lock().conversation.is_empty());
+}
+
+#[tokio::test]
+async fn changing_authentication_discards_an_incompatible_forward_draft() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let (_supervisor, ui, manager) = setup_with_authentication(vec![
+        AuthenticationMethod::ApiKey,
+        AuthenticationMethod::None,
+    ])
+    .await;
+    open_onboarding_settings(&ui).await;
+    edit_onboarding_settings(&ui);
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    ui.lock().workflow_mut().unwrap().choice(true);
+    submit(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        let snapshot = form.snapshot();
+        assert_eq!(snapshot.2.len(), 3);
+        assert_eq!(snapshot.3, 0);
+        assert!(!snapshot.2.join(" ").contains("draft.example.invalid"));
+        assert_eq!(snapshot.2[1], "Model: alpha");
+        assert!(snapshot.2[2].ends_with("No"));
+        form.insert("http://127.0.0.1:11434");
+        form.navigate(true);
+        form.navigate(true);
+        form.choice(true);
+    }
+    submit(&ui).await;
+    let records = manager.records.lock().unwrap();
+    let record = records.values().next().unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(!record.settings.requires_secret);
+    assert!(record.secret.is_none());
+}
+
+#[tokio::test]
+async fn ctrl_c_discards_backward_and_forward_drafts_without_saving() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let (_supervisor, ui, manager) = setup().await;
+    open_onboarding_settings(&ui).await;
+    edit_onboarding_settings(&ui);
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(ui.lock().workflow().unwrap().can_go_back());
+    onboarding_key(&ui, KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(ui.lock().workflow().is_none());
+    open_onboarding_settings(&ui).await;
+    let state = ui.lock();
+    let snapshot = state.workflow().unwrap().snapshot();
+    assert_eq!(snapshot.3, 0);
+    assert!(!snapshot.2.join(" ").contains("draft.example.invalid"));
+    assert_eq!(snapshot.2[1], "Model: alpha");
+    assert!(snapshot.2[3].contains("Secure OS store"));
+    assert_eq!(snapshot.2[4], "API key: ");
+    assert!(state.conversation.is_empty());
+    drop(state);
+    assert!(manager.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn failed_onboarding_save_keeps_public_settings_and_retries_with_a_fresh_secret() {
+    let (_supervisor, ui, manager) = setup().await;
+    open_onboarding_settings(&ui).await;
+    edit_onboarding_settings(&ui);
+    let draft = ui.lock().workflow().unwrap().snapshot();
+    manager.fail.store(true, Ordering::SeqCst);
+    submit(&ui).await;
+    {
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        let snapshot = form.snapshot();
+        assert_eq!(snapshot.0, draft.0);
+        assert_eq!(snapshot.2[..4], draft.2[..4]);
+        assert_eq!(snapshot.3, draft.3);
+        assert_eq!(snapshot.2[4], "API key: ");
+        assert!(form.error_message().unwrap().contains("Could not save"));
+        assert!(!format!("{snapshot:?}").contains(SENTINEL));
+    }
+    assert!(manager.records.lock().unwrap().is_empty());
+    assert!(!ui.submit_workflow());
+    manager.fail.store(false, Ordering::SeqCst);
+    ui.lock().workflow_mut().unwrap().insert(SENTINEL);
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 4 of 4"));
+    assert_eq!(manager.records.lock().unwrap().len(), 1);
+    assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn provider_selection_recovery_failure_stays_editable_and_can_retry() {
+    let (_supervisor, ui, manager) = setup().await;
+    manager.uncertain.store(true, Ordering::SeqCst);
+    manager.recovery_fail.store(true, Ordering::SeqCst);
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    {
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        assert!(form.snapshot().0.contains("Step 1 of 4"));
+        assert!(form.error_message().is_some());
+        assert!(!form.is_pending());
+    }
+    assert!(manager.uncertain.load(Ordering::SeqCst));
+    assert!(manager.records.lock().unwrap().is_empty());
+    manager.recovery_fail.store(false, Ordering::SeqCst);
+    submit(&ui).await;
+    assert!(!manager.uncertain.load(Ordering::SeqCst));
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 2 of 4"));
+}
+
+#[tokio::test]
+async fn existing_provider_summary_filters_other_providers_and_defaults_to_management() {
+    use huginn_presentation::overlay::OverlayKind as Surface;
+    let (_supervisor, ui, manager) = setup().await;
+    login(&ui).await;
+    let original = manager.list().await.unwrap()[0].clone();
+    let mut second = original.clone();
+    second.id = uuid::Uuid::from_u128(1);
+    second.mode = SecretMode::Secure;
+    second.settings.endpoint = Some("https://second.example.invalid/v1".into());
+    let mut unrelated = original.clone();
+    unrelated.id = uuid::Uuid::from_u128(2);
+    unrelated.settings.provider = "another-provider".into();
+    {
+        let mut records = manager.records.lock().unwrap();
+        records.insert(second.id, second.clone());
+        records.insert(unrelated.id, unrelated.clone());
+    }
+    let baseline = manager.list().await.unwrap();
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    let summary = ui.lock().workflow().unwrap().snapshot();
+    assert_eq!(summary.0, "Provider already configured");
+    for record in [&original, &second] {
+        assert!(summary.1.contains(&record.id.to_string()));
+        assert!(summary
+            .1
+            .contains(record.settings.endpoint.as_deref().unwrap()));
+        assert!(summary.1.contains(&format!("{:?}", record.mode)));
+    }
+    assert!(!summary.1.contains(&unrelated.id.to_string()));
+    assert!(summary.2[0].contains("Manage existing connections"));
+    submit(&ui).await;
+    assert_surface(&ui, Surface::Provider);
+    assert_eq!(manager.list().await.unwrap(), baseline);
+    assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn configured_result_actions_route_without_implicitly_selecting_a_model() {
+    use huginn_presentation::overlay::OverlayKind as Surface;
+    for (action, surface, fields) in [(0, Surface::ModelPicker, 1), (1, Surface::Provider, 2)] {
+        let (_supervisor, ui, manager) = setup().await;
+        login(&ui).await;
+        let saved = manager.list().await.unwrap();
+        assert!(!ui.lock().workflow().unwrap().can_go_back());
+        for _ in 0..action {
+            ui.lock().workflow_mut().unwrap().choice(true);
+        }
+        submit(&ui).await;
+        assert_surface(&ui, surface);
+        assert_eq!(ui.lock().workflow().unwrap().snapshot().2.len(), fields);
+        assert_eq!(manager.list().await.unwrap(), saved);
+        assert!(manager.selected.lock().unwrap().is_none());
+        assert!(ui.lock().conversation.is_empty());
+        if action == 0 {
+            submit(&ui).await; // explicitly choose a connection
+            assert!(manager.selected.lock().unwrap().is_none());
+            ui.lock().workflow_mut().unwrap().choice(true);
+            submit(&ui).await; // explicitly choose beta
+            assert_eq!(
+                *manager.selected.lock().unwrap(),
+                Some((saved[0].id, "beta".into()))
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn revoking_provider_ui_removes_history_and_does_not_recover_old_drafts_on_reload() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let (mut supervisor, ui, manager) = setup().await;
+    open_onboarding_settings(&ui).await;
+    edit_onboarding_settings(&ui);
+    onboarding_key(&ui, KeyCode::Esc, KeyModifiers::NONE);
+    supervisor.remove("builtin.providers.ui").await.unwrap();
+    ui.refresh_contributions();
+    assert!(ui.lock().workflow().is_none());
+    assert!(!ui.dispatch_command("/login"));
+    supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
+    supervisor.start().await.unwrap();
+    open_onboarding_settings(&ui).await;
+    let snapshot = ui.lock().workflow().unwrap().snapshot();
+    assert!(!snapshot.2.join(" ").contains("draft.example.invalid"));
+    assert_eq!(snapshot.2[4], "API key: ");
+    assert!(manager.records.lock().unwrap().is_empty());
+}
