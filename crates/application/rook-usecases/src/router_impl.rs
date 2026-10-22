@@ -390,6 +390,14 @@ impl RouterPort for FallbackRouter {
         connection_id: &shared_kernel::ConnectionId,
     ) -> Option<Arc<dyn ProviderPort>> {
         let provider_id = ProviderId::new(connection_id.to_string());
+        let circuit = self
+            .circuits
+            .get(&provider_id)
+            .map(|state| state.clone())
+            .unwrap_or_default();
+        if circuit.is_open() {
+            return None;
+        }
         self.get(&provider_id)
     }
 }
@@ -735,6 +743,32 @@ mod tests {
                 assert_eq!(ids[2], ProviderId::new("a"));
                 assert_eq!(ids[3], ProviderId::new("b"));
             });
+    }
+
+    #[test]
+    fn resolve_connection_skips_provider_with_open_circuit() {
+        let connection_id = shared_kernel::ConnectionId::new();
+        let adapter_id = ProviderId::new(connection_id.to_string());
+        let provider = StubProvider::new(adapter_id.as_str(), &["model-x"]);
+        let fallback = StubProvider::new("fallback", &["model-x"]);
+        let router = FallbackRouter::new(vec![provider, fallback], RoutingStrategy::Priority);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+
+        rt.block_on(async {
+            for _ in 0..FAILURE_THRESHOLD {
+                router
+                    .on_failure(&adapter_id, &CortexError::provider("upstream error"))
+                    .await;
+            }
+        });
+
+        assert!(router.resolve_connection(&connection_id).is_none());
+        let selected = rt
+            .block_on(async { router.select(&request("model-x")).await })
+            .expect("fallback provider remains selectable");
+        assert_eq!(selected.id(), &ProviderId::new("fallback"));
     }
 
     #[test]

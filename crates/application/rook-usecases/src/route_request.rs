@@ -16,7 +16,7 @@ use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
     ApiFormat, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort, ComboRepositoryPort,
-    CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
+    ComboStep, CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
     ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk,
     TokenUsage, ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
 };
@@ -1098,6 +1098,11 @@ impl RouteRequest {
         let sorted_steps: Vec<_> = combo.sorted_steps().into_iter().collect();
         let total_steps = sorted_steps.len();
 
+        // Authorize every usable connection-bound step before upstream I/O.
+        // Invalid or unavailable connections retain their fallback skip behavior.
+        self.preflight_connection_authorization(&req, &sorted_steps)
+            .await?;
+
         // Track errors for the final AllProvidersExhausted
         let mut steps_attempted = 0;
         let mut errors: Vec<(ProviderId, String)> = Vec::new();
@@ -1127,131 +1132,31 @@ impl RouteRequest {
                 "trying combo step"
             );
 
-            // A connection-bound step uses runtime identity for its contract and
-            // the connection UUID for exact adapter lookup. Legacy steps retain
-            // their persisted adapter-id selection behavior.
             let mut step_req = req.clone();
             step_req.model = model.clone();
-            let (provider, audit_provider_id, runtime_id, exact_connection_id) = if let Some(
-                connection_id,
-            ) =
-                effective_connection_id
-            {
-                let Some(repository) = self.provider_repository.as_ref() else {
-                    record_combo_skip(
-                        &mut errors,
-                        provider_id,
-                        step_index,
-                        "connection_repository_unavailable",
-                    );
-                    continue;
-                };
-                let connection = match repository.find(connection_id).await {
-                    Ok(Some(connection)) => connection,
-                    Ok(None) => {
-                        record_combo_skip(
-                            &mut errors,
-                            provider_id,
-                            step_index,
-                            "connection_not_found",
-                        );
-                        continue;
-                    }
-                    Err(error) => {
-                        tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_lookup_failed", "skipping combo step");
-                        errors.push((provider_id.clone(), "connection_lookup_failed".to_string()));
-                        continue;
-                    }
-                };
-                if !connection.is_active {
-                    record_combo_skip(&mut errors, provider_id, step_index, "connection_inactive");
-                    continue;
-                }
-                if connection.provider_runtime_id != *provider_id {
-                    record_combo_skip(
-                        &mut errors,
-                        provider_id,
-                        step_index,
-                        "provider_runtime_mismatch",
-                    );
-                    continue;
-                }
-                let adapter_id = ProviderId::new(connection.id.to_string());
-                let Some(provider) = self.router.resolve_connection(&connection.id) else {
-                    record_combo_skip(&mut errors, &adapter_id, step_index, "adapter_unavailable");
-                    continue;
-                };
-                if provider.id() != &adapter_id {
-                    record_combo_skip(
-                        &mut errors,
-                        &adapter_id,
-                        step_index,
-                        "adapter_identity_mismatch",
-                    );
-                    continue;
-                }
-                let allowed = &req.restrictions.allowed_providers;
-                if !allowed.is_empty() && !allowed.contains(&adapter_id) {
-                    return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
-                }
-                // The exact adapter replaces global selection, so availability
-                // and model support are checked here explicitly.
-                if !provider.is_available() {
-                    record_combo_skip(&mut errors, &adapter_id, step_index, "provider_unavailable");
-                    continue;
-                }
-                if !provider.supports_model(model) {
-                    record_combo_skip(&mut errors, &adapter_id, step_index, "model_unsupported");
-                    continue;
-                }
-                tracing::debug!(
-                    connection_id = %connection.id,
-                    runtime_id = %connection.provider_runtime_id,
-                    "resolved exact combo connection"
-                );
-                (
-                    provider,
-                    adapter_id,
-                    Some(connection.provider_runtime_id),
-                    Some(connection.id),
+            let resolved = if let Some(connection_id) = effective_connection_id {
+                self.resolve_connection_combo_step(
+                    connection_id,
+                    provider_id,
+                    model,
+                    &req,
+                    step_index,
+                    &mut errors,
                 )
+                .await?
             } else {
-                // Legacy steps keep their historical selection behavior: the
-                // router picks the adapter and the step is skipped when the
-                // registry or the router disagree with the stored adapter ID.
-                let available_providers = self.router.providers();
-                if !available_providers.contains(provider_id) {
-                    tracing::warn!(
-                        step_index = step_index + 1,
-                        provider_id = %provider_id,
-                        "skipping step: provider not in registry"
-                    );
-                    continue;
-                }
-                match self.router.select(&step_req).await {
-                    Ok(provider) if provider.id() == provider_id => {
-                        (provider, provider_id.clone(), None, None)
-                    }
-                    Ok(provider) => {
-                        tracing::warn!(
-                            step_index = step_index + 1,
-                            selected = %provider.id(),
-                            expected = %provider_id,
-                            "router selected different provider, skipping to maintain combo order"
-                        );
-                        continue;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            step_index = step_index + 1,
-                            error = %error,
-                            "failed to select provider for step"
-                        );
-                        errors.push((provider_id.clone(), error.to_string()));
-                        steps_attempted += 1;
-                        continue;
-                    }
-                }
+                self.resolve_legacy_combo_step(
+                    provider_id,
+                    &step_req,
+                    step_index,
+                    &mut errors,
+                    &mut steps_attempted,
+                )
+                .await
+            };
+            let Some((provider, audit_provider_id, runtime_id, exact_connection_id)) = resolved
+            else {
+                continue;
             };
 
             let step_context = ComboStepContext {
@@ -1382,6 +1287,186 @@ impl RouteRequest {
         ))
     }
 
+    async fn preflight_connection_authorization(
+        &self,
+        req: &CompletionRequest,
+        steps: &[&ComboStep],
+    ) -> Result<(), CortexError> {
+        let allowed = &req.restrictions.allowed_providers;
+        if allowed.is_empty() {
+            return Ok(());
+        }
+        let Some(repository) = self.provider_repository.as_ref() else {
+            return Ok(());
+        };
+
+        for step in steps {
+            self.authorize_connection_combo_step(repository.as_ref(), allowed, step)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn authorize_connection_combo_step(
+        &self,
+        repository: &dyn ProviderRepositoryPort,
+        allowed: &[ProviderId],
+        step: &ComboStep,
+    ) -> Result<(), CortexError> {
+        let Some(connection_id) = step.connection_id.as_ref() else {
+            return Ok(());
+        };
+        let Ok(Some(connection)) = repository.find(connection_id).await else {
+            return Ok(());
+        };
+        if !connection.is_active || connection.provider_runtime_id != step.provider_id {
+            return Ok(());
+        }
+
+        let adapter_id = ProviderId::new(connection.id.to_string());
+        let Some(provider) = self.router.resolve_connection(&connection.id) else {
+            return Ok(());
+        };
+        if provider.id() != &adapter_id
+            || !provider.is_available()
+            || !provider.supports_model(&step.model)
+        {
+            return Ok(());
+        }
+        if !allowed.contains(&adapter_id) {
+            return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+        }
+        Ok(())
+    }
+
+    async fn resolve_connection_combo_step(
+        &self,
+        connection_id: &ConnectionId,
+        runtime_id: &ProviderId,
+        model: &ModelId,
+        req: &CompletionRequest,
+        step_index: usize,
+        errors: &mut Vec<(ProviderId, String)>,
+    ) -> Result<
+        Option<(
+            Arc<dyn rook_core::ProviderPort>,
+            ProviderId,
+            Option<ProviderId>,
+            Option<ConnectionId>,
+        )>,
+        CortexError,
+    > {
+        let Some(repository) = self.provider_repository.as_ref() else {
+            record_combo_skip(
+                errors,
+                runtime_id,
+                step_index,
+                "connection_repository_unavailable",
+            );
+            return Ok(None);
+        };
+        let connection = match repository.find(connection_id).await {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                record_combo_skip(errors, runtime_id, step_index, "connection_not_found");
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_lookup_failed", "skipping combo step");
+                errors.push((runtime_id.clone(), "connection_lookup_failed".to_string()));
+                return Ok(None);
+            }
+        };
+        if !connection.is_active {
+            record_combo_skip(errors, runtime_id, step_index, "connection_inactive");
+            return Ok(None);
+        }
+        if connection.provider_runtime_id != *runtime_id {
+            record_combo_skip(errors, runtime_id, step_index, "provider_runtime_mismatch");
+            return Ok(None);
+        }
+
+        let adapter_id = ProviderId::new(connection.id.to_string());
+        let Some(provider) = self.router.resolve_connection(&connection.id) else {
+            record_combo_skip(errors, &adapter_id, step_index, "adapter_unavailable");
+            return Ok(None);
+        };
+        if provider.id() != &adapter_id {
+            record_combo_skip(errors, &adapter_id, step_index, "adapter_identity_mismatch");
+            return Ok(None);
+        }
+        let allowed = &req.restrictions.allowed_providers;
+        if !allowed.is_empty() && !allowed.contains(&adapter_id) {
+            return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+        }
+        if !provider.is_available() {
+            record_combo_skip(errors, &adapter_id, step_index, "provider_unavailable");
+            return Ok(None);
+        }
+        if !provider.supports_model(model) {
+            record_combo_skip(errors, &adapter_id, step_index, "model_unsupported");
+            return Ok(None);
+        }
+        tracing::debug!(
+            connection_id = %connection.id,
+            runtime_id = %connection.provider_runtime_id,
+            "resolved exact combo connection"
+        );
+        Ok(Some((
+            provider,
+            adapter_id,
+            Some(connection.provider_runtime_id),
+            Some(connection.id),
+        )))
+    }
+
+    async fn resolve_legacy_combo_step(
+        &self,
+        provider_id: &ProviderId,
+        step_req: &CompletionRequest,
+        step_index: usize,
+        errors: &mut Vec<(ProviderId, String)>,
+        steps_attempted: &mut usize,
+    ) -> Option<(
+        Arc<dyn rook_core::ProviderPort>,
+        ProviderId,
+        Option<ProviderId>,
+        Option<ConnectionId>,
+    )> {
+        if !self.router.providers().contains(provider_id) {
+            tracing::warn!(
+                step_index = step_index + 1,
+                provider_id = %provider_id,
+                "skipping step: provider not in registry"
+            );
+            return None;
+        }
+        match self.router.select(step_req).await {
+            Ok(provider) if provider.id() == provider_id => {
+                Some((provider, provider_id.clone(), None, None))
+            }
+            Ok(provider) => {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    selected = %provider.id(),
+                    expected = %provider_id,
+                    "router selected different provider, skipping to maintain combo order"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    error = %error,
+                    "failed to select provider for step"
+                );
+                errors.push((provider_id.clone(), error.to_string()));
+                *steps_attempted += 1;
+                None
+            }
+        }
+    }
+
     /// Record combo success — fire-and-forget audit + usage.
     async fn record_combo_success(
         &self,
@@ -1406,12 +1491,7 @@ impl RouteRequest {
             tracing::warn!(error = %e, "failed to record combo audit entry");
         }
 
-        // Usage recording uses the resolved connection for new steps. For legacy
-        // steps, the adapter ID is the only exact identity available; never map a
-        // runtime ID back to an arbitrary connection.
-        let connection_id = step
-            .connection_id
-            .or_else(|| ConnectionId::parse_str(step.provider_id.as_str()).ok());
+        // `connection_id` is derived once when the step context is created.
         let entry = UsageEntry {
             request_id: req.id.clone(),
             provider: step.provider_id.clone(),
@@ -1419,7 +1499,7 @@ impl RouteRequest {
             status: RequestStatus::Success,
             requested_tier: req.metadata.requested_tier.clone(),
             api_key_id: req.metadata.api_key_id.clone(),
-            connection_id,
+            connection_id: step.connection_id,
             tokens_prompt: Some(resp.usage.prompt_tokens as u64),
             tokens_completion: Some(resp.usage.completion_tokens as u64),
             tokens_cache_read: resp.usage.cache_read_tokens,
@@ -1473,12 +1553,7 @@ impl RouteRequest {
             tracing::warn!(error = %e, "failed to record combo failure audit");
         }
 
-        // Usage recording uses the resolved connection for new steps. For legacy
-        // steps, the adapter ID is the only exact identity available; never map a
-        // runtime ID back to an arbitrary connection.
-        let connection_id = step
-            .connection_id
-            .or_else(|| ConnectionId::parse_str(step.provider_id.as_str()).ok());
+        // `connection_id` is derived once when the step context is created.
         let entry = UsageEntry {
             request_id: req.id.clone(),
             provider: step.provider_id.clone(),
@@ -1486,7 +1561,7 @@ impl RouteRequest {
             status,
             requested_tier: req.metadata.requested_tier.clone(),
             api_key_id: req.metadata.api_key_id.clone(),
-            connection_id,
+            connection_id: step.connection_id,
             tokens_prompt: None,
             tokens_completion: None,
             tokens_cache_read: None,
@@ -3771,6 +3846,94 @@ mod tests {
             "the exact configured connection must receive the request"
         );
         assert!(h.seen_models.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unauthorized_later_connection_step_is_rejected_before_any_upstream_io() {
+        let first_connection = ConnectionId::new();
+        let unauthorized_connection = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let first_adapter = ProviderId::new(first_connection.to_string());
+        let first_calls = Arc::new(Mutex::new(Vec::new()));
+        let unauthorized_calls = Arc::new(Mutex::new(Vec::new()));
+        let combo = Combo::new(
+            "preflight-authorization".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(first_connection),
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(unauthorized_connection),
+                    priority: 2,
+                },
+            ],
+        );
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([
+                (
+                    first_connection,
+                    Arc::new(SpyProvider {
+                        id: first_adapter.clone(),
+                        model: ModelId::new("gpt-test"),
+                        seen_models: first_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+                (
+                    unauthorized_connection,
+                    Arc::new(SpyProvider {
+                        id: ProviderId::new(unauthorized_connection.to_string()),
+                        model: ModelId::new("gpt-test"),
+                        seen_models: unauthorized_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+            ]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([
+                    (
+                        first_connection,
+                        test_connection(first_connection, runtime_id.clone(), true),
+                    ),
+                    (
+                        unauthorized_connection,
+                        test_connection(unauthorized_connection, runtime_id, true),
+                    ),
+                ]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req(
+                    "gpt-test",
+                    rook_core::ApiKeyRestrictions {
+                        allowed_models: vec![],
+                        allowed_providers: vec![first_adapter],
+                    },
+                ),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(matches!(result, Err(error) if error.is_forbidden()));
+        assert!(first_calls.lock().unwrap().is_empty());
+        assert!(unauthorized_calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -59,6 +59,23 @@ pub struct ComboStepResponse {
     pub priority: u8,
 }
 
+impl CreateComboStepRequest {
+    fn to_domain(&self) -> Result<ComboStep, String> {
+        let connection_id = self
+            .connection_id
+            .as_deref()
+            .map(ConnectionId::parse_str)
+            .transpose()
+            .map_err(|error| format!("invalid connectionId: {error}"))?;
+        Ok(ComboStep {
+            provider_id: ProviderId::new(&self.provider_id),
+            model: ModelId::new(&self.model),
+            connection_id,
+            priority: self.priority,
+        })
+    }
+}
+
 impl CreateComboRequest {
     /// Convert to domain Combo (validation happens in Combo::new + validate)
     pub fn to_domain(&self) -> Result<rook_core::Combo, String> {
@@ -66,20 +83,7 @@ impl CreateComboRequest {
         let steps = self
             .steps
             .iter()
-            .map(|s| {
-                let connection_id = s
-                    .connection_id
-                    .as_deref()
-                    .map(ConnectionId::parse_str)
-                    .transpose()
-                    .map_err(|error| format!("invalid connectionId: {error}"))?;
-                Ok(ComboStep {
-                    provider_id: ProviderId::new(&s.provider_id),
-                    model: ModelId::new(&s.model),
-                    connection_id,
-                    priority: s.priority,
-                })
-            })
+            .map(CreateComboStepRequest::to_domain)
             .collect::<Result<Vec<_>, String>>()?;
 
         let combo = rook_core::Combo::new(self.name.clone(), strategy, steps);
@@ -97,20 +101,7 @@ impl UpdateComboRequest {
         let steps = self
             .steps
             .iter()
-            .map(|s| {
-                let connection_id = s
-                    .connection_id
-                    .as_deref()
-                    .map(ConnectionId::parse_str)
-                    .transpose()
-                    .map_err(|error| format!("invalid connectionId: {error}"))?;
-                Ok(ComboStep {
-                    provider_id: ProviderId::new(&s.provider_id),
-                    model: ModelId::new(&s.model),
-                    connection_id,
-                    priority: s.priority,
-                })
-            })
+            .map(CreateComboStepRequest::to_domain)
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut combo = rook_core::Combo::new(self.name.clone(), strategy, steps);
