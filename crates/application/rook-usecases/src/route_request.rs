@@ -40,6 +40,43 @@ fn record_combo_skip(
     errors.push((provider_id.clone(), reason.to_string()));
 }
 
+/// Decision taken for a resolved connection-bound adapter before any upstream call.
+///
+/// The preflight authorization and the execution loop share this evaluation so
+/// both paths classify a step identically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConnectionAdapterDecision {
+    /// The adapter cannot serve the step; the step is skipped with the reason.
+    Unusable(&'static str),
+    /// The adapter is usable but the key is not allowed to use it.
+    Disallowed(ProviderId),
+    /// The adapter is usable and authorized.
+    Authorized,
+}
+
+/// Classify a resolved connection-bound adapter.
+///
+/// Usability is evaluated before the provider restriction, so an adapter that
+/// cannot serve the step is a deterministic skip in every path, while a usable
+/// but unauthorized adapter is always rejected with 403.
+fn classify_connection_adapter(
+    provider: &dyn rook_core::ProviderPort,
+    adapter_id: &ProviderId,
+    model: &ModelId,
+    allowed: &[ProviderId],
+) -> ConnectionAdapterDecision {
+    if !provider.is_available() {
+        return ConnectionAdapterDecision::Unusable("provider_unavailable");
+    }
+    if !provider.supports_model(model) {
+        return ConnectionAdapterDecision::Unusable("model_unsupported");
+    }
+    if !allowed.is_empty() && !allowed.contains(adapter_id) {
+        return ConnectionAdapterDecision::Disallowed(adapter_id.clone());
+    }
+    ConnectionAdapterDecision::Authorized
+}
+
 async fn notify_provider_failure(
     router: &dyn RouterPort,
     provider: &ProviderId,
@@ -1327,16 +1364,16 @@ impl RouteRequest {
         let Some(provider) = self.router.resolve_connection(&connection.id) else {
             return Ok(());
         };
-        if provider.id() != &adapter_id
-            || !provider.is_available()
-            || !provider.supports_model(&step.model)
-        {
+        if provider.id() != &adapter_id {
             return Ok(());
         }
-        if !allowed.contains(&adapter_id) {
-            return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+        match classify_connection_adapter(provider.as_ref(), &adapter_id, &step.model, allowed) {
+            ConnectionAdapterDecision::Unusable(_) => Ok(()),
+            ConnectionAdapterDecision::Disallowed(adapter_id) => {
+                Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into())
+            }
+            ConnectionAdapterDecision::Authorized => Ok(()),
         }
-        Ok(())
     }
 
     async fn resolve_connection_combo_step(
@@ -1396,16 +1433,15 @@ impl RouteRequest {
             return Ok(None);
         }
         let allowed = &req.restrictions.allowed_providers;
-        if !allowed.is_empty() && !allowed.contains(&adapter_id) {
-            return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
-        }
-        if !provider.is_available() {
-            record_combo_skip(errors, &adapter_id, step_index, "provider_unavailable");
-            return Ok(None);
-        }
-        if !provider.supports_model(model) {
-            record_combo_skip(errors, &adapter_id, step_index, "model_unsupported");
-            return Ok(None);
+        match classify_connection_adapter(provider.as_ref(), &adapter_id, model, allowed) {
+            ConnectionAdapterDecision::Unusable(reason) => {
+                record_combo_skip(errors, &adapter_id, step_index, reason);
+                return Ok(None);
+            }
+            ConnectionAdapterDecision::Disallowed(adapter_id) => {
+                return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+            }
+            ConnectionAdapterDecision::Authorized => {}
         }
         tracing::debug!(
             connection_id = %connection.id,
@@ -4087,6 +4123,106 @@ mod tests {
             second_calls.lock().unwrap().as_slice(),
             ["gpt-test".to_string()],
             "only the second connection must reach the upstream provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn unusable_and_disallowed_connection_step_is_skipped_in_both_paths() {
+        let first_connection = ConnectionId::new();
+        let second_connection = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let first_adapter = ProviderId::new(first_connection.to_string());
+        let second_adapter = ProviderId::new(second_connection.to_string());
+        let second_calls = Arc::new(Mutex::new(Vec::new()));
+
+        let combo = Combo::new(
+            "unusable-disallowed".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(first_connection),
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(second_connection),
+                    priority: 2,
+                },
+            ],
+        );
+
+        // The second adapter is disallowed and cannot serve the step model, so
+        // both the preflight and the execution loop must classify it as a skip.
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([
+                (
+                    first_connection,
+                    Arc::new(RateLimitedProvider {
+                        id: first_adapter.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+                (
+                    second_connection,
+                    Arc::new(SpyProvider {
+                        id: second_adapter.clone(),
+                        model: ModelId::new("other-model"),
+                        seen_models: second_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+            ]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([
+                    (
+                        first_connection,
+                        test_connection(first_connection, runtime_id.clone(), true),
+                    ),
+                    (
+                        second_connection,
+                        test_connection(second_connection, runtime_id.clone(), true),
+                    ),
+                ]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+        );
+
+        let error = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req(
+                    "gpt-test",
+                    rook_core::ApiKeyRestrictions {
+                        allowed_models: vec![],
+                        allowed_providers: vec![first_adapter],
+                    },
+                ),
+                ApiFormat::OpenAI,
+            )
+            .await
+            .expect_err("an unusable step cannot satisfy the request");
+
+        assert!(
+            !error.is_forbidden(),
+            "an unusable adapter must be skipped, not rejected with 403: {error}"
+        );
+        assert!(
+            error.to_string().contains("all providers exhausted"),
+            "the combo must report exhausted providers, got {error}"
+        );
+        assert!(
+            second_calls.lock().unwrap().is_empty(),
+            "the unusable adapter must not receive upstream I/O"
         );
     }
 
