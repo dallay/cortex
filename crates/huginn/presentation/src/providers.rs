@@ -19,11 +19,24 @@ use huginn_plugin_api::v1::{
 use std::sync::{Arc, Mutex};
 
 pub struct ProvidersUiPlugin;
+
+pub struct StandaloneProvidersUiPlugin(pub Arc<std::sync::atomic::AtomicBool>);
+#[async_trait]
+impl Plugin for StandaloneProvidersUiPlugin {
+    fn manifest(&self) -> Manifest {
+        ProvidersUiPlugin.manifest()
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        register_ui(ctx, Some(self.0.clone()))
+    }
+}
 #[derive(Clone)]
 struct Management {
     connections: Arc<dyn ConnectionManagement>,
     catalog: Arc<dyn ProviderCatalog>,
+    saved: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
+
 fn catalog_id() -> ServiceId {
     ServiceId::new("agent:provider-catalog", 1)
 }
@@ -37,31 +50,39 @@ impl Plugin for ProvidersUiPlugin {
         }
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
-        let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
-        let management = Management {
-            connections: ctx
-                .resolve::<ConnectionsService>(&connections_id())?
-                .0
-                .clone(),
-            catalog: ctx
-                .resolve::<ProviderCatalogService>(&catalog_id())?
-                .0
-                .clone(),
-        };
-        for (name, description) in [
-            (
-                "/login",
-                "Search providers and connect with transient host-owned forms",
-            ),
-            ("/providers", "Manage connections and credential status"),
-            ("/model", "Choose the model for the next turn"),
-            (
-                "/logout",
-                "Revoke a connection; remote completion may be unknown",
-            ),
-        ] {
-            let management = management.clone();
-            ui.register_command(ctx, format!("builtin.providers.ui.{}", &name[1..]), name.into(),
+        register_ui(ctx, None)
+    }
+}
+fn register_ui(
+    ctx: &mut PluginContext,
+    saved: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<()> {
+    let ui = ctx.resolve::<UiService>(&contributions_id())?.0.clone();
+    let management = Management {
+        saved,
+        connections: ctx
+            .resolve::<ConnectionsService>(&connections_id())?
+            .0
+            .clone(),
+        catalog: ctx
+            .resolve::<ProviderCatalogService>(&catalog_id())?
+            .0
+            .clone(),
+    };
+    for (name, description) in [
+        (
+            "/login",
+            "Search providers and connect with transient host-owned forms",
+        ),
+        ("/providers", "Manage connections and credential status"),
+        ("/model", "Choose the model for the next turn"),
+        (
+            "/logout",
+            "Revoke a connection; remote completion may be unknown",
+        ),
+    ] {
+        let management = management.clone();
+        ui.register_command(ctx, format!("builtin.providers.ui.{}", &name[1..]), name.into(),
                 CommandMetadata { description: description.into(), ..CommandMetadata::default() },
                 Arc::new(move |args| {
                     if !args.is_empty() {
@@ -75,9 +96,8 @@ impl Plugin for ProvidersUiPlugin {
                         })
                     }))?.with_overlay_kind(command_surface(name))?))
                 }))?;
-        }
-        Ok(())
     }
+    Ok(())
 }
 fn command_surface(command: &str) -> OverlayKind {
     match command {
@@ -540,6 +560,10 @@ impl Management {
         }
     }
     fn configured_result(&self) -> Result<CommandResult> {
+        if let Some(saved) = &self.saved {
+            saved.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Ok(CommandResult::Dismiss);
+        }
         let owner = self.clone();
         Ok(CommandResult::Workflow(Workflow::new(
             "Connection configured — Step 4 of 4",

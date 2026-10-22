@@ -562,6 +562,17 @@ impl Ui {
     }
     /// Returns true only when a contributed command consumed the input.
     /// No callback runs under a state/registry lock.
+    pub(crate) fn start_workflow(&self, workflow: huginn_plugin_api::v1::Workflow) {
+        let ticket = self.lock().overlays.ticket();
+        self.apply_result(
+            CommandResult::Workflow(workflow.clone()),
+            Origin::Workflow(workflow),
+            ticket,
+            None,
+            Vec::new(),
+        );
+    }
+
     pub fn dispatch_command(&self, line: &str) -> bool {
         let line = line.trim();
         let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
