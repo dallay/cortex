@@ -904,6 +904,7 @@ fn edit_onboarding_settings(ui: &Ui) {
     form.choice(true); // ephemeral storage
     form.navigate(true);
     form.insert(SENTINEL);
+    drop(state);
 }
 
 #[tokio::test]
@@ -924,6 +925,7 @@ async fn back_and_forward_restore_search_and_public_drafts_but_require_a_fresh_s
         let form = state.workflow().unwrap();
         assert_eq!(form.search_query(), "tEsT");
         assert_eq!(form.search_rows(), vec![("Test provider".into(), true)]);
+        drop(state);
     }
     submit(&ui).await;
     submit(&ui).await;
@@ -934,6 +936,7 @@ async fn back_and_forward_restore_search_and_public_drafts_but_require_a_fresh_s
         assert_eq!(restored.2[..4], draft.2[..4]);
         assert_eq!(restored.3, 4);
         assert_eq!(restored.2[4], "API key: ");
+        drop(state);
     }
     assert!(!ui.submit_workflow(), "Back must not restore an API key");
     assert!(manager.records.lock().unwrap().is_empty());
@@ -955,6 +958,7 @@ async fn back_and_forward_restore_search_and_public_drafts_but_require_a_fresh_s
     assert_eq!(record.settings.model, "beta");
     assert!(record.settings.allow_loopback_http);
     assert_eq!(record.mode, SecretMode::Ephemeral);
+    drop(records);
     assert!(ui.lock().conversation.is_empty());
 }
 
@@ -984,6 +988,7 @@ async fn changing_authentication_discards_an_incompatible_forward_draft() {
         form.navigate(true);
         form.navigate(true);
         form.choice(true);
+        drop(state);
     }
     submit(&ui).await;
     let records = manager.records.lock().unwrap();
@@ -1034,6 +1039,7 @@ async fn failed_onboarding_save_keeps_public_settings_and_retries_with_a_fresh_s
         assert_eq!(snapshot.2[4], "API key: ");
         assert!(form.error_message().unwrap().contains("Could not save"));
         assert!(!format!("{snapshot:?}").contains(SENTINEL));
+        drop(state);
     }
     assert!(manager.records.lock().unwrap().is_empty());
     assert!(!ui.submit_workflow());
@@ -1065,6 +1071,7 @@ async fn provider_selection_recovery_failure_stays_editable_and_can_retry() {
         assert!(form.snapshot().0.contains("Step 1 of 4"));
         assert!(form.error_message().is_some());
         assert!(!form.is_pending());
+        drop(state);
     }
     assert!(manager.uncertain.load(Ordering::SeqCst));
     assert!(manager.records.lock().unwrap().is_empty());
