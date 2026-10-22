@@ -188,6 +188,7 @@ async fn only_the_first_choice_filters_and_other_fields_keep_their_input_semanti
         assert_eq!(form.search_query(), "bEtA");
         assert!(!form.searching());
         assert!(!format!("{:?}", form.snapshot()).contains("search-secret-sentinel"));
+        drop(state);
     }
     submit(&ui).await;
     let receipt = captured.lock().unwrap();
@@ -197,6 +198,7 @@ async fn only_the_first_choice_filters_and_other_fields_keep_their_input_semanti
     assert_eq!(input.public["storage"], "1");
     assert!(!input.public.contains_key("key"));
     assert_eq!(input.secrets["key"].expose(), "search-secret-sentinel");
+    drop(receipt);
 }
 
 #[tokio::test]
