@@ -576,6 +576,7 @@ impl Ui {
                 Origin::Host,
                 ticket,
                 None,
+                Vec::new(),
             );
             return true;
         }
@@ -591,7 +592,13 @@ impl Ui {
         let ticket = self.lock().overlays.ticket();
         let result = command.run(arguments);
         match result {
-            Ok(result) => self.apply_result(result, Origin::Command(command.clone()), ticket, None),
+            Ok(result) => self.apply_result(
+                result,
+                Origin::Command(command.clone()),
+                ticket,
+                None,
+                Vec::new(),
+            ),
             Err(error) => {
                 self.notify_current(ticket, &Origin::Command(command.clone()), error.to_string())
             }
@@ -613,11 +620,13 @@ impl Ui {
         origin: Origin,
         ticket: TransitionTicket,
         operation: Option<crate::event::OperationId>,
+        history: Vec<crate::workflow::Stage>,
     ) {
         if !origin.is_active() || self.stop.is_cancelled() {
             return;
         }
         let (kind, payload, origin) = match result {
+            CommandResult::Dismiss => return,
             CommandResult::Notice(view) => {
                 self.notify_current(ticket, &origin, view.plain_text());
                 return;
@@ -682,11 +691,9 @@ impl Ui {
                     None => OverlayKind::Workflow,
                 };
                 let origin = Origin::Workflow(workflow.clone());
-                (
-                    kind,
-                    Payload::Workflow(crate::workflow::HostWorkflow::new(workflow)),
-                    origin,
-                )
+                let mut form = crate::workflow::HostWorkflow::new(workflow);
+                form.inherit_history(history);
+                (kind, Payload::Workflow(form), origin)
             }
         };
         let outcome = {
@@ -893,7 +900,7 @@ impl Ui {
     /// Tick-time refresh makes revocation remove transient views even when idle.
     pub fn refresh_contributions(&self) -> bool {
         let widgets = self.contributions.widgets();
-        let (retired, result, ticket, changed) = {
+        let (retired, result, ticket, changed, history) = {
             let mut state = self.lock();
             let expired = state
                 .overlays
@@ -932,6 +939,15 @@ impl Ui {
             } else {
                 result
             };
+            let history =
+                if form_is_editable && matches!(&result, Some(Ok(CommandResult::Workflow(_)))) {
+                    state
+                        .workflow_mut()
+                        .map(|form| form.take_history())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
             let retired = if expired || result.is_some() {
                 let id = state.overlays.snapshot().map(|active| active.id);
                 id.and_then(|id| state.overlays.close(id))
@@ -944,7 +960,7 @@ impl Ui {
             if expired && retired.is_some() {
                 state.notification("UI action no longer available".into());
             }
-            (retired, result, state.overlays.ticket(), changed)
+            (retired, result, state.overlays.ticket(), changed, history)
         };
         let source = retired.as_ref().and_then(|active| match active.payload() {
             Payload::Workflow(form) => {
@@ -957,7 +973,7 @@ impl Ui {
         drop(retired);
         if let (Some(result), Some((origin, operation))) = (result, source) {
             match result {
-                Ok(result) => self.apply_result(result, origin, ticket, Some(operation)),
+                Ok(result) => self.apply_result(result, origin, ticket, Some(operation), history),
                 Err(_) => self.notify_current(
                     ticket,
                     &origin,
@@ -1004,6 +1020,46 @@ impl Ui {
         };
         retired_task.abort();
         true
+    }
+    pub(crate) fn back_workflow_at(&self, ticket: TransitionTicket) {
+        let outcome = {
+            let mut state = self.lock();
+            if state.overlays.ticket() != ticket || self.stop.is_cancelled() {
+                return;
+            }
+            let Some(active) = state.overlays.active() else {
+                return;
+            };
+            if !active.origin.is_active() {
+                return;
+            }
+            let operation = active.operation;
+            let Some(form) = state.workflow_mut().and_then(|form| form.previous()) else {
+                return;
+            };
+            let kind = match form.workflow.overlay_kind() {
+                Some(huginn_plugin_api::v1::OverlayKind::Provider) => OverlayKind::Provider,
+                Some(huginn_plugin_api::v1::OverlayKind::Login) => OverlayKind::Login,
+                Some(huginn_plugin_api::v1::OverlayKind::ModelPicker) => OverlayKind::ModelPicker,
+                Some(huginn_plugin_api::v1::OverlayKind::Confirm) => OverlayKind::Confirm,
+                Some(huginn_plugin_api::v1::OverlayKind::Help) => OverlayKind::Help,
+                Some(huginn_plugin_api::v1::OverlayKind::Settings) => OverlayKind::Settings,
+                None => OverlayKind::Workflow,
+            };
+            let origin = Origin::Workflow(form.workflow.clone());
+            state.overlays.open(OpenRequest {
+                kind,
+                origin,
+                operation,
+                ticket,
+                payload: Payload::Workflow(form),
+            })
+        };
+        let accepted = matches!(&outcome, OpenOutcome::Opened { .. });
+        drop(outcome);
+        if accepted {
+            self.dirty.notify_one();
+        }
     }
     pub fn cancel_workflow(&self) {
         let ticket = self.lock().overlays.ticket();

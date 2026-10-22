@@ -19,9 +19,11 @@ keyboard, or rendering capabilities to adapters.
 - `/model`: choose the connection and model for the **next turn**.
 - `/logout`: confirm local revocation and credential cleanup.
 
-Tab or the vertical arrows move between fields; the horizontal arrows change
-options. Enter submits; Esc cancels the form except during an incomplete paste,
-when it is interpreted as part of the paste delimiter. Use Ctrl+C to cancel without
+In settings forms, Tab or the vertical arrows move between fields; the horizontal
+arrows change options. In provider search, the vertical arrows move between
+matching providers. Enter submits; Esc goes back when a prior stage exists,
+otherwise it cancels. During an incomplete paste, Esc is interpreted as part of
+the paste delimiter. Use Ctrl+C to cancel without
 waiting for that delimiter. Ctrl+C inside the form cancels the local action, not
 the process. Secret fields use a constant mask and never pass through the
 conversation editor or JSON events.
@@ -106,3 +108,46 @@ cargo test -p huginn-presentation --features test-driver
 cargo test -p huginn-application
 just huginn-architecture
 ```
+
+## Searchable transient onboarding
+
+`/login` opens four host-owned stages: provider search, implemented authentication
+method, connection settings, and local configuration result. Type a
+case-insensitive provider query. Up/Down moves the highlighted result; Enter
+continues. Empty results do not submit. Unsupported-only providers remain visible,
+but cannot start OAuth or create a connection.
+
+Esc returns to the previous stage and clears secret fields. Only public unsaved
+settings survive backward navigation within the active workflow. Ctrl+C discards
+the entire workflow. During saving, cancellation retains the existing manager
+fences and reconciliation rules. A completed save clears backward history so that
+a result cannot reopen a submitted credential form.
+
+When a provider already has connections, choose **Manage existing connections** or
+**Add another connection** explicitly. Connection rows include the connection ID
+and storage mode. Adding a connection never implicitly replaces another record.
+
+The result reports local configuration separately from remote authorization and
+model discovery. Saving does not change the active model. Choose **Select model
+(/model)**, **Manage connections**, or **Close**. The four stages and Close do not
+add conversation messages. A remote discovery error remains an editable form
+error; it is not a successful configuration result.
+
+### Terminal acceptance checklist
+
+Automated doubles do not certify native credential stores or human terminal use.
+Record the terminal, dimensions, OS, credential backend, and outcome for each run:
+
+- Mixed-case search, no matches, row navigation, and cancel with conversation intact.
+- Back from settings restores public edits but never restores the API key.
+- API-key save with a sentinel secret absent from screen, scrollback, logs and events.
+- Local no-auth setup with explicit literal-loopback HTTP consent; reject other HTTP.
+- Two connections for one provider: update or revoke only the selected ID.
+- Save while another model is active; activate only through explicit model selection.
+- Cancel an incomplete secret paste with Ctrl+C; resize to a small terminal.
+- Cancel delayed discovery/save; verify authoritative state before retrying.
+- Restart with ephemeral credentials; missing keys must not appear usable.
+- Repeat secure-mode save/restart on real macOS Keychain and Linux Secret Service.
+
+Manual acceptance and real OS-backend results must be reported separately from
+fixture tests. OAuth and `huginn auth login` remain outside this change.

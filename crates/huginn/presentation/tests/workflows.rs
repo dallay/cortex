@@ -302,6 +302,31 @@ impl Plugin for ResultCommands {
             Contribution::Command {
                 name: "/result".into(),
                 handler: Arc::new(|argument| {
+                    if argument == "search" {
+                        return Ok(CommandResult::Workflow(
+                            Workflow::new(
+                                "Search providers",
+                                "",
+                                vec![Field {
+                                    id: "provider".into(),
+                                    label: "Provider".into(),
+                                    kind: FieldKind::Choice(vec![
+                                        "Alpha".into(),
+                                        "Beta".into(),
+                                        "Alpine".into(),
+                                    ]),
+                                    initial: String::new(),
+                                }],
+                                Arc::new(|input, _| {
+                                    Box::pin(async move {
+                                        assert_eq!(input.public["provider"], "2");
+                                        Ok(CommandResult::Dismiss)
+                                    })
+                                }),
+                            )?
+                            .searchable(),
+                        ));
+                    }
                     if argument == "boundary" {
                         return Ok(CommandResult::Workflow(Workflow::new(
                             "Boundary",
@@ -393,6 +418,7 @@ impl Plugin for ResultCommands {
                         ));
                     }
                     let result = match argument {
+                        "dismiss" | "async-dismiss" => CommandResult::Dismiss,
                         "help" | "async-help" => CommandResult::Overlay(OverlayKind::Help),
                         "settings" => CommandResult::Overlay(OverlayKind::Settings),
                         "provider" => CommandResult::Overlay(OverlayKind::Provider),
@@ -936,4 +962,137 @@ async fn failed_form_keeps_public_values_and_focus_but_clears_submitted_secret()
     let error = form.error_message().expect("the failure stays visible");
     assert!(!error.contains(SENTINEL));
     drop(state);
+}
+
+#[tokio::test]
+async fn pending_escape_still_cancels_entire_workflow() {
+    let h = setup(false).await;
+    fill(&h.ui);
+    h.ui.submit_workflow();
+    h.entered.notified().await;
+    let (ticket, focus) = {
+        let state = h.ui.lock();
+        (
+            state.overlays.ticket(),
+            state.overlays.snapshot().unwrap().focus,
+        )
+    };
+    h.ui.overlay_input(
+        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        )),
+        ticket,
+        focus,
+    );
+    assert!(h.ui.lock().workflow().is_none());
+}
+
+#[tokio::test]
+async fn escape_restores_previous_stage_with_fresh_overlay_identity_and_public_edits() {
+    let mut h = setup(false).await;
+    h.supervisor.register(Box::new(ResultCommands)).unwrap();
+    h.supervisor.start().await.unwrap();
+    h.ui.dispatch_command("/result flow-provider");
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.navigate(true);
+        form.insert(SENTINEL);
+        drop(state);
+    }
+    let first = h.ui.lock().overlays.snapshot().unwrap();
+    h.ui.submit_workflow();
+    tokio::task::yield_now().await;
+    h.ui.refresh_contributions();
+    let next = h.ui.lock().overlays.snapshot().unwrap();
+    assert_ne!(first.id, next.id);
+    let ticket = h.ui.lock().overlays.ticket();
+    h.ui.overlay_input(
+        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        )),
+        ticket,
+        next.focus,
+    );
+    let mut state = h.ui.lock();
+    let restored = state.overlays.snapshot().unwrap();
+    assert_ne!(restored.id, next.id);
+    assert_eq!(restored.kind, first.kind);
+    assert_eq!(restored.operation, first.operation);
+    let form = state.workflow_mut().unwrap();
+    assert_eq!(form.snapshot().0, "Exact payload");
+    assert!(form.snapshot().2[0].contains("original"));
+    assert_eq!(form.selected, 1);
+    assert!(!form.snapshot().2.join(" ").contains(SENTINEL));
+    form.insert("fresh secret");
+    form.backspace();
+    drop(state);
+    // A stale continuation event cannot cancel the restored stage.
+    h.ui.overlay_input(
+        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        )),
+        ticket,
+        next.focus,
+    );
+    assert_eq!(h.ui.lock().overlays.snapshot().unwrap().id, restored.id);
+}
+
+#[tokio::test]
+async fn async_dismiss_closes_without_transcript_notice() {
+    let mut h = setup(false).await;
+    h.supervisor.register(Box::new(ResultCommands)).unwrap();
+    h.supervisor.start().await.unwrap();
+    let before = h.ui.lock().notifications.len();
+    h.ui.dispatch_command("/result async-dismiss");
+    tokio::task::yield_now().await;
+    h.ui.refresh_contributions();
+    assert!(h.ui.lock().workflow().is_none());
+    assert_eq!(h.ui.lock().notifications.len(), before);
+}
+
+#[tokio::test]
+async fn searchable_router_filters_navigates_submits_original_index_and_rejects_empty() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut h = setup(false).await;
+    h.supervisor.register(Box::new(ResultCommands)).unwrap();
+    h.supervisor.start().await.unwrap();
+    h.ui.dispatch_command("/result search");
+    let (ticket, focus) = {
+        let state = h.ui.lock();
+        (
+            state.overlays.ticket(),
+            state.overlays.snapshot().unwrap().focus,
+        )
+    };
+    h.ui.overlay_input(
+        Event::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)),
+        ticket,
+        focus,
+    );
+    assert!(!h.ui.submit_workflow());
+    assert!(!h.ui.lock().workflow().unwrap().is_pending());
+    for key in [
+        KeyCode::Backspace,
+        KeyCode::Char('a'),
+        KeyCode::Char('l'),
+        KeyCode::Down,
+    ] {
+        h.ui.overlay_input(
+            Event::Key(KeyEvent::new(key, KeyModifiers::NONE)),
+            ticket,
+            focus,
+        );
+    }
+    assert_eq!(
+        h.ui.lock().workflow().unwrap().search_rows(),
+        vec![("Alpha".into(), false), ("Alpine".into(), true)]
+    );
+    assert!(h.ui.submit_workflow());
+    tokio::task::yield_now().await;
+    h.ui.refresh_contributions();
+    assert!(h.ui.lock().workflow().is_none());
 }

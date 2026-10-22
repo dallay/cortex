@@ -10,6 +10,38 @@ pub struct HostWorkflow {
     values: Vec<Value>,
     pending: Option<Pending>,
     error: Option<String>,
+    history: Vec<Stage>,
+    forward: Vec<Draft>,
+    query: String,
+}
+pub struct Stage {
+    workflow: Workflow,
+    public: Vec<Option<String>>,
+    selected: usize,
+    query: String,
+    forward: Vec<Draft>,
+}
+struct Draft {
+    title: String,
+    body: String,
+    fields: Vec<huginn_plugin_api::v1::Field>,
+    public: Vec<Option<String>>,
+    selected: usize,
+    query: String,
+    forward: Vec<Self>,
+}
+impl Stage {
+    fn into_draft(self) -> Draft {
+        Draft {
+            title: self.workflow.title().to_owned(),
+            body: self.workflow.body().to_owned(),
+            fields: self.workflow.fields().to_vec(),
+            public: self.public,
+            selected: self.selected,
+            query: self.query,
+            forward: self.forward,
+        }
+    }
 }
 enum Value {
     Public(String),
@@ -62,6 +94,136 @@ impl HostWorkflow {
             values,
             pending: None,
             error: None,
+            history: Vec::new(),
+            forward: Vec::new(),
+            query: String::new(),
+        }
+    }
+    fn stage(&mut self) -> Stage {
+        Stage {
+            workflow: self.workflow.clone(),
+            public: self
+                .values
+                .iter()
+                .map(|value| match value {
+                    Value::Public(text) => Some(text.clone()),
+                    Value::Choice(index) => Some(index.to_string()),
+                    Value::Secret(_) => None,
+                })
+                .collect(),
+            selected: self.selected,
+            query: self.query.clone(),
+            forward: std::mem::take(&mut self.forward),
+        }
+    }
+    pub(crate) fn take_history(&mut self) -> Vec<Stage> {
+        let mut history = std::mem::take(&mut self.history);
+        history.push(self.stage());
+        history
+    }
+    fn restore_public(&mut self, stage: Stage) {
+        for (value, public) in self.values.iter_mut().zip(stage.public) {
+            if let Some(public) = public {
+                match value {
+                    Value::Public(text) => *text = public,
+                    Value::Choice(index) => *index = public.parse().unwrap_or(0),
+                    Value::Secret(_) => {}
+                }
+            }
+        }
+        self.selected = stage.selected;
+        self.query = stage.query;
+        self.forward = stage.forward;
+    }
+    pub(crate) fn inherit_history(&mut self, mut history: Vec<Stage>) {
+        if !self.workflow.retains_history() {
+            return;
+        }
+        if let Some(draft) = history.last_mut().and_then(|stage| stage.forward.pop()) {
+            // Restore only an unchanged stage schema. Always keep the newly
+            // returned callback, registration and defaults as the authority.
+            if self.workflow.title() == draft.title
+                && self.workflow.body() == draft.body
+                && self.workflow.fields() == draft.fields
+            {
+                for (value, public) in self.values.iter_mut().zip(draft.public) {
+                    if let Some(public) = public {
+                        match value {
+                            Value::Public(text) => *text = public,
+                            Value::Choice(index) => *index = public.parse().unwrap_or(0),
+                            Value::Secret(_) => {}
+                        }
+                    }
+                }
+                self.selected = draft.selected;
+                self.query = draft.query;
+                self.forward = draft.forward;
+            }
+        }
+        self.history = history;
+    }
+    pub const fn can_go_back(&self) -> bool {
+        !self.is_pending() && !self.history.is_empty()
+    }
+    pub(crate) fn previous(&mut self) -> Option<Self> {
+        if self.is_pending() {
+            return None;
+        }
+        let stage = self.history.pop()?;
+        let mut previous = Self::new(stage.workflow.clone());
+        previous.restore_public(stage);
+        previous.history = std::mem::take(&mut self.history);
+        previous.forward.push(self.stage().into_draft());
+        Some(previous)
+    }
+    fn search_field(&self) -> Option<usize> {
+        if !self.workflow.is_searchable() {
+            return None;
+        }
+        self.workflow
+            .fields()
+            .iter()
+            .position(|field| matches!(field.kind, FieldKind::Choice(_)))
+    }
+    pub fn searching(&self) -> bool {
+        self.search_field() == Some(self.selected)
+    }
+    pub fn search_query(&self) -> &str {
+        &self.query
+    }
+    fn filtered_indices(&self) -> Vec<usize> {
+        let Some(field) = self.search_field() else {
+            return Vec::new();
+        };
+        let FieldKind::Choice(options) = &self.workflow.fields()[field].kind else {
+            return Vec::new();
+        };
+        let query = self.query.to_lowercase();
+        options
+            .iter()
+            .enumerate()
+            .filter(|(_, option)| option.to_lowercase().contains(&query))
+            .map(|(index, _)| index)
+            .collect()
+    }
+    pub fn search_rows(&self) -> Vec<(String, bool)> {
+        let Some(field) = self.search_field() else {
+            return Vec::new();
+        };
+        let FieldKind::Choice(options) = &self.workflow.fields()[field].kind else {
+            return Vec::new();
+        };
+        let Value::Choice(selected) = self.values[field] else {
+            return Vec::new();
+        };
+        self.filtered_indices()
+            .into_iter()
+            .map(|index| (options[index].clone(), index == selected))
+            .collect()
+    }
+    fn filter_selection(&mut self) {
+        if let (Some(field), Some(index)) = (self.search_field(), self.filtered_indices().first()) {
+            self.values[field] = Value::Choice(*index);
         }
     }
     pub const fn is_pending(&self) -> bool {
@@ -106,6 +268,15 @@ impl HostWorkflow {
         if self.is_pending() {
             return;
         }
+        if self.searching() {
+            for ch in text.chars().filter(|ch| !ch.is_control()) {
+                if self.query.len() + ch.len_utf8() <= 4096 {
+                    self.query.push(ch);
+                }
+            }
+            self.filter_selection();
+            return;
+        }
         let Some(value) = self.values.get_mut(self.selected) else {
             return;
         };
@@ -124,6 +295,11 @@ impl HostWorkflow {
     }
     pub fn backspace(&mut self) {
         if self.is_pending() {
+            return;
+        }
+        if self.searching() {
+            self.query.pop();
+            self.filter_selection();
             return;
         }
         match self.values.get_mut(self.selected) {
@@ -158,6 +334,21 @@ impl HostWorkflow {
         if self.is_pending() {
             return;
         }
+        if self.searching() {
+            let indices = self.filtered_indices();
+            if indices.is_empty() {
+                return;
+            }
+            if let Value::Choice(index) = &mut self.values[self.selected] {
+                let position = indices.iter().position(|row| row == index).unwrap_or(0);
+                *index = indices[if right {
+                    (position + 1) % indices.len()
+                } else {
+                    (position + indices.len() - 1) % indices.len()
+                }];
+            }
+            return;
+        }
         if let (Some(Value::Choice(index)), Some(field)) = (
             self.values.get_mut(self.selected),
             self.workflow.fields().get(self.selected),
@@ -188,6 +379,9 @@ impl HostWorkflow {
                 })
         {
             self.error = Some(format!("{} is required.", field.0.label));
+            return None;
+        }
+        if self.search_field().is_some() && self.filtered_indices().is_empty() {
             return None;
         }
         let mut input = FormInput::default();
@@ -263,3 +457,123 @@ impl HostWorkflow {
 #[cfg(feature = "test-driver")]
 #[doc(hidden)]
 pub mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use huginn_plugin_api::v1::Field;
+    use std::sync::Arc;
+
+    fn form() -> Workflow {
+        Workflow::new(
+            "Provider",
+            "",
+            vec![
+                Field {
+                    id: "provider".into(),
+                    label: "Provider".into(),
+                    kind: FieldKind::Choice(vec!["Alpha".into(), "Beta".into(), "Alpine".into()]),
+                    initial: String::new(),
+                },
+                Field {
+                    id: "name".into(),
+                    label: "Name".into(),
+                    kind: FieldKind::Text,
+                    initial: String::new(),
+                },
+                Field {
+                    id: "token".into(),
+                    label: "Token".into(),
+                    kind: FieldKind::Secret,
+                    initial: String::new(),
+                },
+            ],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn back_from_discovery_picker_releases_callback_owned_material() {
+        let material = Arc::new(());
+        let weak = Arc::downgrade(&material);
+        let mut settings = HostWorkflow::new(form());
+        let picker = Workflow::new(
+            "Discovered models",
+            "",
+            vec![],
+            Arc::new(move |_, _| {
+                let _keep_material = &material;
+                Box::pin(async { Ok(CommandResult::Dismiss) })
+            }),
+        )
+        .unwrap();
+        let mut picker = HostWorkflow::new(picker);
+        picker.inherit_history(settings.take_history());
+        let previous = picker.previous().unwrap();
+        drop(picker);
+        assert!(
+            weak.upgrade().is_none(),
+            "forward draft retained handler material"
+        );
+        assert!(!previous.forward.is_empty());
+    }
+
+    #[test]
+    fn search_preserves_original_indices_and_handles_no_matches() {
+        let mut host = HostWorkflow::new(form().searchable());
+        host.insert("AL");
+        assert_eq!(
+            host.search_rows(),
+            vec![("Alpha".into(), true), ("Alpine".into(), false)]
+        );
+        host.choice(true);
+        assert!(matches!(host.values[0], Value::Choice(2)));
+        host.choice(false);
+        assert!(matches!(host.values[0], Value::Choice(0)));
+        host.insert("missing");
+        assert!(host.search_rows().is_empty());
+        host.choice(true);
+        host.backspace();
+        assert_eq!(host.search_query(), "ALmissin");
+    }
+
+    #[test]
+    fn forward_restores_unsaved_public_draft_with_new_callback_and_empty_secret() {
+        let mut auth = HostWorkflow::new(form());
+        let mut settings = HostWorkflow::new(form());
+        settings.inherit_history(auth.take_history());
+        settings.selected = 1;
+        settings.insert("unsaved settings");
+        settings.selected = 2;
+        settings.insert("must not persist");
+        let mut auth = settings.previous().unwrap();
+        let returned = form();
+        let mut settings = HostWorkflow::new(returned.clone());
+        settings.inherit_history(auth.take_history());
+        assert_eq!(settings.workflow, returned);
+        assert!(matches!(&settings.values[1], Value::Public(value) if value == "unsaved settings"));
+        assert!(matches!(&settings.values[2], Value::Secret(value) if value.is_empty()));
+    }
+
+    #[test]
+    fn history_restores_public_edits_and_selection_but_not_secrets() {
+        let mut original = HostWorkflow::new(form().searchable());
+        original.insert("Beta");
+        original.selected = 1;
+        original.insert("Unsaved name");
+        original.selected = 2;
+        original.insert("secret sentinel");
+        let mut next = HostWorkflow::new(form());
+        next.inherit_history(original.take_history());
+        let previous = next.previous().unwrap();
+        assert_eq!(previous.search_query(), "Beta");
+        assert_eq!(previous.selected, 2);
+        assert!(matches!(previous.values[0], Value::Choice(1)));
+        assert!(matches!(&previous.values[1], Value::Public(value) if value == "Unsaved name"));
+        assert!(matches!(&previous.values[2], Value::Secret(value) if value.is_empty()));
+        let mut barrier = HostWorkflow::new(form().without_history());
+        barrier.inherit_history(next.take_history());
+        assert!(!barrier.can_go_back());
+    }
+}

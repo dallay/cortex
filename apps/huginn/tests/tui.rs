@@ -166,3 +166,50 @@ fn json_chat_accepts_piped_stdin_without_tty_or_line_mode() {
     );
     assert!(!output.stdout.contains(&0x1b));
 }
+
+#[test]
+fn provider_onboarding_search_cancel_and_resize_restore_terminal() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    command.arg("--workspace");
+    command.arg(workspace.path());
+    command.arg("--db");
+    command.arg(data.path().join("sessions.db"));
+    command.env("HOME", home.path());
+    command.env("XDG_CONFIG_HOME", home.path());
+    for key in [
+        "HUGINN_BASE_URL",
+        "HUGINN_MODEL",
+        "HUGINN_API_KEY",
+        "AGENT_BASE_URL",
+        "AGENT_MODEL",
+        "AGENT_API_KEY",
+    ] {
+        command.env_remove(key);
+    }
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("No model configured");
+    pty.send("/login\r");
+    pty.wait_for("Step 1 of 4");
+    pty.send("oLlAmA");
+    pty.wait_for("oLlAmA");
+    pty.send("\r");
+    pty.wait_for("Step 2 of 4");
+    pty.send("\r");
+    pty.wait_for("Step 3 of 4");
+    assert!(
+        !pty.screen_text().contains("API key"),
+        "local no-auth must not request a key"
+    );
+    pty.resize(14, 60);
+    pty.send("\x1b");
+    pty.wait_for("Step 2 of 4");
+    pty.send("\x03");
+    pty.wait_until_screen_not_contains("Step 2 of 4");
+    pty.resize(30, 100);
+    pty.send("/quit\r");
+    let output = pty.finish(true);
+    assert!(!output.contains("panicked"));
+}

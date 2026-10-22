@@ -38,6 +38,8 @@ struct Definition {
     fields: Vec<Field>,
     handler: WorkflowHandler,
     overlay_kind: Option<OverlayKind>,
+    searchable: bool,
+    without_history: bool,
 }
 
 /// A description, not a running task. Empty fields mean an immediate async action.
@@ -114,6 +116,8 @@ impl Workflow {
                 fields: checked,
                 handler,
                 overlay_kind: None,
+                searchable: false,
+                without_history: false,
             }),
             registration: None,
         })
@@ -124,6 +128,23 @@ impl Workflow {
         Ok(self)
     }
     /// Attach host-surface metadata without changing the form, callback, or registration.
+    /// Filter the first choice field as the user types. Submitted indices refer
+    /// to the original options, not the filtered rows.
+    pub fn searchable(mut self) -> Self {
+        Arc::make_mut(&mut self.definition).searchable = true;
+        self
+    }
+    pub fn is_searchable(&self) -> bool {
+        self.definition.searchable
+    }
+    /// Do not retain earlier stages when the host enters this workflow.
+    pub fn without_history(mut self) -> Self {
+        Arc::make_mut(&mut self.definition).without_history = true;
+        self
+    }
+    pub fn retains_history(&self) -> bool {
+        !self.definition.without_history
+    }
     pub fn with_overlay_kind(mut self, kind: OverlayKind) -> Result<Self> {
         if !matches!(
             kind,
@@ -190,6 +211,7 @@ impl Workflow {
         };
         registration.check()?;
         match result {
+            CommandResult::Dismiss => Ok(CommandResult::Dismiss),
             CommandResult::Workflow(next) => {
                 Ok(CommandResult::Workflow(next.bind(registration.clone())?))
             }
