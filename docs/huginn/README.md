@@ -154,7 +154,10 @@ command does not create the conversation database. An invalid explicit config
 fails rather than falling back to another config. A concurrent connection writer
 or unavailable secure store remains an error; no automatic storage fallback is
 introduced. API-key forms also offer the existing explicit ephemeral mode, whose
-credentials are lost when this command exits.
+credentials are lost when this command exits. When the selected provider already
+has a connection, the command opens the connection form directly and never the
+connection management screen; the new connection is stored separately and does
+not overwrite the existing one.
 
 A successful save prints **Connection configured locally** and exits with status
 0. This confirms local storage, not remote authorization or model availability.
