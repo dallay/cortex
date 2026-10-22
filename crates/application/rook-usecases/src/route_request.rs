@@ -25,6 +25,21 @@ use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViola
 use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
+fn record_combo_skip(
+    errors: &mut Vec<(ProviderId, String)>,
+    provider_id: &ProviderId,
+    step_index: usize,
+    reason: &'static str,
+) {
+    tracing::warn!(
+        step_index = step_index + 1,
+        provider_id = %provider_id,
+        skip_reason = reason,
+        "skipping combo step"
+    );
+    errors.push((provider_id.clone(), reason.to_string()));
+}
+
 async fn notify_provider_failure(
     router: &dyn RouterPort,
     provider: &ProviderId,
@@ -56,6 +71,18 @@ struct UsageMetrics<'a> {
     usage: Option<&'a TokenUsage>,
     ttft_ms: Option<u64>,
     latency_ms: u64,
+}
+
+/// Grouped identity of a combo step for audit and usage recording
+struct ComboStepContext {
+    combo_id: ComboId,
+    step_index: usize,
+    /// Effective adapter identity that served the step
+    provider_id: ProviderId,
+    /// Connection the step resolved to, when the step is connection-bound
+    connection_id: Option<ConnectionId>,
+    /// Logical provider runtime that owns the connection
+    runtime_id: Option<ProviderId>,
 }
 
 /// Default TTL for cached responses (5 minutes)
@@ -917,7 +944,11 @@ impl RouteRequest {
             {
                 return Err(RestrictionViolation::ModelNotAllowed(step.model.clone()).into());
             }
-            if !req.restrictions.allowed_providers.is_empty()
+            // Legacy steps persist adapter IDs in provider_id, so preserve their
+            // existing preflight check. Connection-bound steps authorize only
+            // after repository resolution yields the effective adapter identity.
+            if step.connection_id.is_none()
+                && !req.restrictions.allowed_providers.is_empty()
                 && !req
                     .restrictions
                     .allowed_providers
@@ -1085,6 +1116,7 @@ impl RouteRequest {
 
             let provider_id = &step.provider_id;
             let model = &step.model;
+            let effective_connection_id = step.connection_id.as_ref();
 
             tracing::info!(
                 step_index = step_index + 1,
@@ -1095,55 +1127,141 @@ impl RouteRequest {
                 "trying combo step"
             );
 
-            // 3a. Check circuit breaker — skip if open
-            // Router doesn't expose is_circuit_open directly, so we rely on
-            // router.providers() to check if provider is registered and
-            // the on_failure call to update circuit state.
-            let available_providers = self.router.providers();
-            if !available_providers.contains(provider_id) {
-                tracing::warn!(
-                    step_index = step_index + 1,
-                    provider_id = %provider_id,
-                    "skipping step: provider not in registry"
-                );
-                continue;
-            }
-
-            // 3b. Get provider from router (we need to find the actual provider instance)
-            // NOTE: select with the STEP's physical model, not req.model: for
-            // virtual combos req.model is `rook/*`, which no provider supports.
-            // Selecting with the virtual id would exhaust every step.
-            // The per-step request below carries the physical model for
-            // selection, translation, and audit/usage records alike; only the
-            // client response keeps the caller's requested model.
+            // A connection-bound step uses runtime identity for its contract and
+            // the connection UUID for exact adapter lookup. Legacy steps retain
+            // their persisted adapter-id selection behavior.
             let mut step_req = req.clone();
             step_req.model = model.clone();
-            let provider = match self.router.select(&step_req).await {
-                Ok(p) => p,
-                Err(e) => {
+            let (provider, audit_provider_id, runtime_id, exact_connection_id) = if let Some(
+                connection_id,
+            ) =
+                effective_connection_id
+            {
+                let Some(repository) = self.provider_repository.as_ref() else {
+                    record_combo_skip(
+                        &mut errors,
+                        provider_id,
+                        step_index,
+                        "connection_repository_unavailable",
+                    );
+                    continue;
+                };
+                let connection = match repository.find(connection_id).await {
+                    Ok(Some(connection)) => connection,
+                    Ok(None) => {
+                        record_combo_skip(
+                            &mut errors,
+                            provider_id,
+                            step_index,
+                            "connection_not_found",
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_lookup_failed", "skipping combo step");
+                        errors.push((provider_id.clone(), "connection_lookup_failed".to_string()));
+                        continue;
+                    }
+                };
+                if !connection.is_active {
+                    record_combo_skip(&mut errors, provider_id, step_index, "connection_inactive");
+                    continue;
+                }
+                if connection.provider_runtime_id != *provider_id {
+                    record_combo_skip(
+                        &mut errors,
+                        provider_id,
+                        step_index,
+                        "provider_runtime_mismatch",
+                    );
+                    continue;
+                }
+                let adapter_id = ProviderId::new(connection.id.to_string());
+                let Some(provider) = self.router.resolve_connection(&connection.id) else {
+                    record_combo_skip(&mut errors, &adapter_id, step_index, "adapter_unavailable");
+                    continue;
+                };
+                if provider.id() != &adapter_id {
+                    record_combo_skip(
+                        &mut errors,
+                        &adapter_id,
+                        step_index,
+                        "adapter_identity_mismatch",
+                    );
+                    continue;
+                }
+                let allowed = &req.restrictions.allowed_providers;
+                if !allowed.is_empty() && !allowed.contains(&adapter_id) {
+                    return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+                }
+                // The exact adapter replaces global selection, so availability
+                // and model support are checked here explicitly.
+                if !provider.is_available() {
+                    record_combo_skip(&mut errors, &adapter_id, step_index, "provider_unavailable");
+                    continue;
+                }
+                if !provider.supports_model(model) {
+                    record_combo_skip(&mut errors, &adapter_id, step_index, "model_unsupported");
+                    continue;
+                }
+                tracing::debug!(
+                    connection_id = %connection.id,
+                    runtime_id = %connection.provider_runtime_id,
+                    "resolved exact combo connection"
+                );
+                (
+                    provider,
+                    adapter_id,
+                    Some(connection.provider_runtime_id),
+                    Some(connection.id),
+                )
+            } else {
+                // Legacy steps keep their historical selection behavior: the
+                // router picks the adapter and the step is skipped when the
+                // registry or the router disagree with the stored adapter ID.
+                let available_providers = self.router.providers();
+                if !available_providers.contains(provider_id) {
                     tracing::warn!(
                         step_index = step_index + 1,
-                        error = %e,
-                        "failed to select provider for step"
+                        provider_id = %provider_id,
+                        "skipping step: provider not in registry"
                     );
-                    errors.push((provider_id.clone(), e.to_string()));
-                    steps_attempted += 1;
                     continue;
+                }
+                match self.router.select(&step_req).await {
+                    Ok(provider) if provider.id() == provider_id => {
+                        (provider, provider_id.clone(), None, None)
+                    }
+                    Ok(provider) => {
+                        tracing::warn!(
+                            step_index = step_index + 1,
+                            selected = %provider.id(),
+                            expected = %provider_id,
+                            "router selected different provider, skipping to maintain combo order"
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            step_index = step_index + 1,
+                            error = %error,
+                            "failed to select provider for step"
+                        );
+                        errors.push((provider_id.clone(), error.to_string()));
+                        steps_attempted += 1;
+                        continue;
+                    }
                 }
             };
 
-            // Verify it's the right provider (router may have its own selection logic)
-            // For combo execution we want the specific provider_id, so we check
-            // and skip if router selected a different one
-            if provider.id() != provider_id {
-                tracing::warn!(
-                    step_index = step_index + 1,
-                    selected = %provider.id(),
-                    expected = %provider_id,
-                    "router selected different provider, skipping to maintain combo order"
-                );
-                continue;
-            }
+            let step_context = ComboStepContext {
+                combo_id: *combo_id,
+                step_index,
+                provider_id: audit_provider_id.clone(),
+                connection_id: exact_connection_id
+                    .or_else(|| ConnectionId::parse_str(audit_provider_id.as_str()).ok()),
+                runtime_id,
+            };
 
             // 3c. Execute with per-step timeout
             let provider_format = provider.api_format();
@@ -1178,15 +1296,8 @@ impl RouteRequest {
                     );
 
                     // Record success (fire-and-forget)
-                    self.record_combo_success(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &step_req,
-                        &resp,
-                    )
-                    .await;
+                    self.record_combo_success(&step_context, latency_ms, &step_req, &resp)
+                        .await;
 
                     return Ok(resp);
                 }
@@ -1211,18 +1322,11 @@ impl RouteRequest {
                     );
 
                     // Record failure (fire-and-forget)
-                    self.record_combo_failure(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &step_req,
-                        &e,
-                    )
-                    .await;
+                    self.record_combo_failure(&step_context, latency_ms, &step_req, &e)
+                        .await;
 
                     // Notify router of failure (circuit breaker)
-                    notify_provider_failure(self.router.as_ref(), provider_id, &e).await;
+                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
 
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
@@ -1248,17 +1352,10 @@ impl RouteRequest {
                         "combo step timed out"
                     );
 
-                    self.record_combo_failure(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &step_req,
-                        &err,
-                    )
-                    .await;
+                    self.record_combo_failure(&step_context, latency_ms, &step_req, &err)
+                        .await;
 
-                    notify_provider_failure(self.router.as_ref(), provider_id, &err).await;
+                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &err).await;
                     continue;
                 }
             }
@@ -1288,32 +1385,36 @@ impl RouteRequest {
     /// Record combo success — fire-and-forget audit + usage.
     async fn record_combo_success(
         &self,
-        combo_id: &ComboId,
-        step_index: usize,
-        provider_id: &ProviderId,
+        step: &ComboStepContext,
         latency_ms: u64,
         req: &CompletionRequest,
         resp: &CompletionResponse,
     ) {
         // Audit entry with combo metadata
-        let entry = AuditEntry::success_with_combo(
+        let mut entry = AuditEntry::success_with_combo(
             &req.id,
-            provider_id,
+            &step.provider_id,
             &req.model,
             Some(resp.usage.clone()),
             latency_ms,
-            Some(*combo_id),
-            Some(step_index),
+            Some(step.combo_id),
+            Some(step.step_index),
         );
+        entry.connection_id = step.connection_id;
+        entry.provider_runtime_id = step.runtime_id.clone();
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record combo audit entry");
         }
 
-        // Usage recording
-        let connection_id = self.resolve_connection_id(provider_id).await;
+        // Usage recording uses the resolved connection for new steps. For legacy
+        // steps, the adapter ID is the only exact identity available; never map a
+        // runtime ID back to an arbitrary connection.
+        let connection_id = step
+            .connection_id
+            .or_else(|| ConnectionId::parse_str(step.provider_id.as_str()).ok());
         let entry = UsageEntry {
             request_id: req.id.clone(),
-            provider: provider_id.clone(),
+            provider: step.provider_id.clone(),
             model: req.model.clone(),
             status: RequestStatus::Success,
             requested_tier: req.metadata.requested_tier.clone(),
@@ -1328,7 +1429,7 @@ impl RouteRequest {
             latency_ms,
             cost_usd: crate::estimate_cost_usd(
                 &self.pricing,
-                provider_id,
+                &step.provider_id,
                 &req.model,
                 Some(&resp.usage),
             ),
@@ -1345,9 +1446,7 @@ impl RouteRequest {
     /// Record combo failure — fire-and-forget audit + usage.
     async fn record_combo_failure(
         &self,
-        combo_id: &ComboId,
-        step_index: usize,
-        provider_id: &ProviderId,
+        step: &ComboStepContext,
         latency_ms: u64,
         req: &CompletionRequest,
         error: &CortexError,
@@ -1359,24 +1458,30 @@ impl RouteRequest {
         };
 
         // Audit entry with combo metadata
-        let entry = AuditEntry::failure_with_combo(
+        let mut entry = AuditEntry::failure_with_combo(
             &req.id,
-            provider_id,
+            &step.provider_id,
             &req.model,
             status,
             latency_ms,
-            Some(*combo_id),
-            Some(step_index),
+            Some(step.combo_id),
+            Some(step.step_index),
         );
+        entry.connection_id = step.connection_id;
+        entry.provider_runtime_id = step.runtime_id.clone();
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record combo failure audit");
         }
 
-        // Usage recording
-        let connection_id = self.resolve_connection_id(provider_id).await;
+        // Usage recording uses the resolved connection for new steps. For legacy
+        // steps, the adapter ID is the only exact identity available; never map a
+        // runtime ID back to an arbitrary connection.
+        let connection_id = step
+            .connection_id
+            .or_else(|| ConnectionId::parse_str(step.provider_id.as_str()).ok());
         let entry = UsageEntry {
             request_id: req.id.clone(),
-            provider: provider_id.clone(),
+            provider: step.provider_id.clone(),
             model: req.model.clone(),
             status,
             requested_tier: req.metadata.requested_tier.clone(),
@@ -1389,7 +1494,7 @@ impl RouteRequest {
             tokens_reasoning: None,
             ttft_ms: None,
             latency_ms,
-            cost_usd: crate::estimate_cost_usd(&self.pricing, provider_id, &req.model, None),
+            cost_usd: crate::estimate_cost_usd(&self.pricing, &step.provider_id, &req.model, None),
             timestamp: Utc::now(),
         };
 
@@ -3196,6 +3301,7 @@ mod tests {
 
     struct SpyProvider {
         id: ProviderId,
+        model: ModelId,
         seen_models: Arc<Mutex<Vec<String>>>,
     }
 
@@ -3206,7 +3312,7 @@ mod tests {
         }
 
         fn supported_models(&self) -> &[ModelId] {
-            std::slice::from_ref(&TEST_MODEL)
+            std::slice::from_ref(&self.model)
         }
 
         fn api_format(&self) -> ApiFormat {
@@ -3259,6 +3365,88 @@ mod tests {
 
     struct MapComboRepository {
         combos: HashMap<ComboId, Combo>,
+    }
+
+    /// Provider that always fails with a rate-limit error, used to prove the
+    /// combo fallback policy still advances to the next step.
+    struct RateLimitedProvider {
+        id: ProviderId,
+    }
+
+    #[async_trait]
+    impl ProviderPort for RateLimitedProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn supported_models(&self) -> &[ModelId] {
+            std::slice::from_ref(&TEST_MODEL)
+        }
+
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: self.id.clone(),
+                latency_ms: 1,
+            }
+        }
+
+        async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+            Err(CortexError::rate_limited(self.id.clone(), 30))
+        }
+
+        async fn stream(
+            &self,
+            _req: &CompletionRequest,
+        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+            unreachable!("combo tests use complete()")
+        }
+    }
+
+    struct MapProviderRepository {
+        connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for MapProviderRepository {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(self.connections.values().cloned().collect())
+        }
+
+        async fn find(
+            &self,
+            id: &ConnectionId,
+        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(self.connections.get(id).cloned())
+        }
+
+        async fn create(
+            &self,
+            _connection: &rook_core::ProviderConnection,
+        ) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
+
+        async fn update(
+            &self,
+            _connection: &rook_core::ProviderConnection,
+            _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
     }
 
     #[async_trait]
@@ -3317,10 +3505,55 @@ mod tests {
     struct ComboHarness {
         usecase: RouteRequest,
         seen_models: Arc<Mutex<Vec<String>>>,
+        audit: Arc<TestAudit>,
+        usage: Arc<TestUsageRecorder>,
     }
 
     struct RecordingRouter {
         provider: Arc<dyn ProviderPort>,
+    }
+
+    struct OrderedRouter {
+        providers: Vec<Arc<dyn ProviderPort>>,
+        connection_providers: HashMap<ConnectionId, Arc<dyn ProviderPort>>,
+    }
+
+    #[async_trait]
+    impl RouterPort for OrderedRouter {
+        async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.providers
+                .first()
+                .cloned()
+                .ok_or_else(CortexError::all_providers_exhausted)
+        }
+
+        async fn select_excluding(
+            &self,
+            _req: &CompletionRequest,
+            excluded: &[ProviderId],
+        ) -> CortexResult<Arc<dyn ProviderPort>> {
+            self.providers
+                .iter()
+                .find(|provider| !excluded.contains(provider.id()))
+                .cloned()
+                .ok_or_else(CortexError::all_providers_exhausted)
+        }
+
+        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
+
+        fn providers(&self) -> Vec<ProviderId> {
+            self.providers
+                .iter()
+                .map(|provider| provider.id().clone())
+                .collect()
+        }
+
+        fn resolve_connection(
+            &self,
+            connection_id: &ConnectionId,
+        ) -> Option<Arc<dyn ProviderPort>> {
+            self.connection_providers.get(connection_id).cloned()
+        }
     }
 
     #[async_trait]
@@ -3341,7 +3574,22 @@ mod tests {
         }
     }
 
-    fn combo_harness(combo: Combo, aliases: Vec<(&str, ComboId)>) -> ComboHarness {
+    fn combo_harness_with_router(
+        combo: Combo,
+        aliases: Vec<(&str, ComboId)>,
+        router: Arc<dyn RouterPort>,
+        seen_models: Arc<Mutex<Vec<String>>>,
+    ) -> ComboHarness {
+        combo_harness_with_repositories(combo, aliases, router, seen_models, None)
+    }
+
+    fn combo_harness_with_repositories(
+        combo: Combo,
+        aliases: Vec<(&str, ComboId)>,
+        router: Arc<dyn RouterPort>,
+        seen_models: Arc<Mutex<Vec<String>>>,
+        provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+    ) -> ComboHarness {
         let combo_id = combo.id;
         let mut combos = HashMap::new();
         combos.insert(combo_id, combo);
@@ -3349,22 +3597,22 @@ mod tests {
             .into_iter()
             .map(|(a, id)| (a.to_string(), ComboAlias::new(ModelId::new(a), id)))
             .collect();
-        let seen_models = Arc::new(Mutex::new(Vec::new()));
-        let spy: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
-            id: ProviderId::new("openai"),
-            seen_models: seen_models.clone(),
+        let audit = Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        });
+        let usage = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
         });
         let usecase = RouteRequest::new(
-            Arc::new(RecordingRouter { provider: spy }),
+            router,
             Arc::new(TestCache {
                 get_calls: Mutex::new(0),
                 set_calls: Mutex::new(0),
             }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            None,
-            None,
+            audit.clone(),
+            Some(usage.clone()),
+            provider_repository,
             Some(Arc::new(MapComboRepository { combos })),
             Arc::new(crate::PricingConfig::default()),
             Arc::new(TestFormatTranslator),
@@ -3376,6 +3624,60 @@ mod tests {
         ComboHarness {
             usecase,
             seen_models,
+            audit,
+            usage,
+        }
+    }
+
+    fn combo_harness(combo: Combo, aliases: Vec<(&str, ComboId)>) -> ComboHarness {
+        let seen_models = Arc::new(Mutex::new(Vec::new()));
+        let spy: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+            id: ProviderId::new("openai"),
+            model: TEST_MODEL.clone(),
+            seen_models: seen_models.clone(),
+        });
+        combo_harness_with_router(
+            combo,
+            aliases,
+            Arc::new(RecordingRouter { provider: spy }),
+            seen_models,
+        )
+    }
+
+    fn test_connection(
+        id: ConnectionId,
+        runtime_id: ProviderId,
+        is_active: bool,
+    ) -> rook_core::ProviderConnection {
+        use rook_core::{
+            AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderKind,
+            QuotaWindowThresholds, TestStatus,
+        };
+
+        let now = chrono::Utc::now();
+        rook_core::ProviderConnection {
+            id,
+            provider_kind: ProviderKind::OpenAI,
+            provider_runtime_id: runtime_id,
+            name: "combo-test".to_string(),
+            priority: 1,
+            is_active,
+            auth_type: AuthType::ApiKey,
+            credentials: Credentials::ApiKey {
+                api_key: EncryptedBlob("encrypted".to_string()),
+            },
+            config: ConnectionConfig {
+                max_concurrent: 1,
+                quota_window_thresholds: QuotaWindowThresholds {
+                    warning: 0.7,
+                    error: 0.9,
+                },
+                default_model: None,
+                base_url: None,
+            },
+            test_status: TestStatus::NeverTested,
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -3403,6 +3705,367 @@ mod tests {
             ComboStrategy::Priority,
             vec![step("openai", "gpt-4o", 1)],
         )
+    }
+
+    #[tokio::test]
+    async fn combo_step_with_connection_id_uses_exact_provider_not_router_selection() {
+        let target_connection = ConnectionId::new();
+        let adapter_id = ProviderId::new(target_connection.to_string());
+        let runtime_id = ProviderId::new("openai-primary");
+        let combo = Combo::new(
+            "exact-connection".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-4o"),
+                connection_id: Some(target_connection),
+                priority: 1,
+            }],
+        );
+        let router_selected_calls = Arc::new(Mutex::new(Vec::new()));
+        let exact_connection_calls = Arc::new(Mutex::new(Vec::new()));
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![Arc::new(SpyProvider {
+                id: ProviderId::new("other-account"),
+                model: ModelId::new("gpt-4o"),
+                seen_models: router_selected_calls,
+            })],
+            connection_providers: HashMap::from([(
+                target_connection,
+                Arc::new(SpyProvider {
+                    id: adapter_id.clone(),
+                    model: ModelId::new("gpt-4o"),
+                    seen_models: exact_connection_calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            )]),
+        });
+        let connection = test_connection(target_connection, runtime_id.clone(), true);
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([(target_connection, connection)]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-4o", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "the configured connection should execute successfully: {result:?}"
+        );
+        assert_eq!(
+            exact_connection_calls.lock().unwrap().as_slice(),
+            &["gpt-4o".to_string()],
+            "the exact configured connection must receive the request"
+        );
+        assert!(h.seen_models.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_bound_step_rejects_another_account_before_upstream_io() {
+        let connection_id = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let adapter_id = ProviderId::new(connection_id.to_string());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let combo = Combo::new(
+            "cross-account".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-4o"),
+                connection_id: Some(connection_id),
+                priority: 1,
+            }],
+        );
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([(
+                connection_id,
+                Arc::new(SpyProvider {
+                    id: adapter_id.clone(),
+                    model: ModelId::new("gpt-4o"),
+                    seen_models: calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            )]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([(
+                    connection_id,
+                    test_connection(connection_id, runtime_id, true),
+                )]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+        );
+        let restrictions = rook_core::ApiKeyRestrictions {
+            allowed_models: vec![],
+            allowed_providers: vec![ProviderId::new("some-other-account")],
+        };
+
+        let error = h
+            .usecase
+            .execute_combo(&combo, combo_req("gpt-4o", restrictions), ApiFormat::OpenAI)
+            .await
+            .expect_err("different account must be forbidden");
+
+        assert!(
+            error.is_forbidden(),
+            "expected 403 classification, got {error}"
+        );
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "forbidden account must not receive upstream I/O"
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_bound_step_falls_back_to_the_next_step_on_rate_limit() {
+        let first_connection = ConnectionId::new();
+        let second_connection = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let first_adapter = ProviderId::new(first_connection.to_string());
+        let second_adapter = ProviderId::new(second_connection.to_string());
+        let second_calls = Arc::new(Mutex::new(Vec::new()));
+
+        let combo = Combo::new(
+            "fallback-429".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(first_connection),
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(second_connection),
+                    priority: 2,
+                },
+            ],
+        );
+
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([
+                (
+                    first_connection,
+                    Arc::new(RateLimitedProvider {
+                        id: first_adapter.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+                (
+                    second_connection,
+                    Arc::new(SpyProvider {
+                        id: second_adapter.clone(),
+                        model: ModelId::new("gpt-test"),
+                        seen_models: second_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+            ]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([
+                    (
+                        first_connection,
+                        test_connection(first_connection, runtime_id.clone(), true),
+                    ),
+                    (
+                        second_connection,
+                        test_connection(second_connection, runtime_id.clone(), true),
+                    ),
+                ]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+        );
+
+        let response = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req(
+                    "gpt-test",
+                    rook_core::ApiKeyRestrictions {
+                        allowed_models: vec![],
+                        allowed_providers: vec![],
+                    },
+                ),
+                ApiFormat::OpenAI,
+            )
+            .await
+            .expect("the second step must run after the 429");
+
+        assert_eq!(response.provider, second_adapter);
+        assert_eq!(
+            second_calls.lock().unwrap().as_slice(),
+            ["gpt-test".to_string()],
+            "only the second connection must reach the upstream provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn combo_audit_and_usage_record_the_effective_connection() {
+        let connection_id = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let adapter_id = ProviderId::new(connection_id.to_string());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+
+        let combo = Combo::new(
+            "audit-attribution".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(connection_id),
+                priority: 1,
+            }],
+        );
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([(
+                connection_id,
+                Arc::new(SpyProvider {
+                    id: adapter_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    seen_models: calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            )]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([(
+                    connection_id,
+                    test_connection(connection_id, runtime_id.clone(), true),
+                )]),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            calls,
+            Some(provider_repository),
+        );
+
+        h.usecase
+            .execute_combo(
+                &combo,
+                combo_req(
+                    "gpt-test",
+                    rook_core::ApiKeyRestrictions {
+                        allowed_models: vec![],
+                        allowed_providers: vec![],
+                    },
+                ),
+                ApiFormat::OpenAI,
+            )
+            .await
+            .expect("combo execution succeeds");
+
+        let audit_entries = h.audit.entries.lock().unwrap();
+        assert_eq!(audit_entries.len(), 1, "one audit entry per executed step");
+        let entry = &audit_entries[0];
+        assert_eq!(
+            entry.provider, adapter_id,
+            "audit keeps the adapter identity"
+        );
+        assert_eq!(entry.connection_id, Some(connection_id));
+        assert_eq!(entry.provider_runtime_id, Some(runtime_id));
+        assert_eq!(entry.combo_id, Some(combo.id));
+        assert_eq!(entry.combo_step_index, Some(0));
+        drop(audit_entries);
+
+        let usage_entries = h.usage.entries.lock().unwrap();
+        assert_eq!(usage_entries.len(), 1, "one usage entry per executed step");
+        assert_eq!(usage_entries[0].connection_id, Some(connection_id));
+        assert_eq!(usage_entries[0].provider, adapter_id);
+    }
+
+    #[tokio::test]
+    async fn legacy_step_keeps_its_adapter_id_without_connection_lookup() {
+        let legacy_adapter = ProviderId::new("legacy-adapter");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let combo = Combo::new(
+            "legacy-compat".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: legacy_adapter.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: None,
+                priority: 1,
+            }],
+        );
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![Arc::new(SpyProvider {
+                id: legacy_adapter.clone(),
+                model: ModelId::new("gpt-test"),
+                seen_models: calls.clone(),
+            })],
+            connection_providers: HashMap::new(),
+        });
+        // An empty repository proves the legacy path never resolves a connection:
+        // any lookup would skip the step and exhaust the combo.
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::new(),
+            });
+        let h = combo_harness_with_repositories(
+            combo.clone(),
+            vec![],
+            router,
+            calls.clone(),
+            Some(provider_repository),
+        );
+
+        h.usecase
+            .execute_combo(
+                &combo,
+                combo_req(
+                    "gpt-test",
+                    rook_core::ApiKeyRestrictions {
+                        allowed_models: vec![],
+                        allowed_providers: vec![],
+                    },
+                ),
+                ApiFormat::OpenAI,
+            )
+            .await
+            .expect("legacy step must still execute");
+
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            ["gpt-test".to_string()],
+            "the legacy adapter must receive the request"
+        );
+
+        let audit_entries = h.audit.entries.lock().unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].provider, legacy_adapter);
+        assert_eq!(audit_entries[0].connection_id, None);
+        assert_eq!(audit_entries[0].provider_runtime_id, None);
     }
 
     #[tokio::test]

@@ -640,6 +640,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_and_find_combo_preserves_connection_id() {
+        let (repo, _temp) = setup_test_repo().await;
+        let connection_id = shared_kernel::ConnectionId::new();
+        let combo = create_test_combo(
+            "connection-bound",
+            vec![ComboStep {
+                provider_id: ProviderId::new("openai-primary"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: Some(connection_id),
+                priority: 1,
+            }],
+        );
+
+        ComboRepositoryPort::create(&repo, &combo)
+            .await
+            .expect("create combo");
+        let found = ComboRepositoryPort::find(&repo, &combo.id)
+            .await
+            .expect("find combo")
+            .expect("combo exists");
+
+        assert_eq!(found.steps[0].connection_id, Some(connection_id));
+        assert_eq!(
+            found.steps[0].provider_id,
+            ProviderId::new("openai-primary")
+        );
+    }
+
+    #[tokio::test]
     async fn find_by_name_case_insensitive() {
         let (repo, _temp) = setup_test_repo().await;
 

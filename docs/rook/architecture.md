@@ -88,14 +88,35 @@ Request with X-Rook-Combo header or default_combo
   → Load combo from repository
   → Sort steps by priority (ascending)
   → For each step:
-      → Check circuit breaker (skip if open)
-      → Check provider availability (skip if not registered)
+      → Connection-bound step (connection_id present):
+          → Resolve the persisted connection
+          → Verify it is active and its runtime matches the step provider_id
+          → Resolve the exact adapter for that connection (no substitution)
+          → Authorize the effective connection against allowed_providers
+          → Skip with a deterministic reason when the connection is unusable
+      → Legacy step (no connection_id):
+          → Check circuit breaker (skip if open)
+          → Check provider availability (skip if not registered)
       → Execute with 10s timeout
       → On success: return immediately
       → On 4xx (except 429): stop, return error
       → On 429/5xx/network: continue to next step
   → If all steps fail: AllProvidersExhausted error
 ```
+
+**Step identity:**
+
+- `ComboStep.provider_id` holds the logical provider runtime ID when the step sets
+  `connection_id`. The persisted connection is the authority: the runtime ID must
+  match `connection.provider_runtime_id`, and the adapter ID must equal
+  `ProviderId::new(connection.id.to_string())`.
+- `allowed_providers` authorizes connections (adapter IDs), not runtime IDs. A key
+  allowed for one account cannot execute another account. The check runs before
+  any upstream call and returns 403.
+- Steps without `connection_id` keep the historical adapter-ID selection and
+  authorization behavior. Legacy rows are never re-normalized.
+- Audit and usage records carry the effective connection. Audit also stores the
+  runtime ID plus the combo ID and step index.
 
 **Timeouts:**
 - Per-step timeout: 10 seconds

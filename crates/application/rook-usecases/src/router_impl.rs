@@ -384,6 +384,14 @@ impl RouterPort for FallbackRouter {
             .map(|p| p.id().clone())
             .collect()
     }
+
+    fn resolve_connection(
+        &self,
+        connection_id: &shared_kernel::ConnectionId,
+    ) -> Option<Arc<dyn ProviderPort>> {
+        let provider_id = ProviderId::new(connection_id.to_string());
+        self.get(&provider_id)
+    }
 }
 
 #[cfg(test)]
