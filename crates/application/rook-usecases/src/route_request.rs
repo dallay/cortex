@@ -1710,6 +1710,18 @@ impl RouteRequest {
     async fn resolve_connection_id(&self, provider_id: &ProviderId) -> Option<ConnectionId> {
         let repository = self.provider_repository.as_ref()?;
 
+        // Connection adapters use the connection UUID as their ProviderId.
+        // Resolve that identity exactly before trying the runtime-ID lookup.
+        if let Ok(connection_id) = ConnectionId::parse_str(provider_id.as_str()) {
+            match repository.find(&connection_id).await {
+                Ok(Some(_)) => return Some(connection_id),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%connection_id, error = %error, "failed to resolve provider connection by id");
+                }
+            }
+        }
+
         match repository.find_connection_id_by_runtime(provider_id).await {
             Ok(connection_id) => connection_id,
             Err(error) => {
@@ -3613,9 +3625,18 @@ mod tests {
 
         async fn stream(
             &self,
-            _req: &CompletionRequest,
+            req: &CompletionRequest,
         ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-            unreachable!("combo tests use complete()")
+            self.seen_models.lock().unwrap().push(req.model.to_string());
+            Ok(Box::pin(futures::stream::iter(vec![Ok(StreamChunk {
+                id: RequestId::new(),
+                model: req.model.clone(),
+                delta: "spy stream".to_string(),
+                thinking: None,
+                tool_calls: Vec::new(),
+                finish_reason: Some(rook_core::FinishReason::Stop),
+                usage: None,
+            })])))
         }
     }
 
@@ -4139,11 +4160,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn standard_request_skips_provider_with_exhausted_quota() {
-        let exhausted_runtime = ProviderId::new("openai-exhausted");
-        let healthy_runtime = ProviderId::new("openai-healthy");
+    async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_requests() {
         let exhausted_connection = ConnectionId::new();
         let healthy_connection = ConnectionId::new();
+        let exhausted_runtime = ProviderId::new(exhausted_connection.to_string());
+        let healthy_runtime = ProviderId::new(healthy_connection.to_string());
         let exhausted_calls = Arc::new(Mutex::new(Vec::new()));
         let healthy_calls = Arc::new(Mutex::new(Vec::new()));
 
@@ -4175,10 +4196,7 @@ mod tests {
                         test_connection(healthy_connection, healthy_runtime.clone(), true),
                     ),
                 ]),
-                runtime_connections: HashMap::from([
-                    (exhausted_runtime.clone(), exhausted_connection),
-                    (healthy_runtime.clone(), healthy_connection),
-                ]),
+                runtime_connections: HashMap::new(),
             });
 
         let now = chrono::Utc::now();
@@ -4227,6 +4245,87 @@ mod tests {
             healthy_calls.lock().unwrap().as_slice(),
             &[TEST_MODEL.to_string()],
             "the healthy provider must receive the request"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
+        let exhausted_connection = ConnectionId::new();
+        let healthy_connection = ConnectionId::new();
+        let exhausted_runtime = ProviderId::new(exhausted_connection.to_string());
+        let healthy_runtime = ProviderId::new(healthy_connection.to_string());
+        let exhausted_calls = Arc::new(Mutex::new(Vec::new()));
+        let healthy_calls = Arc::new(Mutex::new(Vec::new()));
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![
+                Arc::new(SpyProvider {
+                    id: exhausted_runtime.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: exhausted_calls.clone(),
+                }),
+                Arc::new(SpyProvider {
+                    id: healthy_runtime.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: healthy_calls.clone(),
+                }),
+            ],
+            connection_providers: HashMap::new(),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(QuotaAwareProviderRepository {
+                connections: HashMap::from([
+                    (
+                        exhausted_connection,
+                        test_connection(exhausted_connection, exhausted_runtime.clone(), true),
+                    ),
+                    (
+                        healthy_connection,
+                        test_connection(healthy_connection, healthy_runtime.clone(), true),
+                    ),
+                ]),
+                runtime_connections: HashMap::new(),
+            });
+        let now = chrono::Utc::now();
+        let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+            Arc::new(FakeQuotaStore::new(vec![quota_observation(
+                exhausted_connection,
+                exhausted_runtime,
+                0.0,
+                now,
+                Some(now + chrono::Duration::seconds(60)),
+            )]));
+        let usecase = RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            Some(provider_repository),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_quota_observation_reader(quota_reader);
+
+        let mut req = request();
+        req.stream = true;
+        let mut stream = usecase
+            .execute_stream_with_format(req, ApiFormat::OpenAI)
+            .await
+            .expect("healthy provider should start streaming");
+        while stream.next().await.is_some() {}
+
+        assert!(exhausted_calls.lock().unwrap().is_empty());
+        assert_eq!(
+            healthy_calls.lock().unwrap().as_slice(),
+            &[TEST_MODEL.to_string()],
         );
     }
 
