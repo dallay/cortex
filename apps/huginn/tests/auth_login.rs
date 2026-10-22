@@ -24,6 +24,16 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
         "login",
     ]);
     command.env("HUGINN_CONFIG", data.path().join("missing.toml"));
+    for name in [
+        "HUGINN_BASE_URL",
+        "HUGINN_MODEL",
+        "HUGINN_API_KEY",
+        "AGENT_BASE_URL",
+        "AGENT_MODEL",
+        "AGENT_API_KEY",
+    ] {
+        command.env_remove(name);
+    }
     // Ratatui refuses a dumb terminal, and CI runners expose no usable TERM.
     command.env("TERM", "xterm-256color");
     let mut child = pair.slave.spawn_command(command).unwrap();
@@ -51,11 +61,17 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
             break;
         }
         if let Ok(Some(status)) = child.try_wait() {
+            drop(writer);
+            drop(pair.master);
+            thread.join().unwrap();
             panic!("huginn auth login exited before drawing: {status:?}\n{output}");
         }
         if Instant::now() >= deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
+            let _ = child.kill();
+            let _ = child.wait();
+            drop(writer);
+            drop(pair.master);
+            thread.join().unwrap();
             panic!("cursor query missing\n{output}");
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -122,7 +138,7 @@ fn local_no_auth_save_exits_without_creating_a_conversation() {
     settings.extend_from_slice(format!("http://{address}").as_bytes());
     settings.extend_from_slice(b"\x1b[Bfixture-model\x1b[B\x1b[C\r");
     let (status, text, data) = login(&[
-        ("Search:", b"\r"),
+        ("Search:", b"Ollama local\r"),
         ("Authentication", b"\r"),
         ("Endpoint", &settings),
     ]);

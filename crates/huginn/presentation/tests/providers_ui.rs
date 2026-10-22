@@ -201,6 +201,16 @@ async fn setup_with_catalog(
     authentication: Vec<AuthenticationMethod>,
     extra_adapters: Vec<(ProviderRegistration, ProviderDescriptor)>,
 ) -> (Supervisor, Arc<Ui>, Arc<Manager>) {
+    setup_with_mode(authentication, extra_adapters, false).await
+}
+async fn setup_standalone() -> (Supervisor, Arc<Ui>, Arc<Manager>) {
+    setup_with_mode(vec![AuthenticationMethod::ApiKey], Vec::new(), true).await
+}
+async fn setup_with_mode(
+    authentication: Vec<AuthenticationMethod>,
+    extra_adapters: Vec<(ProviderRegistration, ProviderDescriptor)>,
+    standalone: bool,
+) -> (Supervisor, Arc<Ui>, Arc<Manager>) {
     let contributions = Arc::new(Contributions::default());
     let manager = Arc::new(Manager::default());
     let mut supervisor = Supervisor::default();
@@ -212,7 +222,17 @@ async fn setup_with_catalog(
             extra_adapters,
         }))
         .unwrap();
-    supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
+    if standalone {
+        supervisor
+            .register(Box::new(
+                huginn_presentation::providers::StandaloneProvidersUiPlugin(Arc::new(
+                    AtomicBool::new(false),
+                )),
+            ))
+            .unwrap();
+    } else {
+        supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
+    }
     supervisor.start().await.unwrap();
     let ui = Ui::new(
         &Session::new(".".into()),
@@ -945,6 +965,36 @@ async fn existing_provider_requires_explicit_add_and_rows_distinguish_ids() {
         assert!(public.contains(&id.to_string()));
     }
     assert!(public.contains("remote availability not checked"));
+}
+
+#[tokio::test]
+async fn standalone_login_does_not_enter_existing_connection_management() {
+    let (_supervisor, ui, manager) = setup_standalone().await;
+    let id = uuid::Uuid::new_v4();
+    manager.records.lock().unwrap().insert(
+        id,
+        ConnectionRecord {
+            id,
+            revision: uuid::Uuid::new_v4(),
+            settings: ConnectionSettings {
+                provider: "double".into(),
+                endpoint: Some("https://example.invalid/v1".into()),
+                model: "alpha".into(),
+                requires_secret: false,
+                allow_loopback_http: false,
+            },
+            secret: None,
+            mode: SecretMode::Ephemeral,
+        },
+    );
+
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+
+    let workflow = ui.lock().workflow().unwrap().snapshot();
+    assert_eq!(workflow.0, "Authentication method — Step 2 of 4");
+    assert_eq!(manager.records.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

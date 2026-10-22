@@ -255,7 +255,9 @@ impl Management {
                             Ok(records) => records,
                             Err(error) => return Ok(failure(error)),
                         };
-                        if records.iter().any(|r| r.settings.provider == descriptor.id) {
+                        if management.saved.is_none()
+                            && records.iter().any(|r| r.settings.provider == descriptor.id)
+                        {
                             management.existing_provider(registration, descriptor, records)
                         } else {
                             management.authentication_form(registration, descriptor)
