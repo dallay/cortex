@@ -729,8 +729,11 @@ impl Driver {
                 lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
             }
             let header = lines.len();
-            let searchable = search.as_ref().filter(|_| !*pending);
-            let show_fields = !*pending && (search.is_none() || fields.len() != 1);
+            // The option list belongs to the searchable field: it appears only
+            // while that field is active, so the selected field of another
+            // kind keeps the viewport.
+            let searchable = search.as_ref().filter(|_| !*pending && *searching);
+            let show_fields = !*pending && (searchable.is_none() || fields.len() != 1);
             let mut remaining = rows.saturating_sub(header);
             // The search line is context: it appears only when the selected
             // option still keeps a visible row.
@@ -1462,6 +1465,30 @@ mod tests {
         // 20x8 is the smallest supported viewport.
         let output = frame_text(&view, 20, 8);
         assert!(output.contains("> Local"), "{output}");
+    }
+
+    #[test]
+    fn non_searchable_field_keeps_the_fields_visible_without_the_option_list() {
+        let view = test_view(OverlayView::Workflow(
+            "Search".into(),
+            "Choose".into(),
+            vec!["Provider: Local".into(), "Name: draft".into()],
+            1,
+            false,
+            None,
+            Some((
+                String::new(),
+                vec![("Local".into(), true), ("Remote".into(), false)],
+            )),
+            false,
+        ));
+        let output = frame_text(&view, 100, 30);
+        // The active field stays visible.
+        assert!(output.contains("> Name: draft"), "{output}");
+        // The option list belongs to the searchable field, which is not active.
+        assert!(!output.contains("Remote"), "{output}");
+        assert!(!output.contains("Search:"), "{output}");
+        assert!(output.contains("Type enters the field"), "{output}");
     }
 
     #[test]
