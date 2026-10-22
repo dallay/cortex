@@ -430,6 +430,8 @@ enum OverlayView {
         bool,
         Option<String>,
         Option<(String, Vec<(String, bool)>)>,
+        /// The selected field is the searchable one.
+        bool,
     ),
     Settings(SettingsView),
     Help(usize),
@@ -475,6 +477,7 @@ impl View {
                             form.workflow
                                 .is_searchable()
                                 .then(|| (form.search_query().to_owned(), form.search_rows())),
+                            form.searching(),
                         )
                     }
                     crate::overlay::Payload::PluginDialog(dialog) => OverlayView::Dialog(
@@ -681,8 +684,16 @@ impl Driver {
             frame.render_widget(Paragraph::new(instructions), footer);
             return last_scroll;
         }
-        if let Some(OverlayView::Workflow(title, body, fields, selected, pending, error, search)) =
-            &view.overlay
+        if let Some(OverlayView::Workflow(
+            title,
+            body,
+            fields,
+            selected,
+            pending,
+            error,
+            search,
+            searching,
+        )) = &view.overlay
         {
             let [heading, content, footer] = Layout::vertical([
                 Constraint::Length(2),
@@ -692,63 +703,86 @@ impl Driver {
             .areas(area);
             frame.render_widget(Paragraph::new(safe(body)), heading);
             let rows = usize::from(content.height.saturating_sub(2)).max(1);
-            let start = selected.saturating_sub(rows.saturating_sub(1));
-            let mut text = String::new();
+            // A single-row viewport cannot show the error and the selected
+            // option. The title carries the error so the option never leaves
+            // the viewport.
+            let cramped = rows < 2;
+            let mut title = safe(title);
             if let Some(message) = error {
-                // The error keeps its own lines: a long message never hides a field.
-                text.push_str(&format!(
-                    "Error: {}\nCorrect the fields and submit again. Re-enter any API key.\n\n",
-                    safe(message)
-                ));
+                if cramped {
+                    title = format!("{title} ⚠ {}", safe(message));
+                }
             }
+            let mut lines: Vec<String> = Vec::new();
+            if let Some(message) = error {
+                if !cramped {
+                    // The error keeps its own lines: a long message never hides a field.
+                    lines.push(format!("Error: {}", safe(message)));
+                    lines.push("Correct the fields and submit again. Re-enter any API key.".into());
+                    lines.push(String::new());
+                }
+            }
+            // The header never takes the last row: the form or the selected
+            // option stays visible below it.
+            lines.truncate(lines.len().min(rows.saturating_sub(1)));
             if *pending {
-                text.push_str("Waiting… Esc cancels locally; completion may be unknown");
-            } else if search.is_none() || fields.len() != 1 {
-                text.push_str(
-                    &fields
+                lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
+            }
+            let header = lines.len();
+            let searchable = search.as_ref().filter(|_| !*pending);
+            let show_fields = !*pending && (search.is_none() || fields.len() != 1);
+            let mut remaining = rows.saturating_sub(header);
+            // The search line is context: it appears only when the selected
+            // option still keeps a visible row.
+            let mut show_search = false;
+            if searchable.is_some() && remaining >= 2 {
+                show_search = true;
+                remaining -= 1;
+            }
+            // A searchable form reserves one row for the selected option, so
+            // the choice never scrolls out of the viewport.
+            let field_budget = if searchable.is_some() {
+                remaining.saturating_sub(1)
+            } else {
+                remaining
+            };
+            let field_start = selected.saturating_sub(field_budget.saturating_sub(1));
+            if show_fields {
+                lines.extend(
+                    fields
                         .iter()
                         .enumerate()
-                        .skip(start)
-                        .take(rows)
+                        .skip(field_start)
+                        .take(field_budget)
                         .map(|(i, field)| {
                             format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                        }),
                 );
             }
-            if let Some((query, options)) = search.as_ref().filter(|_| !*pending) {
-                // A choice-only picker uses its content area for the actionable
-                // list instead of repeating the selected option as a form row.
-                let budget = if fields.len() == 1 {
-                    rows.saturating_sub(text.lines().count() + 1).max(1)
-                } else {
-                    rows.saturating_sub(fields.len() + 1)
-                };
-                if rows > 1 {
-                    if !text.is_empty() && !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-                    text.push_str(&format!("Search: {}\n", safe(query)));
+            if let Some((query, options)) = searchable {
+                let rendered_fields = lines.len().saturating_sub(header);
+                let option_budget = remaining.saturating_sub(rendered_fields);
+                if show_search {
+                    lines.push(format!("Search: {}", safe(query)));
                 }
                 let selected = options
                     .iter()
                     .position(|(_, selected)| *selected)
                     .unwrap_or(0);
-                let start = selected.saturating_sub(budget.saturating_sub(1));
+                let start = selected.saturating_sub(option_budget.saturating_sub(1));
                 if options.is_empty() {
-                    text.push_str("No matching options");
+                    lines.push("No matching options".into());
                 }
-                for (label, selected) in options.iter().skip(start).take(budget) {
-                    text.push_str(&format!(
-                        "{} {}\n",
+                for (label, selected) in options.iter().skip(start).take(option_budget) {
+                    lines.push(format!(
+                        "{} {}",
                         if *selected { ">" } else { " " },
                         safe(label)
                     ));
                 }
             }
-            let highlighted = text
-                .lines()
+            let highlighted = lines
+                .iter()
                 .map(|line| {
                     Line::styled(
                         line.to_owned(),
@@ -761,10 +795,17 @@ impl Driver {
                 })
                 .collect::<Vec<_>>();
             frame.render_widget(
-                Paragraph::new(highlighted).block(Block::bordered().title(safe(title))),
+                Paragraph::new(highlighted).block(Block::bordered().title(title)),
                 content,
             );
-            frame.render_widget(Paragraph::new("Type filters searchable choices · ↑↓ choice · Tab field · Enter submits\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history."), footer);
+            let hint = if fields.is_empty() {
+                "Enter submits · Esc back/cancel"
+            } else if *searching {
+                "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
+            } else {
+                "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
+            };
+            frame.render_widget(Paragraph::new(format!("{hint}\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history.")), footer);
             return last_scroll;
         }
         if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
@@ -1379,6 +1420,7 @@ mod tests {
                 pending,
                 error,
                 Some((String::new(), vec![("Local".into(), true)])),
+                true,
             ));
             assert!(frame_text(&view, 100, 30).contains(expected));
         }
@@ -1394,11 +1436,104 @@ mod tests {
             false,
             None,
             Some(("local".into(), vec![("Local".into(), true)])),
+            true,
         ));
         let output = frame_text(&view, 100, 30);
         assert!(output.contains("Name: draft"));
         assert!(output.contains("Search: local"));
         assert!(!output.contains("Name: draftSearch:"));
+    }
+
+    #[test]
+    fn searchable_multifield_keeps_the_selected_option_visible_at_the_minimum_viewport() {
+        let view = test_view(OverlayView::Workflow(
+            "Search".into(),
+            "Choose".into(),
+            vec!["Provider: Local".into(), "Name: draft".into()],
+            0,
+            false,
+            Some("Catalog unavailable".into()),
+            Some((
+                String::new(),
+                vec![("Local".into(), true), ("Remote".into(), false)],
+            )),
+            true,
+        ));
+        // 20x8 is the smallest supported viewport.
+        let output = frame_text(&view, 20, 8);
+        assert!(output.contains("> Local"), "{output}");
+    }
+
+    #[test]
+    fn searchable_single_field_keeps_the_selected_option_visible_at_the_minimum_viewport() {
+        let view = test_view(OverlayView::Workflow(
+            "Provider search".into(),
+            "Choose".into(),
+            vec!["Provider: Local".into()],
+            0,
+            false,
+            Some("Catalog unavailable".into()),
+            Some((String::new(), vec![("Local".into(), true)])),
+            true,
+        ));
+        let output = frame_text(&view, 20, 8);
+        assert!(output.contains("> Local"), "{output}");
+    }
+
+    #[test]
+    fn searchable_multifield_keeps_the_error_and_the_selected_option_visible() {
+        let view = test_view(OverlayView::Workflow(
+            "Search".into(),
+            "Choose".into(),
+            vec!["Provider: Local".into(), "Name: draft".into()],
+            0,
+            false,
+            Some("Catalog unavailable".into()),
+            Some((
+                String::new(),
+                vec![("Local".into(), true), ("Remote".into(), false)],
+            )),
+            true,
+        ));
+        let output = frame_text(&view, 100, 30);
+        assert!(output.contains("Error: Catalog unavailable"), "{output}");
+        assert!(output.contains("> Local"), "{output}");
+    }
+
+    #[test]
+    fn footer_instructions_follow_the_active_field_kind() {
+        let searchable = test_view(OverlayView::Workflow(
+            "Provider search".into(),
+            "Choose".into(),
+            vec!["Provider: Local".into()],
+            0,
+            false,
+            None,
+            Some((String::new(), vec![("Local".into(), true)])),
+            true,
+        ));
+        let output = frame_text(&searchable, 100, 30);
+        assert!(
+            output.contains("Type filters searchable choices"),
+            "{output}"
+        );
+
+        let plain = test_view(OverlayView::Workflow(
+            "Credentials".into(),
+            "Fill the form".into(),
+            vec!["API key: ********".into()],
+            0,
+            false,
+            None,
+            None,
+            false,
+        ));
+        let output = frame_text(&plain, 100, 30);
+        assert!(output.contains("Type enters the field"), "{output}");
+        assert!(
+            !output.contains("Type filters searchable choices"),
+            "{output}"
+        );
     }
 
     #[test]
@@ -1414,6 +1549,7 @@ mod tests {
             false,
             None,
             Some((String::new(), options)),
+            true,
         ));
         for height in [30, 14] {
             let output = frame_text(&view, 80, height);
@@ -1706,7 +1842,7 @@ mod tests {
         drop(outcome);
         let view = View::snapshot(&ui.lock());
         assert_eq!(view.overlay_identity.unwrap().kind, OverlayKind::Login);
-        let Some(OverlayView::Workflow(title, body, fields, _, _, _, _)) = view.overlay else {
+        let Some(OverlayView::Workflow(title, body, fields, _, _, _, _, _)) = view.overlay else {
             panic!("Login must render its actual form")
         };
         assert_eq!(title, "Login");

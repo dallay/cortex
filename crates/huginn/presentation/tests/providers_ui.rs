@@ -216,15 +216,82 @@ async fn oauth_only_adapter_is_discoverable_but_never_starts_authentication() {
         setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
     ui.dispatch_command("/login");
     settle(&ui).await;
-    let snapshot = ui.lock().workflow().unwrap().snapshot();
-    assert!(snapshot.1.contains("OAuth: unsupported"));
-    assert!(snapshot.2.iter().any(|row| row.contains("Test provider")));
+    let catalog = ui.lock().workflow().unwrap().snapshot();
+    assert!(catalog.1.contains("OAuth: unsupported"));
+    assert!(catalog.2.iter().any(|row| row.contains("Test provider")));
     submit(&ui).await;
     let snapshot = ui.lock().workflow().unwrap().snapshot();
     assert!(snapshot.0.contains("Unsupported"));
+    assert!(snapshot.1.contains("OAuth: unsupported"));
     assert!(snapshot.1.contains("No connection was created"));
+    assert_eq!(snapshot.2, ["Action: Back to provider catalog"]);
     assert!(manager.records.lock().unwrap().is_empty());
     assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn unsupported_oauth_stage_returns_to_the_root_catalog_without_history_growth() {
+    let (_supervisor, ui, manager) =
+        setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Unsupported"));
+    // The explicit action returns to the catalog as the first step.
+    submit(&ui).await;
+    let catalog = ui.lock();
+    let form = catalog.workflow().unwrap();
+    assert!(form.snapshot().0.contains("Step 1 of 4"));
+    drop(catalog);
+    // Esc at the root catalog closes the flow. A duplicated history would
+    // reopen the unsupported stage instead.
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    assert!(ui.lock().workflow().is_none());
+    assert!(manager.records.lock().unwrap().is_empty());
+    assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn unsupported_oauth_stage_escape_returns_to_the_catalog_once() {
+    let (_supervisor, ui, manager) =
+        setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Unsupported"));
+    // Esc uses the host-owned back transition and restores the catalog.
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    let catalog = ui.lock();
+    let form = catalog.workflow().unwrap();
+    assert!(form.snapshot().0.contains("Step 1 of 4"));
+    drop(catalog);
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    assert!(ui.lock().workflow().is_none());
+    assert!(manager.records.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
