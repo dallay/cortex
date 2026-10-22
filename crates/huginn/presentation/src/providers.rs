@@ -148,6 +148,25 @@ fn field(id: &str, label: &str, kind: FieldKind, initial: impl Into<String>) -> 
 fn choice(id: &str, label: &str, options: Vec<String>) -> Field {
     field(id, label, FieldKind::Choice(options), "")
 }
+fn provider_labels(options: &[(ProviderRegistration, ProviderDescriptor)]) -> Vec<String> {
+    let mut totals = std::collections::HashMap::new();
+    for (_, descriptor) in options {
+        *totals
+            .entry(descriptor.display_name.as_str())
+            .or_insert(0_usize) += 1;
+    }
+    options
+        .iter()
+        .map(|(_, descriptor)| {
+            if totals[descriptor.display_name.as_str()] > 1 {
+                format!("{} ({})", descriptor.display_name, descriptor.id)
+            } else {
+                descriptor.display_name.clone()
+            }
+        })
+        .collect()
+}
+
 fn index(input: &FormInput, id: &str) -> usize {
     input
         .public
@@ -195,10 +214,7 @@ impl Management {
                 "No provider adapters available. The Providers core still works headless.",
             ));
         }
-        let labels = options
-            .iter()
-            .map(|(_, d)| d.display_name.clone())
-            .collect();
+        let labels = provider_labels(&options);
         let management = self.clone();
         Ok(CommandResult::Workflow(
             Workflow::new(
@@ -303,7 +319,16 @@ impl Management {
                 format!("{}: OAuth: unsupported. No implemented API-key or no-authentication method is available. Esc returns; Ctrl+C cancels. No connection was created.", descriptor.display_name),
                 vec![choice("action", "Action", vec!["Back to provider catalog".into()])],
                 { let owner = self.clone(); Arc::new(move |_, _| {
-                    let result = owner.login(); Box::pin(async move { result })
+                    // The explicit action returns to the catalog as the first
+                    // step. Without this the host would inherit the current
+                    // history and stack another catalog on it.
+                    let result = owner.login().map(|result| match result {
+                        CommandResult::Workflow(workflow) => {
+                            CommandResult::Workflow(workflow.without_history())
+                        }
+                        other => other,
+                    });
+                    Box::pin(async move { result })
                 }) },
             )?.with_overlay_kind(OverlayKind::Login)?));
         }

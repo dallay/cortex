@@ -121,10 +121,14 @@ impl ConnectionManagement for Manager {
         Ok(())
     }
 }
-struct Catalog(Vec<AuthenticationMethod>, ProviderRegistration);
+struct Catalog(
+    Vec<AuthenticationMethod>,
+    ProviderRegistration,
+    Vec<(ProviderRegistration, ProviderDescriptor)>,
+);
 impl ProviderCatalog for Catalog {
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
-        vec![(
+        let mut adapters = vec![(
             self.1.clone(),
             ProviderDescriptor {
                 id: "double".into(),
@@ -141,7 +145,9 @@ impl ProviderCatalog for Catalog {
                 ],
                 authentication: self.0.clone(),
             },
-        )]
+        )];
+        adapters.extend(self.2.iter().cloned());
+        adapters
     }
     fn register(
         &self,
@@ -155,6 +161,7 @@ struct Host {
     contributions: Arc<Contributions>,
     manager: Arc<Manager>,
     authentication: Vec<AuthenticationMethod>,
+    extra_adapters: Vec<(ProviderRegistration, ProviderDescriptor)>,
 }
 #[async_trait]
 impl Plugin for Host {
@@ -177,6 +184,7 @@ impl Plugin for Host {
             ProviderCatalogService(Arc::new(Catalog(
                 self.authentication.clone(),
                 ProviderRegistration::new("double".into(), 1),
+                self.extra_adapters.clone(),
             ))),
         )
     }
@@ -187,6 +195,12 @@ async fn setup() -> (Supervisor, Arc<Ui>, Arc<Manager>) {
 async fn setup_with_authentication(
     authentication: Vec<AuthenticationMethod>,
 ) -> (Supervisor, Arc<Ui>, Arc<Manager>) {
+    setup_with_catalog(authentication, Vec::new()).await
+}
+async fn setup_with_catalog(
+    authentication: Vec<AuthenticationMethod>,
+    extra_adapters: Vec<(ProviderRegistration, ProviderDescriptor)>,
+) -> (Supervisor, Arc<Ui>, Arc<Manager>) {
     let contributions = Arc::new(Contributions::default());
     let manager = Arc::new(Manager::default());
     let mut supervisor = Supervisor::default();
@@ -195,6 +209,7 @@ async fn setup_with_authentication(
             contributions: contributions.clone(),
             manager: manager.clone(),
             authentication,
+            extra_adapters,
         }))
         .unwrap();
     supervisor.register(Box::new(ProvidersUiPlugin)).unwrap();
@@ -216,15 +231,131 @@ async fn oauth_only_adapter_is_discoverable_but_never_starts_authentication() {
         setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
     ui.dispatch_command("/login");
     settle(&ui).await;
-    let snapshot = ui.lock().workflow().unwrap().snapshot();
-    assert!(snapshot.1.contains("OAuth: unsupported"));
-    assert!(snapshot.2.iter().any(|row| row.contains("Test provider")));
+    let catalog = ui.lock().workflow().unwrap().snapshot();
+    assert!(catalog.1.contains("OAuth: unsupported"));
+    assert!(catalog.2.iter().any(|row| row.contains("Test provider")));
     submit(&ui).await;
     let snapshot = ui.lock().workflow().unwrap().snapshot();
     assert!(snapshot.0.contains("Unsupported"));
+    assert!(snapshot.1.contains("OAuth: unsupported"));
     assert!(snapshot.1.contains("No connection was created"));
+    assert_eq!(snapshot.2, ["Action: Back to provider catalog"]);
     assert!(manager.records.lock().unwrap().is_empty());
     assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn duplicate_provider_display_names_include_the_provider_id() {
+    let extra = ["provider-a", "provider-b"]
+        .into_iter()
+        .map(|id| {
+            (
+                ProviderRegistration::new(id.into(), 1),
+                ProviderDescriptor {
+                    id: id.into(),
+                    display_name: "Same provider".into(),
+                    models: vec![],
+                    authentication: vec![],
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let (_supervisor, ui, _manager) =
+        setup_with_catalog(vec![AuthenticationMethod::ApiKey], extra).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    let catalog = ui.lock();
+    let options = catalog
+        .workflow()
+        .unwrap()
+        .workflow
+        .fields()
+        .iter()
+        .find_map(|field| match &field.kind {
+            FieldKind::Choice(options) => Some(options.clone()),
+            _ => None,
+        })
+        .expect("the catalog offers a provider choice");
+    drop(catalog);
+    // A duplicated display name carries the provider id.
+    assert!(
+        options.contains(&"Same provider (provider-a)".to_string()),
+        "{options:?}"
+    );
+    assert!(
+        options.contains(&"Same provider (provider-b)".to_string()),
+        "{options:?}"
+    );
+    // A unique display name keeps its plain label.
+    assert!(
+        options.contains(&"Test provider".to_string()),
+        "{options:?}"
+    );
+}
+
+#[tokio::test]
+async fn unsupported_oauth_stage_returns_to_the_root_catalog_without_history_growth() {
+    let (_supervisor, ui, manager) =
+        setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Unsupported"));
+    // The explicit action returns to the catalog as the first step.
+    submit(&ui).await;
+    let catalog = ui.lock();
+    let form = catalog.workflow().unwrap();
+    assert!(form.snapshot().0.contains("Step 1 of 4"));
+    drop(catalog);
+    // Esc at the root catalog closes the flow. A duplicated history would
+    // reopen the unsupported stage instead.
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    assert!(ui.lock().workflow().is_none());
+    assert!(manager.records.lock().unwrap().is_empty());
+    assert!(manager.selected.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn unsupported_oauth_stage_escape_returns_to_the_catalog_once() {
+    let (_supervisor, ui, manager) =
+        setup_with_authentication(vec![AuthenticationMethod::OAuth]).await;
+    ui.dispatch_command("/login");
+    settle(&ui).await;
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Unsupported"));
+    // Esc uses the host-owned back transition and restores the catalog.
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    let catalog = ui.lock();
+    let form = catalog.workflow().unwrap();
+    assert!(form.snapshot().0.contains("Step 1 of 4"));
+    drop(catalog);
+    onboarding_key(
+        &ui,
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    assert!(ui.lock().workflow().is_none());
+    assert!(manager.records.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
