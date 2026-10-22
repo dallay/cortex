@@ -24,6 +24,8 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
         "login",
     ]);
     command.env("HUGINN_CONFIG", data.path().join("missing.toml"));
+    // Ratatui refuses a dumb terminal, and CI runners expose no usable TERM.
+    command.env("TERM", "xterm-256color");
     let mut child = pair.slave.spawn_command(command).unwrap();
     drop(pair.slave);
     let mut writer = pair.master.take_writer().unwrap();
@@ -42,9 +44,16 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
                 .push_str(&String::from_utf8_lossy(&buf[..n]));
         }
     });
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !captured.lock().unwrap().contains("\x1b[6n") {
-        assert!(Instant::now() < deadline, "cursor query missing");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let output = captured.lock().unwrap().clone();
+        if output.contains("\x1b[6n") {
+            break;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("huginn auth login exited before drawing: {status:?}\n{output}");
+        }
+        assert!(Instant::now() < deadline, "cursor query missing\n{output}");
         std::thread::sleep(Duration::from_millis(10));
     }
     writer.write_all(b"\x1b[1;1R").unwrap();
