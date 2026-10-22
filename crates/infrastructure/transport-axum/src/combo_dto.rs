@@ -1,6 +1,6 @@
 use rook_core::{Combo, ComboStep, ComboStrategy};
 use serde::{Deserialize, Serialize};
-use shared_kernel::{ComboId, ModelId, ProviderId};
+use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId};
 
 /// Request body for creating a new combo
 #[derive(Debug, Deserialize)]
@@ -26,6 +26,7 @@ pub struct UpdateComboRequest {
 pub struct CreateComboStepRequest {
     pub provider_id: String,
     pub model: String,
+    pub connection_id: Option<String>,
     pub priority: u8,
 }
 
@@ -54,7 +55,25 @@ pub struct ComboListResponse {
 pub struct ComboStepResponse {
     pub provider_id: String,
     pub model: String,
+    pub connection_id: Option<String>,
     pub priority: u8,
+}
+
+impl CreateComboStepRequest {
+    fn to_domain(&self) -> Result<ComboStep, String> {
+        let connection_id = self
+            .connection_id
+            .as_deref()
+            .map(ConnectionId::parse_str)
+            .transpose()
+            .map_err(|error| format!("invalid connectionId: {error}"))?;
+        Ok(ComboStep {
+            provider_id: ProviderId::new(&self.provider_id),
+            model: ModelId::new(&self.model),
+            connection_id,
+            priority: self.priority,
+        })
+    }
 }
 
 impl CreateComboRequest {
@@ -64,13 +83,8 @@ impl CreateComboRequest {
         let steps = self
             .steps
             .iter()
-            .map(|s| ComboStep {
-                provider_id: ProviderId::new(&s.provider_id),
-                model: ModelId::new(&s.model),
-                connection_id: None,
-                priority: s.priority,
-            })
-            .collect();
+            .map(CreateComboStepRequest::to_domain)
+            .collect::<Result<Vec<_>, String>>()?;
 
         let combo = rook_core::Combo::new(self.name.clone(), strategy, steps);
         combo
@@ -87,13 +101,8 @@ impl UpdateComboRequest {
         let steps = self
             .steps
             .iter()
-            .map(|s| ComboStep {
-                provider_id: ProviderId::new(&s.provider_id),
-                model: ModelId::new(&s.model),
-                connection_id: None,
-                priority: s.priority,
-            })
-            .collect();
+            .map(CreateComboStepRequest::to_domain)
+            .collect::<Result<Vec<_>, String>>()?;
 
         let mut combo = rook_core::Combo::new(self.name.clone(), strategy, steps);
         combo.id = combo_id;
@@ -122,6 +131,7 @@ impl From<&ComboStep> for ComboStepResponse {
         Self {
             provider_id: step.provider_id.to_string(),
             model: step.model.to_string(),
+            connection_id: step.connection_id.as_ref().map(ToString::to_string),
             priority: step.priority,
         }
     }
@@ -160,11 +170,13 @@ mod tests {
                 CreateComboStepRequest {
                     provider_id: "openai".to_string(),
                     model: "gpt-4o".to_string(),
+                    connection_id: None,
                     priority: 1,
                 },
                 CreateComboStepRequest {
                     provider_id: "anthropic".to_string(),
                     model: "claude-opus-4".to_string(),
+                    connection_id: None,
                     priority: 2,
                 },
             ],
@@ -178,6 +190,129 @@ mod tests {
     }
 
     #[test]
+    fn create_combo_request_keeps_connection_id() {
+        let connection_id = shared_kernel::ConnectionId::new();
+        let body = serde_json::json!({
+            "name": "Bound Combo",
+            "strategy": "priority",
+            "steps": [{
+                "providerId": "openai-primary",
+                "model": "gpt-4o",
+                "connectionId": connection_id.to_string(),
+                "priority": 1
+            }]
+        });
+
+        let req: CreateComboRequest = serde_json::from_value(body).expect("deserialize request");
+        let combo = req.to_domain().expect("convert to domain");
+
+        assert_eq!(combo.steps[0].connection_id, Some(connection_id));
+        assert_eq!(
+            combo.steps[0].provider_id,
+            ProviderId::new("openai-primary"),
+            "the step keeps the runtime identity"
+        );
+    }
+
+    #[test]
+    fn create_combo_request_without_connection_id_stays_legacy() {
+        let body = serde_json::json!({
+            "name": "Legacy Combo",
+            "strategy": "priority",
+            "steps": [{
+                "providerId": "openai",
+                "model": "gpt-4o",
+                "priority": 1
+            }]
+        });
+
+        let req: CreateComboRequest = serde_json::from_value(body).expect("deserialize request");
+        let combo = req.to_domain().expect("convert to domain");
+
+        assert_eq!(combo.steps[0].connection_id, None);
+    }
+
+    #[test]
+    fn create_combo_request_rejects_invalid_connection_id() {
+        let body = serde_json::json!({
+            "name": "Bound Combo",
+            "strategy": "priority",
+            "steps": [{
+                "providerId": "openai-primary",
+                "model": "gpt-4o",
+                "connectionId": "not-a-uuid",
+                "priority": 1
+            }]
+        });
+
+        let req: CreateComboRequest = serde_json::from_value(body).expect("deserialize request");
+        let error = req
+            .to_domain()
+            .expect_err("invalid connection id must fail");
+
+        assert!(error.contains("invalid connectionId"), "got {error}");
+    }
+
+    #[test]
+    fn update_combo_request_keeps_connection_id() {
+        let connection_id = shared_kernel::ConnectionId::new();
+        let body = serde_json::json!({
+            "name": "Bound Combo",
+            "strategy": "priority",
+            "steps": [{
+                "providerId": "openai-primary",
+                "model": "gpt-4o",
+                "connectionId": connection_id.to_string(),
+                "priority": 1
+            }]
+        });
+
+        let req: UpdateComboRequest = serde_json::from_value(body).expect("deserialize request");
+        let combo = req
+            .to_domain(shared_kernel::ComboId::new())
+            .expect("convert to domain");
+
+        assert_eq!(combo.steps[0].connection_id, Some(connection_id));
+    }
+
+    #[test]
+    fn combo_response_exposes_connection_id_and_keeps_null_for_legacy_steps() {
+        let connection_id = shared_kernel::ConnectionId::new();
+        let combo = rook_core::Combo::new(
+            "Mixed".to_string(),
+            rook_core::ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: ProviderId::new("openai-primary"),
+                    model: ModelId::new("gpt-4o"),
+                    connection_id: Some(connection_id),
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: ProviderId::new("anthropic"),
+                    model: ModelId::new("claude-opus-4"),
+                    connection_id: None,
+                    priority: 2,
+                },
+            ],
+        );
+
+        let response = ComboResponse::from(&combo);
+        assert_eq!(
+            response.steps[0].connection_id,
+            Some(connection_id.to_string())
+        );
+        assert_eq!(response.steps[1].connection_id, None);
+
+        let json = serde_json::to_value(&response).expect("serialize response");
+        assert_eq!(
+            json["steps"][0]["connectionId"].as_str(),
+            Some(connection_id.to_string().as_str())
+        );
+        assert!(json["steps"][1]["connectionId"].is_null());
+    }
+
+    #[test]
     fn create_combo_request_empty_name() {
         let req = CreateComboRequest {
             name: "".to_string(),
@@ -185,6 +320,7 @@ mod tests {
             steps: vec![CreateComboStepRequest {
                 provider_id: "openai".to_string(),
                 model: "gpt-4o".to_string(),
+                connection_id: None,
                 priority: 1,
             }],
         };
@@ -202,6 +338,7 @@ mod tests {
             steps: vec![CreateComboStepRequest {
                 provider_id: "openai".to_string(),
                 model: "gpt-4o".to_string(),
+                connection_id: None,
                 priority: 1,
             }],
         };
@@ -220,11 +357,13 @@ mod tests {
                 CreateComboStepRequest {
                     provider_id: "openai".to_string(),
                     model: "gpt-4o".to_string(),
+                    connection_id: None,
                     priority: 1,
                 },
                 CreateComboStepRequest {
                     provider_id: "anthropic".to_string(),
                     model: "claude-opus-4".to_string(),
+                    connection_id: None,
                     priority: 1,
                 },
             ],

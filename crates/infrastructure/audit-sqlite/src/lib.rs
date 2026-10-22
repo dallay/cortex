@@ -30,7 +30,11 @@ const QUOTA_OBSERVATION_QUEUE_CAPACITY: usize = 1024;
 ///     total_tokens       INTEGER,
 ///     estimated_cost_usd REAL,
 ///     latency_ms  INTEGER NOT NULL,
-///     timestamp   TEXT NOT NULL
+///     timestamp   TEXT NOT NULL,
+///     combo_id TEXT,
+///     combo_step_index INTEGER,
+///     connection_id TEXT,
+///     provider_runtime_id TEXT
 ///   );
 pub struct SqliteAudit {
     conn: Mutex<Connection>,
@@ -52,7 +56,11 @@ impl SqliteAudit {
                 total_tokens       INTEGER,
                 estimated_cost_usd REAL,
                 latency_ms  INTEGER NOT NULL,
-                timestamp   TEXT NOT NULL
+                timestamp   TEXT NOT NULL,
+                combo_id TEXT,
+                combo_step_index INTEGER,
+                connection_id TEXT,
+                provider_runtime_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit(request_id);
             CREATE INDEX IF NOT EXISTS idx_audit_provider ON audit(provider);
@@ -91,8 +99,9 @@ impl AuditPort for SqliteAudit {
             "INSERT INTO audit
              (request_id, provider, model, status,
               prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd,
-              latency_ms, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              latency_ms, timestamp, combo_id, combo_step_index,
+              connection_id, provider_runtime_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 entry.request_id.to_string(),
                 entry.provider.to_string(),
@@ -104,6 +113,10 @@ impl AuditPort for SqliteAudit {
                 estimated_cost,
                 entry.latency_ms as i64,
                 entry.timestamp.to_rfc3339(),
+                entry.combo_id.map(|id| id.to_string()),
+                entry.combo_step_index.map(|index| index as i64),
+                entry.connection_id.map(|id| id.to_string()),
+                entry.provider_runtime_id.map(|id| id.to_string()),
             ],
         )
         .map_err(|e| CortexError::provider(format!("sqlite insert failed: {e}")))?;

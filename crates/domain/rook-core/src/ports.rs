@@ -113,6 +113,12 @@ pub trait RouterPort: Send + Sync {
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
+
+    /// Resolve the provider adapter registered for an exact connection.
+    /// Returns `None` when the connection is unavailable or unknown.
+    fn resolve_connection(&self, _connection_id: &ConnectionId) -> Option<Arc<dyn ProviderPort>> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

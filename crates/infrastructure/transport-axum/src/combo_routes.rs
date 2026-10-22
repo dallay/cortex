@@ -480,6 +480,7 @@ mod tests {
             steps: vec![combo_dto::CreateComboStepRequest {
                 provider_id: "openai".to_string(),
                 model: "gpt-4o".to_string(),
+                connection_id: None,
                 priority: 1,
             }],
         };
@@ -499,6 +500,7 @@ mod tests {
             steps: vec![combo_dto::CreateComboStepRequest {
                 provider_id: "openai".to_string(),
                 model: "gpt-4o".to_string(),
+                connection_id: None,
                 priority: 1,
             }],
         };

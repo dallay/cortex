@@ -485,6 +485,10 @@ pub struct AuditEntry {
     pub combo_id: Option<ComboId>,
     /// Step index within the combo (0-based) if applicable
     pub combo_step_index: Option<usize>,
+    /// Effective configured connection used for this request, when known.
+    pub connection_id: Option<ConnectionId>,
+    /// Logical provider runtime identity, distinct from the adapter instance ID.
+    pub provider_runtime_id: Option<ProviderId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -838,6 +842,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id: None,
             combo_step_index: None,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -860,6 +866,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id,
             combo_step_index,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -880,6 +888,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id: None,
             combo_step_index: None,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -902,6 +912,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id,
             combo_step_index,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 }
