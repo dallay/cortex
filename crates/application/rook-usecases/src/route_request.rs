@@ -153,29 +153,50 @@ impl RouteRequest {
 
     pub async fn execute_with_format(
         &self,
-        mut req: CompletionRequest,
+        req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        // 0. Resolve model alias if enabled (BEFORE combo dispatch and
-        // restrictions check, so combo execution also uses the canonical model).
-        // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
-        // they are combo aliases handled below.
+        let (req, combo_response) = self
+            .resolve_alias_and_dispatch_combo(req, client_format)
+            .await?;
+        if let Some(response) = combo_response {
+            return Ok(response);
+        }
+        self.execute_standard_request(req, client_format).await
+    }
+
+    async fn resolve_alias_and_dispatch_combo(
+        &self,
+        mut req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
+        // Resolve aliases before combo dispatch and restrictions checks so combo
+        // execution also uses the canonical model. Virtual models are combo aliases.
         if !is_virtual_model(&req.model) {
             self.resolve_model_alias(&mut req).await;
         }
 
-        // 0a. Virtual combo (`rook/*` model): shared lookup + fail-closed auth.
-        if is_virtual_model(&req.model) {
-            return self.execute_virtual_combo(req, client_format).await;
-        }
+        let combo_response = if is_virtual_model(&req.model) {
+            Some(
+                self.execute_virtual_combo(req.clone(), client_format)
+                    .await?,
+            )
+        } else if let Some(combo_id) = req.metadata.combo_id {
+            Some(
+                self.execute_legacy_combo(&combo_id, req.clone(), client_format)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        Ok((req, combo_response))
+    }
 
-        // 0b. Legacy combo via X-Rook-Combo header (back-compat).
-        if let Some(combo_id) = req.metadata.combo_id {
-            return self
-                .execute_legacy_combo(&combo_id, req, client_format)
-                .await;
-        }
-
+    async fn execute_standard_request(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
         let cache_key = req.cache_key();
         let start = Instant::now();
 
@@ -188,14 +209,45 @@ impl RouteRequest {
         }
 
         // 2. Retry loop: select provider, execute, failover on recoverable errors
-        let mut excluded: Vec<ProviderId> = Vec::new();
-        let mut local_backpressure = None;
-        let mut provider_attempt_failed = false;
+        let excluded: Vec<ProviderId> = Vec::new();
+        let local_backpressure = None;
+        let provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
         let selection_budget = total_providers.max(1);
         let max_attempts = MAX_RETRY_ATTEMPTS.min(selection_budget);
-        let mut provider_attempts = 0;
+        let provider_attempts = 0;
 
+        self.execute_provider_attempts(
+            req,
+            client_format,
+            cache_key,
+            start,
+            selection_budget,
+            max_attempts,
+            total_providers,
+            excluded,
+            local_backpressure,
+            provider_attempt_failed,
+            provider_attempts,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_provider_attempts(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+        cache_key: rook_core::CacheKey,
+        start: Instant,
+        selection_budget: usize,
+        max_attempts: usize,
+        total_providers: usize,
+        mut excluded: Vec<ProviderId>,
+        mut local_backpressure: Option<CortexError>,
+        mut provider_attempt_failed: bool,
+        mut provider_attempts: usize,
+    ) -> Result<CompletionResponse, CortexError> {
         for _ in 0..selection_budget {
             if provider_attempts >= max_attempts {
                 break;
@@ -356,6 +408,14 @@ impl RouteRequest {
             }
         }
 
+        self.finish_provider_attempts(provider_attempt_failed, local_backpressure)
+    }
+
+    fn finish_provider_attempts(
+        &self,
+        provider_attempt_failed: bool,
+        local_backpressure: Option<CortexError>,
+    ) -> Result<CompletionResponse, CortexError> {
         // This should not be reached, but safety fallback
         if !provider_attempt_failed {
             if let Some(error) = local_backpressure {

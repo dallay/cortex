@@ -111,34 +111,43 @@ fn doctor_report(
     }))
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let config = prepare_config(&cli)?;
-    let sessions = Arc::new(SqliteSessions::open(&config.db)?);
-    if matches!(cli.command, Some(Commands::Sessions)) {
-        for session in sessions.list().await? {
-            if cli.json {
-                println!("{}", serde_json::to_string(&session)?);
-            } else {
-                println!(
-                    "{}\t{}{}",
-                    session.id,
-                    session.workspace.display(),
-                    if session.interrupted {
-                        "\tinterrupted"
-                    } else {
-                        ""
-                    }
-                );
-            }
-        }
-        return Ok(());
+async fn list_sessions_if_requested(
+    cli: &Cli,
+    sessions: &Arc<SqliteSessions>,
+) -> anyhow::Result<bool> {
+    if !matches!(cli.command, Some(Commands::Sessions)) {
+        return Ok(false);
     }
-    let (mut session, prompt, lease) = match &cli.command {
+    for session in sessions.list().await? {
+        if cli.json {
+            println!("{}", serde_json::to_string(&session)?);
+        } else {
+            println!(
+                "{}\t{}{}",
+                session.id,
+                session.workspace.display(),
+                if session.interrupted {
+                    "\tinterrupted"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    Ok(true)
+}
+
+async fn prepare_session(
+    cli: &Cli,
+    sessions: &Arc<SqliteSessions>,
+) -> anyhow::Result<(
+    Session,
+    Option<String>,
+    Option<huginn_runtime::sessions::SessionLease>,
+)> {
+    let (session, prompt, lease) = match &cli.command {
         Some(Commands::Resume { id, prompt }) => {
-            // Acquire session ownership before reading the snapshot used for this
-            // resumed execution. This prevents a stale load-then-lock race.
+            // Lock before loading the snapshot to prevent a stale load-then-lock race.
             let lease = sessions.lease(id)?;
             let session = sessions.load(id).await?;
             if let Some(workspace) = &cli.workspace {
@@ -152,6 +161,7 @@ async fn main() -> anyhow::Result<()> {
         _ => {
             let workspace = cli
                 .workspace
+                .clone()
                 .unwrap_or(std::env::current_dir()?)
                 .canonicalize()?;
             let prompt = match &cli.command {
@@ -162,28 +172,43 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     anyhow::ensure!(session.workspace.is_dir(), "saved workspace is unavailable");
-    let _lease = match lease {
-        Some(lease) => lease,
-        None => sessions.lease(&session.id)?,
-    };
-    let is_doctor = matches!(cli.command, Some(Commands::Doctor));
-    let interactive = prompt.is_none() && !is_doctor;
+    Ok((session, prompt, lease))
+}
+
+fn prepare_interaction(
+    cli: &Cli,
+    has_prompt: bool,
+    is_doctor: bool,
+) -> anyhow::Result<(bool, bool, Option<Arc<Input>>)> {
+    let interactive = !has_prompt && !is_doctor;
     let tui = interactive && !cli.line_mode && !cli.json;
     if interactive {
         use std::io::IsTerminal;
-        // The Ratatui path (tui) always needs a TTY: it implies neither
-        // --line-mode nor --json. The line/NDJSON adapter works headless,
-        // so piped stdin is allowed with --json (or --line-mode recovery).
+        // TUI requires a TTY. Line and JSON modes support piped input.
         anyhow::ensure!(
             std::io::stdin().is_terminal() || cli.line_mode || cli.json,
             "interactive mode needs a terminal; use `huginn run <prompt>` or explicit --line-mode recovery"
         );
     }
-    let input = if interactive && !tui {
-        Some(Arc::new(Input::new()))
-    } else {
-        None
+    let input = (interactive && !tui).then(|| Arc::new(Input::new()));
+    Ok((interactive, tui, input))
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let config = prepare_config(&cli)?;
+    let sessions = Arc::new(SqliteSessions::open(&config.db)?);
+    if list_sessions_if_requested(&cli, &sessions).await? {
+        return Ok(());
+    }
+    let (mut session, prompt, lease) = prepare_session(&cli, &sessions).await?;
+    let _lease = match lease {
+        Some(lease) => lease,
+        None => sessions.lease(&session.id)?,
     };
+    let is_doctor = matches!(cli.command, Some(Commands::Doctor));
+    let (_, tui, input) = prepare_interaction(&cli, prompt.is_some(), is_doctor)?;
     let allowed = cli.allow.into_iter().collect::<BTreeSet<_>>();
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
     let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
@@ -338,78 +363,92 @@ async fn main() -> anyhow::Result<()> {
     if session.interrupted {
         eprintln!("Previous turn was interrupted. Effect completion may be unknown; nothing will be replayed automatically.");
     }
-    let result = async {
-        if let Some(prompt) = prompt {
-            prompt_adapter.reset_turn();
-            let cancel = CancellationToken::new();
-            return interruptible(
-                cancel.clone(),
-                implementation
-                    .0
-                    .run(&mut session, prompt, policy.as_ref(), &output, cancel),
-            )
-            .await
-            .map_err(anyhow::Error::from);
+    let result = run_prompt_loop(
+        prompt,
+        &mut session,
+        implementation.0.as_ref(),
+        input.as_deref(),
+        &prompt_adapter,
+        policy.as_ref(),
+        &output,
+        router.is_configured(),
+    )
+    .await;
+    drop(implementation);
+    supervisor.shutdown().await;
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_prompt_loop(
+    prompt: Option<String>,
+    session: &mut Session,
+    implementation: &dyn huginn_core::AgentLoop,
+    input: Option<&Input>,
+    prompt_adapter: &LinePrompt,
+    policy: &dyn ApprovalPolicy,
+    output: &Output,
+    router_configured: bool,
+) -> anyhow::Result<()> {
+    if let Some(prompt) = prompt {
+        prompt_adapter.reset_turn();
+        let cancel = CancellationToken::new();
+        return interruptible(
+            cancel.clone(),
+            implementation.run(session, prompt, policy, output, cancel),
+        )
+        .await
+        .map_err(anyhow::Error::from);
+    }
+    let terminal_input = input.context("missing terminal input")?;
+    loop {
+        eprint!("\nhuginn> ");
+        let line =
+            tokio::select! {value=terminal_input.line()=>value?,_=tokio::signal::ctrl_c()=>break};
+        let Some(line) = line else {
+            break;
+        };
+        let line = line.trim().to_string();
+        if matches!(line.as_str(), "/quit" | "/exit") {
+            break;
         }
-        let terminal_input = input.context("missing terminal input")?;
-        loop {
-            eprint!("\nhuginn> ");
-            let line = tokio::select! {value=terminal_input.line()=>value?,_=tokio::signal::ctrl_c()=>break};
-            let Some(line) = line else {
-                break;
-            };
-            let line = line.trim().to_string();
-            if matches!(line.as_str(), "/quit" | "/exit") {
-                break;
-            }
-            if line.is_empty() {
-                continue;
-            }
-            if !router.is_configured() {
-                eprintln!("\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference.");
-                continue;
-            }
-            // `/compact` and `/summarize` (alias) run the same real-model
-            // summarizer the conservative byte budget would call. We
-            // require explicit confirmation through the same `Input`
-            // reader that handles approvals.
-            if matches!(line.as_str(), "/compact" | "/summarize") {
-                let cancel = CancellationToken::new();
-                if let Err(error) = interruptible(
-                    cancel.clone(),
-                    run_compact(
-                        implementation.0.as_ref(),
-                        &mut session,
-                        &terminal_input,
-                        &output,
-                        cancel,
-                    ),
-                )
-                .await
-                {
-                    eprintln!("\n{error}");
-                }
-                continue;
-            }
-            prompt_adapter.reset_turn();
+        if line.is_empty() {
+            continue;
+        }
+        if !router_configured {
+            eprintln!(
+                "\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference."
+            );
+            continue;
+        }
+        // `/compact` and `/summarize` (alias) run the same real-model
+        // summarizer the conservative byte budget would call. We
+        // require explicit confirmation through the same `Input`
+        // reader that handles approvals.
+        if matches!(line.as_str(), "/compact" | "/summarize") {
             let cancel = CancellationToken::new();
             if let Err(error) = interruptible(
                 cancel.clone(),
-                implementation
-                    .0
-                    .run(&mut session, line, policy.as_ref(), &output, cancel),
+                run_compact(implementation, session, terminal_input, output, cancel),
             )
             .await
             {
                 eprintln!("\n{error}");
             }
+            continue;
         }
-        Ok(())
+        prompt_adapter.reset_turn();
+        let cancel = CancellationToken::new();
+        if let Err(error) = interruptible(
+            cancel.clone(),
+            implementation.run(session, line, policy, output, cancel),
+        )
+        .await
+        {
+            eprintln!("\n{error}");
+        }
     }
-    .await;
-    drop(implementation);
-    supervisor.shutdown().await;
-    result
+    Ok(())
 }
 
 async fn interruptible<T>(

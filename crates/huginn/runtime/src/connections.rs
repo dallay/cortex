@@ -1,6 +1,9 @@
 //! Provider metadata is separate from sessions. OS stores never fall back to files.
 use async_trait::async_trait;
-use huginn_core::connections::*;
+use huginn_core::connections::{
+    ConnectionError, ConnectionMetadata, ConnectionResult, ConnectionStore, Secret, SecretMode,
+    SecretReference, SecretStore,
+};
 use std::{
     collections::BTreeMap,
     path::Path,

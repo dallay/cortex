@@ -108,16 +108,16 @@ export function useApiKeys() {
   }
 
   function nextPage() {
-    fetch(limit.value, offset.value + limit.value);
+    void fetch(limit.value, offset.value + limit.value);
   }
 
   function prevPage() {
     const newOffset = Math.max(0, offset.value - limit.value);
-    fetch(limit.value, newOffset);
+    void fetch(limit.value, newOffset);
   }
 
   function setPage(page: number) {
-    fetch(limit.value, page * limit.value);
+    void fetch(limit.value, page * limit.value);
   }
 
   const totalPages = () => Math.ceil(total.value / limit.value);

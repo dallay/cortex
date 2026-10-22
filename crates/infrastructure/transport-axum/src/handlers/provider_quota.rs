@@ -47,97 +47,113 @@ pub async fn list_provider_quota(
     let mut items = Vec::new();
 
     for kind in all_provider_kinds() {
-        let provider_connections = connections
-            .iter()
-            .filter(|c| c.provider_kind == kind)
-            .collect::<Vec<_>>();
-        let ids = provider_connections
-            .iter()
-            .map(|c| c.id)
-            .collect::<Vec<_>>();
-        let all_time = if ids.is_empty() {
-            empty_window()
-        } else {
-            summarize_window(recorder, &ids, None, None).await
-        };
-        let last_24h = if ids.is_empty() {
-            empty_window()
-        } else {
-            summarize_window(recorder, &ids, last_24h_start, None).await
-        };
-        let last_7d = if ids.is_empty() {
-            empty_window()
-        } else {
-            summarize_window(recorder, &ids, last_7d_start, None).await
-        };
-        let trend = if ids.is_empty() {
-            Ok(empty_trend(generated_at))
-        } else {
-            build_trend(recorder, &ids, generated_at).await
-        };
-        let connection_count = provider_connections.len() as u32;
-        let active_connection_count =
-            provider_connections.iter().filter(|c| c.is_active).count() as u32;
-        let ratio = if last_7d.rate_limit_availability == "available"
-            && last_7d.availability != "unavailable"
-        {
-            rate_limited_ratio(&last_7d)
-        } else {
-            None
-        };
-        let connection_ratios = if last_7d.rate_limit_availability == "available"
-            && last_7d.availability != "unavailable"
-        {
-            connection_rate_limit_ratios(recorder, &provider_connections, last_7d_start).await
-        } else {
-            vec![None; provider_connections.len()]
-        };
-        let local_warning_level = classify_warning_level(&provider_connections, &connection_ratios);
-        items.push(ProviderQuotaSummaryResponse {
-            provider_kind: kind.as_str().to_string(),
-            connection_count,
-            active_connection_count,
-            coverage: "cortex_routed",
-            usage_availability: all_time.availability,
-            account_quota: ProviderAccountQuotaResponse {
-                availability: if kind == ProviderKind::Ollama {
-                    "not_applicable"
-                } else {
-                    "not_provided"
-                },
-            },
-            local_thresholds: grouped_thresholds(&provider_connections),
-            rate_limit_observation: ProviderRateLimitObservationResponse {
-                source: "recorded_routed_request_status",
-                availability: if ratio.is_some() {
-                    "available"
-                } else {
-                    "unavailable"
-                },
-                window: "last_7d",
-                rate_limited_requests: if ratio.is_some() {
-                    last_7d.rate_limited_requests
-                } else {
-                    None
-                },
-                requests: if ratio.is_some() {
-                    last_7d.requests
-                } else {
-                    None
-                },
-                ratio,
-            },
-            local_warning_level,
-            all_time,
-            last_24h,
-            last_7d,
-            trend: trend.unwrap_or_default(),
-        });
+        let item = summarize_provider_kind(
+            recorder,
+            &connections,
+            kind,
+            generated_at,
+            last_24h_start,
+            last_7d_start,
+        )
+        .await;
+        items.push(item);
     }
     Ok(Json(ProvidersQuotaResponse {
         generated_at,
         items,
     }))
+}
+
+async fn summarize_provider_kind(
+    recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
+    connections: &[ProviderConnection],
+    kind: ProviderKind,
+    generated_at: chrono::DateTime<Utc>,
+    last_24h_start: Option<chrono::DateTime<Utc>>,
+    last_7d_start: Option<chrono::DateTime<Utc>>,
+) -> ProviderQuotaSummaryResponse {
+    let provider_connections = connections
+        .iter()
+        .filter(|c| c.provider_kind == kind)
+        .collect::<Vec<_>>();
+    let ids = provider_connections
+        .iter()
+        .map(|c| c.id)
+        .collect::<Vec<_>>();
+    let (all_time, last_24h, last_7d, trend) = if ids.is_empty() {
+        (
+            empty_window(),
+            empty_window(),
+            empty_window(),
+            empty_trend(generated_at),
+        )
+    } else {
+        (
+            summarize_window(recorder, &ids, None, None).await,
+            summarize_window(recorder, &ids, last_24h_start, None).await,
+            summarize_window(recorder, &ids, last_7d_start, None).await,
+            build_trend(recorder, &ids, generated_at)
+                .await
+                .unwrap_or_default(),
+        )
+    };
+    let connection_count = provider_connections.len() as u32;
+    let active_connection_count =
+        provider_connections.iter().filter(|c| c.is_active).count() as u32;
+    let has_available_rate_limit =
+        last_7d.rate_limit_availability == "available" && last_7d.availability != "unavailable";
+    let ratio = if has_available_rate_limit {
+        rate_limited_ratio(&last_7d)
+    } else {
+        None
+    };
+    let connection_ratios = if has_available_rate_limit {
+        connection_rate_limit_ratios(recorder, &provider_connections, last_7d_start).await
+    } else {
+        vec![None; provider_connections.len()]
+    };
+    let local_warning_level = classify_warning_level(&provider_connections, &connection_ratios);
+
+    ProviderQuotaSummaryResponse {
+        provider_kind: kind.as_str().to_string(),
+        connection_count,
+        active_connection_count,
+        coverage: "cortex_routed",
+        usage_availability: all_time.availability,
+        account_quota: ProviderAccountQuotaResponse {
+            availability: if kind == ProviderKind::Ollama {
+                "not_applicable"
+            } else {
+                "not_provided"
+            },
+        },
+        local_thresholds: grouped_thresholds(&provider_connections),
+        rate_limit_observation: ProviderRateLimitObservationResponse {
+            source: "recorded_routed_request_status",
+            availability: if ratio.is_some() {
+                "available"
+            } else {
+                "unavailable"
+            },
+            window: "last_7d",
+            rate_limited_requests: if ratio.is_some() {
+                last_7d.rate_limited_requests
+            } else {
+                None
+            },
+            requests: if ratio.is_some() {
+                last_7d.requests
+            } else {
+                None
+            },
+            ratio,
+        },
+        local_warning_level,
+        all_time,
+        last_24h,
+        last_7d,
+        trend,
+    }
 }
 
 async fn summarize_window(

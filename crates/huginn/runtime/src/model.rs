@@ -205,34 +205,8 @@ impl SseParser {
         }
         self.buffer.extend_from_slice(bytes);
         let mut result = vec![];
-        loop {
-            let delimiter = self
-                .buffer
-                .windows(2)
-                .position(|w| w == b"\n\n")
-                .map(|p| (p, 2))
-                .into_iter()
-                .chain({
-                    self.buffer
-                        .windows(4)
-                        .position(|w| w == b"\r\n\r\n")
-                        .map(|p| (p, 4))
-                })
-                .min_by_key(|(position, _)| *position);
-            let Some((end, len)) = delimiter else {
-                break;
-            };
-            if end + len > 1_048_576 {
-                return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
-            }
-            let event: Vec<_> = self.buffer.drain(..end + len).collect();
-            let text = std::str::from_utf8(&event)
-                .map_err(|_| AgentError::Model("invalid UTF-8 in SSE event".into()))?;
-            let data = text
-                .lines()
-                .filter_map(|l| l.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
+        while let Some(event) = self.next_event()? {
+            let data = Self::event_data(&event)?;
             if data.is_empty() {
                 continue;
             }
@@ -240,71 +214,119 @@ impl SseParser {
                 result.extend(self.finish()?);
                 break;
             }
-            let value: Value = serde_json::from_str(&data)
-                .map_err(|_| AgentError::Model("malformed SSE JSON".into()))?;
-            if value.get("error").is_some() {
-                return Err(AgentError::Model("endpoint sent a stream error".into()));
-            }
-            if let Some(usage) = value.get("usage").filter(|v| v.is_object()) {
-                result.push(ModelDelta::Usage {
-                    input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                    output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                });
-            }
-            if let Some(choice) = value["choices"].as_array().and_then(|c| c.first()) {
-                if let Some(text) = choice["delta"]["content"].as_str() {
-                    if self.finished {
-                        return Err(AgentError::Model("content after finish marker".into()));
-                    }
-                    result.push(ModelDelta::Text(text.into()));
-                }
-                if let Some(calls) = choice["delta"]["tool_calls"].as_array() {
-                    if self.finished {
-                        return Err(AgentError::Model(
-                            "tool arguments after finish marker".into(),
-                        ));
-                    }
-                    for call in calls {
-                        let index = call["index"]
-                            .as_u64()
-                            .and_then(|i| usize::try_from(i).ok())
-                            .filter(|i| *i < 64)
-                            .ok_or_else(|| AgentError::Model("invalid tool-call index".into()))?;
-                        let parts = self.calls.entry(index).or_default();
-                        if let Some(id) = call["id"].as_str() {
-                            if !parts.id.is_empty() && parts.id != id {
-                                return Err(AgentError::Model("tool-call id changed".into()));
-                            }
-                            parts.id = id.into();
-                        }
-                        if let Some(name) = call["function"]["name"].as_str() {
-                            parts.name.push_str(name);
-                        }
-                        if let Some(args) = call["function"]["arguments"].as_str() {
-                            parts.arguments.push_str(args);
-                        }
-                        if parts.arguments.len() > 262_144
-                            || parts.name.len() > 256
-                            || parts.id.len() > 256
-                        {
-                            return Err(AgentError::Model("tool call exceeds limits".into()));
-                        }
-                    }
-                }
-                if let Some(reason) = choice["finish_reason"].as_str() {
-                    if !matches!(reason, "stop" | "tool_calls") {
-                        return Err(AgentError::Model(
-                            "incomplete model response (unsupported finish reason)".into(),
-                        ));
-                    }
-                    self.finished = true;
-                }
-            }
+            self.process_payload(&data, &mut result)?;
         }
         if self.buffer.len() > 1_048_576 {
             return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
         }
         Ok(result)
+    }
+
+    fn next_event(&mut self) -> Result<Option<Vec<u8>>> {
+        let delimiter = self
+            .buffer
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .map(|p| (p, 2))
+            .into_iter()
+            .chain(
+                self.buffer
+                    .windows(4)
+                    .position(|w| w == b"\r\n\r\n")
+                    .map(|p| (p, 4)),
+            )
+            .min_by_key(|(position, _)| *position);
+        let Some((end, len)) = delimiter else {
+            return Ok(None);
+        };
+        if end + len > 1_048_576 {
+            return Err(AgentError::Model("SSE event exceeds 1 MiB".into()));
+        }
+        Ok(Some(self.buffer.drain(..end + len).collect()))
+    }
+
+    fn event_data(event: &[u8]) -> Result<String> {
+        let text = std::str::from_utf8(event)
+            .map_err(|_| AgentError::Model("invalid UTF-8 in SSE event".into()))?;
+        Ok(text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
+    fn process_payload(&mut self, data: &str, result: &mut Vec<ModelDelta>) -> Result<()> {
+        let value: Value = serde_json::from_str(data)
+            .map_err(|_| AgentError::Model("malformed SSE JSON".into()))?;
+        if value.get("error").is_some() {
+            return Err(AgentError::Model("endpoint sent a stream error".into()));
+        }
+        if let Some(usage) = value.get("usage").filter(|value| value.is_object()) {
+            result.push(ModelDelta::Usage {
+                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+            });
+        }
+        if let Some(choice) = value["choices"]
+            .as_array()
+            .and_then(|choices| choices.first())
+        {
+            self.process_choice(choice, result)?;
+        }
+        Ok(())
+    }
+
+    fn process_choice(&mut self, choice: &Value, result: &mut Vec<ModelDelta>) -> Result<()> {
+        if let Some(text) = choice["delta"]["content"].as_str() {
+            if self.finished {
+                return Err(AgentError::Model("content after finish marker".into()));
+            }
+            result.push(ModelDelta::Text(text.into()));
+        }
+        if let Some(calls) = choice["delta"]["tool_calls"].as_array() {
+            if self.finished {
+                return Err(AgentError::Model(
+                    "tool arguments after finish marker".into(),
+                ));
+            }
+            self.append_tool_calls(calls)?;
+        }
+        if let Some(reason) = choice["finish_reason"].as_str() {
+            if !matches!(reason, "stop" | "tool_calls") {
+                return Err(AgentError::Model(
+                    "incomplete model response (unsupported finish reason)".into(),
+                ));
+            }
+            self.finished = true;
+        }
+        Ok(())
+    }
+
+    fn append_tool_calls(&mut self, calls: &[Value]) -> Result<()> {
+        for call in calls {
+            let index = call["index"]
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .filter(|index| *index < 64)
+                .ok_or_else(|| AgentError::Model("invalid tool-call index".into()))?;
+            let parts = self.calls.entry(index).or_default();
+            if let Some(id) = call["id"].as_str() {
+                if !parts.id.is_empty() && parts.id != id {
+                    return Err(AgentError::Model("tool-call id changed".into()));
+                }
+                parts.id = id.into();
+            }
+            if let Some(name) = call["function"]["name"].as_str() {
+                parts.name.push_str(name);
+            }
+            if let Some(arguments) = call["function"]["arguments"].as_str() {
+                parts.arguments.push_str(arguments);
+            }
+            if parts.arguments.len() > 262_144 || parts.name.len() > 256 || parts.id.len() > 256 {
+                return Err(AgentError::Model("tool call exceeds limits".into()));
+            }
+        }
+        Ok(())
     }
     pub fn eof(&mut self) -> Result<Vec<ModelDelta>> {
         if self.done {

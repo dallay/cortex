@@ -7,7 +7,11 @@ use huginn_application::{
 };
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
-    providers::*,
+    providers::{
+        AuthenticationMethod, ConnectionIdentity, ModelDescriptor, ModelSelection, ProviderAction,
+        ProviderActionOutput, ProviderAdapter, ProviderCatalogService, ProviderDescriptor,
+        ProvidersService,
+    },
     CancellationToken, ModelDelta, ModelProvider, ModelRequest, ModelService, Result,
 };
 use std::sync::Arc;

@@ -586,10 +586,13 @@ onUnmounted(stopOAuthPolling);
 
         <!-- Auth type toggle (OAuth disabled when kind doesn't support it) -->
         <div class="space-y-2">
-          <Label>{{ t('providers.form.authType') }}</Label>
+          <span id="provider-auth-type-label" class="text-sm font-medium">
+            {{ t('providers.form.authType') }}
+          </span>
           <ToggleGroup
             v-model="authType"
             type="single"
+            aria-labelledby="provider-auth-type-label"
             class="justify-start"
             data-testid="auth-type-toggle"
           >

@@ -10,17 +10,27 @@ import {computed, ref} from "vue";
 
 const STORAGE_KEY = "rook-api-base-url";
 
+/**
+ * `localStorage` is missing in non-browser runtimes (SSR, workers, tests).
+ * The cast keeps the "may be absent" contract explicit for the type checker.
+ */
+function getLocalStorage(): Storage | undefined {
+  return globalThis.localStorage as Storage | undefined;
+}
+
 function getStoredOverride(): string | null {
-  if (typeof globalThis.localStorage === "undefined") return null;
-  return globalThis.localStorage.getItem(STORAGE_KEY);
+  const storage = getLocalStorage();
+  if (storage === undefined) return null;
+  return storage.getItem(STORAGE_KEY);
 }
 
 function storeOverride(url: string | null): void {
-  if (typeof globalThis.localStorage === "undefined") return;
+  const storage = getLocalStorage();
+  if (storage === undefined) return;
   if (url) {
-    globalThis.localStorage.setItem(STORAGE_KEY, url);
+    storage.setItem(STORAGE_KEY, url);
   } else {
-    globalThis.localStorage.removeItem(STORAGE_KEY);
+    storage.removeItem(STORAGE_KEY);
   }
 }
 

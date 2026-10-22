@@ -74,58 +74,13 @@ fn context(editor: &Editor) -> Option<Context> {
         return None;
     }
     let start = text.len() - text.trim_start().len();
-    let command_end = text[start..]
-        .find(char::is_whitespace)
-        .map_or(text.len(), |i| start + i);
-    if text[start..].starts_with('/') && cursor > start && cursor <= command_end {
-        return Some(Context {
-            kind: Kind::Command,
-            range: start..command_end,
-            query: text[start..cursor].into(),
-        });
+    let command_end = command_end(text, start);
+    if let Some(context) = command_context(text, start, cursor, command_end) {
+        return Some(context);
     }
-    let mut token_start = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    for (i, ch) in text[..cursor].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' && quoted {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            quoted = !quoted;
-        } else if ch.is_whitespace() && !quoted {
-            token_start = i + ch.len_utf8();
-        }
-    }
-    let mut end = text.len();
-    let mut first_whitespace = None;
-    for (i, ch) in text[cursor..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' && quoted {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            quoted = !quoted;
-        } else if ch.is_whitespace() {
-            first_whitespace.get_or_insert(cursor + i);
-            if !quoted {
-                end = cursor + i;
-                break;
-            }
-        }
-    }
-    if quoted && end == text.len() {
-        end = first_whitespace.unwrap_or(text.len());
-    }
+
+    let (token_start, quoted) = token_start(text, cursor);
+    let end = token_end(text, cursor, quoted);
     let token = &text[token_start..cursor];
     if let Some(query) = token.strip_prefix('@') {
         return Some(Context {
@@ -134,14 +89,92 @@ fn context(editor: &Editor) -> Option<Context> {
             query: unquote(query),
         });
     }
-    if text[start..].starts_with('/') && cursor > command_end && token_start > command_end {
-        return Some(Context {
+    argument_context(text, start, cursor, command_end, token_start, end, token)
+}
+
+fn command_end(text: &str, start: usize) -> usize {
+    text[start..]
+        .find(char::is_whitespace)
+        .map_or(text.len(), |index| start + index)
+}
+
+fn command_context(text: &str, start: usize, cursor: usize, end: usize) -> Option<Context> {
+    (text[start..].starts_with('/') && cursor > start && cursor <= end).then(|| Context {
+        kind: Kind::Command,
+        range: start..end,
+        query: text[start..cursor].into(),
+    })
+}
+
+fn token_start(text: &str, cursor: usize) -> (usize, bool) {
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in text[..cursor].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quoted {
+            escaped = true;
+            continue;
+        }
+        if character == '"' {
+            quoted = !quoted;
+        } else if character.is_whitespace() && !quoted {
+            start = index + character.len_utf8();
+        }
+    }
+    (start, quoted)
+}
+
+fn token_end(text: &str, cursor: usize, in_quotes: bool) -> usize {
+    let mut end = text.len();
+    let mut first_whitespace = None;
+    let mut in_quotes = in_quotes;
+    let mut escaped = false;
+    for (index, character) in text[cursor..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && in_quotes {
+            escaped = true;
+            continue;
+        }
+        if character == '"' {
+            in_quotes = !in_quotes;
+        } else if character.is_whitespace() {
+            first_whitespace.get_or_insert(cursor + index);
+            if !in_quotes {
+                end = cursor + index;
+                break;
+            }
+        }
+    }
+    if in_quotes && end == text.len() {
+        first_whitespace.unwrap_or(text.len())
+    } else {
+        end
+    }
+}
+
+fn argument_context(
+    text: &str,
+    start: usize,
+    cursor: usize,
+    command_end: usize,
+    token_start: usize,
+    end: usize,
+    token: &str,
+) -> Option<Context> {
+    (text[start..].starts_with('/') && cursor > command_end && token_start > command_end).then(
+        || Context {
             kind: Kind::Argument(text[start..command_end].into()),
             range: token_start..end,
             query: unquote(token),
-        });
-    }
-    None
+        },
+    )
 }
 fn unquote(text: &str) -> String {
     let Some(text) = text.strip_prefix('"') else {

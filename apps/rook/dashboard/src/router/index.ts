@@ -8,8 +8,8 @@ import {useAuthStore} from "@/stores/auth";
  * `providerCatalog.ts` can never drift apart. Adding a new kind to
  * the catalog automatically makes its route valid here.
  */
-const VALID_PROVIDER_KINDS: readonly string[] = PROVIDER_KINDS.map(
-  (p) => p.kind,
+const VALID_PROVIDER_KINDS = new Set<string>(
+  PROVIDER_KINDS.map((provider) => provider.kind),
 );
 
 const routes: RouteRecordRaw[] = [
@@ -71,7 +71,7 @@ const routes: RouteRecordRaw[] = [
               const kind = to.params.providerKind;
               if (
                 typeof kind !== "string" ||
-                !VALID_PROVIDER_KINDS.includes(kind)
+                !VALID_PROVIDER_KINDS.has(kind)
               ) {
                 // Invalid kind — bounce back to the catalog so the user
                 // sees a real page rather than a flash of an empty view.
