@@ -701,18 +701,23 @@ impl Driver {
                 Constraint::Length(2),
             ])
             .areas(area);
-            frame.render_widget(Paragraph::new(safe(body)), heading);
             let rows = usize::from(content.height.saturating_sub(2)).max(1);
             // A single-row viewport cannot show the error and the selected
-            // option. The title carries the error so the option never leaves
+            // option. The heading carries the error so the option never leaves
             // the viewport.
             let cramped = rows < 2;
             let mut title = safe(title);
+            let mut heading_text = safe(body);
             if let Some(message) = error {
                 if cramped {
-                    title = format!("{title} ⚠ {}", safe(message));
+                    // The block title is truncated in a cramped viewport, so
+                    // the message moves to the heading and the title only
+                    // marks the failure.
+                    title = format!("⚠ {title}");
+                    heading_text = safe(message);
                 }
             }
+            frame.render_widget(Paragraph::new(heading_text), heading);
             let mut lines: Vec<String> = Vec::new();
             if let Some(message) = error {
                 if !cramped {
@@ -1465,6 +1470,8 @@ mod tests {
         // 20x8 is the smallest supported viewport.
         let output = frame_text(&view, 20, 8);
         assert!(output.contains("> Local"), "{output}");
+        // The error stays readable: a cramped block truncates its title.
+        assert!(output.contains("Catalog unavailable"), "{output}");
     }
 
     #[test]
@@ -1505,6 +1512,7 @@ mod tests {
         ));
         let output = frame_text(&view, 20, 8);
         assert!(output.contains("> Local"), "{output}");
+        assert!(output.contains("Catalog unavailable"), "{output}");
     }
 
     #[test]
