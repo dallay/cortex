@@ -125,6 +125,50 @@ Request with X-Rook-Combo header or default_combo
 **Streaming Limitation:**
 Combos only apply before streaming starts. Once the first chunk is sent, no fallback occurs.
 
+### Upstream Quota Eligibility
+
+Providers report their own quota limits through response headers. Rook captures those
+values as `QuotaObservation` records, scoped to the connection that produced the
+response. The records stay separate from locally measured usage (`UsageEntry`).
+
+**Read model:**
+- `QuotaObservationRecorderPort::latest_observations` (`QuotaObservationQuery`) returns
+  the newest observation per connection, metric, scope, window, and source.
+- `audit-sqlite` answers that query with a bounded SQL read, filtered by connection,
+  provider, metric, and source.
+
+**Evaluation** (`rook-core::quota::evaluate_connection_quota`):
+
+| State | Meaning | Routing effect |
+| -- | -- | -- |
+| `Exhausted` | Fresh, applicable evidence reports no remaining capacity | The connection is skipped before upstream I/O |
+| `Available` | Fresh, applicable evidence reports remaining capacity | The connection stays eligible |
+| `Stale` | The evidence is older than the freshness window, or its reset instant passed | The connection stays eligible |
+| `NotApplicable` | The evidence describes a metric that does not apply to requests | The connection stays eligible |
+| `Unknown` | No evidence exists | The connection stays eligible |
+
+**Policy defaults** (`QuotaEligibilityPolicy`):
+- Freshness window: 300 seconds.
+- Exhaustion threshold: remaining of 0.
+- Applicable metrics: `requests`, `tokens`, `input_tokens`, `output_tokens`.
+
+The defaults are a starting point, not a provider contract. Deployments can narrow the
+applicable metrics or the freshness window.
+
+**Rules:**
+- Only `Exhausted` skips a connection. Every other state fails open, so a missing or
+  stale header never removes a working account.
+- Only observations captured for that connection count. A provider-scoped observation
+  never proves that one connection is exhausted.
+- The reset instant comes from `reset_at` or from `reset_after_milliseconds` anchored to
+  `observed_at`. A passed reset restores eligibility, and a newer observation with
+  remaining capacity overrides an older exhaustion.
+- The authorization preflight runs first. A quota decision never relaxes an API key
+  restriction.
+- A runtime 429 still follows the existing combo fallback rules.
+- Skip reasons carry quota provenance only: provider, metric, counters, and timing.
+  Credentials never reach the reason string.
+
 ### `transport-axum`
 
 HTTP transport layer. All wire-format logic lives here.

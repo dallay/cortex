@@ -177,6 +177,16 @@ impl CortexError {
         }
     }
 
+    /// Skip reasons recorded when every combo step was exhausted.
+    ///
+    /// The reasons describe why each step was skipped, for example an
+    /// exhausted upstream quota. They never carry credentials.
+    pub fn combo_skip_reasons(&self) -> Option<&[(super::ProviderId, String)]> {
+        self.source
+            .downcast_ref::<AllProvidersExhaustedComboError>()
+            .map(|combo_error| combo_error.errors.as_slice())
+    }
+
     // --- Error classification helpers ---
 
     /// Returns true for resource-not-found errors (unknown virtual alias,

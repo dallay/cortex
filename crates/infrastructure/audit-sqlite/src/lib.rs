@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
-    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, ProviderKind, QuotaObservation,
-    QuotaObservationRecorderPort, RequestStatus, UsageEntry, UsageFilters, UsageRecorderPort,
-    UsageSummary,
+    reduce_latest_observations, ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination,
+    ProviderKind, QuotaObservation, QuotaObservationQuery, QuotaObservationRecorderPort,
+    RequestStatus, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
 };
 use rusqlite::{params, Connection};
 use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId, ProviderId, RequestId};
@@ -303,83 +303,80 @@ impl QuotaObservationRecorderPort for SqliteUsageRepository {
             )
             .map_err(|e| CortexError::provider(format!("sqlite quota list prepare failed: {e}")))?;
         let rows = stmt
-            .query_map([provider.map(|id| id.to_string())], |row| {
-                let provider_kind: String = row.get(0)?;
-                let provider_kind =
-                    ProviderKind::try_from(provider_kind.as_str()).map_err(|_| {
-                        rusqlite::Error::InvalidColumnType(
-                            0,
-                            "provider_kind".to_string(),
-                            rusqlite::types::Type::Text,
-                        )
-                    })?;
-                let connection_id: Option<String> = row.get(2)?;
-                let connection_id = connection_id
-                    .map(|id| {
-                        ConnectionId::parse_str(&id).map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                2,
-                                "connection_id".to_string(),
-                                rusqlite::types::Type::Text,
-                            )
-                        })
-                    })
-                    .transpose()?;
-                let reset_at: Option<String> = row.get(9)?;
-                let reset_at = reset_at
-                    .map(|value| {
-                        DateTime::parse_from_rfc3339(&value)
-                            .map(|date| date.with_timezone(&Utc))
-                            .map_err(|_| {
-                                rusqlite::Error::InvalidColumnType(
-                                    9,
-                                    "reset_at".to_string(),
-                                    rusqlite::types::Type::Text,
-                                )
-                            })
-                    })
-                    .transpose()?;
-                let observed_at: String = row.get(11)?;
-                let observed_at = DateTime::parse_from_rfc3339(&observed_at)
-                    .map(|date| date.with_timezone(&Utc))
-                    .map_err(|_| {
-                        rusqlite::Error::InvalidColumnType(
-                            11,
-                            "observed_at".to_string(),
-                            rusqlite::types::Type::Text,
-                        )
-                    })?;
-                let reset_after_milliseconds: Option<i64> = row.get(10)?;
-                Ok(QuotaObservation {
-                    provider_kind,
-                    provider: ProviderId::new(row.get::<_, String>(1)?),
-                    connection_id,
-                    metric: row.get(3)?,
-                    source: row.get(4)?,
-                    scope: row.get(5)?,
-                    window: row.get(6)?,
-                    limit: row.get(7)?,
-                    remaining: row.get(8)?,
-                    reset_at,
-                    reset_after_milliseconds: reset_after_milliseconds
-                        .map(|value| {
-                            u64::try_from(value).map_err(|_| {
-                                rusqlite::Error::InvalidColumnType(
-                                    10,
-                                    "reset_after_milliseconds".to_string(),
-                                    rusqlite::types::Type::Integer,
-                                )
-                            })
-                        })
-                        .transpose()?,
-                    observed_at,
-                })
-            })
+            .query_map(
+                [provider.map(|id| id.to_string())],
+                map_quota_observation_row,
+            )
             .map_err(|e| CortexError::provider(format!("sqlite quota list failed: {e}")))?;
         rows.map(|row| {
             row.map_err(|e| CortexError::provider(format!("sqlite quota row failed: {e}")))
         })
         .collect()
+    }
+
+    /// Latest observation of each quota series, read with a bounded query.
+    ///
+    /// The scan is limited to a small multiple of the requested series count so
+    /// that a chatty provider cannot turn one preflight read into a full scan.
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        let conn = self.conn.lock().await;
+
+        let mut sql = String::from(
+            "SELECT provider_kind, provider_runtime_id, connection_id, metric, source,
+                    scope, window, quota_limit, remaining, reset_at,
+                    reset_after_milliseconds, observed_at
+             FROM provider_quota_observations",
+        );
+        let mut filters: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if !query.connection_ids.is_empty() {
+            let placeholders = vec!["?"; query.connection_ids.len()].join(",");
+            filters.push(format!("connection_id IN ({placeholders})"));
+            for connection_id in &query.connection_ids {
+                params.push(Box::new(connection_id.to_string()));
+            }
+        }
+        if let Some(provider) = &query.provider {
+            filters.push("provider_runtime_id = ?".to_string());
+            params.push(Box::new(provider.to_string()));
+        }
+        if let Some(metric) = &query.metric {
+            filters.push("metric = ?".to_string());
+            params.push(Box::new(metric.clone()));
+        }
+        if let Some(source) = &query.source {
+            filters.push("source = ?".to_string());
+            params.push(Box::new(source.clone()));
+        }
+
+        if !filters.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&filters.join(" AND "));
+        }
+        sql.push_str(" ORDER BY observed_at DESC, id DESC LIMIT ?");
+        let scan_limit = query.clamped_limit().saturating_mul(4).min(4000);
+        params.push(Box::new(scan_limit as i64));
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| {
+            CortexError::provider(format!("sqlite quota latest prepare failed: {e}"))
+        })?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                map_quota_observation_row,
+            )
+            .map_err(|e| CortexError::provider(format!("sqlite quota latest failed: {e}")))?;
+        let observations: Vec<QuotaObservation> = rows
+            .map(|row| {
+                row.map_err(|e| CortexError::provider(format!("sqlite quota row failed: {e}")))
+            })
+            .collect::<CortexResult<Vec<QuotaObservation>>>()?;
+
+        Ok(reduce_latest_observations(observations, query))
     }
 }
 
@@ -416,6 +413,79 @@ impl SqliteUsageRepository {
         }
         Ok(())
     }
+}
+
+/// Map one `provider_quota_observations` row into the domain model.
+fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaObservation> {
+    let provider_kind: String = row.get(0)?;
+    let provider_kind = ProviderKind::try_from(provider_kind.as_str()).map_err(|_| {
+        rusqlite::Error::InvalidColumnType(
+            0,
+            "provider_kind".to_string(),
+            rusqlite::types::Type::Text,
+        )
+    })?;
+    let connection_id: Option<String> = row.get(2)?;
+    let connection_id = connection_id
+        .map(|id| {
+            ConnectionId::parse_str(&id).map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    2,
+                    "connection_id".to_string(),
+                    rusqlite::types::Type::Text,
+                )
+            })
+        })
+        .transpose()?;
+    let reset_at: Option<String> = row.get(9)?;
+    let reset_at = reset_at
+        .map(|value| {
+            DateTime::parse_from_rfc3339(&value)
+                .map(|date| date.with_timezone(&Utc))
+                .map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        9,
+                        "reset_at".to_string(),
+                        rusqlite::types::Type::Text,
+                    )
+                })
+        })
+        .transpose()?;
+    let observed_at: String = row.get(11)?;
+    let observed_at = DateTime::parse_from_rfc3339(&observed_at)
+        .map(|date| date.with_timezone(&Utc))
+        .map_err(|_| {
+            rusqlite::Error::InvalidColumnType(
+                11,
+                "observed_at".to_string(),
+                rusqlite::types::Type::Text,
+            )
+        })?;
+    let reset_after_milliseconds: Option<i64> = row.get(10)?;
+    Ok(QuotaObservation {
+        provider_kind,
+        provider: ProviderId::new(row.get::<_, String>(1)?),
+        connection_id,
+        metric: row.get(3)?,
+        source: row.get(4)?,
+        scope: row.get(5)?,
+        window: row.get(6)?,
+        limit: row.get(7)?,
+        remaining: row.get(8)?,
+        reset_at,
+        reset_after_milliseconds: reset_after_milliseconds
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        10,
+                        "reset_after_milliseconds".to_string(),
+                        rusqlite::types::Type::Integer,
+                    )
+                })
+            })
+            .transpose()?,
+        observed_at,
+    })
 }
 
 fn enqueue_quota_observation_batch(
@@ -1260,6 +1330,86 @@ mod usage_tests {
                 0,
                 "upstream quota capture must not create local usage history"
             );
+        });
+    }
+
+    #[test]
+    fn latest_observations_returns_the_newest_series_per_connection() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let first = ConnectionId::new();
+            let second = ConnectionId::new();
+
+            let mut older = quota_observation("openai-runtime", Some(first));
+            older.observed_at = timestamp(1);
+            older.remaining = Some(0.0);
+            let mut newer = quota_observation("openai-runtime", Some(first));
+            newer.observed_at = timestamp(5);
+            newer.remaining = Some(11.0);
+            let other_connection = quota_observation("openai-runtime", Some(second));
+
+            repo.record_observations(vec![older, newer, other_connection])
+                .await
+                .expect("record quota batch");
+            wait_for_quota_rows(&repo, 3).await;
+
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![first]))
+                .await
+                .expect("latest quota observations");
+            assert_eq!(rows.len(), 1, "one series per connection is enough");
+            assert_eq!(rows[0].remaining, Some(11.0));
+            assert_eq!(rows[0].observed_at, timestamp(5));
+            assert_eq!(rows[0].connection_id, Some(first));
+
+            let other_rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![second]))
+                .await
+                .expect("latest quota observations");
+            assert_eq!(other_rows.len(), 1);
+            assert_eq!(other_rows[0].connection_id, Some(second));
+            assert_eq!(other_rows[0].remaining, Some(73.0));
+
+            let unknown_connection = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![
+                    ConnectionId::new(),
+                ]))
+                .await
+                .expect("latest quota observations");
+            assert!(
+                unknown_connection.is_empty(),
+                "a connection without evidence yields no rows"
+            );
+        });
+    }
+
+    #[test]
+    fn latest_observations_filters_by_provider_metric_and_source() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let connection = ConnectionId::new();
+            let mut openai = quota_observation("openai-runtime", Some(connection));
+            openai.source = "response_headers".to_string();
+            let mut anthropic = quota_observation("anthropic-runtime", Some(connection));
+            anthropic.source = "response_headers".to_string();
+
+            repo.record_observations(vec![openai, anthropic])
+                .await
+                .expect("record quota batch");
+            wait_for_quota_rows(&repo, 2).await;
+
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery {
+                    connection_ids: vec![connection],
+                    provider: Some(ProviderId::new("openai-runtime")),
+                    metric: Some("requests".to_string()),
+                    source: Some("response_headers".to_string()),
+                    limit: 10,
+                })
+                .await
+                .expect("latest quota observations");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].provider, ProviderId::new("openai-runtime"));
         });
     }
 

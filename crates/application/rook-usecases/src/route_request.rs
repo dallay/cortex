@@ -15,10 +15,12 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort, ComboRepositoryPort,
-    ComboStep, CompletionRequest, CompletionResponse, CortexError, FormatTranslatorPort,
-    ModelAliasRepositoryPort, ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk,
-    TokenUsage, ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
+    evaluate_connection_quota, ApiFormat, AuditEntry, AuditPort, CachePort,
+    ComboAliasRepositoryPort, ComboRepositoryPort, ComboStep, CompletionRequest,
+    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
+    ProviderRepositoryPort, QuotaEligibilityPolicy, QuotaObservationQuery,
+    QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort, StreamChunk, TokenUsage,
+    ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
@@ -29,7 +31,7 @@ fn record_combo_skip(
     errors: &mut Vec<(ProviderId, String)>,
     provider_id: &ProviderId,
     step_index: usize,
-    reason: &'static str,
+    reason: &str,
 ) {
     tracing::warn!(
         step_index = step_index + 1,
@@ -38,6 +40,17 @@ fn record_combo_skip(
         "skipping combo step"
     );
     errors.push((provider_id.clone(), reason.to_string()));
+}
+
+/// Build the skip reason of an exhausted connection.
+///
+/// The reason carries quota provenance only: provider, metric, counters, and
+/// timing. Credentials and account identifiers never reach this string.
+fn quota_skip_reason(state: &QuotaState) -> String {
+    match state.evidence() {
+        Some(evidence) => format!("quota_exhausted: {}", evidence.describe()),
+        None => "quota_exhausted".to_string(),
+    }
 }
 
 /// Decision taken for a resolved connection-bound adapter before any upstream call.
@@ -138,6 +151,10 @@ pub struct RouteRequest {
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
     combo_alias_repository: Option<Arc<dyn ComboAliasRepositoryPort>>,
+    /// Reader for upstream quota observations used by the eligibility preflight.
+    quota_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    /// Policy that decides when quota evidence is trustworthy.
+    quota_policy: QuotaEligibilityPolicy,
 }
 
 /// Configuration for model alias resolution
@@ -175,7 +192,27 @@ impl RouteRequest {
             alias_config,
             telemetry,
             combo_alias_repository: None,
+            quota_reader: None,
+            quota_policy: QuotaEligibilityPolicy::default(),
         }
+    }
+
+    /// Wire the reader for upstream quota observations.
+    ///
+    /// With no reader the preflight stays disabled and every connection keeps
+    /// its eligibility.
+    pub fn with_quota_observation_reader(
+        mut self,
+        reader: Arc<dyn QuotaObservationRecorderPort>,
+    ) -> Self {
+        self.quota_reader = Some(reader);
+        self
+    }
+
+    /// Override the policy that decides when quota evidence is trustworthy.
+    pub fn with_quota_policy(mut self, policy: QuotaEligibilityPolicy) -> Self {
+        self.quota_policy = policy;
+        self
     }
 
     /// Builder-style wiring for virtual combo (`rook/*`) resolution.
@@ -347,6 +384,26 @@ impl RouteRequest {
                     continue;
                 }
                 return Err(error);
+            }
+
+            // Skip connections with fresh, authoritative exhaustion evidence.
+            // The check runs after authorization and before any upstream I/O.
+            if let Some(connection_id) = connection_id.as_ref() {
+                let runtime_id = self.connection_runtime_id(connection_id).await;
+                let state = self
+                    .connection_quota_state(connection_id, runtime_id.as_ref())
+                    .await;
+                if state.is_exhausted() {
+                    let reason = quota_skip_reason(&state);
+                    tracing::info!(
+                        provider = %provider_id,
+                        %connection_id,
+                        skip_reason = %reason,
+                        "skipping connection with exhausted upstream quota"
+                    );
+                    excluded.push(provider_id);
+                    continue;
+                }
             }
 
             let provider_format = provider.api_format();
@@ -690,6 +747,26 @@ impl RouteRequest {
                     );
                 }
                 let provider_format = provider.api_format();
+                // Skip connections with fresh, authoritative exhaustion
+                // evidence before the stream starts and exposes SSE bytes.
+                let connection_id = self.resolve_connection_id(&provider_id).await;
+                if let Some(connection_id) = connection_id.as_ref() {
+                    let runtime_id = self.connection_runtime_id(connection_id).await;
+                    let state = self
+                        .connection_quota_state(connection_id, runtime_id.as_ref())
+                        .await;
+                    if state.is_exhausted() {
+                        let reason = quota_skip_reason(&state);
+                        tracing::info!(
+                            provider = %provider_id,
+                            %connection_id,
+                            skip_reason = %reason,
+                            "skipping connection with exhausted upstream quota"
+                        );
+                        excluded.push(provider_id);
+                        continue;
+                    }
+                }
                 let provider_req = self.format_translator.translate_request(
                     client_format,
                     provider_format,
@@ -698,7 +775,6 @@ impl RouteRequest {
                 provider_attempts += 1;
                 match provider.stream(&provider_req).await {
                     Ok(upstream) => {
-                        let connection_id = self.resolve_connection_id(&provider_id).await;
                         break 'select (provider_id, connection_id, upstream);
                     }
                     Err(error) if error.is_local_backpressure() => {
@@ -1171,6 +1247,21 @@ impl RouteRequest {
 
             let mut step_req = req.clone();
             step_req.model = model.clone();
+
+            // Skip connections with fresh, authoritative exhaustion evidence.
+            // The check runs before any upstream I/O and never replaces the
+            // authorization preflight.
+            if let Some(connection_id) = effective_connection_id {
+                let state = self
+                    .connection_quota_state(connection_id, Some(provider_id))
+                    .await;
+                if state.is_exhausted() {
+                    let reason = quota_skip_reason(&state);
+                    record_combo_skip(&mut errors, provider_id, step_index, &reason);
+                    continue;
+                }
+            }
+
             let resolved = if let Some(connection_id) = effective_connection_id {
                 self.resolve_connection_combo_step(
                     connection_id,
@@ -1628,6 +1719,60 @@ impl RouteRequest {
         }
     }
 
+    /// Runtime provider that owns a connection, when the connection is known.
+    async fn connection_runtime_id(&self, connection_id: &ConnectionId) -> Option<ProviderId> {
+        let repository = self.provider_repository.as_ref()?;
+        match repository.find(connection_id).await {
+            Ok(Some(connection)) => Some(connection.provider_runtime_id),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(%connection_id, error = %error, "failed to resolve connection runtime id");
+                None
+            }
+        }
+    }
+
+    /// Evaluate the quota state of a connection from upstream evidence.
+    ///
+    /// The evaluation fails open: an unreadable store leaves the connection
+    /// eligible, and only fresh, applicable exhaustion evidence removes it.
+    /// Authorization never depends on this result.
+    async fn connection_quota_state(
+        &self,
+        connection_id: &ConnectionId,
+        runtime_id: Option<&ProviderId>,
+    ) -> QuotaState {
+        let Some(reader) = self.quota_reader.as_ref() else {
+            return QuotaState::Unknown;
+        };
+
+        let query = QuotaObservationQuery {
+            connection_ids: vec![*connection_id],
+            provider: runtime_id.cloned(),
+            ..QuotaObservationQuery::default()
+        };
+
+        let observations = match reader.latest_observations(&query).await {
+            Ok(observations) => observations,
+            Err(error) => {
+                tracing::warn!(
+                    %connection_id,
+                    error = %error,
+                    "failed to read quota observations; keeping connection eligible"
+                );
+                return QuotaState::Unknown;
+            }
+        };
+
+        evaluate_connection_quota(
+            &observations,
+            connection_id,
+            runtime_id,
+            Utc::now(),
+            &self.quota_policy,
+        )
+    }
+
     async fn record_failure_audit_usage(
         &self,
         req: &CompletionRequest,
@@ -1717,9 +1862,9 @@ mod tests {
         ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
         ComboAliasRepositoryPort, ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown,
         HealthStatus, Message, ModelAlias, ModelAliasRepositoryError, ModelId, Pagination,
-        ProviderId, ProviderPort, ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry,
-        StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort,
-        UsageSummary,
+        ProviderId, ProviderPort, ProviderRepositoryPort, QuotaObservation,
+        QuotaObservationRecorderPort, RequestMetadata, Role, SignatureEntry, StreamChunk,
+        TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
     };
     use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
     use std::collections::HashMap;
@@ -3701,6 +3846,24 @@ mod tests {
         seen_models: Arc<Mutex<Vec<String>>>,
         provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
     ) -> ComboHarness {
+        combo_harness_with_repositories_and_quota(
+            combo,
+            aliases,
+            router,
+            seen_models,
+            provider_repository,
+            None,
+        )
+    }
+
+    fn combo_harness_with_repositories_and_quota(
+        combo: Combo,
+        aliases: Vec<(&str, ComboId)>,
+        router: Arc<dyn RouterPort>,
+        seen_models: Arc<Mutex<Vec<String>>>,
+        provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
+        quota_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    ) -> ComboHarness {
         let combo_id = combo.id;
         let mut combos = HashMap::new();
         combos.insert(combo_id, combo);
@@ -3715,7 +3878,7 @@ mod tests {
             entries: Mutex::new(Vec::new()),
             fail_recording: false,
         });
-        let usecase = RouteRequest::new(
+        let mut usecase = RouteRequest::new(
             router,
             Arc::new(TestCache {
                 get_calls: Mutex::new(0),
@@ -3732,6 +3895,9 @@ mod tests {
             None,
         )
         .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases: alias_map }));
+        if let Some(reader) = quota_reader {
+            usecase = usecase.with_quota_observation_reader(reader);
+        }
         ComboHarness {
             usecase,
             seen_models,
@@ -3882,6 +4048,557 @@ mod tests {
             "the exact configured connection must receive the request"
         );
         assert!(h.seen_models.lock().unwrap().is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // Upstream quota eligibility preflight
+    // ------------------------------------------------------------------
+
+    /// In-memory quota store used by the eligibility tests.
+    struct FakeQuotaStore {
+        observations: Mutex<Vec<QuotaObservation>>,
+    }
+
+    impl FakeQuotaStore {
+        fn new(observations: Vec<QuotaObservation>) -> Self {
+            Self {
+                observations: Mutex::new(observations),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl QuotaObservationRecorderPort for FakeQuotaStore {
+        async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()> {
+            self.observations.lock().unwrap().push(observation);
+            Ok(())
+        }
+
+        async fn list_observations(
+            &self,
+            provider: Option<ProviderId>,
+        ) -> CortexResult<Vec<QuotaObservation>> {
+            let observations = self.observations.lock().unwrap();
+            Ok(observations
+                .iter()
+                .filter(|observation| match &provider {
+                    Some(provider) => &observation.provider == provider,
+                    None => true,
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    /// Provider repository that also resolves the connection of a runtime.
+    struct QuotaAwareProviderRepository {
+        connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
+        runtime_connections: HashMap<ProviderId, ConnectionId>,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for QuotaAwareProviderRepository {
+        async fn list(
+            &self,
+        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(self.connections.values().cloned().collect())
+        }
+
+        async fn find(
+            &self,
+            id: &ConnectionId,
+        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+            Ok(self.connections.get(id).cloned())
+        }
+
+        async fn find_connection_id_by_runtime(
+            &self,
+            provider: &ProviderId,
+        ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
+            Ok(self.runtime_connections.get(provider).copied())
+        }
+
+        async fn create(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+        ) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
+
+        async fn update(
+            &self,
+            _conn: &rook_core::ProviderConnection,
+            _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+            unreachable!("test repository is read-only")
+        }
+    }
+
+    #[tokio::test]
+    async fn standard_request_skips_provider_with_exhausted_quota() {
+        let exhausted_runtime = ProviderId::new("openai-exhausted");
+        let healthy_runtime = ProviderId::new("openai-healthy");
+        let exhausted_connection = ConnectionId::new();
+        let healthy_connection = ConnectionId::new();
+        let exhausted_calls = Arc::new(Mutex::new(Vec::new()));
+        let healthy_calls = Arc::new(Mutex::new(Vec::new()));
+
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![
+                Arc::new(SpyProvider {
+                    id: exhausted_runtime.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: exhausted_calls.clone(),
+                }),
+                Arc::new(SpyProvider {
+                    id: healthy_runtime.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: healthy_calls.clone(),
+                }),
+            ],
+            connection_providers: HashMap::new(),
+        });
+
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(QuotaAwareProviderRepository {
+                connections: HashMap::from([
+                    (
+                        exhausted_connection,
+                        test_connection(exhausted_connection, exhausted_runtime.clone(), true),
+                    ),
+                    (
+                        healthy_connection,
+                        test_connection(healthy_connection, healthy_runtime.clone(), true),
+                    ),
+                ]),
+                runtime_connections: HashMap::from([
+                    (exhausted_runtime.clone(), exhausted_connection),
+                    (healthy_runtime.clone(), healthy_connection),
+                ]),
+            });
+
+        let now = chrono::Utc::now();
+        let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+            Arc::new(FakeQuotaStore::new(vec![quota_observation(
+                exhausted_connection,
+                exhausted_runtime.clone(),
+                0.0,
+                now,
+                Some(now + chrono::Duration::seconds(60)),
+            )]));
+
+        let usecase = RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            Some(provider_repository),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_quota_observation_reader(quota_reader);
+
+        let mut req = request();
+        req.stream = false;
+        let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+
+        assert!(
+            result.is_ok(),
+            "the healthy provider should serve the request: {result:?}"
+        );
+        assert!(
+            exhausted_calls.lock().unwrap().is_empty(),
+            "the exhausted connection must not reach the upstream provider"
+        );
+        assert_eq!(
+            healthy_calls.lock().unwrap().as_slice(),
+            &[TEST_MODEL.to_string()],
+            "the healthy provider must receive the request"
+        );
+    }
+
+    /// Skip reasons recorded by a failed combo.
+    fn combo_skip_reasons(error: &CortexError) -> Vec<String> {
+        error
+            .combo_skip_reasons()
+            .map(|reasons| reasons.iter().map(|(_, reason)| reason.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    fn quota_observation(
+        connection_id: ConnectionId,
+        runtime_id: ProviderId,
+        remaining: f64,
+        observed_at: chrono::DateTime<chrono::Utc>,
+        reset_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> QuotaObservation {
+        QuotaObservation {
+            provider_kind: rook_core::ProviderKind::OpenAI,
+            provider: runtime_id,
+            connection_id: Some(connection_id),
+            metric: "requests".to_string(),
+            source: "response_headers".to_string(),
+            scope: None,
+            window: None,
+            limit: Some(100.0),
+            remaining: Some(remaining),
+            reset_at,
+            reset_after_milliseconds: None,
+            observed_at,
+        }
+    }
+
+    /// Two connection-bound combo steps plus a quota store.
+    struct QuotaComboSetup {
+        combo: Combo,
+        router: Arc<dyn RouterPort>,
+        provider_repository: Arc<dyn ProviderRepositoryPort>,
+        quota_reader: Arc<dyn QuotaObservationRecorderPort>,
+        first_calls: Arc<Mutex<Vec<String>>>,
+        second_calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    fn quota_combo_setup(
+        remaining_first: Option<f64>,
+        observed_at_offset_seconds: i64,
+        reset_in_seconds: Option<i64>,
+    ) -> QuotaComboSetup {
+        let first_connection = ConnectionId::new();
+        let second_connection = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let first_calls = Arc::new(Mutex::new(Vec::new()));
+        let second_calls = Arc::new(Mutex::new(Vec::new()));
+
+        let combo = Combo::new(
+            "quota-preflight".to_string(),
+            ComboStrategy::Priority,
+            vec![
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(first_connection),
+                    priority: 1,
+                },
+                ComboStep {
+                    provider_id: runtime_id.clone(),
+                    model: ModelId::new("gpt-test"),
+                    connection_id: Some(second_connection),
+                    priority: 2,
+                },
+            ],
+        );
+
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([
+                (
+                    first_connection,
+                    Arc::new(SpyProvider {
+                        id: ProviderId::new(first_connection.to_string()),
+                        model: ModelId::new("gpt-test"),
+                        seen_models: first_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+                (
+                    second_connection,
+                    Arc::new(SpyProvider {
+                        id: ProviderId::new(second_connection.to_string()),
+                        model: ModelId::new("gpt-test"),
+                        seen_models: second_calls.clone(),
+                    }) as Arc<dyn ProviderPort>,
+                ),
+            ]),
+        });
+
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([
+                    (
+                        first_connection,
+                        test_connection(first_connection, runtime_id.clone(), true),
+                    ),
+                    (
+                        second_connection,
+                        test_connection(second_connection, runtime_id.clone(), true),
+                    ),
+                ]),
+            });
+
+        let now = chrono::Utc::now();
+        let observations = match remaining_first {
+            Some(remaining) => vec![quota_observation(
+                first_connection,
+                runtime_id.clone(),
+                remaining,
+                now + chrono::Duration::seconds(observed_at_offset_seconds),
+                reset_in_seconds.map(|seconds| now + chrono::Duration::seconds(seconds)),
+            )],
+            None => Vec::new(),
+        };
+        let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+            Arc::new(FakeQuotaStore::new(observations));
+
+        QuotaComboSetup {
+            combo,
+            router,
+            provider_repository,
+            quota_reader,
+            first_calls,
+            second_calls,
+        }
+    }
+
+    #[tokio::test]
+    async fn combo_skips_connection_with_fresh_exhausted_quota() {
+        let QuotaComboSetup {
+            combo,
+            router,
+            provider_repository,
+            quota_reader,
+            first_calls,
+            second_calls,
+        } = quota_combo_setup(Some(0.0), 0, Some(60));
+
+        let h = combo_harness_with_repositories_and_quota(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+            Some(quota_reader),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "the eligible connection should serve the request: {result:?}"
+        );
+        assert!(
+            first_calls.lock().unwrap().is_empty(),
+            "the exhausted connection must not reach the upstream provider"
+        );
+        assert_eq!(
+            second_calls.lock().unwrap().as_slice(),
+            &["gpt-test".to_string()],
+            "the eligible connection must receive the request"
+        );
+    }
+
+    #[tokio::test]
+    async fn combo_keeps_connection_without_quota_evidence() {
+        let QuotaComboSetup {
+            combo,
+            router,
+            provider_repository,
+            quota_reader,
+            first_calls,
+            second_calls,
+        } = quota_combo_setup(None, 0, None);
+
+        let h = combo_harness_with_repositories_and_quota(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+            Some(quota_reader),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(result.is_ok(), "unknown quota must not skip: {result:?}");
+        assert_eq!(
+            first_calls.lock().unwrap().as_slice(),
+            &["gpt-test".to_string()],
+            "unknown quota leaves the connection eligible"
+        );
+        assert!(second_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn combo_keeps_connection_with_stale_quota_evidence() {
+        let QuotaComboSetup {
+            combo,
+            router,
+            provider_repository,
+            quota_reader,
+            first_calls,
+            second_calls,
+        } = quota_combo_setup(Some(0.0), -3600, None);
+
+        let h = combo_harness_with_repositories_and_quota(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+            Some(quota_reader),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(result.is_ok(), "stale quota must not skip: {result:?}");
+        assert_eq!(
+            first_calls.lock().unwrap().as_slice(),
+            &["gpt-test".to_string()],
+            "stale evidence leaves the connection eligible"
+        );
+        assert!(second_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn combo_reconsiders_connection_after_the_reset_instant_passed() {
+        let QuotaComboSetup {
+            combo,
+            router,
+            provider_repository,
+            quota_reader,
+            first_calls,
+            second_calls,
+        } = quota_combo_setup(Some(0.0), -60, Some(-30));
+
+        let h = combo_harness_with_repositories_and_quota(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+            Some(quota_reader),
+        );
+
+        let result = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await;
+
+        assert!(result.is_ok(), "expired quota must not skip: {result:?}");
+        assert_eq!(
+            first_calls.lock().unwrap().as_slice(),
+            &["gpt-test".to_string()],
+            "an expired reset restores eligibility"
+        );
+        assert!(second_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn combo_reports_the_quota_skip_reason_when_every_connection_is_exhausted() {
+        let first_connection = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-primary");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let combo = Combo::new(
+            "quota-preflight-exhausted".to_string(),
+            ComboStrategy::Priority,
+            vec![ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(first_connection),
+                priority: 1,
+            }],
+        );
+
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![],
+            connection_providers: HashMap::from([(
+                first_connection,
+                Arc::new(SpyProvider {
+                    id: ProviderId::new(first_connection.to_string()),
+                    model: ModelId::new("gpt-test"),
+                    seen_models: calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            )]),
+        });
+        let provider_repository: Arc<dyn ProviderRepositoryPort> =
+            Arc::new(MapProviderRepository {
+                connections: HashMap::from([(
+                    first_connection,
+                    test_connection(first_connection, runtime_id.clone(), true),
+                )]),
+            });
+        let now = chrono::Utc::now();
+        let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+            Arc::new(FakeQuotaStore::new(vec![quota_observation(
+                first_connection,
+                runtime_id,
+                0.0,
+                now,
+                Some(now + chrono::Duration::seconds(60)),
+            )]));
+
+        let h = combo_harness_with_repositories_and_quota(
+            combo.clone(),
+            vec![],
+            router,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(provider_repository),
+            Some(quota_reader),
+        );
+
+        let error = h
+            .usecase
+            .execute_combo(
+                &combo,
+                combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+                ApiFormat::OpenAI,
+            )
+            .await
+            .expect_err("an exhausted connection must fail the combo");
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "the exhausted connection must not reach the upstream provider"
+        );
+        let reasons = combo_skip_reasons(&error);
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("quota_exhausted")),
+            "the skip reason must expose the quota decision: {reasons:?}"
+        );
+        assert!(
+            reasons.iter().all(|reason| !reason.contains("api_key")
+                && !reason.contains("secret")
+                && !reason.contains("token=")),
+            "the skip reason must not leak credentials: {reasons:?}"
+        );
     }
 
     #[tokio::test]
