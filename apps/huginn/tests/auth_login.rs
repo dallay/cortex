@@ -53,7 +53,11 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
         if let Ok(Some(status)) = child.try_wait() {
             panic!("huginn auth login exited before drawing: {status:?}\n{output}");
         }
-        assert!(Instant::now() < deadline, "cursor query missing\n{output}");
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("cursor query missing\n{output}");
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
     writer.write_all(b"\x1b[1;1R").unwrap();
