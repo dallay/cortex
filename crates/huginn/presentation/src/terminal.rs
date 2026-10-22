@@ -219,6 +219,7 @@ struct Driver {
     screen: Screen,
     #[cfg(unix)]
     input_generation: u64,
+    standalone: bool,
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     guard: Arc<TerminalGuard>,
@@ -262,6 +263,16 @@ pub struct Ratatui {
 #[async_trait]
 impl Presentation for Ratatui {
     async fn open(&self, session: &Session) -> Result<Connection> {
+        self.open_workflow(session, None).await
+    }
+}
+impl Ratatui {
+    async fn open_workflow(
+        &self,
+        session: &Session,
+        workflow: Option<huginn_plugin_api::v1::Workflow>,
+    ) -> Result<Connection> {
+        let standalone = workflow.is_some();
         let mut drivers = self
             .drivers
             .lock()
@@ -315,16 +326,21 @@ impl Presentation for Ratatui {
             ui_config,
             save_ui_config,
         );
-        ui.start_file_index(session.workspace.clone());
+        if let Some(workflow) = workflow {
+            ui.start_workflow(workflow);
+        } else {
+            ui.start_file_index(session.workspace.clone());
+        }
         let connection = self.connection.clone().map(|mut receiver| {
             let snapshot = receiver.borrow_and_update().clone();
             let attachment = ui.lock().attach_connection(snapshot);
             (receiver, attachment)
         });
-        if !self
-            .readiness
-            .as_ref()
-            .map_or(self.model_configured, |ready| ready())
+        if !standalone
+            && !self
+                .readiness
+                .as_ref()
+                .map_or(self.model_configured, |ready| ready())
         {
             ui.notification(if self.contributions.command("/login").is_some() {
                 "No model configured. Use /login, then /model. No restart needed.".into()
@@ -345,6 +361,7 @@ impl Presentation for Ratatui {
             input_generation: crate::input::begin(),
             guard,
             ui: ui.clone(),
+            standalone,
             model_configured: self.model_configured,
             readiness: self.readiness.clone(),
             _done: Completion(done),
@@ -363,6 +380,42 @@ impl Presentation for Ratatui {
 }
 
 /// Wrap by display width without discarding any action/diff content.
+pub async fn login(
+    contributions: Arc<Contributions>,
+    saved: Arc<AtomicBool>,
+    workspace: std::path::PathBuf,
+) -> Result<bool> {
+    let command = contributions
+        .command("/login")
+        .ok_or_else(|| AgentError::Composition("Provider login is unavailable".into()))?;
+    let huginn_plugin_api::v1::CommandResult::Workflow(workflow) = command.run("")? else {
+        return Err(AgentError::Composition(
+            "Provider login did not open a workflow".into(),
+        ));
+    };
+    let terminal = Ratatui {
+        connection: None,
+        contributions,
+        lifecycle: CancellationToken::new(),
+        drivers: Arc::new(Mutex::new(Vec::new())),
+        model_configured: true,
+        readiness: None,
+        ui_config: None,
+        save_ui_config: None,
+    };
+    // An in-memory rendering context only; never persisted or passed to inference.
+    let mut connection = terminal
+        .open_workflow(&Session::new(workspace), Some(workflow))
+        .await?;
+    let driver = connection.task.as_mut().expect("terminal driver");
+    let result = driver
+        .await
+        .map_err(|_| AgentError::Composition("Provider login terminal task failed".into()))?;
+    connection.task.take();
+    result?;
+    Ok(saved.load(Ordering::SeqCst))
+}
+
 pub fn wrapped(text: &str, width: u16) -> Vec<String> {
     let width = usize::from(width.max(1));
     let mut lines = vec![];
@@ -1067,6 +1120,9 @@ Enter save Esc close"
         let mut draining_focus = None;
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
+            if self.standalone && self.ui.lock().overlays.active().is_none() {
+                return Ok(());
+            }
             let epoch = self.ui.lock().modal().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
                 shown_focus = self.arm_modal(epoch, shown_focus)?;

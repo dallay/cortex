@@ -24,6 +24,33 @@ fn huginn_command(workspace: &Path, db: &Path) -> Command {
 }
 
 #[test]
+fn auth_login_is_discoverable_and_rejects_piped_input_without_creating_storage() {
+    let help = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&help.stdout).contains("auth"));
+    let help = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["auth", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("login"));
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("absent/sessions.db");
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .arg("--db")
+        .arg(&db)
+        .args(["auth", "login"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
+    assert!(!db.parent().unwrap().exists());
+}
+
+#[test]
 fn json_read_only_turn_lists_and_resumes_a_session() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();

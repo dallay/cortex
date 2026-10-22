@@ -15,6 +15,7 @@ pub mod settings;
 pub mod state;
 pub mod status_bar;
 mod terminal;
+pub use terminal::login;
 mod workflow;
 
 use async_trait::async_trait;
@@ -25,6 +26,7 @@ use huginn_core::{
 };
 pub use huginn_plugin_api::v1::contributions_id;
 use huginn_plugin_api::v1::UiService;
+pub use huginn_plugin_api::v1::UiService as ProviderUiService;
 use std::sync::Arc;
 
 pub fn presentation_id() -> ServiceId {
@@ -89,6 +91,25 @@ impl Drop for Connection {
             task.abort();
         }
         (self.cleanup)();
+    }
+}
+
+/// Contribution registry for hosts that do not start a conversation loop.
+pub struct ContributionsPlugin;
+#[async_trait]
+impl Plugin for ContributionsPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "presentation.contributions".into(),
+            provides: vec![contributions_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(
+            contributions_id(),
+            UiService(Arc::new(Contributions::default())),
+        )
     }
 }
 
