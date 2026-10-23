@@ -13,28 +13,36 @@
 // - Setup endpoint rejects missing token in memory with 503
 // - Setup endpoint succeeds with correct token and strong password → returns api_key
 
-// =============================================================================
-// Test fixture passwords — TEST DATA ONLY, not production credentials.
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_FIXTURE_PASSWORD: &str = "Super-Secret-12345!";
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_SETUP_TOKEN: &str = "rk-setup-test-fixture-token";
-// =============================================================================
-
-use std::sync::{Arc, Mutex};
-
 use async_trait::async_trait;
 use axum::body::to_bytes;
 use axum::http::{Method, Request, StatusCode};
 use chrono::Utc;
 use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
+use ring::rand::SecureRandom;
 use rook_core::{
     ApiKeyRepositoryPort, NewUser, PasswordHash, PasswordHashError, PasswordHasher, ProviderPort,
     User, UserId, UserRepositoryError, UserRepositoryPort,
 };
 use serde_json::Value;
 use shared_kernel::{ModelId, ProviderId};
+use std::sync::{Arc, Mutex};
 use tower::util::ServiceExt;
+
+fn random_token() -> String {
+    let mut token = [0; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut token)
+        .expect("system random source");
+    hex::encode(token)
+}
+
+fn random_strong_password() -> String {
+    let mut password = [0; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut password)
+        .expect("system random source");
+    format!("Aa1!{}", hex::encode(password))
+}
 use transport_axum::{
     authz::AuthzConfig,
     bootstrap_helpers::{
@@ -298,10 +306,7 @@ async fn openai_chat_completions_http_sse_preserves_tools_and_propagates_truncat
 
 #[tokio::test]
 async fn status_returns_not_initialized_on_fresh_system() {
-    let usecases = make_bootstrap_usecases(
-        Arc::new(FakeUserRepo::fresh()),
-        Some(TEST_SETUP_TOKEN.to_string()),
-    );
+    let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), Some(random_token()));
     let router = bootstrap_test_router(usecases);
 
     let req = Request::builder()
@@ -349,7 +354,7 @@ async fn status_never_exposes_setup_token_in_response_body() {
         (
             "fresh system with active token",
             Arc::new(FakeUserRepo::fresh()) as Arc<dyn UserRepositoryPort>,
-            Some(TEST_SETUP_TOKEN.to_string()),
+            Some(random_token()),
         ),
         (
             "initialized system",
@@ -383,15 +388,16 @@ async fn status_never_exposes_setup_token_in_response_body() {
 
 #[tokio::test]
 async fn setup_rejects_wrong_token_with_401() {
+    let expected_token = random_token();
     let usecases = make_bootstrap_usecases(
         Arc::new(FakeUserRepo::fresh()),
-        Some(TEST_SETUP_TOKEN.to_string()),
+        Some(expected_token.clone()),
     );
     let router = bootstrap_test_router(usecases);
 
     let body = serde_json::json!({
-        "setup_token": "rk-setup-wrong-token",
-        "password": TEST_FIXTURE_PASSWORD
+        "setup_token": random_token(),
+        "password": random_strong_password()
     });
 
     let req = Request::builder()
@@ -410,15 +416,16 @@ async fn setup_rejects_wrong_token_with_401() {
 
 #[tokio::test]
 async fn setup_rejects_already_initialized_system_with_409() {
+    let setup_token = random_token();
     let usecases = make_bootstrap_usecases(
         Arc::new(FakeUserRepo::initialized()),
-        Some(TEST_SETUP_TOKEN.to_string()),
+        Some(setup_token.clone()),
     );
     let router = bootstrap_test_router(usecases);
 
     let body = serde_json::json!({
-        "setup_token": TEST_SETUP_TOKEN,
-        "password": TEST_FIXTURE_PASSWORD
+        "setup_token": setup_token,
+        "password": random_strong_password()
     });
 
     let req = Request::builder()
@@ -446,8 +453,8 @@ async fn setup_rejects_missing_token_in_memory_with_503() {
     let router = bootstrap_test_router(usecases);
 
     let body = serde_json::json!({
-        "setup_token": TEST_SETUP_TOKEN,
-        "password": TEST_FIXTURE_PASSWORD
+        "setup_token": random_token(),
+        "password": random_strong_password()
     });
 
     let req = Request::builder()
@@ -466,15 +473,14 @@ async fn setup_rejects_missing_token_in_memory_with_503() {
 
 #[tokio::test]
 async fn setup_succeeds_with_correct_token_and_returns_api_key() {
-    let usecases = make_bootstrap_usecases(
-        Arc::new(FakeUserRepo::fresh()),
-        Some(TEST_SETUP_TOKEN.to_string()),
-    );
+    let setup_token = random_token();
+    let usecases =
+        make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), Some(setup_token.clone()));
     let router = bootstrap_test_router(usecases);
 
     let body = serde_json::json!({
-        "setup_token": TEST_SETUP_TOKEN,
-        "password": TEST_FIXTURE_PASSWORD
+        "setup_token": setup_token,
+        "password": random_strong_password()
     });
 
     let req = Request::builder()

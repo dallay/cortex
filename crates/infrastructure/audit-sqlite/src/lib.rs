@@ -981,20 +981,13 @@ mod usage_tests {
             .expect("runtime")
     }
 
-    fn usage_repo() -> SqliteUsageRepository {
-        static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join(format!("audit_sqlite_test_{}.db", n));
-        // Remove any stale file from a previous run — ignore errors if it doesn't exist
-        let _ = std::fs::remove_file(&db_path);
-        let db_path_str = db_path.to_string_lossy().to_string();
+    fn usage_repo() -> (tempfile::TempDir, SqliteUsageRepository) {
+        let directory = tempfile::tempdir().expect("temporary test directory");
+        let db_path = directory.path().join("audit.db");
+        let db_path_str = db_path.to_string_lossy().into_owned();
         db_migration::run_migrations(&db_path_str).expect("migrations");
         let repo = SqliteUsageRepository::new(&db_path).expect("usage repo");
-        // Leak the path so the file persists for the duration of the test process.
-        // This avoids the NamedTempFile auto-delete-on-drop issue.
-        Box::leak(db_path_str.into_boxed_str());
-        repo
+        (directory, repo)
     }
 
     async fn wait_for_quota_rows(repo: &SqliteUsageRepository, expected: usize) {
@@ -1050,7 +1043,7 @@ mod usage_tests {
     #[test]
     fn usage_record_and_list_round_trips_complete_records() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let saved = entry("openai", "gpt-4o", 1, Some(0.0123));
             let request_id = saved.request_id.clone();
             let connection_id = saved.connection_id;
@@ -1088,7 +1081,7 @@ mod usage_tests {
     #[test]
     fn usage_record_preserves_null_optional_token_fields() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let mut saved = entry("ollama", "llama3", 1, Some(0.001));
             saved.requested_tier = None;
             saved.api_key_id = None;
@@ -1117,7 +1110,7 @@ mod usage_tests {
     #[test]
     fn usage_list_orders_by_timestamp_desc_and_paginates() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             for day in 1..=5 {
                 repo.record(entry("openai", "gpt-4o", day, Some(day as f64)))
                     .await
@@ -1144,7 +1137,7 @@ mod usage_tests {
     #[test]
     fn usage_count_and_summary_apply_filters() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let mut openai = entry("openai", "gpt-4o", 1, Some(0.10));
             openai.tokens_prompt = Some(200);
             openai.tokens_completion = Some(80);
@@ -1199,7 +1192,7 @@ mod usage_tests {
     #[test]
     fn usage_cost_breakdown_groups_by_provider_model_and_api_key() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let mut first = entry("openai", "gpt-4o", 1, Some(0.10));
             first.api_key_id = Some(ApiKeyId::new("key_a"));
             repo.record(first).await.expect("first");
@@ -1264,7 +1257,7 @@ mod usage_tests {
     #[test]
     fn cost_breakdown_completeness_respects_connection_and_time_filters() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let first_connection = ConnectionId::new();
             let second_connection = ConnectionId::new();
 
@@ -1311,7 +1304,7 @@ mod usage_tests {
     #[test]
     fn usage_delete_older_than_removes_expired_rows() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let mut expired = entry("openai", "gpt-4o", 1, Some(0.10));
             expired.timestamp = Utc::now() - Duration::days(120);
             repo.record(expired).await.expect("expired");
@@ -1347,7 +1340,7 @@ mod usage_tests {
     #[test]
     fn shutdown_drains_accepted_quota_batches_before_returning() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let observation = quota_observation("openai-runtime", None);
             repo.record_observations(vec![observation.clone()])
                 .await
@@ -1365,7 +1358,7 @@ mod usage_tests {
     #[test]
     fn quota_observation_round_trips_values_nulls_and_runtime_identity() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let connection = ConnectionId::new();
             let mut expected = quota_observation("openai-runtime-a", Some(connection));
             expected.scope = None;
@@ -1406,7 +1399,7 @@ mod usage_tests {
     #[test]
     fn latest_observations_skips_old_rows_before_applying_series_limit() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let chatty_connection = ConnectionId::new();
             let other_connection = ConnectionId::new();
             let mut observations = Vec::new();
@@ -1452,7 +1445,7 @@ mod usage_tests {
     #[test]
     fn latest_observations_returns_the_newest_series_per_connection() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let first = ConnectionId::new();
             let second = ConnectionId::new();
 
@@ -1502,7 +1495,7 @@ mod usage_tests {
     #[test]
     fn latest_observations_keeps_each_runtime_series_independent() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let connection = ConnectionId::new();
             let mut openai = quota_observation("openai-runtime", Some(connection));
             openai.observed_at = timestamp(2);
@@ -1535,7 +1528,7 @@ mod usage_tests {
     #[test]
     fn late_older_observation_does_not_replace_latest_series_row() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let connection = ConnectionId::new();
             let mut newer = quota_observation("openai-runtime", Some(connection));
             newer.observed_at = timestamp(8);
@@ -1566,7 +1559,7 @@ mod usage_tests {
     #[test]
     fn retention_removes_latest_series_entry_before_expiring_its_observation() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let connection = ConnectionId::new();
             let mut expired_latest = quota_observation("openai-runtime", Some(connection));
             expired_latest.observed_at = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
@@ -1593,7 +1586,7 @@ mod usage_tests {
     #[test]
     fn latest_observations_filters_by_provider_metric_and_source() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let connection = ConnectionId::new();
             let mut openai = quota_observation("openai-runtime", Some(connection));
             openai.source = "response_headers".to_string();
@@ -1683,7 +1676,7 @@ mod usage_tests {
     #[test]
     fn v6_migration_adds_isolated_quota_storage() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             let conn = repo.conn.lock().await;
             let table_count: i64 = conn
                 .query_row(
@@ -1709,7 +1702,7 @@ mod usage_tests {
     #[test]
     fn quota_retention_deletes_only_expired_quota_rows() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             repo.record_observation(quota_observation("openai", None))
                 .await
                 .expect("old quota");
@@ -1736,7 +1729,7 @@ mod usage_tests {
     #[test]
     fn quota_retention_batches_large_expired_backlog_without_touching_usage() {
         runtime().block_on(async {
-            let repo = usage_repo();
+            let (_db_dir, repo) = usage_repo();
             // 2500 expired rows force at least three 1000-row batches.
             let mut quota_rows = Vec::with_capacity(2510);
             for _ in 0..2500 {

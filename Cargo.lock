@@ -355,6 +355,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "shared-kernel",
+ "tempfile",
  "tokio",
 ]
 

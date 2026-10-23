@@ -239,12 +239,9 @@ mod tests {
         let nested = root.path().join("crates/huginn");
         write(&nested.join("AGENTS.md"), "nested rules");
         let output = load(&nested).unwrap();
-        assert!(output.contains("root rules"), "{output}");
-        assert!(output.contains("nested rules"), "{output}");
-        assert!(
-            output.find("root rules") < output.find("nested rules"),
-            "general instructions come first: {output}"
-        );
+        assert!(output.contains("root rules"));
+        assert!(output.contains("nested rules"));
+        assert!(output.find("root rules") < output.find("nested rules"));
     }
 
     #[test]
@@ -256,8 +253,8 @@ mod tests {
             "third party rules",
         );
         let output = load(root.path()).unwrap();
-        assert!(output.contains("root rules"), "{output}");
-        assert!(!output.contains("third party rules"), "{output}");
+        assert!(output.contains("root rules"));
+        assert!(!output.contains("third party rules"));
     }
 
     #[test]
@@ -271,8 +268,8 @@ mod tests {
         }
         write(&dump.join("AGENTS.md"), "dump rules");
         let output = load(root.path()).unwrap();
-        assert!(output.contains("root rules"), "{output}");
-        assert!(!output.contains("dump rules"), "{output}");
+        assert!(output.contains("root rules"));
+        assert!(!output.contains("dump rules"));
     }
 
     #[test]
@@ -286,9 +283,9 @@ mod tests {
             "too far rules",
         );
         let output = load(root.path()).unwrap();
-        assert!(output.contains("style rules"), "{output}");
-        assert!(!output.contains("not a rule"), "{output}");
-        assert!(!output.contains("too far rules"), "{output}");
+        assert!(output.contains("style rules"));
+        assert!(!output.contains("not a rule"));
+        assert!(!output.contains("too far rules"));
     }
 
     #[test]
@@ -301,7 +298,7 @@ mod tests {
         )
         .unwrap();
         let output = load(root.path()).unwrap();
-        assert_eq!(output.matches("shared rules").count(), 1, "{output}");
+        assert_eq!(output.matches("shared rules").count(), 1);
     }
 
     #[test]
@@ -310,8 +307,8 @@ mod tests {
         write(&root.path().join("AGENTS.md"), "root rules");
         write(&root.path().join("nested/AGENTS.md"), "nested rules");
         let output = load(root.path()).unwrap();
-        assert!(output.contains("root rules"), "{output}");
-        assert!(!output.contains("nested rules"), "{output}");
+        assert!(output.contains("root rules"));
+        assert!(!output.contains("nested rules"));
     }
 }
 
