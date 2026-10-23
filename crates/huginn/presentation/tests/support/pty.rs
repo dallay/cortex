@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code)] // Shared by several test binaries; each uses a subset.
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::{
     io::{Read, Write},

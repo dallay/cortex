@@ -101,7 +101,6 @@ pub fn classify_route(model: &str, header_values: &[String]) -> Result<RouteSele
 /// Extract all values of a header from an Axum `HeaderMap` without depending on
 /// Axum here: callers pass `headers.get_all(name).iter().map(...)`.
 /// Kept as documentation; the actual extraction is two lines in transport.
-#[allow(dead_code)]
 pub fn header_values_note() -> &'static str {
     "use headers.get_all(\"x-rook-combo\").iter().filter_map(|v| v.to_str().ok().map(str::to_string)).collect::<Vec<_>>()"
 }

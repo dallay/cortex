@@ -1066,7 +1066,6 @@ impl ManageConnections {
         Ok(EncryptedBlob(self.key_manager.encrypt(plaintext.trim())?))
     }
 
-    #[allow(dead_code)]
     fn decrypt_credentials(
         &self,
         credentials: &Credentials,
@@ -2825,49 +2824,6 @@ mod tests {
     // ---------------------------------------------------------------------------
     // delete() tests
     // ---------------------------------------------------------------------------
-
-    #[allow(dead_code)]
-    struct DeletableRepo {
-        conn: ProviderConnection,
-    }
-
-    #[async_trait]
-    impl ProviderRepositoryPort for DeletableRepo {
-        async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
-            Ok(vec![self.conn.clone()])
-        }
-
-        async fn find(
-            &self,
-            id: &ConnectionId,
-        ) -> Result<Option<ProviderConnection>, RepositoryError> {
-            Ok(if id == &self.conn.id {
-                Some(self.conn.clone())
-            } else {
-                None
-            })
-        }
-
-        async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-
-        async fn update(
-            &self,
-            _conn: &ProviderConnection,
-            _expected_updated_at: DateTime<Utc>,
-        ) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, id: &ConnectionId) -> Result<(), RepositoryError> {
-            if id == &self.conn.id {
-                Ok(())
-            } else {
-                Err(RepositoryError::NotFound(*id))
-            }
-        }
-    }
 
     #[test]
     fn delete_returns_ok_for_existing_id() {

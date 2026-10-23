@@ -74,7 +74,9 @@ impl CircuitState {
         self.cooldown_until = Some(Instant::now() + Duration::from_secs(retry_after_secs));
     }
 
-    #[allow(dead_code)]
+    // RouterPort has no success hook yet, so failures accumulate instead of
+    // counting consecutively; wire this in once `on_success` exists.
+    #[expect(dead_code)]
     fn record_success(&mut self) {
         self.failures = 0;
         self.is_open = false;

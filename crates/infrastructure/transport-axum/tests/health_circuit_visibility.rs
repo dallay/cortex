@@ -107,7 +107,7 @@ async fn test_weak_reference_pattern_for_graceful_shutdown() {
     use tokio::sync::Mutex;
 
     // Simulate the weak reference pattern
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     struct HealthChecker {
         counter: Arc<Mutex<u32>>,
     }

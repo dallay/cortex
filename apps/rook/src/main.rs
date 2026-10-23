@@ -2,11 +2,7 @@
 //
 // Boots the dependency injection container and starts the HTTP server.
 
-mod config;
-mod dashboard;
-mod di;
-mod server;
-mod usage_retention;
+use rook::{config, di, server};
 
 use anyhow::Context;
 use clap::Parser;

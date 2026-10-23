@@ -31,24 +31,17 @@ struct GeminiGenerateResponse {
 struct GeminiCandidate {
     content: GeminiContent,
     #[serde(rename = "finishReason")]
-    #[allow(dead_code)]
     finish_reason: Option<String>,
-    #[allow(dead_code)]
-    index: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GeminiContent {
-    #[allow(dead_code)]
-    role: String,
     parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GeminiPart {
     text: Option<String>,
-    #[allow(dead_code)]
-    function_call: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -14,12 +11,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rook_core::{ApiKeyId, ApiKeyTier};
 use rook_usecases::{
     AuthenticateClientApi, AuthenticateClientApiError, BootstrapStatus, ValidateSession,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::middleware::{ApiKeyRateLimiter, RateLimitSnapshot};
@@ -735,60 +730,6 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
     }
 }
 
-// verify_jwt is kept for backward compatibility with existing JWT-based auth
-// but is no longer used for MANAGEMENT routes (replaced by session validation)
-#[allow(dead_code)]
-fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
-    let mut parts = token.split('.');
-    let header = parts.next().ok_or("INVALID_TOKEN")?;
-    let payload = parts.next().ok_or("INVALID_TOKEN")?;
-    let signature = parts.next().ok_or("INVALID_TOKEN")?;
-    if parts.next().is_some() {
-        return Err("INVALID_TOKEN");
-    }
-
-    let signing_input = format!("{header}.{payload}");
-    let signature = URL_SAFE_NO_PAD
-        .decode(signature)
-        .map_err(|_| "INVALID_TOKEN")?;
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
-    ring::hmac::verify(&key, signing_input.as_bytes(), &signature).map_err(|_| "INVALID_TOKEN")?;
-
-    let payload = URL_SAFE_NO_PAD
-        .decode(payload)
-        .map_err(|_| "INVALID_TOKEN")?;
-    let payload: Value = serde_json::from_slice(&payload).map_err(|_| "INVALID_TOKEN")?;
-    if !payload
-        .get("authenticated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Err("INVALID_TOKEN");
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "INVALID_TOKEN")?
-        .as_secs();
-    if payload.get("exp").and_then(Value::as_u64).unwrap_or(0) <= now {
-        return Err("TOKEN_EXPIRED");
-    }
-
-    let id = payload
-        .get("sub")
-        .and_then(Value::as_str)
-        .unwrap_or("dashboard")
-        .to_string();
-    Ok(Subject {
-        kind: AuthKind::Session,
-        id: id.clone(),
-        label: id,
-        scopes: vec!["admin".to_string()],
-        allowed_models: Vec::new(),
-        allowed_providers: Vec::new(),
-        tier: ApiKeyTier::Free,
-    })
-}
-
 /// Middleware that rejects requests lacking the `admin` scope in the trusted
 /// `x-authz-auth-scopes` header stamped by the authz middleware.
 /// Apply this as a layer on route groups that require administrator access.
@@ -996,6 +937,7 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use chrono::{DateTime, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
