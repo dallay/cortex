@@ -43,6 +43,8 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
             },
             default_model: Some(ModelId::new("gpt-4o")),
             base_url: None,
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         },
         test_status: TestStatus::NeverTested,
         created_at: chrono::Utc::now(),
@@ -74,6 +76,8 @@ fn connection_config_response_includes_base_url() {
         },
         default_model: Some(ModelId::new("gpt-4o")),
         base_url: Some("https://api.openai.com".to_string()),
+        api_format: Some(rook_core::ApiFormat::OpenAI),
+        supported_models: Vec::new(),
     };
 
     let response = ConnectionConfigResponse::from(&config);
@@ -102,6 +106,8 @@ fn connection_config_response_base_url_is_null_when_none() {
         },
         default_model: None,
         base_url: None,
+        api_format: Some(rook_core::ApiFormat::OpenAI),
+        supported_models: Vec::new(),
     };
 
     let response = ConnectionConfigResponse::from(&config);
@@ -520,6 +526,8 @@ fn create_provider_request_converts_to_create_connection_request() {
             },
             default_model: Some("gpt-4o".to_string()),
             base_url: Some("https://custom.openai.com".to_string()),
+            api_format: None,
+            supported_models: Vec::new(),
         },
     };
 

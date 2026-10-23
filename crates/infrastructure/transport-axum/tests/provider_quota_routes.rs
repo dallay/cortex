@@ -1,8 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use axum::{body::to_bytes, routing::get, Router};
+use axum::{
+    body::to_bytes,
+    http::{Request, StatusCode},
+    routing::get,
+    Router,
+};
 use chrono::Utc;
 use rook_core::{
     CortexResult, CostBreakdown, Pagination, ProviderConnection, ProviderKind, UsageEntry,
@@ -77,6 +82,75 @@ impl UsageRecorderPort for FakeUsageRecorder {
                 .unwrap_or_else(|| self.cost.clone()))
         }
     }
+}
+
+#[tokio::test]
+async fn create_provider_defaults_omitted_api_format_and_rejects_unknown_format() {
+    let app = transport_axum::provider_routes::router(test_usecases(vec![]));
+    let request_body = |api_format: Option<&str>| {
+        let mut body = serde_json::json!({
+            "providerKind": "openai",
+            "providerRuntimeId": "openai-primary",
+            "authType": "apiKey",
+            "name": "OpenAI",
+            "priority": 1,
+            "isActive": false,
+            "credentials": { "apiKey": "short" },
+            "config": {
+                "maxConcurrent": 10,
+                "quotaWindowThresholds": { "warning": 0.7, "error": 0.9 },
+                "defaultModel": null,
+                "baseUrl": null,
+                "supportedModels": []
+            }
+        });
+        if let Some(api_format) = api_format {
+            body["config"]["apiFormat"] = serde_json::Value::String(api_format.to_string());
+        }
+        body
+    };
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/providers")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(request_body(None).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["config"]["apiFormat"], "openai");
+    let connection_id = response["id"].as_str().expect("created id");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/providers/{connection_id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let persisted: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(persisted["config"]["apiFormat"], "openai");
+
+    let response = app
+        .oneshot(
+            Request::post("/api/providers")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    request_body(Some("openai-ish")).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -446,6 +520,8 @@ fn api_key_connection(kind: ProviderKind, name: &str) -> ProviderConnection {
             },
             default_model: None,
             base_url: None,
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         },
         test_status: rook_core::TestStatus::NeverTested,
         created_at: now,
@@ -470,7 +546,7 @@ fn test_usecases(connections: Vec<ProviderConnection>) -> Arc<rook_usecases::Roo
         None,
     );
     let connections = rook_usecases::ManageConnections::new(
-        Arc::new(EmptyConnections(connections)),
+        Arc::new(EmptyConnections(Mutex::new(connections))),
         usecases.fallback_router.clone(),
         Arc::new(PassThroughKeys),
         Arc::new(UnusedBuilder),
@@ -479,35 +555,52 @@ fn test_usecases(connections: Vec<ProviderConnection>) -> Arc<rook_usecases::Roo
     usecases
 }
 
-struct EmptyConnections(Vec<rook_core::ProviderConnection>);
+struct EmptyConnections(Mutex<Vec<rook_core::ProviderConnection>>);
 #[async_trait]
 impl rook_core::ProviderRepositoryPort for EmptyConnections {
     async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-        Ok(self.0.clone())
+        Ok(self.0.lock().unwrap().clone())
     }
     async fn find(
         &self,
-        _: &shared_kernel::ConnectionId,
+        id: &shared_kernel::ConnectionId,
     ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-        Ok(None)
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|connection| &connection.id == id)
+            .cloned())
     }
     async fn create(
         &self,
-        _: &rook_core::ProviderConnection,
+        connection: &rook_core::ProviderConnection,
     ) -> Result<(), rook_core::RepositoryError> {
+        self.0.lock().unwrap().push(connection.clone());
         Ok(())
     }
     async fn update(
         &self,
-        _: &rook_core::ProviderConnection,
+        connection: &rook_core::ProviderConnection,
         _: chrono::DateTime<Utc>,
     ) -> Result<(), rook_core::RepositoryError> {
+        let mut connections = self.0.lock().unwrap();
+        let existing = connections
+            .iter_mut()
+            .find(|existing| existing.id == connection.id)
+            .ok_or(rook_core::RepositoryError::NotFound(connection.id))?;
+        *existing = connection.clone();
         Ok(())
     }
     async fn delete(
         &self,
-        _: &shared_kernel::ConnectionId,
+        id: &shared_kernel::ConnectionId,
     ) -> Result<(), rook_core::RepositoryError> {
+        self.0
+            .lock()
+            .unwrap()
+            .retain(|connection| &connection.id != id);
         Ok(())
     }
 }

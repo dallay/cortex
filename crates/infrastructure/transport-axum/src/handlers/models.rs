@@ -41,6 +41,12 @@ pub fn compute_models_by_provider(
                     .map(ToString::to_string)
                     .into_iter()
                     .collect()
+            } else if conn.provider_kind == rook_core::ProviderKind::OpenAiCompatible {
+                conn.config
+                    .supported_models
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect()
             } else {
                 catalog
                     .iter()

@@ -17,6 +17,13 @@ Every provider accepts these fields when created via the CRUD API:
 | `priority`      | u8     | No       | 0                 | Priority for routing (higher = preferred) |
 | `default_model` | string | No       | —                 | Default model ID if provider has multiple |
 
+Connections of kind `openai-compatible` accept two extra config fields:
+
+| Field             | Type            | Required | Default    | Description                                          |
+|-------------------|-----------------|----------|------------|------------------------------------------------------|
+| `supported_models` | array of string | Yes      | —          | Physical model IDs this connection serves            |
+| `api_format`      | string          | No       | `openai`   | Wire format; only `openai` is supported today        |
+
 ## OpenAI
 
 **Kind:** `openai`
@@ -260,6 +267,84 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 ---
 
+## OpenAI-Compatible
+
+**Kind:** `openai-compatible`
+
+**Auth:** API key (Bearer token). OAuth is not supported for this kind.
+
+**Default base URL:** none. The connection must declare `base_url`.
+
+**Default timeout:** 60s
+
+This kind connects to any upstream that implements the OpenAI Chat Completions
+contract. Rook reuses the OpenAI adapter, so no vendor-specific crate is
+needed. Each connection is independent: it keeps its own endpoint, credential,
+and declared models, and it gets its own runtime ID.
+
+**API example:**
+
+Create the connection inactive. The response contains its immutable `id`.
+
+```json
+{
+  "name": "internal-llm",
+  "provider_kind": "openai-compatible",
+  "auth_type": "api_key",
+  "credentials": { "api_key": "${INTERNAL_LLM_KEY}" },
+  "base_url": "https://llm.internal.example/v1",
+  "config": {
+    "supported_models": ["internal-large", "internal-small"],
+    "api_format": "openai"
+  },
+  "is_active": false,
+  "priority": 1
+}
+```
+
+Then add a grant for the returned ID in the server config and restart Rook before
+activating the connection.
+
+**Contract:**
+
+- Only the OpenAI Chat Completions format is supported. The Responses API, image
+  inputs, and reasoning-specific fields are out of scope.
+- `supported_models` is required and must not be empty. These are the physical
+  model IDs sent to the upstream, and they are the models the connection serves
+  during routing.
+- `api_format` must be `openai` when present.
+- Model declarations live on the connection. The static model catalog does not
+  describe compatible upstreams.
+
+**Endpoint policy (server-owned):**
+
+The endpoint must match an operator grant in the server config, keyed by the
+immutable provider-connection UUID. Rook checks the grant when the connection is
+activated or updated, then checks DNS answers when it opens the upstream
+connection. The public CRUD API cannot create or widen grants.
+
+| Destination                          | Behavior                                                  |
+|--------------------------------------|-----------------------------------------------------------|
+| Public HTTPS                         | Allowed only when the exact origin is granted             |
+| Public HTTP                          | Rejected (`InsecureScheme`)                               |
+| Loopback/private destination         | Allowed only when the exact origin is granted             |
+| Link-local addresses                  | Always rejected                                           |
+| Cloud metadata addresses              | Always rejected                                           |
+| Redirects                            | Not followed; credentials are not sent to another origin |
+| Environment proxy variables          | Ignored for compatible connections                       |
+
+Create the connection inactive. Add its `connection_id` and exact
+`allowed_origins` entry to `[provider_endpoint_policy]`. Restart Rook to load the
+grant, then activate the connection. A grant includes scheme, hostname, and
+port; it does not include a URL path.
+
+**Health check behavior:**
+
+- Makes a `GET {base_url}/models` request.
+- Failure returns `HealthStatus::Unhealthy` with a sanitized reason.
+
+---
+
 ## Provider Capability Matrix
 
 | Provider      | complete() | stream() | Real health check | Default timeout |
@@ -268,6 +353,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 | Anthropic     | ✅          | ✅        | ❌ (placeholder)   | 60s             |
 | Ollama (1)    | ✅          | ✅        | ✅ (2-step)        | 300s            |
 | Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
+| OpenAI-Compatible | ✅       | ✅        | ✅                 | 60s             |
 
 (1) Ollama and Ollama Cloud share the same `OllamaProvider` implementation. Local Ollama uses `http://localhost:11434` with no API key; Ollama Cloud uses `https://ollama.com` with Bearer auth configured via `api_key`.
 

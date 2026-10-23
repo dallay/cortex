@@ -59,7 +59,7 @@ impl TestCredentialsRequest {
         let auth_type = parse_auth_type(&self.auth_type)?;
 
         let credentials = credentials_to_usecase(&self.credentials);
-        let config = config_to_domain(&self.config);
+        let config = config_to_domain(&self.config)?;
 
         Ok(rook_usecases::manage_connections::TestCredentialsRequest {
             provider_kind,
@@ -110,6 +110,10 @@ pub struct ConnectionConfigDto {
     pub quota_window_thresholds: QuotaWindowThresholdsDto,
     pub default_model: Option<String>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub supported_models: Vec<String>,
+    #[serde(default)]
+    pub api_format: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +159,8 @@ pub struct ConnectionConfigResponse {
     pub quota_window_thresholds: QuotaWindowThresholdsResponse,
     pub default_model: Option<String>,
     pub base_url: Option<String>,
+    pub supported_models: Vec<String>,
+    pub api_format: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -285,7 +291,7 @@ impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
             priority: req.priority,
             is_active: req.is_active,
             credentials: credentials_to_usecase(&req.credentials),
-            config: config_to_domain(&req.config),
+            config: config_to_domain(&req.config)?,
         })
     }
 }
@@ -313,7 +319,7 @@ impl TryFrom<&UpdateProviderRequest> for UsecaseUpdateConnectionRequest {
             priority: req.priority,
             is_active: req.is_active,
             credentials: req.credentials.as_ref().map(credentials_to_usecase),
-            config: req.config.as_ref().map(config_to_domain),
+            config: req.config.as_ref().map(config_to_domain).transpose()?,
         })
     }
 }
@@ -329,7 +335,7 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
             priority: conn.priority,
             is_active: conn.is_active,
             credentials: EmptyCredentials {},
-            config: ConnectionConfigResponse::from(&conn.config),
+            config: ConnectionConfigResponse::from_provider_kind(&conn.config, conn.provider_kind),
             test_status: TestStatusResponse::from(&conn.test_status),
             created_at: conn.created_at,
             updated_at: conn.updated_at,
@@ -376,6 +382,16 @@ pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
 
 impl From<&ConnectionConfig> for ConnectionConfigResponse {
     fn from(config: &ConnectionConfig) -> Self {
+        Self::from_provider_kind(config, ProviderKind::OpenAI)
+    }
+}
+
+impl ConnectionConfigResponse {
+    pub fn from_provider_kind(config: &ConnectionConfig, provider_kind: ProviderKind) -> Self {
+        let api_format = config.api_format.unwrap_or(match provider_kind {
+            ProviderKind::Anthropic => rook_core::ApiFormat::Anthropic,
+            _ => rook_core::ApiFormat::OpenAI,
+        });
         Self {
             max_concurrent: config.max_concurrent,
             quota_window_thresholds: QuotaWindowThresholdsResponse {
@@ -384,6 +400,15 @@ impl From<&ConnectionConfig> for ConnectionConfigResponse {
             },
             default_model: config.default_model.as_ref().map(ToString::to_string),
             base_url: config.base_url.clone(),
+            supported_models: config
+                .supported_models
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            api_format: match api_format {
+                rook_core::ApiFormat::OpenAI => "openai".to_string(),
+                rook_core::ApiFormat::Anthropic => "anthropic".to_string(),
+            },
         }
     }
 }
@@ -469,8 +494,14 @@ fn credentials_to_usecase(credentials: &CredentialsInput) -> UsecaseCredentialsI
         },
     }
 }
-fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
-    ConnectionConfig {
+fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, String> {
+    let api_format = match config.api_format.as_deref() {
+        None => None,
+        Some("openai") => Some(rook_core::ApiFormat::OpenAI),
+        Some("anthropic") => Some(rook_core::ApiFormat::Anthropic),
+        Some(_) => return Err("invalid apiFormat".to_string()),
+    };
+    Ok(ConnectionConfig {
         max_concurrent: config.max_concurrent,
         quota_window_thresholds: rook_core::QuotaWindowThresholds {
             warning: config.quota_window_thresholds.warning,
@@ -478,7 +509,9 @@ fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
         },
         default_model: config.default_model.as_ref().map(ModelId::new),
         base_url: config.base_url.clone(),
-    }
+        supported_models: config.supported_models.iter().map(ModelId::new).collect(),
+        api_format,
+    })
 }
 
 fn parse_auth_type(value: &str) -> Result<AuthType, String> {
