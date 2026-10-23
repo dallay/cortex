@@ -900,8 +900,12 @@ impl ManageConnections {
             .unwrap_or_else(|| existing.provider_runtime_id.clone());
         let name = request.name.unwrap_or_else(|| existing.name.clone());
         let priority = request.priority.unwrap_or(existing.priority);
+        let config_provided = request.config.is_some();
         let mut config = request.config.unwrap_or_else(|| existing.config.clone());
         let provider_kind = request.provider_kind.unwrap_or(existing.provider_kind);
+        if !config_provided && provider_kind != existing.provider_kind {
+            config.api_format = None;
+        }
         normalize_api_format(provider_kind, &mut config);
         let is_active = request.is_active.unwrap_or(existing.is_active);
         validate_base_fields(&provider_runtime_id, &name, priority, &config)?;

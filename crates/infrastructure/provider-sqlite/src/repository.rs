@@ -668,16 +668,14 @@ mod tests {
 
     #[test]
     fn connections_created_before_the_model_declaration_migration_keep_working() {
-        let path = std::env::temp_dir().join(format!(
-            "rook-provider-legacy-{}-{}.sqlite",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
+        let temp_file = tempfile::Builder::new()
+            .prefix("rook-provider-legacy-")
+            .suffix(".sqlite")
+            .tempfile()
+            .expect("temporary database");
+        let path = temp_file.path();
         {
-            let mut conn = Connection::open(&path).expect("legacy database");
+            let mut conn = Connection::open(path).expect("legacy database");
             db_migration::run_on_connection(&mut conn).expect("migrations");
             // A row written before the migration: no supported_models, no api_format.
             conn.execute(
@@ -694,7 +692,7 @@ mod tests {
         }
 
         runtime().block_on(async {
-            let repo = SqliteProviderRepository::new(&path).expect("repo");
+            let repo = SqliteProviderRepository::new(path).expect("repo");
             let connections = repo.list().await.expect("legacy connection loads");
             assert_eq!(connections.len(), 1);
             let legacy = &connections[0];
@@ -709,8 +707,6 @@ mod tests {
                 "a legacy connection keeps the OpenAI api format"
             );
         });
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

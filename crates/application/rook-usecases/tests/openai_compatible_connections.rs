@@ -774,6 +774,43 @@ async fn create_defaults_missing_api_format_for_anthropic_connections() {
 }
 
 #[tokio::test]
+async fn update_resets_inherited_api_format_when_provider_kind_changes() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "anthropic",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.provider_kind = ProviderKind::Anthropic;
+    request.is_active = false;
+    request.config.api_format = None;
+    let connection = mc.create(request).await.expect("connection is valid");
+    assert_eq!(connection.config.api_format, Some(ApiFormat::Anthropic));
+
+    let updated = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider_kind: Some(ProviderKind::OpenAiCompatible),
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: None,
+                credentials: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("provider kind can be changed with its compatible default");
+
+    assert_eq!(updated.config.api_format, Some(ApiFormat::OpenAI));
+}
+
+#[tokio::test]
 async fn update_defaults_missing_api_format_for_openai_compatible_connections() {
     let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
     let mut request = create_request(
