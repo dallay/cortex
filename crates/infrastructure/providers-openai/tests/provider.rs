@@ -365,6 +365,58 @@ async fn error_body_redacts_non_empty_secrets_shorter_than_eight_characters() {
 }
 
 #[tokio::test]
+async fn trailing_slashes_in_base_url_are_removed_for_chat_and_health_requests() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-123",
+                "model": "gpt-4",
+                "choices": [{
+                    "message": { "role": "assistant", "content": "Hello" },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+            })),
+        )
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "sk-test".to_string(),
+        base_url: format!("{}///", server.uri()),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    provider
+        .complete(&stream_request())
+        .await
+        .expect("chat request uses the normalized base URL");
+    assert!(matches!(
+        provider.health_check().await,
+        HealthStatus::Healthy { .. }
+    ));
+
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 2);
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "POST" && request.url.path() == "/chat/completions"));
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "GET" && request.url.path() == "/models"));
+}
+
+#[tokio::test]
 async fn complete_returns_response_on_success() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))

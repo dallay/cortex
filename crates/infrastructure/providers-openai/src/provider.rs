@@ -176,6 +176,8 @@ impl OpenAIProvider {
         quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
         endpoint_policy: Option<rook_core::EndpointPolicy>,
     ) -> anyhow::Result<Self> {
+        let mut config = config;
+        config.base_url = config.base_url.trim_end_matches('/').to_string();
         let mut builder = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none());
