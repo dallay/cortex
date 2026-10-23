@@ -8,4 +8,5 @@ pub mod mcp;
 pub mod model;
 pub mod providers;
 pub mod sessions;
+pub mod skills;
 pub mod tools;
