@@ -40,6 +40,8 @@ async fn oauth_client_configuration_round_trips_through_v6_columns() {
             },
             default_model: Some(shared_kernel::ModelId::new("deployment")),
             base_url: Some("https://resource.openai.azure.com".to_string()),
+            api_format: None,
+            supported_models: Vec::new(),
         },
         test_status: TestStatus::NeverTested,
         created_at: Utc::now(),

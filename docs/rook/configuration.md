@@ -34,6 +34,11 @@ allow_env_fallback = true
 [provider_crud]
 enabled = false
 
+[provider_endpoint_policy]
+[[provider_endpoint_policy.grants]]
+connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
+allowed_origins = ["https://llm.internal.example:443"]
+
 [rate_limiting]
 enabled = false
 default_tier = "free"
@@ -357,6 +362,34 @@ export ENCRYPTION_SALT="Z3G83UBdTUkfGGWr-QDnQg"  # Use the generated value above
 
 Rollback: setting `enabled = false` unmounts the provider CRUD routes. It does not delete the SQLite database or stored connection rows.
 
+### `[provider_endpoint_policy]`
+
+Administrative trust settings for configurable `openai-compatible` endpoints. This section is server-owned: no client API request can widen it.
+
+```toml
+[provider_endpoint_policy]
+[[provider_endpoint_policy.grants]]
+connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
+allowed_origins = ["https://llm.internal.example:443"]
+```
+
+| Field             | Type              | Default | Description                                                       |
+|-------------------|-------------------|---------|-------------------------------------------------------------------|
+| `grants`          | array             | `[]`    | Operator grants keyed by immutable connection UUID.               |
+| `connection_id`   | string            | —       | UUID returned by provider CRUD; must match the stored connection. |
+| `allowed_origins` | array of strings  | `[]`    | Exact `scheme://host:port` origins allowed for this connection.   |
+
+Behavior:
+
+- Create the compatible connection inactive. The CRUD API returns its immutable ID.
+- Add an exact origin grant for that ID, then restart Rook to load the grant. Activate the connection after restart.
+- The scheme, hostname, and effective port must all match. Paths are not part of a grant.
+- A missing, malformed, duplicated, or unloaded grant denies access.
+- Public HTTP is rejected. HTTP may be used only for an explicitly granted loopback or private endpoint.
+- Link-local and cloud metadata destinations are always rejected, even when an origin is granted.
+- The resolver checks DNS answers at connection time and rejects unsafe addresses.
+- Redirects are not followed, and environment proxy variables are ignored for compatible connections.
+
 ### Dynamic Provider Registry
 
 When `provider_crud.enabled = true`, the provider registry starts empty and is populated by calling `refresh_registry()` at startup — this reads all active connections from the database, decrypts credentials, and builds providers. The registry is also refreshed after each create, update, or delete operation.
@@ -413,6 +446,7 @@ You can add multiple connections for the same provider kind (e.g., "OpenAI Produ
 | `ollama-cloud`  | API key (Bearer)       | `https://ollama.com`          |
 | `gemini`        | API key or OAuth token | (uses Google's API)           |
 | `groq`          | API key or OAuth token | (uses Groq's API)             |
+| `openai-compatible` | API key (Bearer)    | none — `base_url` is required |
 
 ## Routing Strategies
 

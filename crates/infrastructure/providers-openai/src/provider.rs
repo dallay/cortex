@@ -80,10 +80,30 @@ const MAX_TOOL_CALL_NAME_BYTES: usize = 4_096;
 const MAX_TOOL_CALL_ID_BYTES: usize = 256;
 const MAX_SSE_EVENT_BYTES: usize = 2_097_152;
 
+/// Replace every occurrence of a known secret with a redaction marker.
+///
+/// Upstream error bodies can echo the credential that Rook sent, so the
+/// configured key is removed before the message reaches a client.
+fn redact_secrets(text: &str, secrets: &[&str]) -> String {
+    let mut redacted = text.to_string();
+    for secret in secrets {
+        let secret = secret.trim();
+        if secret.len() < 8 || !redacted.contains(secret) {
+            continue;
+        }
+        redacted = redacted.replace(secret, "[redacted]");
+    }
+    redacted
+}
+
 /// Map an OpenAI HTTP error response to a typed `CortexError`.
 ///
 /// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
-async fn map_openai_http_error(provider_id: &ProviderId, resp: reqwest::Response) -> CortexError {
+async fn map_openai_http_error(
+    provider_id: &ProviderId,
+    resp: reqwest::Response,
+    secrets: &[&str],
+) -> CortexError {
     let status = resp.status();
     let retry_after = resp
         .headers()
@@ -96,7 +116,7 @@ async fn map_openai_http_error(provider_id: &ProviderId, resp: reqwest::Response
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
     let raw_body = resp.text().await.unwrap_or_default();
-    let sanitized = sanitize_body(&raw_body);
+    let sanitized = redact_secrets(&sanitize_body(&raw_body), secrets);
 
     match status.as_u16() {
         401 => CortexError::auth_failed("OpenAI authentication failed"),
@@ -140,10 +160,44 @@ impl OpenAIProvider {
         config: OpenAIProviderConfig,
         quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     ) -> anyhow::Result<Self> {
-        let client = Client::builder()
+        Self::build(config, quota_recorder, None)
+    }
+
+    pub fn new_with_endpoint_policy(
+        config: OpenAIProviderConfig,
+        policy: rook_core::EndpointPolicy,
+    ) -> anyhow::Result<Self> {
+        let endpoint = super::endpoint_resolver::resolver_for_url(policy, &config.base_url)?;
+        let mut builder = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .no_proxy()
+            .dns_resolver(endpoint.resolver);
+        if let Some((host, addresses)) = endpoint.literal {
+            builder = builder.resolve_to_addrs(&host, &addresses);
+        }
+        let client = builder.build()?;
+        Ok(Self {
+            config,
+            client,
+            quota_recorder: None,
+            oauth_token_port: None,
+            connection_id: None,
+        })
+    }
+
+    fn build(
+        config: OpenAIProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+        resolver: Option<Arc<dyn reqwest::dns::Resolve>>,
+    ) -> anyhow::Result<Self> {
+        let mut builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(resolver) = resolver {
+            builder = builder.dns_resolver(resolver);
+        }
+        let client = builder.build()?;
         Ok(Self {
             config,
             client,
@@ -174,6 +228,11 @@ impl OpenAIProvider {
         provider.oauth_token_port = Some(oauth_token_port);
         provider.connection_id = Some(connection_id);
         Ok(provider)
+    }
+
+    /// Secrets that must never appear in an error message.
+    fn secrets(&self) -> Vec<&str> {
+        vec![self.config.api_key.as_str()]
     }
 
     async fn access_token(&self, force_refresh: bool) -> CortexResult<String> {
@@ -778,7 +837,8 @@ impl ProviderPort for OpenAIProvider {
         self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
-            return Err(map_openai_http_error(&self.config.id, resp).await);
+            let error = map_openai_http_error(&self.config.id, resp, &self.secrets()).await;
+            return Err(error);
         }
 
         let openai_resp: OpenAIResponse = resp
@@ -843,7 +903,8 @@ impl ProviderPort for OpenAIProvider {
         let resp = self.send_stream_request(&body).await?;
 
         if !resp.status().is_success() {
-            return Err(map_openai_http_error(&self.config.id, resp).await);
+            let error = map_openai_http_error(&self.config.id, resp, &self.secrets()).await;
+            return Err(error);
         }
 
         let stream = futures::stream::unfold(

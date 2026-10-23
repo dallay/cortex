@@ -3184,6 +3184,7 @@ dependencies = [
  "db-migration",
  "rook-core",
  "rusqlite",
+ "serde_json",
  "shared-kernel",
  "tempfile",
  "thiserror 2.0.21",
@@ -3828,6 +3829,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

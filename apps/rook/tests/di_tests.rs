@@ -5,7 +5,9 @@ use std::sync::Arc;
 use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
 use rook::di::{
     build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
-    build_provider_from_connection_with_recorder, build_rate_limiter_config, is_canonical_base_url,
+    build_provider_from_connection_with_policy, build_provider_from_connection_with_recorder,
+    build_rate_limiter_config, is_canonical_base_url, ProviderBuildError,
+    ProviderConnectionBuildOptions,
 };
 use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
@@ -913,4 +915,127 @@ fn azure_builds_oauth_backed_provider_with_token_port() {
     )
     .expect("Azure OAuth provider should build");
     assert!(provider.supports_model(&ModelId::new("deployment-chat")));
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-compatible connections (DALLAY-682)
+// ---------------------------------------------------------------------------
+
+fn expect_build_error(
+    result: Result<Arc<dyn rook_core::ProviderPort>, ProviderBuildError>,
+) -> ProviderBuildError {
+    match result {
+        Ok(_) => panic!("expected the provider build to fail"),
+        Err(error) => error,
+    }
+}
+
+#[test]
+fn build_provider_for_openai_compatible_exposes_declared_models_and_connection_id() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "compatible-key".to_string(),
+    };
+    let id = conn_id();
+    let models = vec![
+        ModelId::new("physical-model"),
+        ModelId::new("physical-model-mini"),
+    ];
+    let provider = build_provider_from_connection_with_policy(
+        &id,
+        ProviderKind::OpenAiCompatible,
+        &creds,
+        Some("https://upstream.example.com/v1".to_string()),
+        models.clone(),
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy {
+                allowed_origins: vec!["https://upstream.example.com:443".to_string()],
+            },
+        },
+    )
+    .expect("expected Ok for an OpenAI-compatible connection");
+
+    assert_eq!(provider.id().as_str(), id.to_string());
+    assert_eq!(provider.supported_models(), models.as_slice());
+    assert!(provider.supports_model(&ModelId::new("physical-model")));
+    assert!(!provider.supports_model(&ModelId::new("gpt-4o")));
+}
+
+#[test]
+fn build_provider_for_openai_compatible_requires_base_url() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "compatible-key".to_string(),
+    };
+    let error = expect_build_error(build_provider_from_connection_with_policy(
+        &conn_id(),
+        ProviderKind::OpenAiCompatible,
+        &creds,
+        None,
+        vec![ModelId::new("physical-model")],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    ));
+    assert!(
+        error.to_string().to_lowercase().contains("base_url"),
+        "expected a base_url error, got: {error}"
+    );
+}
+
+#[test]
+fn build_provider_for_openai_compatible_rejects_oauth_credentials() {
+    let creds = DecryptedCredentials::OAuth {
+        email: "user@example.com".to_string(),
+        access_token: "token".to_string(),
+        refresh_token: "refresh".to_string(),
+        expires_at: 0,
+        scope: "openid".to_string(),
+        id_token: "id".to_string(),
+        project_id: "project".to_string(),
+        oauth_client_id: "client".to_string(),
+        oauth_client_secret: Some("secret".to_string()),
+        oauth_tenant_id: None,
+    };
+    let error = expect_build_error(build_provider_from_connection_with_policy(
+        &conn_id(),
+        ProviderKind::OpenAiCompatible,
+        &creds,
+        Some("https://upstream.example.com/v1".to_string()),
+        vec![ModelId::new("physical-model")],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    ));
+    assert!(
+        error.to_string().to_lowercase().contains("api key"),
+        "expected an API key error, got: {error}"
+    );
+}
+
+#[test]
+fn build_provider_for_openai_compatible_rejects_unsafe_endpoints() {
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "compatible-key".to_string(),
+    };
+    let error = expect_build_error(build_provider_from_connection_with_policy(
+        &conn_id(),
+        ProviderKind::OpenAiCompatible,
+        &creds,
+        Some("http://169.254.169.254/v1".to_string()),
+        vec![ModelId::new("physical-model")],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    ));
+    assert!(
+        !error.to_string().contains("compatible-key"),
+        "the error must not leak the credential: {error}"
+    );
 }

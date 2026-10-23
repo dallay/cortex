@@ -265,6 +265,19 @@ fn config_to_domain(config: ConnectionConfigDto) -> rook_core::ConnectionConfig 
         },
         default_model: config.default_model.map(shared_kernel::ModelId::new),
         base_url: config.base_url,
+        supported_models: config
+            .supported_models
+            .into_iter()
+            .map(shared_kernel::ModelId::new)
+            .collect(),
+        api_format: config
+            .api_format
+            .as_deref()
+            .and_then(|format| match format {
+                "openai" => Some(rook_core::ApiFormat::OpenAI),
+                "anthropic" => Some(rook_core::ApiFormat::Anthropic),
+                _ => None,
+            }),
     }
 }
 

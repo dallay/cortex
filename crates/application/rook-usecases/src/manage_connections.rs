@@ -44,6 +44,7 @@ pub struct ManageConnections {
     oauth_endpoint_overrides: OAuthEndpointOverrides,
     registry_refresh: tokio::sync::Mutex<()>,
     admission_states: DashMap<ConnectionId, Weak<crate::provider_concurrency::AdmissionState>>,
+    endpoint_policy: rook_core::EndpointPolicyConfig,
 }
 
 /// Code-level test hook for OAuth HTTP endpoints.
@@ -108,7 +109,17 @@ impl ManageConnections {
             oauth_endpoint_overrides,
             registry_refresh: tokio::sync::Mutex::new(()),
             admission_states: DashMap::new(),
+            endpoint_policy: rook_core::EndpointPolicyConfig::default(),
         }
+    }
+
+    pub fn with_endpoint_policy(mut self, policy: rook_core::EndpointPolicyConfig) -> Self {
+        self.endpoint_policy = policy;
+        self
+    }
+
+    fn policy_for(&self, id: ConnectionId) -> rook_core::EndpointPolicy {
+        self.endpoint_policy.for_connection(&id.to_string())
     }
 
     pub fn oauth_token_port(&self) -> Arc<dyn OAuthTokenPort> {
@@ -217,7 +228,12 @@ impl ManageConnections {
             request.priority,
             &request.config,
         )?;
-        validate_provider_config(provider_kind, &request.config)?;
+        validate_provider_config(
+            provider_kind,
+            &request.config,
+            &rook_core::EndpointPolicy::default(),
+            false,
+        )?;
         let project_id = match request
             .project_id
             .as_deref()
@@ -805,7 +821,25 @@ impl ManageConnections {
             request.priority,
             &request.config,
         )?;
-        validate_provider_config(request.provider_kind, &request.config)?;
+        if request.provider_kind == ProviderKind::OpenAiCompatible && request.is_active {
+            return Err(ValidationError::InvalidBaseUrl.into());
+        }
+        if request.provider_kind == ProviderKind::OpenAiCompatible
+            && request.config.base_url.as_deref().is_some_and(|base_url| {
+                reqwest::Url::parse(base_url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(is_cloud_metadata_host))
+                    .unwrap_or(false)
+            })
+        {
+            return Err(ValidationError::InvalidBaseUrl.into());
+        }
+        validate_provider_config(
+            request.provider_kind,
+            &request.config,
+            &rook_core::EndpointPolicy::default(),
+            false,
+        )?;
         validate_provider_auth_type(request.provider_kind, request.auth_type)?;
 
         let credentials = self.encrypt_credentials(&request.credentials)?;
@@ -867,8 +901,10 @@ impl ManageConnections {
         let priority = request.priority.unwrap_or(existing.priority);
         let config = request.config.unwrap_or_else(|| existing.config.clone());
         let provider_kind = request.provider_kind.unwrap_or(existing.provider_kind);
+        let is_active = request.is_active.unwrap_or(existing.is_active);
         validate_base_fields(&provider_runtime_id, &name, priority, &config)?;
-        validate_provider_config(provider_kind, &config)?;
+        let policy = self.policy_for(existing.id);
+        validate_provider_config(provider_kind, &config, &policy, is_active)?;
         validate_provider_auth_type(provider_kind, auth_type)?;
 
         let updated = ProviderConnection {
@@ -877,7 +913,7 @@ impl ManageConnections {
             provider_runtime_id,
             name: name.trim().to_string(),
             priority,
-            is_active: request.is_active.unwrap_or(existing.is_active),
+            is_active,
             auth_type,
             credentials,
             config,
@@ -933,6 +969,17 @@ impl ManageConnections {
             }
         }
 
+        if conn.provider_kind == ProviderKind::OpenAiCompatible && !conn.is_active {
+            return Err(ValidationError::InvalidBaseUrl.into());
+        }
+        if conn.provider_kind == ProviderKind::OpenAiCompatible {
+            validate_provider_config(
+                conn.provider_kind,
+                &conn.config,
+                &self.policy_for(conn.id),
+                conn.is_active,
+            )?;
+        }
         let provider = self
             .registry
             .get(&conn.provider_runtime_id)
@@ -955,7 +1002,15 @@ impl ManageConnections {
         req: TestCredentialsRequest,
     ) -> ManageConnectionsResult<TestConnectionResult> {
         // Validate and encrypt credentials
-        validate_provider_config(req.provider_kind, &req.config)?;
+        if req.provider_kind == ProviderKind::OpenAiCompatible {
+            return Err(ValidationError::InvalidBaseUrl.into());
+        }
+        validate_provider_config(
+            req.provider_kind,
+            &req.config,
+            &rook_core::EndpointPolicy::default(),
+            false,
+        )?;
         validate_provider_auth_type(req.provider_kind, req.auth_type)?;
         let encrypted = self.encrypt_credentials(&req.credentials)?;
         validate_credentials_not_expired(&encrypted)?;
@@ -988,6 +1043,9 @@ impl ManageConnections {
             decrypted_credentials: self.decrypt_credentials(&ephemeral_conn.credentials)?,
             base_url: ephemeral_conn.config.base_url.clone(),
             default_model: ephemeral_conn.config.default_model.clone(),
+            supported_models: ephemeral_conn.config.supported_models.clone(),
+            api_format: ephemeral_conn.config.api_format,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
             oauth_token_port: self.oauth_token_manager.clone(),
         };
 
@@ -1125,7 +1183,12 @@ impl ManageConnections {
         for conn in connections.iter().filter(|c| c.is_active) {
             active_connection_ids.insert(conn.id);
             let runtime_id = ProviderId::new(conn.id.to_string());
-            if let Err(error) = validate_provider_config(conn.provider_kind, &conn.config) {
+            if let Err(error) = validate_provider_config(
+                conn.provider_kind,
+                &conn.config,
+                &self.policy_for(conn.id),
+                conn.is_active,
+            ) {
                 tracing::warn!(
                     connection_id = %conn.id,
                     error = %error,
@@ -1161,6 +1224,9 @@ impl ManageConnections {
                 decrypted_credentials: decrypted,
                 base_url: conn.config.base_url.clone(),
                 default_model: conn.config.default_model.clone(),
+                supported_models: conn.config.supported_models.clone(),
+                api_format: conn.config.api_format,
+                endpoint_policy: self.policy_for(conn.id),
                 oauth_token_port: self.oauth_token_manager.clone(),
             };
 
@@ -1230,6 +1296,9 @@ pub struct ProviderBuildInput {
     pub decrypted_credentials: DecryptedCredentials,
     pub base_url: Option<String>,
     pub default_model: Option<ModelId>,
+    pub supported_models: Vec<ModelId>,
+    pub api_format: Option<rook_core::ApiFormat>,
+    pub endpoint_policy: rook_core::EndpointPolicy,
     pub oauth_token_port: Arc<dyn OAuthTokenPort>,
 }
 
@@ -1784,7 +1853,41 @@ fn validate_config(config: &ConnectionConfig) -> Result<(), ValidationError> {
 fn validate_provider_config(
     provider_kind: ProviderKind,
     config: &ConnectionConfig,
+    endpoint_policy: &rook_core::EndpointPolicy,
+    is_active: bool,
 ) -> Result<(), ValidationError> {
+    if provider_kind == ProviderKind::OpenAiCompatible {
+        let Some(base_url) = config.base_url.as_deref() else {
+            return Err(ValidationError::InvalidBaseUrl);
+        };
+        let endpoint =
+            reqwest::Url::parse(base_url).map_err(|_| ValidationError::InvalidBaseUrl)?;
+        if is_active {
+            endpoint_policy
+                .validate_url(&endpoint)
+                .map_err(|_| ValidationError::InvalidBaseUrl)?;
+        } else if endpoint.host_str().is_none()
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || !matches!(endpoint.scheme(), "https" | "http")
+            || endpoint.host_str().is_some_and(is_cloud_metadata_host)
+        {
+            return Err(ValidationError::InvalidBaseUrl);
+        }
+        if config.supported_models.is_empty()
+            || config
+                .supported_models
+                .iter()
+                .any(|m| m.as_str().trim().is_empty())
+        {
+            return Err(ValidationError::EmptySupportedModels);
+        }
+        if config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) != rook_core::ApiFormat::OpenAI
+        {
+            return Err(ValidationError::UnsupportedApiFormat);
+        }
+        return Ok(());
+    }
     if let Some(base_url) = config.base_url.as_deref() {
         if reqwest::Url::parse(base_url)
             .ok()
@@ -1843,6 +1946,7 @@ fn is_cloud_metadata_host(host: &str) -> bool {
         host,
         "metadata.google.internal"
             | "metadata.google"
+            | "metadata"
             | "instance-data.ec2.internal"
             | "metadata.azure.com"
             | "metadata.tencentyun.com"
@@ -2031,6 +2135,8 @@ mod tests {
             },
             default_model: None,
             base_url: None,
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         }
     }
 
@@ -2154,6 +2260,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -2215,6 +2323,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -2471,6 +2581,8 @@ mod tests {
                     },
                     default_model: None,
                     base_url: None,
+                    api_format: Some(rook_core::ApiFormat::OpenAI),
+                    supported_models: Vec::new(),
                 };
                 let result = usecase()
                     .create(CreateConnectionRequest {
@@ -2510,6 +2622,8 @@ mod tests {
                     },
                     default_model: None,
                     base_url: None,
+                    api_format: Some(rook_core::ApiFormat::OpenAI),
+                    supported_models: Vec::new(),
                 };
                 let result = usecase()
                     .create(CreateConnectionRequest {
@@ -2594,6 +2708,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -2651,6 +2767,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -2711,6 +2829,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -2894,6 +3014,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3229,6 +3351,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3277,6 +3401,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3337,6 +3463,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3408,6 +3536,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3668,6 +3798,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3692,6 +3824,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3758,6 +3892,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3819,6 +3955,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3843,6 +3981,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3915,6 +4055,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -3973,6 +4115,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -4031,6 +4175,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -4088,6 +4234,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -4170,6 +4318,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -4237,6 +4387,8 @@ mod tests {
                         },
                         default_model: None,
                         base_url: None,
+                        api_format: Some(rook_core::ApiFormat::OpenAI),
+                        supported_models: Vec::new(),
                     },
                     test_status: TestStatus::NeverTested,
                     created_at: Utc::now(),
@@ -4274,6 +4426,8 @@ mod tests {
             },
             default_model: None,
             base_url: Some(base_url.to_string()),
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         }
     }
 
@@ -4290,7 +4444,12 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    validate_provider_config(ProviderKind::OpenAI, &connection_config(url)),
+                    validate_provider_config(
+                        ProviderKind::OpenAI,
+                        &connection_config(url),
+                        &rook_core::EndpointPolicy::default(),
+                        false
+                    ),
                     Err(ValidationError::CloudMetadataEndpointNotAllowed)
                 ),
                 "expected cloud metadata validation error for {url}"
@@ -4305,7 +4464,13 @@ mod tests {
             (ProviderKind::Ollama, "http://127.0.0.1:11434"),
         ] {
             assert!(
-                validate_provider_config(kind, &connection_config(url)).is_ok(),
+                validate_provider_config(
+                    kind,
+                    &connection_config(url),
+                    &rook_core::EndpointPolicy::default(),
+                    false
+                )
+                .is_ok(),
                 "explicit self-hosted endpoint should remain supported: {url}"
             );
         }

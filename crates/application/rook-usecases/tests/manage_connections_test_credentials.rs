@@ -200,6 +200,8 @@ fn config() -> ConnectionConfig {
         },
         default_model: None,
         base_url: None,
+        api_format: Some(rook_core::ApiFormat::OpenAI),
+        supported_models: Vec::new(),
     }
 }
 

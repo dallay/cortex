@@ -108,6 +108,8 @@ fn request(flow_type: OAuthFlowType) -> StartOAuthFlowRequest {
             },
             default_model: Some(shared_kernel::ModelId::new("gpt-prod")),
             base_url: Some("https://resource.openai.azure.com".to_string()),
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         },
         client_id: "client-id".to_string(),
         client_secret: Some("must-not-appear-in-url".to_string()),

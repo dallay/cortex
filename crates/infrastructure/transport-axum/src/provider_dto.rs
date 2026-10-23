@@ -110,6 +110,10 @@ pub struct ConnectionConfigDto {
     pub quota_window_thresholds: QuotaWindowThresholdsDto,
     pub default_model: Option<String>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub supported_models: Vec<String>,
+    #[serde(default)]
+    pub api_format: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +159,8 @@ pub struct ConnectionConfigResponse {
     pub quota_window_thresholds: QuotaWindowThresholdsResponse,
     pub default_model: Option<String>,
     pub base_url: Option<String>,
+    pub supported_models: Vec<String>,
+    pub api_format: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -384,6 +390,15 @@ impl From<&ConnectionConfig> for ConnectionConfigResponse {
             },
             default_model: config.default_model.as_ref().map(ToString::to_string),
             base_url: config.base_url.clone(),
+            supported_models: config
+                .supported_models
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            api_format: match config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) {
+                rook_core::ApiFormat::OpenAI => "openai".to_string(),
+                rook_core::ApiFormat::Anthropic => "anthropic".to_string(),
+            },
         }
     }
 }
@@ -478,6 +493,15 @@ fn config_to_domain(config: &ConnectionConfigDto) -> ConnectionConfig {
         },
         default_model: config.default_model.as_ref().map(ModelId::new),
         base_url: config.base_url.clone(),
+        supported_models: config.supported_models.iter().map(ModelId::new).collect(),
+        api_format: config
+            .api_format
+            .as_deref()
+            .and_then(|format| match format {
+                "openai" => Some(rook_core::ApiFormat::OpenAI),
+                "anthropic" => Some(rook_core::ApiFormat::Anthropic),
+                _ => None,
+            }),
     }
 }
 

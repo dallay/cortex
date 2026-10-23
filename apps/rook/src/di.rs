@@ -122,16 +122,20 @@ pub fn build_manage_connections(
         AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
             .map_err(|e| anyhow::anyhow!("invalid provider CRUD encryption config: {e}"))?,
     );
+    let endpoint_policy = config.provider_endpoint_policy.clone();
     let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(
         model_catalog.clone(),
         quota_observation_recorder,
     ));
-    Ok(Some(ManageConnections::new(
-        provider_repo.clone(),
-        registry.clone(),
-        key_manager,
-        builder,
-    )))
+    Ok(Some(
+        ManageConnections::new(
+            provider_repo.clone(),
+            registry.clone(),
+            key_manager,
+            builder,
+        )
+        .with_endpoint_policy(endpoint_policy),
+    ))
 }
 
 fn build_rate_limit_store(
@@ -959,6 +963,12 @@ pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>
     }
 }
 
+pub struct ProviderConnectionBuildOptions {
+    pub quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    pub oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
+    pub endpoint_policy: rook_core::EndpointPolicy,
+}
+
 pub fn build_provider_from_connection_with_recorder(
     connection_id: &ConnectionId,
     kind: ProviderKind,
@@ -968,6 +978,33 @@ pub fn build_provider_from_connection_with_recorder(
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    build_provider_from_connection_with_policy(
+        connection_id,
+        kind,
+        credentials,
+        base_url_override,
+        models,
+        ProviderConnectionBuildOptions {
+            quota_recorder,
+            oauth_token_port,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    )
+}
+
+pub fn build_provider_from_connection_with_policy(
+    connection_id: &ConnectionId,
+    kind: ProviderKind,
+    credentials: &DecryptedCredentials,
+    base_url_override: Option<String>,
+    models: Vec<ModelId>,
+    options: ProviderConnectionBuildOptions,
+) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
+    let ProviderConnectionBuildOptions {
+        quota_recorder,
+        oauth_token_port,
+        endpoint_policy,
+    } = options;
     let quota_recorder =
         quota_recorder.filter(|_| is_canonical_base_url(kind, base_url_override.as_deref()));
     // Extract credentials — use access_token for OAuth where the provider supports it
@@ -1006,6 +1043,29 @@ pub fn build_provider_from_connection_with_recorder(
             }
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
             Arc::new(provider) as Arc<dyn ProviderPort>
+        }
+        ProviderKind::OpenAiCompatible => {
+            let base_url = base_url_override.ok_or_else(|| {
+                ProviderBuildError::ConstructionFailed(
+                    "OpenAI-compatible provider requires base_url".to_string(),
+                )
+            })?;
+            if matches!(credentials, DecryptedCredentials::OAuth { .. }) {
+                return Err(ProviderBuildError::ConstructionFailed(
+                    "OpenAI-compatible providers require API key authentication".to_string(),
+                ));
+            }
+            let config = providers_openai::OpenAIProviderConfig {
+                id: ProviderId::new(connection_id.to_string()),
+                api_key,
+                base_url,
+                models: models.clone(),
+                timeout_secs: 60,
+            };
+            Arc::new(
+                providers_openai::OpenAIProvider::new_with_endpoint_policy(config, endpoint_policy)
+                    .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
+            ) as Arc<dyn ProviderPort>
         }
         ProviderKind::Anthropic => {
             let config = providers_anthropic::AnthropicProviderConfig {
@@ -1223,21 +1283,24 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             .filter(|e| e.provider_kind == input.provider_kind)
             .map(|e| ModelId::new(e.model_id))
             .collect();
-        let models = if input.provider_kind == ProviderKind::AzureOpenAI {
-            input.default_model.clone().into_iter().collect()
-        } else {
-            catalog_models
+        let models = match input.provider_kind {
+            ProviderKind::AzureOpenAI => input.default_model.clone().into_iter().collect(),
+            ProviderKind::OpenAiCompatible => input.supported_models.clone(),
+            _ => catalog_models,
         };
 
         let quota_recorder = self.quota_recorder(&input);
-        build_provider_from_connection_with_recorder(
+        build_provider_from_connection_with_policy(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
             input.base_url,
             models,
-            quota_recorder,
-            Some(input.oauth_token_port),
+            ProviderConnectionBuildOptions {
+                quota_recorder,
+                oauth_token_port: Some(input.oauth_token_port),
+                endpoint_policy: input.endpoint_policy,
+            },
         )
         .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
     }

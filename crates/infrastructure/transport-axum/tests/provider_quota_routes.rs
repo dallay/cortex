@@ -446,6 +446,8 @@ fn api_key_connection(kind: ProviderKind, name: &str) -> ProviderConnection {
             },
             default_model: None,
             base_url: None,
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         },
         test_status: rook_core::TestStatus::NeverTested,
         created_at: now,

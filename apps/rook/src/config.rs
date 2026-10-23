@@ -36,6 +36,9 @@ pub struct RookConfig {
     /// Telemetry configuration
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    /// Administrative SSRF exceptions for configurable OpenAI-compatible endpoints.
+    #[serde(default)]
+    pub provider_endpoint_policy: rook_core::EndpointPolicyConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -466,6 +469,11 @@ impl RookConfig {
 
         // Validate combo configurations
         Self::validate_combos(&config.combos);
+        if !config.provider_endpoint_policy.validate() {
+            return Err(anyhow::anyhow!(
+                "invalid provider endpoint grant configuration"
+            ));
+        }
 
         // Validate cache configuration
         config

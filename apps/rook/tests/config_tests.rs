@@ -21,6 +21,23 @@ ttl_secs = 60
 }
 
 #[test]
+fn provider_endpoint_grants_reject_duplicate_or_malformed_entries_on_load() {
+    use std::io::Write;
+    let id = "c56a4180-65aa-42ec-a945-5fd21dec0538";
+    let invalid_configs = [
+        format!("[provider_endpoint_policy]\n[[provider_endpoint_policy.grants]]\nconnection_id = \"{id}\"\nallowed_origins = [\"https://one.example\"]\n[[provider_endpoint_policy.grants]]\nconnection_id = \"{id}\"\nallowed_origins = [\"https://two.example\"]"),
+        format!("[provider_endpoint_policy]\n[[provider_endpoint_policy.grants]]\nconnection_id = \"{id}\"\nallowed_origins = [\"https://one.example/v1\"]"),
+    ];
+    for invalid in invalid_configs {
+        let mut file = tempfile::NamedTempFile::new().expect("temporary config");
+        file.write_all(minimal_config_toml(&invalid).as_bytes())
+            .expect("write config");
+        file.flush().expect("flush config");
+        assert!(RookConfig::load(file.path()).is_err());
+    }
+}
+
+#[test]
 fn config_defaults_usage_retention_to_90_days_and_6_hour_sweep() {
     let config: RookConfig = toml::from_str(&minimal_config_toml("")).expect("config parses");
 

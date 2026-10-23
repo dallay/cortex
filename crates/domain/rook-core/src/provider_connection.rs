@@ -49,6 +49,10 @@ pub struct ConnectionConfig {
     pub quota_window_thresholds: QuotaWindowThresholds,
     pub default_model: Option<ModelId>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub supported_models: Vec<ModelId>,
+    #[serde(default)]
+    pub api_format: Option<crate::ApiFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -78,6 +82,8 @@ pub enum TestStatus {
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     OpenAI,
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
     Anthropic,
     Ollama,
     OllamaCloud,
@@ -90,6 +96,7 @@ impl ProviderKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAI => "openai",
+            Self::OpenAiCompatible => "openai-compatible",
             Self::Anthropic => "anthropic",
             Self::Ollama => "ollama",
             Self::OllamaCloud => "ollama-cloud",
@@ -106,6 +113,7 @@ impl TryFrom<&str> for ProviderKind {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.to_ascii_lowercase().as_str() {
             "openai" => Ok(Self::OpenAI),
+            "openai-compatible" => Ok(Self::OpenAiCompatible),
             "anthropic" => Ok(Self::Anthropic),
             "ollama" => Ok(Self::Ollama),
             "ollama-cloud" => Ok(Self::OllamaCloud),
@@ -149,6 +157,9 @@ pub enum ValidationError {
     OAuthEmailInvalid,
     OAuthExpiresAtPast,
     CloudMetadataEndpointNotAllowed,
+    InvalidBaseUrl,
+    EmptySupportedModels,
+    UnsupportedApiFormat,
     AzureOpenAIRequiresEndpoint,
     AzureOpenAIRequiresDeployment,
     AzureOpenAIRequiresOAuth,
@@ -180,6 +191,18 @@ impl std::fmt::Display for ValidationError {
                     "provider endpoint must not target cloud metadata services"
                 )
             }
+            Self::InvalidBaseUrl => write!(
+                f,
+                "provider endpoint is invalid or blocked by server policy"
+            ),
+            Self::EmptySupportedModels => write!(
+                f,
+                "OpenAI-compatible providers require at least one supported model"
+            ),
+            Self::UnsupportedApiFormat => write!(
+                f,
+                "OpenAI-compatible providers currently support only OpenAI Chat Completions"
+            ),
             Self::AzureOpenAIRequiresEndpoint => {
                 write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
             }

@@ -1,6 +1,8 @@
 use futures::StreamExt;
 use providers_openai::provider::{OpenAIProvider, OpenAIProviderConfig};
-use rook_core::{CompletionRequest, FinishReason, HealthStatus, ModelId, ProviderPort, Role};
+use rook_core::{
+    CompletionRequest, EndpointPolicy, FinishReason, HealthStatus, ModelId, ProviderPort, Role,
+};
 use shared_kernel::{ProviderId, RequestId};
 
 fn stream_request() -> CompletionRequest {
@@ -258,6 +260,72 @@ async fn health_check_returns_warning_on_no_key() {
         }
         other => panic!("expected Warning, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn guarded_compatible_endpoint_blocks_untrusted_loopback_before_sending_credentials() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let mut config = OpenAIProviderConfig {
+        id: ProviderId::new("compatible-test"),
+        api_key: "secret-marker".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("physical-model")],
+        timeout_secs: 2,
+    };
+
+    let policy = EndpointPolicy::default();
+    assert!(OpenAIProvider::new_with_endpoint_policy(config.clone(), policy).is_err());
+    config.base_url = format!("http://localhost:{}", server.address().port());
+    let provider = OpenAIProvider::new_with_endpoint_policy(
+        config,
+        EndpointPolicy {
+            allowed_origins: vec![format!("http://localhost:{}", server.address().port())],
+        },
+    )
+    .expect("explicit loopback opt-in is accepted");
+    assert!(matches!(
+        provider.health_check().await,
+        HealthStatus::Healthy { .. } | HealthStatus::Warning { .. }
+    ));
+    assert_eq!(server.received_requests().await.expect("requests").len(), 1);
+}
+
+#[tokio::test]
+async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_credentials() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(302)
+                .insert_header("Location", "http://127.0.0.1:9/steal"),
+        )
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new_with_endpoint_policy(
+        OpenAIProviderConfig {
+            id: ProviderId::new("compatible-redirect-test"),
+            api_key: "secret-marker".to_string(),
+            base_url: server.uri(),
+            models: vec![ModelId::new("physical-model")],
+            timeout_secs: 2,
+        },
+        EndpointPolicy {
+            allowed_origins: vec![server.uri()],
+        },
+    )
+    .expect("loopback endpoint configured explicitly");
+
+    let error = provider
+        .complete(&stream_request())
+        .await
+        .expect_err("redirect response is not followed");
+    assert!(!error.to_string().contains("secret-marker"));
+    assert_eq!(server.received_requests().await.expect("requests").len(), 1);
 }
 
 #[tokio::test]
