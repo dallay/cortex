@@ -72,9 +72,8 @@ impl LinePrompt {
     pub fn reset_turn(&self) {
         *self.turn_count.lock().expect("policy turn_count poisoned") = 0;
     }
-    /// Inspect the current per-turn approval count. Exposed for tests and
-    /// any future UI that wants to summarize a turn's approvals.
-    #[allow(dead_code)]
+    /// Inspect the current per-turn approval count.
+    #[cfg(test)]
     pub fn turn_count(&self) -> u64 {
         *self.turn_count.lock().expect("policy turn_count poisoned")
     }

@@ -505,8 +505,6 @@ struct OpenAIRequestFunction {
 
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIResponse {
-    #[allow(dead_code)]
-    id: String,
     model: String,
     choices: Vec<OpenAIChoice>,
     usage: OpenAIUsage,
@@ -515,14 +513,11 @@ struct OpenAIResponse {
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIChoice {
     message: OpenAIMessageResp,
-    #[allow(dead_code)]
     finish_reason: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIMessageResp {
-    #[allow(dead_code)]
-    role: String,
     #[serde(default)]
     content: Option<String>,
     #[serde(default, alias = "reasoning_content", alias = "thinking")]
@@ -568,8 +563,6 @@ struct OpenAICompletionTokensDetails {
 
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIStreamResponse {
-    #[allow(dead_code)]
-    id: String,
     model: String,
     choices: Vec<OpenAIStreamChoice>,
     usage: Option<OpenAIUsage>,

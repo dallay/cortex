@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code)] // Shared by several test binaries; each uses a subset.
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_application::{

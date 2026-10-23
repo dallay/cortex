@@ -720,6 +720,51 @@ async fn stream_maps_pause_turn_to_stop_finish_reason() {
     assert_eq!(final_chunk.finish_reason, Some(FinishReason::Stop));
 }
 
+#[tokio::test]
+async fn stream_keeps_finish_reason_and_usage_when_stop_sequence_is_a_string() {
+    // Anthropic reports the matched stop sequence as a string and may send a
+    // non-empty `content` array in `message_start`; neither may drop events.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"\"}],\"model\":\"claude-3-5-sonnet\"}}\n\n\
+             data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
+             data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"END\"},\"usage\":{\"output_tokens\":7}}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.stream = true;
+    let chunks = provider
+        .stream(&req)
+        .await
+        .expect("stream starts")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("chunks parse");
+
+    let final_chunk = chunks.last().unwrap();
+    assert_eq!(final_chunk.finish_reason, Some(FinishReason::Stop));
+    assert_eq!(
+        final_chunk.usage.as_ref().map(|u| u.completion_tokens),
+        Some(7)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // R3: structured tool-calling (RED first)
 // ---------------------------------------------------------------------------

@@ -4968,6 +4968,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "models-catalog",
+ "parking_lot",
  "providers-anthropic",
  "providers-ollama",
  "providers-openai",

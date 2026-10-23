@@ -22,10 +22,8 @@ pub struct RookConfig {
     #[serde(default)]
     pub rate_limiting: RateLimiterConfig,
     #[serde(default)]
-    #[allow(dead_code)] // TODO: Phase 7 - wire usage recorder and retention sweep
     pub usage: UsageConfig,
     #[serde(default)]
-    #[allow(dead_code)] // TODO: Phase 7 - wire pricing through DI
     pub pricing: PricingConfig,
     /// Combo (multi-step fallback chain) definitions
     #[serde(default)]
@@ -178,10 +176,8 @@ fn default_provider_crud_enabled() -> bool {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UsageConfig {
     #[serde(default = "default_usage_retention_days")]
-    #[allow(dead_code)] // TODO: Phase 7 - wire retention sweep
     pub retention_days: u32,
     #[serde(default = "default_usage_sweep_interval_hours")]
-    #[allow(dead_code)] // TODO: Phase 7 - wire retention sweep
     pub sweep_interval_hours: u32,
 }
 
@@ -249,7 +245,6 @@ pub struct RoutingConfig {
     pub strategy: StrategyConfig,
     /// Optional default combo ID to use when no X-Rook-Combo header is present
     #[serde(default)]
-    #[allow(dead_code)] // Used in DI for wiring combo execution
     pub default_combo: Option<String>,
 }
 
@@ -284,7 +279,6 @@ pub struct CacheConfig {
     /// Layer 2: provider-side token caching.
     /// Fields will be used in WU-2 (Phase 4-5: provider integration).
     #[serde(default)]
-    #[allow(dead_code)]
     pub token_cache: TokenCacheConfig,
 }
 
@@ -301,7 +295,6 @@ pub struct SignatureCacheConfig {
 /// Configuration for Layer 2 token cache (provider-side token caching).
 /// Fields will be used in WU-2 (Phase 4-5: provider integration).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct TokenCacheConfig {
     /// Cache mode: auto (known providers only), always (all providers), never (disabled).
     #[serde(default = "default_cache_mode")]

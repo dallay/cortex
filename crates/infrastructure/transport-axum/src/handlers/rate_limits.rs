@@ -6,13 +6,10 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use shared_kernel::{RateLimitRule, RateLimitScope, RateLimitStatus};
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::HttpError;
@@ -65,7 +62,7 @@ impl RateLimitRuleStore {
     }
 
     pub fn insert(&self, rule: RateLimitRule) -> bool {
-        let mut state = self.0.write().unwrap();
+        let mut state = self.0.write();
         let identity = (rule.scope, rule.target.clone());
         if state.identities.contains_key(&identity) || state.rules.contains_key(&rule.id) {
             return false;
@@ -84,7 +81,6 @@ impl RateLimitRuleStore {
     pub fn list(&self) -> Vec<RateLimitRule> {
         self.0
             .read()
-            .unwrap()
             .rules
             .values()
             .map(|entry| entry.rule.clone())
@@ -92,12 +88,7 @@ impl RateLimitRuleStore {
     }
 
     pub fn get(&self, id: &str) -> Option<RateLimitRule> {
-        self.0
-            .read()
-            .unwrap()
-            .rules
-            .get(id)
-            .map(|entry| entry.rule.clone())
+        self.0.read().rules.get(id).map(|entry| entry.rule.clone())
     }
 
     pub fn update(
@@ -105,14 +96,14 @@ impl RateLimitRuleStore {
         id: &str,
         update: impl FnOnce(&mut RateLimitRule),
     ) -> Option<RateLimitRule> {
-        let mut state = self.0.write().unwrap();
+        let mut state = self.0.write();
         let entry = state.rules.get_mut(id)?;
         update(&mut entry.rule);
         Some(entry.rule.clone())
     }
 
     pub fn remove(&self, id: &str) -> Option<RateLimitRule> {
-        let mut state = self.0.write().unwrap();
+        let mut state = self.0.write();
         let entry = state.rules.remove(id)?;
         state
             .identities
@@ -140,7 +131,7 @@ impl RateLimitRuleStore {
             ip.map(|target| (RateLimitScope::IpAddress, canonical_ip(target).to_string())),
         ];
         let matching: Vec<_> = {
-            let state = self.0.read().unwrap();
+            let state = self.0.read();
             candidates
                 .into_iter()
                 .flatten()
@@ -240,7 +231,7 @@ impl RateLimitRuleStore {
             target.to_owned()
         };
         let (rule, counter) = {
-            let state = self.0.read().unwrap();
+            let state = self.0.read();
             let id = state.identities.get(&(scope, target.clone()))?;
             let entry = state.rules.get(id)?;
             (entry.rule.clone(), Arc::clone(&entry.counter))
@@ -532,6 +523,19 @@ mod tests {
             burst: None,
             provider_limits: Default::default(),
         }
+    }
+
+    #[test]
+    fn rule_store_stays_usable_after_a_panicking_update() {
+        let store = RateLimitRuleStore::new();
+        store.insert(rule(RateLimitScope::Global, "global", 8, None));
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.update("Global-global", |_| panic!("update closure failed"));
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(store.list().len(), 1);
     }
 
     #[tokio::test]

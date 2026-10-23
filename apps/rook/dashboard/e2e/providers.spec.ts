@@ -5,13 +5,15 @@ import { expect, test } from "@playwright/test";
 // ---------------------------------------------------------------------------
 
 async function loginIfNeeded(page: import("@playwright/test").Page) {
-  // Use a relative path so it resolves correctly against baseURL (ends with /dashboard/).
-  await page.goto(".");
-  if (await page.getByRole("textbox", {name: "Password"}).isVisible()) {
-    await page.getByRole("textbox", {name: "Password"}).fill("S3cr3tP@ssw0rd*123");
-    await page.getByRole("button", {name: "Sign in"}).click();
-    await expect(page).toHaveURL(/\/dashboard\/$/);
-  }
+	// Use a relative path so it resolves correctly against baseURL (ends with /dashboard/).
+	await page.goto(".");
+	if (await page.getByRole("textbox", { name: "Password" }).isVisible()) {
+		await page
+			.getByRole("textbox", { name: "Password" })
+			.fill("S3cr3tP@ssw0rd*123");
+		await page.getByRole("button", { name: "Sign in" }).click();
+		await expect(page).toHaveURL(/\/dashboard\/$/);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -20,7 +22,7 @@ async function loginIfNeeded(page: import("@playwright/test").Page) {
 
 test.describe("Provider Catalog — Ollama Cloud card", () => {
 	test.beforeEach(async ({ page }) => {
-    await loginIfNeeded(page);
+		await loginIfNeeded(page);
 		await page.goto("providers");
 	});
 
@@ -59,9 +61,9 @@ test.describe("Provider Catalog — Ollama Cloud card", () => {
 		// (vendor-fixed endpoint, users should not edit it). The
 		// catalog default is still sent in the request payload —
 		// verified by intercepting the test-credentials call below.
-		await expect(
-			page.getByRole("textbox", { name: "Base URL" }),
-		).toHaveCount(0);
+		await expect(page.getByRole("textbox", { name: "Base URL" })).toHaveCount(
+			0,
+		);
 
 		// Fill the form and intercept the test-credentials request to
 		// confirm the hidden baseUrl is correctly carried through as
@@ -91,35 +93,37 @@ test.describe("Provider Catalog — Ollama Cloud card", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Provider Detail Polish", () => {
-  test.beforeEach(async ({page}) => {
-    await loginIfNeeded(page);
-  });
+	test.beforeEach(async ({ page }) => {
+		await loginIfNeeded(page);
+	});
 
-  test("clicking the Ollama Cloud card navigates to /providers/ollama-cloud", async ({
-                                                                                       page,
-                                                                                     }) => {
-    await page.goto("providers");
-    // Click the card body link (not the Add button)
-    await page.getByTestId("provider-card-link-ollama-cloud").click();
-    await expect(page).toHaveURL(/\/providers\/ollama-cloud$/);
-  });
+	test("clicking the Ollama Cloud card navigates to /providers/ollama-cloud", async ({
+		page,
+	}) => {
+		await page.goto("providers");
+		// Click the card body link (not the Add button)
+		await page.getByTestId("provider-card-link-ollama-cloud").click();
+		await expect(page).toHaveURL(/\/providers\/ollama-cloud$/);
+	});
 
-  test("detail header title link has correct href, target, rel, and aria-label", async ({
-                                                                                          page,
-                                                                                        }) => {
-    await page.goto("providers/ollama-cloud");
-    const link = page.getByRole("link", {name: /Ollama Cloud — opens in new tab/i});
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute("href", "https://ollama.com/cloud");
-    await expect(link).toHaveAttribute("target", "_blank");
-    await expect(link).toHaveAttribute("rel", /noopener/);
-    await expect(link).toHaveAttribute("rel", /noreferrer/);
-  });
+	test("detail header title link has correct href, target, rel, and aria-label", async ({
+		page,
+	}) => {
+		await page.goto("providers/ollama-cloud");
+		const link = page.getByRole("link", {
+			name: /Ollama Cloud — opens in new tab/i,
+		});
+		await expect(link).toBeVisible();
+		await expect(link).toHaveAttribute("href", "https://ollama.com/cloud");
+		await expect(link).toHaveAttribute("target", "_blank");
+		await expect(link).toHaveAttribute("rel", /noopener/);
+		await expect(link).toHaveAttribute("rel", /noreferrer/);
+	});
 
-  test("invalid kind /providers/foo redirects to /providers", async ({
-                                                                       page,
-                                                                     }) => {
-    await page.goto("providers/foo");
-    await expect(page).toHaveURL(/\/providers$/);
-  });
+	test("invalid kind /providers/foo redirects to /providers", async ({
+		page,
+	}) => {
+		await page.goto("providers/foo");
+		await expect(page).toHaveURL(/\/providers$/);
+	});
 });

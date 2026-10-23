@@ -15,15 +15,15 @@
 
 import {AlertTriangle, ChevronDown, Key, ShieldAlert} from "@lucide/vue";
 import {computed} from "vue";
-import {Badge} from "@/components/ui/badge";
-import {Button} from "@/components/ui/button";
-import {Checkbox} from "@/components/ui/checkbox";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Checkbox} from "@/components/ui/checkbox";
 import {Input} from "@/components/ui/input";
 import {
   Select,
@@ -32,11 +32,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import {
   PROVIDER_KINDS,
   type ProviderKind,
 } from "@/config/providerCatalog";
-import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import type {ScopeDef, ScopeGroup} from "@/config/scopes";
 import type {ProviderConnectionResponse} from "@/lib/api";
 
