@@ -17,77 +17,77 @@
  * composable's own reactivity: callers can decide whether to
  * pre-fetch or fetch-on-demand.
  */
-import {type ComputedRef, computed, type Ref, ref} from "vue";
-import {useProviders} from "@/composables/useProviders";
+import { type ComputedRef, computed, type Ref, ref } from "vue";
+import { useProviders } from "@/composables/useProviders";
 import {
-  type ProviderConnectionResponse,
-  type ProviderModelsGroup,
-  useApi,
+	type ProviderConnectionResponse,
+	type ProviderModelsGroup,
+	useApi,
 } from "@/lib/api";
 
 export interface ModelsByProvider {
-  provider: ProviderConnectionResponse;
-  models: string[];
+	provider: ProviderConnectionResponse;
+	models: string[];
 }
 
 export function useAvailableModels() {
-  const api = useApi();
-  const {providers, fetch: fetchProviders} = useProviders();
+	const api = useApi();
+	const { providers, fetch: fetchProviders } = useProviders();
 
-  const groups = ref<ProviderModelsGroup[]>([]);
-  const loading = ref(false);
-  const error = ref<string | null>(null);
-  const fetched = ref(false);
+	const groups = ref<ProviderModelsGroup[]>([]);
+	const loading = ref(false);
+	const error = ref<string | null>(null);
+	const fetched = ref(false);
 
-  async function fetch() {
-    loading.value = true;
-    error.value = null;
-    try {
-      const response = await api.getAvailableModels();
-      groups.value = response.models;
-      fetched.value = true;
-    } catch (e) {
-      error.value =
-        e instanceof Error ? e.message : "Failed to fetch available models";
-      // Keep `groups` as-is so the UI degrades gracefully.
-    } finally {
-      loading.value = false;
-    }
-  }
+	async function fetch() {
+		loading.value = true;
+		error.value = null;
+		try {
+			const response = await api.getAvailableModels();
+			groups.value = response.models;
+			fetched.value = true;
+		} catch (e) {
+			error.value =
+				e instanceof Error ? e.message : "Failed to fetch available models";
+			// Keep `groups` as-is so the UI degrades gracefully.
+		} finally {
+			loading.value = false;
+		}
+	}
 
-  /**
-   * The cross between active providers (from useProviders) and the
-   * model catalog (from the API). Defensive filters handle the case
-   * where a provider is no longer active or has no models in the
-   * catalog — the server already filters, but we re-apply here to
-   * stay safe.
-   */
-  const modelsByProvider: ComputedRef<ModelsByProvider[]> = computed(() => {
-    if (!fetched.value) return [];
-    const byId = new Map<string, ProviderModelsGroup>();
-    for (const group of groups.value) {
-      byId.set(group.providerId, group);
-    }
-    return providers.value
-      .filter((p) => p.isActive)
-      .map((provider) => {
-        const group = byId.get(provider.id);
-        return {
-          provider,
-          models: group?.models ?? [],
-        };
-      })
-      .filter((entry) => entry.models.length > 0);
-  });
+	/**
+	 * The cross between active providers (from useProviders) and the
+	 * model catalog (from the API). Defensive filters handle the case
+	 * where a provider is no longer active or has no models in the
+	 * catalog — the server already filters, but we re-apply here to
+	 * stay safe.
+	 */
+	const modelsByProvider: ComputedRef<ModelsByProvider[]> = computed(() => {
+		if (!fetched.value) return [];
+		const byId = new Map<string, ProviderModelsGroup>();
+		for (const group of groups.value) {
+			byId.set(group.providerId, group);
+		}
+		return providers.value
+			.filter((p) => p.isActive)
+			.map((provider) => {
+				const group = byId.get(provider.id);
+				return {
+					provider,
+					models: group?.models ?? [],
+				};
+			})
+			.filter((entry) => entry.models.length > 0);
+	});
 
-  return {
-    groups: groups as Ref<ProviderModelsGroup[]>,
-    modelsByProvider,
-    loading: loading as Ref<boolean>,
-    error: error as Ref<string | null>,
-    fetched: fetched as Ref<boolean>,
-    fetch,
-    // Re-exported so callers can pre-fetch providers in parallel.
-    fetchProviders,
-  };
+	return {
+		groups: groups as Ref<ProviderModelsGroup[]>,
+		modelsByProvider,
+		loading: loading as Ref<boolean>,
+		error: error as Ref<string | null>,
+		fetched: fetched as Ref<boolean>,
+		fetch,
+		// Re-exported so callers can pre-fetch providers in parallel.
+		fetchProviders,
+	};
 }

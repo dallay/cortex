@@ -66,7 +66,7 @@ function openCreateForm() {
               <p class="text-sm text-muted-foreground">{{ combo.description }}</p>
             </div>
           </div>
-          <button class="text-muted-foreground hover:text-destructive">
+          <button type="button" class="text-muted-foreground hover:text-destructive">
             <Trash2 class="h-4 w-4" />
           </button>
         </div>

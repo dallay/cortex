@@ -28,25 +28,25 @@ function makeI18n(locale: "en" | "es") {
 }
 
 describe("providers i18n keys", () => {
-  it("provides provider-usage copy in English and Spanish", () => {
-    for (const locale of ["en", "es"] as const) {
-      const translator = makeI18n(locale).global.t as (key: string) => string;
-      for (const key of [
-        "providers.quota.title",
-        "providers.quota.coverage",
-        "providers.quota.estimatedCost",
-        "providers.quota.partialCost",
-        "providers.quota.unknownCost",
-        "providers.quota.staleDescription",
-        "providers.quota.accountNotProvided",
-        "providers.quota.trendLabel",
-        "providers.quota.level.unknown",
-      ]) {
-        expect(translator(key), `${locale}: ${key}`).not.toBe("");
-        expect(translator(key), `${locale}: ${key}`).not.toBe(key);
-      }
-    }
-  });
+	it("provides provider-usage copy in English and Spanish", () => {
+		for (const locale of ["en", "es"] as const) {
+			const translator = makeI18n(locale).global.t as (key: string) => string;
+			for (const key of [
+				"providers.quota.title",
+				"providers.quota.coverage",
+				"providers.quota.estimatedCost",
+				"providers.quota.partialCost",
+				"providers.quota.unknownCost",
+				"providers.quota.staleDescription",
+				"providers.quota.accountNotProvided",
+				"providers.quota.trendLabel",
+				"providers.quota.level.unknown",
+			]) {
+				expect(translator(key), `${locale}: ${key}`).not.toBe("");
+				expect(translator(key), `${locale}: ${key}`).not.toBe(key);
+			}
+		}
+	});
 	for (const locale of ["en", "es"] as const) {
 		describe(`locale: ${locale}`, () => {
 			const i18n = makeI18n(locale);
