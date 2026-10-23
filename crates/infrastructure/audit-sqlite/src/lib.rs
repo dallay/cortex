@@ -162,41 +162,44 @@ impl SqliteUsageRepository {
     }
 
     pub async fn delete_older_than(&self, retention_days: u32) -> CortexResult<u64> {
-        let conn = self.conn.lock().await;
         let mut total_deleted: u64 = 0;
 
         loop {
-            let cutoff = format!("datetime('now', '-' || {} || ' days')", retention_days);
-            let batch: Vec<i64> = conn
-                .prepare(&format!(
-                    "SELECT rowid FROM usage_history WHERE timestamp < {} LIMIT 1000",
-                    cutoff
-                ))
-                .map_err(|e| CortexError::provider(format!("sqlite prepare failed: {e}")))?
-                .query_map([], |row| row.get::<_, i64>(0))
-                .map_err(|e| CortexError::provider(format!("sqlite select failed: {e}")))?
-                .filter_map(|row| row.ok())
-                .collect();
+            // Hold the shared connection only for one batch. Quota preflight reads
+            // can acquire it between retention transactions.
+            let deleted = {
+                let conn = self.conn.lock().await;
+                let cutoff = format!("datetime('now', '-' || {} || ' days')", retention_days);
+                let batch: Vec<i64> = conn
+                    .prepare(&format!(
+                        "SELECT rowid FROM usage_history WHERE timestamp < {cutoff} LIMIT 1000"
+                    ))
+                    .map_err(|e| CortexError::provider(format!("sqlite prepare failed: {e}")))?
+                    .query_map([], |row| row.get::<_, i64>(0))
+                    .map_err(|e| CortexError::provider(format!("sqlite select failed: {e}")))?
+                    .filter_map(|row| row.ok())
+                    .collect();
 
-            if batch.is_empty() {
-                break;
-            }
+                if batch.is_empty() {
+                    break;
+                }
 
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| CortexError::provider(format!("sqlite transaction failed: {e}")))?;
-            let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let deleted = tx
-                .execute(
-                    &format!("DELETE FROM usage_history WHERE rowid IN ({placeholders})",),
-                    rusqlite::params_from_iter(batch.iter()),
-                )
-                .map_err(|e| CortexError::provider(format!("sqlite delete failed: {e}")))?;
-            tx.commit()
-                .map_err(|e| CortexError::provider(format!("sqlite commit failed: {e}")))?;
+                let tx = conn.unchecked_transaction().map_err(|e| {
+                    CortexError::provider(format!("sqlite transaction failed: {e}"))
+                })?;
+                let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let deleted = tx
+                    .execute(
+                        &format!("DELETE FROM usage_history WHERE rowid IN ({placeholders})"),
+                        rusqlite::params_from_iter(batch.iter()),
+                    )
+                    .map_err(|e| CortexError::provider(format!("sqlite delete failed: {e}")))?;
+                tx.commit()
+                    .map_err(|e| CortexError::provider(format!("sqlite commit failed: {e}")))?;
+                deleted
+            };
 
             total_deleted += deleted as u64;
-
             if deleted < 1000 {
                 break;
             }
@@ -214,55 +217,59 @@ impl SqliteUsageRepository {
         &self,
         retention_days: u32,
     ) -> CortexResult<u64> {
-        let conn = self.conn.lock().await;
         let mut total_deleted: u64 = 0;
 
         loop {
-            let cutoff = format!("datetime('now', '-' || {} || ' days')", retention_days);
-            let batch: Vec<i64> = conn
-                .prepare(&format!(
-                    "SELECT rowid FROM provider_quota_observations
-                     WHERE datetime(observed_at) < {cutoff} LIMIT 1000"
-                ))
-                .map_err(|e| CortexError::provider(format!("sqlite prepare failed: {e}")))?
-                .query_map([], |row| row.get::<_, i64>(0))
-                .map_err(|e| CortexError::provider(format!("sqlite select failed: {e}")))?
-                .filter_map(|row| row.ok())
-                .collect();
+            // Release the shared connection after each committed batch so a
+            // latest-observation read can run between retention transactions.
+            let deleted = {
+                let conn = self.conn.lock().await;
+                let cutoff = format!("datetime('now', '-' || {} || ' days')", retention_days);
+                let batch: Vec<i64> = conn
+                    .prepare(&format!(
+                        "SELECT rowid FROM provider_quota_observations
+                         WHERE datetime(observed_at) < {cutoff} LIMIT 1000"
+                    ))
+                    .map_err(|e| CortexError::provider(format!("sqlite prepare failed: {e}")))?
+                    .query_map([], |row| row.get::<_, i64>(0))
+                    .map_err(|e| CortexError::provider(format!("sqlite select failed: {e}")))?
+                    .filter_map(|row| row.ok())
+                    .collect();
 
-            if batch.is_empty() {
-                break;
-            }
+                if batch.is_empty() {
+                    break;
+                }
 
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| CortexError::provider(format!("sqlite transaction failed: {e}")))?;
-            let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            tx.execute(
-                &format!(
-                    "DELETE FROM provider_quota_observation_latest
-                     WHERE observation_id IN ({placeholders})"
-                ),
-                rusqlite::params_from_iter(batch.iter()),
-            )
-            .map_err(|e| {
-                CortexError::provider(format!("sqlite quota latest retention failed: {e}"))
-            })?;
-            let deleted = tx
-                .execute(
+                let tx = conn.unchecked_transaction().map_err(|e| {
+                    CortexError::provider(format!("sqlite transaction failed: {e}"))
+                })?;
+                let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                tx.execute(
                     &format!(
-                        "DELETE FROM provider_quota_observations WHERE rowid IN ({placeholders})",
+                        "DELETE FROM provider_quota_observation_latest
+                         WHERE observation_id IN ({placeholders})"
                     ),
                     rusqlite::params_from_iter(batch.iter()),
                 )
                 .map_err(|e| {
-                    CortexError::provider(format!("sqlite quota retention failed: {e}"))
+                    CortexError::provider(format!("sqlite quota latest retention failed: {e}"))
                 })?;
-            tx.commit()
-                .map_err(|e| CortexError::provider(format!("sqlite commit failed: {e}")))?;
+                let deleted = tx
+                    .execute(
+                        &format!(
+                            "DELETE FROM provider_quota_observations WHERE rowid IN ({placeholders})"
+                        ),
+                        rusqlite::params_from_iter(batch.iter()),
+                    )
+                    .map_err(|e| {
+                        CortexError::provider(format!("sqlite quota retention failed: {e}"))
+                    })?;
+                tx.commit()
+                    .map_err(|e| CortexError::provider(format!("sqlite commit failed: {e}")))?;
+                deleted
+            };
 
             total_deleted += deleted as u64;
-
             if deleted < 1000 {
                 break;
             }

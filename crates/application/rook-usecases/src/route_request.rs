@@ -102,6 +102,7 @@ async fn notify_provider_failure(
 
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
+const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Grouped parameters for success handling to avoid excessive parameter count
 struct SuccessContext {
@@ -1769,13 +1770,26 @@ impl RouteRequest {
             ..QuotaObservationQuery::default()
         };
 
-        let observations = match reader.latest_observations(&query).await {
-            Ok(observations) => observations,
-            Err(error) => {
+        let observations = match tokio::time::timeout(
+            QUOTA_READ_TIMEOUT,
+            reader.latest_observations(&query),
+        )
+        .await
+        {
+            Ok(Ok(observations)) => observations,
+            Ok(Err(error)) => {
                 tracing::warn!(
                     %connection_id,
                     error = %error,
                     "failed to read quota observations; keeping connection eligible"
+                );
+                return QuotaState::Unknown;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    %connection_id,
+                    timeout_ms = QUOTA_READ_TIMEOUT.as_millis(),
+                    "quota observation read timed out; keeping connection eligible"
                 );
                 return QuotaState::Unknown;
             }
@@ -4116,6 +4130,29 @@ mod tests {
         }
     }
 
+    struct PendingQuotaStore;
+
+    #[async_trait]
+    impl QuotaObservationRecorderPort for PendingQuotaStore {
+        async fn record_observation(&self, _observation: QuotaObservation) -> CortexResult<()> {
+            Ok(())
+        }
+
+        async fn list_observations(
+            &self,
+            _provider: Option<ProviderId>,
+        ) -> CortexResult<Vec<QuotaObservation>> {
+            Ok(Vec::new())
+        }
+
+        async fn latest_observations(
+            &self,
+            _query: &QuotaObservationQuery,
+        ) -> CortexResult<Vec<QuotaObservation>> {
+            std::future::pending().await
+        }
+    }
+
     /// Provider repository that also resolves the connection of a runtime.
     struct QuotaAwareProviderRepository {
         connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
@@ -4162,6 +4199,59 @@ mod tests {
         async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
             unreachable!("test repository is read-only")
         }
+    }
+
+    #[tokio::test]
+    async fn quota_read_timeout_keeps_connection_eligible() {
+        let connection_id = ConnectionId::new();
+        let runtime_id = ProviderId::new("openai-pending-runtime");
+        let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+            connections: HashMap::from([(
+                connection_id,
+                test_connection(connection_id, runtime_id.clone(), true),
+            )]),
+            runtime_connections: HashMap::new(),
+        });
+        let provider_id = ProviderId::new(connection_id.to_string());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+            providers: vec![Arc::new(SpyProvider {
+                id: provider_id,
+                model: TEST_MODEL.clone(),
+                seen_models: calls.clone(),
+            })],
+            connection_providers: HashMap::new(),
+        });
+        let usecase = RouteRequest::new(
+            router,
+            Arc::new(TestCache {
+                get_calls: Mutex::new(0),
+                set_calls: Mutex::new(0),
+            }),
+            Arc::new(TestAudit {
+                entries: Mutex::new(Vec::new()),
+            }),
+            None,
+            Some(repository),
+            None,
+            Arc::new(crate::PricingConfig::default()),
+            Arc::new(TestFormatTranslator),
+            Arc::new(TestAliasRepository),
+            test_alias_config(),
+            None,
+        )
+        .with_quota_observation_reader(Arc::new(PendingQuotaStore));
+
+        let mut req = request();
+        req.metadata.cacheable = false;
+        let result = tokio::time::timeout(
+            QUOTA_READ_TIMEOUT + std::time::Duration::from_secs(1),
+            usecase.execute(req),
+        )
+        .await
+        .expect("quota timeout should bound request latency");
+        assert!(result.is_ok(), "timeout must fail open: {result:?}");
+        assert_eq!(calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
