@@ -157,7 +157,8 @@ vi.mock("@/components/ui/label", () => ({
 		name: "Label",
 		props: { for: String, id: String },
 		setup(props, { slots }) {
-			return () => h("label", { for: props.for, id: props.id }, slots.default?.());
+			return () =>
+				h("label", { for: props.for, id: props.id }, slots.default?.());
 		},
 	}),
 }));
@@ -626,7 +627,7 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-	describe("AddProviderDialog — create mode", () => {
+describe("AddProviderDialog — create mode", () => {
 	it("renders without a kind selector when providerKind is pre-scoped (ollama)", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();
@@ -651,7 +652,7 @@ afterEach(() => {
 	});
 
 	it("requires Azure deployment settings before enabling OAuth authorization", async () => {
-		const wrapper = mountDialog({providerKind: "azure-openai"});
+		const wrapper = mountDialog({ providerKind: "azure-openai" });
 		await flushPromises();
 
 		const connect = wrapper.find<HTMLButtonElement>(
@@ -674,7 +675,7 @@ afterEach(() => {
 
 	it("associates the OAuth flow label and announces authorization status", async () => {
 		const open = vi.spyOn(globalThis, "open").mockReturnValue(null);
-		const wrapper = mountDialog({providerKind: "azure-openai"});
+		const wrapper = mountDialog({ providerKind: "azure-openai" });
 		await flushPromises();
 		await setInputValue(wrapper, "input-displayName", "Azure prod");
 		await setInputValue(wrapper, "oauth-client-id", "client-id");
@@ -689,7 +690,8 @@ afterEach(() => {
 
 		expect(wrapper.find("label#oauthFlowTypeLabel").exists()).toBe(true);
 		expect(
-			wrapper.find('[id="oauthFlowType"][aria-labelledby="oauthFlowTypeLabel"]')
+			wrapper
+				.find('[id="oauthFlowType"][aria-labelledby="oauthFlowTypeLabel"]')
 				.exists(),
 		).toBe(true);
 		expect(wrapper.find("output[aria-live='polite']").exists()).toBe(true);
@@ -701,7 +703,7 @@ afterEach(() => {
 		vi.useFakeTimers();
 		try {
 			vi.spyOn(globalThis, "open").mockReturnValue(null);
-			const conn = makeConnection({id: "conn-1", name: "Azure prod"});
+			const conn = makeConnection({ id: "conn-1", name: "Azure prod" });
 			mockState.providerById.value = new Map([[conn.id, conn]]);
 			mockState.getOAuthStatus
 				.mockResolvedValueOnce({
@@ -716,7 +718,7 @@ afterEach(() => {
 					connectionId: "conn-1",
 				});
 
-			const wrapper = mountDialog({providerKind: "azure-openai"});
+			const wrapper = mountDialog({ providerKind: "azure-openai" });
 			await flushPromises();
 			await setInputValue(wrapper, "input-displayName", "Azure prod");
 			await setInputValue(wrapper, "oauth-client-id", "client-id");
@@ -726,7 +728,9 @@ afterEach(() => {
 				"https://resource.openai.azure.com",
 			);
 			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
-			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await wrapper
+				.find('[data-testid="oauth-connect-button"]')
+				.trigger("click");
 			await flushPromises();
 
 			expect(wrapper.find("output[aria-live='polite']").text()).toContain(
@@ -756,7 +760,7 @@ afterEach(() => {
 				connectionId: "ghost-conn",
 			});
 
-			const wrapper = mountDialog({providerKind: "azure-openai"});
+			const wrapper = mountDialog({ providerKind: "azure-openai" });
 			await flushPromises();
 			await setInputValue(wrapper, "input-displayName", "Azure prod");
 			await setInputValue(wrapper, "oauth-client-id", "client-id");
@@ -766,7 +770,9 @@ afterEach(() => {
 				"https://resource.openai.azure.com",
 			);
 			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
-			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await wrapper
+				.find('[data-testid="oauth-connect-button"]')
+				.trigger("click");
 			await flushPromises();
 
 			expect(wrapper.find("output[aria-live='polite']").text()).toContain(
@@ -774,7 +780,9 @@ afterEach(() => {
 			);
 			expect(wrapper.emitted("saved")).toBeUndefined();
 			expect(
-				wrapper.find('[data-testid="oauth-connect-button"]').attributes("disabled"),
+				wrapper
+					.find('[data-testid="oauth-connect-button"]')
+					.attributes("disabled"),
 			).toBeUndefined();
 			wrapper.unmount();
 		} finally {
@@ -782,7 +790,8 @@ afterEach(() => {
 		}
 	});
 
-	it("stops polling when the OAuth flow fails", async () => {		vi.useFakeTimers();
+	it("stops polling when the OAuth flow fails", async () => {
+		vi.useFakeTimers();
 		try {
 			vi.spyOn(globalThis, "open").mockReturnValue(null);
 			mockState.getOAuthStatus.mockResolvedValueOnce({
@@ -791,7 +800,7 @@ afterEach(() => {
 				message: "Denied",
 			});
 
-			const wrapper = mountDialog({providerKind: "azure-openai"});
+			const wrapper = mountDialog({ providerKind: "azure-openai" });
 			await flushPromises();
 			await setInputValue(wrapper, "input-displayName", "Azure prod");
 			await setInputValue(wrapper, "oauth-client-id", "client-id");
@@ -801,7 +810,9 @@ afterEach(() => {
 				"https://resource.openai.azure.com",
 			);
 			await setInputValue(wrapper, "input-models", "gpt-prod-deployment");
-			await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
+			await wrapper
+				.find('[data-testid="oauth-connect-button"]')
+				.trigger("click");
 			await flushPromises();
 
 			expect(mockState.getOAuthStatus).toHaveBeenCalledTimes(1);
@@ -816,7 +827,7 @@ afterEach(() => {
 	});
 
 	it("renders the Google project field for Gemini", async () => {
-		const wrapper = mountDialog({providerKind: "gemini"});
+		const wrapper = mountDialog({ providerKind: "gemini" });
 		await flushPromises();
 		await wrapper
 			.find('[data-testid="mock-togglegroup-set-oauth"]')
@@ -943,9 +954,9 @@ describe("AddProviderDialog — test before save", () => {
 
 		expect(mockState.testCredentialsImpl).toHaveBeenCalled();
 		expect(wrapper.find('[data-testid="test-result"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
-      true,
-    );
+		expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
+			true,
+		);
 
 		const saveButton = wrapper.find<HTMLButtonElement>(
 			'[data-testid="save-button"]',
@@ -1012,9 +1023,9 @@ describe("AddProviderDialog — test before save", () => {
 		expect(
 			wrapper.find('[data-testid="test-result-icon-warning"]').exists(),
 		).toBe(true);
-    expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
-      false,
-    );
+		expect(wrapper.find('[data-testid="test-result-icon-ok"]').exists()).toBe(
+			false,
+		);
 		expect(
 			wrapper.find('[data-testid="test-result-icon-error"]').exists(),
 		).toBe(false);
@@ -1171,7 +1182,7 @@ describe("AddProviderDialog — Ollama Cloud (e2e)", () => {
 		const baseUrlInput = wrapper.find<HTMLInputElement>(
 			'[data-testid="input-baseUrl"]',
 		);
-    expect(baseUrlInput.exists(), "baseUrl input should be hidden").toBe(false);
+		expect(baseUrlInput.exists(), "baseUrl input should be hidden").toBe(false);
 	});
 
 	it("shows the baseUrl field for self-hosted Ollama (user can override)", async () => {
@@ -1180,7 +1191,7 @@ describe("AddProviderDialog — Ollama Cloud (e2e)", () => {
 		const baseUrlInput = wrapper.find<HTMLInputElement>(
 			'[data-testid="input-baseUrl"]',
 		);
-    expect(baseUrlInput.exists(), "baseUrl input should be visible").toBe(true);
+		expect(baseUrlInput.exists(), "baseUrl input should be visible").toBe(true);
 		expect(baseUrlInput.element.value).toBe("http://localhost:11434");
 	});
 

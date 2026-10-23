@@ -100,8 +100,6 @@ fn map_anthropic_finish_reason(reason: &str) -> Option<FinishReason> {
 /// Non-streaming response body from Anthropic API
 #[derive(Debug, Deserialize)]
 struct AnthropicNonStreamResponse {
-    #[allow(dead_code)]
-    id: String,
     model: String,
     #[serde(default)]
     stop_reason: Option<String>,
@@ -251,17 +249,14 @@ enum AnthropicStreamEvent {
     ContentBlockDelta { index: u32, delta: AnthropicDelta },
     #[serde(rename = "message_delta")]
     MessageDelta {
-        #[allow(dead_code)]
         delta: AnthropicMessageDeltaDetails,
         usage: AnthropicMessageDeltaUsage,
     },
     #[serde(rename = "error")]
     Error { error: AnthropicErrorDetail },
     #[serde(rename = "message_start")]
-    #[allow(dead_code)]
-    MessageStart { message: AnthropicMessageStart },
+    MessageStart,
     #[serde(rename = "content_block_start")]
-    #[allow(dead_code)]
     ContentBlockStart {
         index: u32,
         content_block: AnthropicContentBlockStart,
@@ -285,11 +280,7 @@ enum AnthropicDelta {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicMessageDeltaDetails {
-    #[allow(dead_code)]
     stop_reason: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    stop_sequence: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,19 +299,6 @@ struct AnthropicErrorDetail {
     #[serde(rename = "type")]
     error_type: String,
     message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AnthropicMessageStart {
-    #[allow(dead_code)]
-    id: String,
-    #[serde(rename = "type")]
-    #[allow(dead_code)]
-    message_type: String,
-    #[allow(dead_code)]
-    role: String,
-    #[allow(dead_code)]
-    content: Vec<()>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -354,7 +332,6 @@ pub struct AnthropicProviderConfig {
 
 pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
-    #[allow(dead_code)]
     client: Client,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 }

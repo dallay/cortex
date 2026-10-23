@@ -59,12 +59,10 @@ pub struct RookContainer {
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
     pub rate_limit_store: Option<transport_axum::handlers::rate_limits::RateLimitRuleStore>,
     /// Format registry for provider wire-format lookup — used in Phase 2 routing.
-    #[allow(dead_code)]
     pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
     /// Concrete usage repository — used for retention sweep task.
     pub usage_repository: Arc<SqliteUsageRepository>,
     /// Upstream quota observation recorder — kept distinct from local usage history.
-    #[allow(dead_code)] // Consumed by the response-capture work unit in the feature chain.
     pub quota_observation_recorder: Arc<dyn QuotaObservationRecorderPort>,
     /// Usage config — retention_days and sweep_interval_hours for retention sweep.
     pub usage_config: crate::config::UsageConfig,
@@ -879,7 +877,6 @@ impl std::error::Error for ProviderBuildError {}
 ///
 /// This is the single function that handles all 5 providers (openai, anthropic,
 /// ollama, gemini, groq) for both ApiKey and OAuth credentials.
-#[allow(dead_code)]
 pub fn build_provider_from_connection(
     connection_id: &ConnectionId,
     kind: ProviderKind,

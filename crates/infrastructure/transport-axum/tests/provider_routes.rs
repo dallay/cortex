@@ -604,7 +604,7 @@ fn test_status_enum_has_expected_variants() {
 // Tests: Mock registry for compile-time verification
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 mod mock_registry {
     use super::*;
     use std::sync::Arc;

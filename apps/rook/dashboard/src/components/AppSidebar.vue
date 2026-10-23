@@ -8,8 +8,8 @@ import {
 	SidebarFooter,
 	SidebarHeader,
 } from "@/components/ui/sidebar";
-import { useNavigation } from "@/composables/useNavigation";
 import { useHealth } from "@/composables/useHealth";
+import { useNavigation } from "@/composables/useNavigation";
 
 const { navMain, navSecondary } = useNavigation();
 const { appName } = useHealth();

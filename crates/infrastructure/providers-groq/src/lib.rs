@@ -59,8 +59,6 @@ fn groq_header_number(headers: &reqwest::header::HeaderMap, name: &str) -> Optio
 
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
-    #[allow(dead_code)]
-    id: String,
     model: String,
     choices: Vec<GroqChoice>,
     usage: GroqUsage,
@@ -69,14 +67,11 @@ struct GroqResponse {
 #[derive(Debug, Deserialize)]
 struct GroqChoice {
     message: GroqMessage,
-    #[allow(dead_code)]
     finish_reason: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GroqMessage {
-    #[allow(dead_code)]
-    role: String,
     content: String,
 }
 
@@ -89,8 +84,6 @@ struct GroqUsage {
 
 #[derive(Debug, Deserialize)]
 struct GroqStreamResponse {
-    #[allow(dead_code)]
-    id: String,
     model: String,
     choices: Vec<GroqStreamChoice>,
     usage: Option<GroqUsage>,

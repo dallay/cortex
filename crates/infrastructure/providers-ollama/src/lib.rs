@@ -17,9 +17,6 @@ struct OllamaChatResponse {
     model: String,
     message: OllamaMessage,
     done: bool,
-    #[allow(dead_code)]
-    #[serde(default)]
-    created_at: Option<String>,
     #[serde(default)]
     done_reason: Option<String>,
     #[serde(default)]
@@ -36,23 +33,15 @@ struct OllamaChatResponse {
     eval_count: Option<u32>,
     #[serde(default)]
     eval_duration: Option<u64>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    logprobs: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OllamaMessage {
-    #[allow(dead_code)]
-    role: String,
     content: String,
     #[serde(default)]
     thinking: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<OllamaToolCall>>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    images: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,7 +71,6 @@ pub struct OllamaProviderConfig {
 
 pub struct OllamaProvider {
     config: OllamaProviderConfig,
-    #[allow(dead_code)]
     client: Client,
 }
 
