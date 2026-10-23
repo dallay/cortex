@@ -138,6 +138,40 @@ huginn --workspace /path/to/your/project chat
 huginn --workspace /path/to/your/project run "Explain this codebase"
 ```
 
+### Standalone provider login
+
+Run `huginn auth login` directly in an interactive terminal to configure a provider
+without starting a conversation. The command uses the same searchable runtime
+catalog, masked fields, and secure connection storage as TUI `/login`.
+
+```bash
+huginn --config /path/to/huginn.toml --db /path/to/sessions.db auth login
+```
+
+Global `--config`, `--db`, and `--workspace` options retain their existing meaning.
+Connection metadata uses the selected database's `providers.db` extension; the
+command does not create the conversation database. An invalid explicit config
+fails rather than falling back to another config. A concurrent connection writer
+or unavailable secure store remains an error; no automatic storage fallback is
+introduced. API-key forms also offer the existing explicit ephemeral mode, whose
+credentials are lost when this command exits. When the selected provider already
+has a connection, the command opens the connection form directly and never the
+connection management screen; the new connection is stored separately and does
+not overwrite the existing one.
+
+A successful save prints **Connection configured locally** and exits with status
+0. This confirms local storage, not remote authorization or model availability.
+Select a model with `/model` on the next TUI startup; the command does not change
+an already running session. Escape returns to the previous form and cancels at
+the catalog. Ctrl+C cancels. Cancellation and failure both return nonzero, with
+different messages; neither reports success. If a write was pending when the
+command was cancelled, inspect connections on the next startup to reconcile its
+status. Cancellation does not revoke remote credentials.
+
+Piped input, redirected output, `--json`, and `--line-mode` are rejected. There
+is no API-key argument or stdin secret-entry mode. OAuth and device-code login
+remain unsupported. Secrets must only be entered in the host-owned masked form.
+
 ### Command Reference
 
 | Command | Description |

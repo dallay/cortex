@@ -1,3 +1,4 @@
+mod auth;
 mod terminal;
 
 use anyhow::Context;
@@ -46,6 +47,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Configure provider credentials without starting a conversation.
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
     /// Interactive conversation (default).
     Chat,
     /// Run one prompt. Effects are denied unless explicitly granted with --allow.
@@ -60,6 +66,12 @@ enum Commands {
     Sessions,
     /// Validate configuration and show service diagnostics without network/model calls.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// Connect a provider using secure interactive forms (requires a terminal).
+    Login,
 }
 
 fn prepare_config(cli: &Cli) -> anyhow::Result<Config> {
@@ -197,6 +209,10 @@ fn prepare_interaction(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Commands::Auth { .. })) {
+        auth::require_interactive(cli.json, cli.line_mode)?;
+        return auth::login(prepare_config(&cli)?, cli.workspace.clone()).await;
+    }
     let config = prepare_config(&cli)?;
     let sessions = Arc::new(SqliteSessions::open(&config.db)?);
     if list_sessions_if_requested(&cli, &sessions).await? {
