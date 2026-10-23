@@ -100,7 +100,7 @@ mod tests {
             .expect("hash should succeed");
         let hash_str = hash.as_str();
         assert!(
-            !hash_str.contains("super_secret"),
+            !hash_str.contains(SAMPLE_PASSWORD),
             "hash should not contain plaintext password"
         );
         assert!(
