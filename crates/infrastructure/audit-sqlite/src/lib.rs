@@ -11,7 +11,7 @@ use rusqlite::{params, Connection};
 use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId, ProviderId, RequestId};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
 
 const QUOTA_OBSERVATION_QUEUE_CAPACITY: usize = 1024;
@@ -127,7 +127,7 @@ impl AuditPort for SqliteAudit {
 
 /// SQLite-backed usage history repository.
 pub struct SqliteUsageRepository {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     quota_observation_sender: StdMutex<Option<mpsc::Sender<Vec<QuotaObservation>>>>,
     quota_observation_worker: StdMutex<Option<std::thread::JoinHandle<usize>>>,
     shutdown_lock: Mutex<()>,
@@ -154,7 +154,7 @@ impl SqliteUsageRepository {
             .spawn(move || quota_observation_worker(worker_conn, receiver))
             .map_err(|e| CortexError::provider(format!("sqlite quota worker spawn failed: {e}")))?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             quota_observation_sender: StdMutex::new(Some(quota_observation_sender)),
             quota_observation_worker: StdMutex::new(Some(quota_observation_worker)),
             shutdown_lock: Mutex::new(()),
@@ -333,60 +333,68 @@ impl QuotaObservationRecorderPort for SqliteUsageRepository {
         &self,
         query: &QuotaObservationQuery,
     ) -> CortexResult<Vec<QuotaObservation>> {
-        let conn = self.conn.lock().await;
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        let mut sql = String::from(
-            "SELECT observation.provider_kind, observation.provider_runtime_id,
-                    observation.connection_id, observation.metric, observation.source,
-                    observation.scope, observation.window, observation.quota_limit,
-                    observation.remaining, observation.reset_at,
-                    observation.reset_after_milliseconds, observation.observed_at
-             FROM provider_quota_observation_latest AS latest
-             JOIN provider_quota_observations AS observation
-               ON observation.id = latest.observation_id",
-        );
-        let mut filters: Vec<String> = Vec::new();
+        let connection = Arc::clone(&self.conn);
+        let query = query.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = connection.blocking_lock();
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            let mut sql = String::from(
+                "SELECT observation.provider_kind, observation.provider_runtime_id,
+                        observation.connection_id, observation.metric, observation.source,
+                        observation.scope, observation.window, observation.quota_limit,
+                        observation.remaining, observation.reset_at,
+                        observation.reset_after_milliseconds, observation.observed_at
+                 FROM provider_quota_observation_latest AS latest
+                 JOIN provider_quota_observations AS observation
+                   ON observation.id = latest.observation_id",
+            );
+            let mut filters: Vec<String> = Vec::new();
 
-        if !query.connection_ids.is_empty() {
-            let placeholders = vec!["?"; query.connection_ids.len()].join(",");
-            filters.push(format!("latest.connection_id IN ({placeholders})"));
-            for connection_id in &query.connection_ids {
-                params.push(Box::new(connection_id.to_string()));
+            if !query.connection_ids.is_empty() {
+                let placeholders = vec!["?"; query.connection_ids.len()].join(",");
+                filters.push(format!("latest.connection_id IN ({placeholders})"));
+                for connection_id in &query.connection_ids {
+                    params.push(Box::new(connection_id.to_string()));
+                }
             }
-        }
-        if let Some(provider) = &query.provider {
-            filters.push("latest.provider_runtime_id = ?".to_string());
-            params.push(Box::new(provider.to_string()));
-        }
-        if let Some(metric) = &query.metric {
-            filters.push("latest.metric = ?".to_string());
-            params.push(Box::new(metric.clone()));
-        }
-        if let Some(source) = &query.source {
-            filters.push("latest.source = ?".to_string());
-            params.push(Box::new(source.clone()));
-        }
+            if let Some(provider) = &query.provider {
+                filters.push("latest.provider_runtime_id = ?".to_string());
+                params.push(Box::new(provider.to_string()));
+            }
+            if let Some(metric) = &query.metric {
+                filters.push("latest.metric = ?".to_string());
+                params.push(Box::new(metric.clone()));
+            }
+            if let Some(source) = &query.source {
+                filters.push("latest.source = ?".to_string());
+                params.push(Box::new(source.clone()));
+            }
 
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY observation.observed_at DESC, observation.id DESC LIMIT ?");
-        params.push(Box::new(query.clamped_limit() as i64));
+            if !filters.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&filters.join(" AND "));
+            }
+            sql.push_str(" ORDER BY observation.observed_at DESC, observation.id DESC LIMIT ?");
+            params.push(Box::new(query.clamped_limit() as i64));
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| {
-            CortexError::provider(format!("sqlite quota latest prepare failed: {e}"))
-        })?;
-        let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                map_quota_observation_row,
-            )
-            .map_err(|e| CortexError::provider(format!("sqlite quota latest failed: {e}")))?;
-        rows.map(|row| {
-            row.map_err(|e| CortexError::provider(format!("sqlite quota row failed: {e}")))
+            let mut stmt = conn.prepare(&sql).map_err(|e| {
+                CortexError::provider(format!("sqlite quota latest prepare failed: {e}"))
+            })?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                    map_quota_observation_row,
+                )
+                .map_err(|e| CortexError::provider(format!("sqlite quota latest failed: {e}")))?;
+            rows.map(|row| {
+                row.map_err(|e| CortexError::provider(format!("sqlite quota row failed: {e}")))
+            })
+            .collect()
         })
-        .collect()
+        .await
+        .map_err(|error| {
+            CortexError::provider(format!("sqlite quota latest task failed: {error}"))
+        })?
     }
 }
 
@@ -1514,6 +1522,64 @@ mod usage_tests {
             assert_eq!(rows[0].provider, ProviderId::new("openai-runtime"));
             assert_eq!(rows[0].remaining, Some(0.0));
             assert_eq!(rows[0].observed_at, timestamp(2));
+        });
+    }
+
+    #[test]
+    fn late_older_observation_does_not_replace_latest_series_row() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let connection = ConnectionId::new();
+            let mut newer = quota_observation("openai-runtime", Some(connection));
+            newer.observed_at = timestamp(8);
+            newer.remaining = Some(8.0);
+            repo.record_observations(vec![newer])
+                .await
+                .expect("record newer");
+            wait_for_quota_rows(&repo, 1).await;
+
+            let mut late_older = quota_observation("openai-runtime", Some(connection));
+            late_older.observed_at = timestamp(3);
+            late_older.remaining = Some(3.0);
+            repo.record_observations(vec![late_older])
+                .await
+                .expect("record late older observation");
+            wait_for_quota_rows(&repo, 2).await;
+
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![connection]))
+                .await
+                .expect("read latest series row");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].remaining, Some(8.0));
+            assert_eq!(rows[0].observed_at, timestamp(8));
+        });
+    }
+
+    #[test]
+    fn retention_removes_latest_series_entry_before_expiring_its_observation() {
+        runtime().block_on(async {
+            let repo = usage_repo();
+            let connection = ConnectionId::new();
+            let mut expired_latest = quota_observation("openai-runtime", Some(connection));
+            expired_latest.observed_at = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+            repo.record_observations(vec![expired_latest])
+                .await
+                .expect("record expired observation");
+            wait_for_quota_rows(&repo, 1).await;
+
+            assert_eq!(
+                repo.delete_quota_observations_older_than(1).await.unwrap(),
+                1
+            );
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![connection]))
+                .await
+                .expect("read after retention");
+            assert!(
+                rows.is_empty(),
+                "retention must remove its latest-series entry"
+            );
         });
     }
 

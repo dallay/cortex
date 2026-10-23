@@ -375,7 +375,12 @@ impl RouteRequest {
                 }
             };
             let provider_id = provider.id().clone();
-            let connection_id = self.resolve_connection_id(&provider_id).await;
+            let connection = if self.provider_repository.is_some() {
+                self.resolve_connection(&provider_id).await
+            } else {
+                None
+            };
+            let connection_id = connection.as_ref().map(|(id, _)| *id);
 
             // Provider restriction check (after selection, before execution)
             if let Err(error) = self.check_provider_restriction(&req, &provider_id) {
@@ -388,21 +393,22 @@ impl RouteRequest {
 
             // Skip connections with fresh, authoritative exhaustion evidence.
             // The check runs after authorization and before any upstream I/O.
-            if let Some(connection_id) = connection_id.as_ref() {
-                let runtime_id = self.connection_runtime_id(connection_id).await;
-                let state = self
-                    .connection_quota_state(connection_id, runtime_id.as_ref())
-                    .await;
-                if state.is_exhausted() {
-                    let reason = quota_skip_reason(&state);
-                    tracing::info!(
-                        provider = %provider_id,
-                        %connection_id,
-                        skip_reason = %reason,
-                        "skipping connection with exhausted upstream quota"
-                    );
-                    excluded.push(provider_id);
-                    continue;
+            if self.quota_reader.is_some() {
+                if let Some((connection_id, runtime_id)) = connection.as_ref() {
+                    let state = self
+                        .connection_quota_state(connection_id, runtime_id.as_ref())
+                        .await;
+                    if state.is_exhausted() {
+                        let reason = quota_skip_reason(&state);
+                        tracing::info!(
+                            provider = %provider_id,
+                            %connection_id,
+                            skip_reason = %reason,
+                            "skipping connection with exhausted upstream quota"
+                        );
+                        excluded.push(provider_id);
+                        continue;
+                    }
                 }
             }
 
@@ -749,22 +755,28 @@ impl RouteRequest {
                 let provider_format = provider.api_format();
                 // Skip connections with fresh, authoritative exhaustion
                 // evidence before the stream starts and exposes SSE bytes.
-                let connection_id = self.resolve_connection_id(&provider_id).await;
-                if let Some(connection_id) = connection_id.as_ref() {
-                    let runtime_id = self.connection_runtime_id(connection_id).await;
-                    let state = self
-                        .connection_quota_state(connection_id, runtime_id.as_ref())
-                        .await;
-                    if state.is_exhausted() {
-                        let reason = quota_skip_reason(&state);
-                        tracing::info!(
-                            provider = %provider_id,
-                            %connection_id,
-                            skip_reason = %reason,
-                            "skipping connection with exhausted upstream quota"
-                        );
-                        excluded.push(provider_id);
-                        continue;
+                let connection = if self.provider_repository.is_some() {
+                    self.resolve_connection(&provider_id).await
+                } else {
+                    None
+                };
+                let connection_id = connection.as_ref().map(|(id, _)| *id);
+                if self.quota_reader.is_some() {
+                    if let Some((connection_id, runtime_id)) = connection.as_ref() {
+                        let state = self
+                            .connection_quota_state(connection_id, runtime_id.as_ref())
+                            .await;
+                        if state.is_exhausted() {
+                            let reason = quota_skip_reason(&state);
+                            tracing::info!(
+                                provider = %provider_id,
+                                %connection_id,
+                                skip_reason = %reason,
+                                "skipping connection with exhausted upstream quota"
+                            );
+                            excluded.push(provider_id);
+                            continue;
+                        }
                     }
                 }
                 let provider_req = self.format_translator.translate_request(
@@ -1707,14 +1719,19 @@ impl RouteRequest {
         }
     }
 
-    async fn resolve_connection_id(&self, provider_id: &ProviderId) -> Option<ConnectionId> {
+    async fn resolve_connection(
+        &self,
+        provider_id: &ProviderId,
+    ) -> Option<(ConnectionId, Option<ProviderId>)> {
         let repository = self.provider_repository.as_ref()?;
 
         // Connection adapters use the connection UUID as their ProviderId.
-        // Resolve that identity exactly before trying the runtime-ID lookup.
+        // Return the runtime ID from the same record to avoid a second lookup.
         if let Ok(connection_id) = ConnectionId::parse_str(provider_id.as_str()) {
             match repository.find(&connection_id).await {
-                Ok(Some(_)) => return Some(connection_id),
+                Ok(Some(connection)) => {
+                    return Some((connection_id, Some(connection.provider_runtime_id)));
+                }
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(%connection_id, error = %error, "failed to resolve provider connection by id");
@@ -1723,22 +1740,10 @@ impl RouteRequest {
         }
 
         match repository.find_connection_id_by_runtime(provider_id).await {
-            Ok(connection_id) => connection_id,
-            Err(error) => {
-                tracing::warn!(provider = %provider_id, error = %error, "failed to resolve provider connection id");
-                None
-            }
-        }
-    }
-
-    /// Runtime provider that owns a connection, when the connection is known.
-    async fn connection_runtime_id(&self, connection_id: &ConnectionId) -> Option<ProviderId> {
-        let repository = self.provider_repository.as_ref()?;
-        match repository.find(connection_id).await {
-            Ok(Some(connection)) => Some(connection.provider_runtime_id),
+            Ok(Some(connection_id)) => Some((connection_id, Some(provider_id.clone()))),
             Ok(None) => None,
             Err(error) => {
-                tracing::warn!(%connection_id, error = %error, "failed to resolve connection runtime id");
+                tracing::warn!(provider = %provider_id, error = %error, "failed to resolve provider connection id");
                 None
             }
         }
@@ -4163,20 +4168,22 @@ mod tests {
     async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_requests() {
         let exhausted_connection = ConnectionId::new();
         let healthy_connection = ConnectionId::new();
-        let exhausted_runtime = ProviderId::new(exhausted_connection.to_string());
-        let healthy_runtime = ProviderId::new(healthy_connection.to_string());
+        let exhausted_runtime = ProviderId::new("openai-exhausted-runtime");
+        let healthy_runtime = ProviderId::new("openai-healthy-runtime");
         let exhausted_calls = Arc::new(Mutex::new(Vec::new()));
         let healthy_calls = Arc::new(Mutex::new(Vec::new()));
+        let exhausted_provider = ProviderId::new(exhausted_connection.to_string());
+        let healthy_provider = ProviderId::new(healthy_connection.to_string());
 
         let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
             providers: vec![
                 Arc::new(SpyProvider {
-                    id: exhausted_runtime.clone(),
+                    id: exhausted_provider.clone(),
                     model: TEST_MODEL.clone(),
                     seen_models: exhausted_calls.clone(),
                 }),
                 Arc::new(SpyProvider {
-                    id: healthy_runtime.clone(),
+                    id: healthy_provider.clone(),
                     model: TEST_MODEL.clone(),
                     seen_models: healthy_calls.clone(),
                 }),
@@ -4252,19 +4259,21 @@ mod tests {
     async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
         let exhausted_connection = ConnectionId::new();
         let healthy_connection = ConnectionId::new();
-        let exhausted_runtime = ProviderId::new(exhausted_connection.to_string());
-        let healthy_runtime = ProviderId::new(healthy_connection.to_string());
+        let exhausted_runtime = ProviderId::new("openai-exhausted-runtime");
+        let healthy_runtime = ProviderId::new("openai-healthy-runtime");
         let exhausted_calls = Arc::new(Mutex::new(Vec::new()));
         let healthy_calls = Arc::new(Mutex::new(Vec::new()));
+        let exhausted_provider = ProviderId::new(exhausted_connection.to_string());
+        let healthy_provider = ProviderId::new(healthy_connection.to_string());
         let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
             providers: vec![
                 Arc::new(SpyProvider {
-                    id: exhausted_runtime.clone(),
+                    id: exhausted_provider.clone(),
                     model: TEST_MODEL.clone(),
                     seen_models: exhausted_calls.clone(),
                 }),
                 Arc::new(SpyProvider {
-                    id: healthy_runtime.clone(),
+                    id: healthy_provider.clone(),
                     model: TEST_MODEL.clone(),
                     seen_models: healthy_calls.clone(),
                 }),

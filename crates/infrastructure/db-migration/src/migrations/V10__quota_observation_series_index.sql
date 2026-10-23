@@ -10,29 +10,23 @@ CREATE TABLE provider_quota_observation_latest (
     PRIMARY KEY (connection_id, metric, scope, window, source, provider_runtime_id)
 );
 
--- SQLite treats NULL values as distinct in composite keys, so the primary key
--- is not the series uniqueness check. This index supports identity lookups.
-CREATE INDEX idx_quota_observation_latest_series
-    ON provider_quota_observation_latest(
-        connection_id, metric, scope, window, source, provider_runtime_id
-    );
+-- The composite primary key automatically indexes the series identity. Index the
+-- referenced observation ID for bounded retention cleanup and joins.
+CREATE INDEX idx_quota_observation_latest_observation
+    ON provider_quota_observation_latest(observation_id);
 
--- Backfill the latest row for each series, including deterministic tie-breaking.
+-- Backfill the newest row for each series with deterministic tie-breaking.
+-- SQLite window functions are supported by the bundled SQLite library (>= 3.25).
 INSERT INTO provider_quota_observation_latest (
     connection_id, metric, scope, window, source, provider_runtime_id, observation_id
 )
-SELECT current.connection_id, current.metric, current.scope, current.window,
-       current.source, current.provider_runtime_id, current.id
-FROM provider_quota_observations AS current
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM provider_quota_observations AS newer
-    WHERE newer.connection_id IS current.connection_id
-      AND newer.metric = current.metric
-      AND newer.scope IS current.scope
-      AND newer.window IS current.window
-      AND newer.source = current.source
-      AND newer.provider_runtime_id = current.provider_runtime_id
-      AND (newer.observed_at > current.observed_at
-           OR (newer.observed_at = current.observed_at AND newer.id > current.id))
-);
+SELECT connection_id, metric, scope, window, source, provider_runtime_id, id
+FROM (
+    SELECT connection_id, metric, scope, window, source, provider_runtime_id, id,
+           ROW_NUMBER() OVER (
+               PARTITION BY connection_id, metric, scope, window, source, provider_runtime_id
+               ORDER BY observed_at DESC, id DESC
+           ) AS series_rank
+    FROM provider_quota_observations
+)
+WHERE series_rank = 1;
