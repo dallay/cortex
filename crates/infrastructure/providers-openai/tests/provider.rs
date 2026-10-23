@@ -298,11 +298,16 @@ async fn guarded_compatible_endpoint_blocks_untrusted_loopback_before_sending_cr
 #[tokio::test]
 async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_credentials() {
     let server = wiremock::MockServer::start().await;
+    let redirect_target = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&redirect_target)
+        .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(
             wiremock::ResponseTemplate::new(302)
-                .insert_header("Location", "http://127.0.0.1:9/steal"),
+                .insert_header("Location", format!("{}/steal", redirect_target.uri())),
         )
         .mount(&server)
         .await;
@@ -326,6 +331,11 @@ async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_creden
         .expect_err("redirect response is not followed");
     assert!(!error.to_string().contains("secret-marker"));
     assert_eq!(server.received_requests().await.expect("requests").len(), 1);
+    assert!(redirect_target
+        .received_requests()
+        .await
+        .expect("redirect target requests")
+        .is_empty());
 }
 
 #[tokio::test]

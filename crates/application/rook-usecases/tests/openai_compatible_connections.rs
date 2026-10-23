@@ -776,6 +776,30 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
         "key",
         &["model-a"],
     );
+    request.auth_type = rook_core::AuthType::OAuth;
+    request.credentials = CredentialsInput::OAuth {
+        email: "operator@example.com".into(),
+        access_token: "access-token".into(),
+        refresh_token: "refresh-token".into(),
+        expires_at: i64::MAX,
+        scope: "scope".into(),
+        id_token: String::new(),
+        project_id: String::new(),
+        oauth_client_id: String::new(),
+        oauth_client_secret: None,
+        oauth_tenant_id: None,
+    };
+    mc.create(request)
+        .await
+        .expect_err("OAuth authentication is rejected for compatible connections");
+
+    let mut request = create_request(
+        RUNTIME_A,
+        "compat-a",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
     request.config.base_url = None;
     mc.create(request)
         .await

@@ -469,11 +469,12 @@ impl RookConfig {
 
         // Validate combo configurations
         Self::validate_combos(&config.combos);
-        if !config.provider_endpoint_policy.validate() {
-            return Err(anyhow::anyhow!(
-                "invalid provider endpoint grant configuration"
-            ));
-        }
+        config
+            .provider_endpoint_policy
+            .validate()
+            .map_err(|error| {
+                anyhow::anyhow!("invalid provider endpoint grant configuration: {error}")
+            })?;
 
         // Validate cache configuration
         config

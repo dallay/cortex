@@ -1977,6 +1977,9 @@ fn validate_provider_auth_type(
     if provider_kind == ProviderKind::AzureOpenAI && auth_type != AuthType::OAuth {
         return Err(ValidationError::AzureOpenAIRequiresOAuth);
     }
+    if provider_kind == ProviderKind::OpenAiCompatible && auth_type != AuthType::ApiKey {
+        return Err(ValidationError::AuthTypeCredentialMismatch);
+    }
     Ok(())
 }
 

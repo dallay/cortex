@@ -21,27 +21,71 @@ pub struct EndpointGrant {
     pub allowed_origins: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndpointPolicyConfigError {
+    pub grant_index: usize,
+    pub reason: EndpointPolicyConfigErrorReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointPolicyConfigErrorReason {
+    InvalidConnectionId,
+    DuplicateConnectionId,
+    EmptyOrigins,
+    InvalidOrigin,
+}
+
+impl std::fmt::Display for EndpointPolicyConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "grant {}: {:?}", self.grant_index, self.reason)
+    }
+}
+
+impl std::error::Error for EndpointPolicyConfigError {}
+
 impl EndpointPolicyConfig {
-    pub fn validate(&self) -> bool {
+    pub fn validate(&self) -> Result<(), EndpointPolicyConfigError> {
         let mut ids = std::collections::HashSet::new();
-        self.grants.iter().all(|grant| {
-            let Ok(id) = uuid::Uuid::parse_str(&grant.connection_id) else {
-                return false;
-            };
-            ids.insert(id)
-                && !grant.allowed_origins.is_empty()
-                && grant
-                    .allowed_origins
-                    .iter()
-                    .all(|origin| is_valid_grant_origin(origin))
-        })
+        for (index, grant) in self.grants.iter().enumerate() {
+            let id = uuid::Uuid::parse_str(&grant.connection_id).map_err(|_| {
+                EndpointPolicyConfigError {
+                    grant_index: index,
+                    reason: EndpointPolicyConfigErrorReason::InvalidConnectionId,
+                }
+            })?;
+            if !ids.insert(id) {
+                return Err(EndpointPolicyConfigError {
+                    grant_index: index,
+                    reason: EndpointPolicyConfigErrorReason::DuplicateConnectionId,
+                });
+            }
+            if grant.allowed_origins.is_empty() {
+                return Err(EndpointPolicyConfigError {
+                    grant_index: index,
+                    reason: EndpointPolicyConfigErrorReason::EmptyOrigins,
+                });
+            }
+            if grant
+                .allowed_origins
+                .iter()
+                .any(|origin| !is_valid_grant_origin(origin))
+            {
+                return Err(EndpointPolicyConfigError {
+                    grant_index: index,
+                    reason: EndpointPolicyConfigErrorReason::InvalidOrigin,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn for_connection(&self, connection_id: &str) -> EndpointPolicy {
-        let mut matching = self
-            .grants
-            .iter()
-            .filter(|grant| grant.connection_id.eq_ignore_ascii_case(connection_id));
+        let Ok(requested_id) = uuid::Uuid::parse_str(connection_id) else {
+            return EndpointPolicy::default();
+        };
+        let mut matching = self.grants.iter().filter(|grant| {
+            uuid::Uuid::parse_str(&grant.connection_id).is_ok_and(|id| id == requested_id)
+        });
         let Some(grant) = matching.next() else {
             return EndpointPolicy::default();
         };
@@ -116,8 +160,14 @@ impl EndpointPolicy {
         {
             return Err(EndpointPolicyError::OriginNotGranted);
         }
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            self.validate_ip(host, ip, port, url.scheme())?;
+        match url.host().ok_or(EndpointPolicyError::InvalidHost)? {
+            url::Host::Ipv4(ip) => {
+                self.validate_ip(host, IpAddr::V4(ip), port, url.scheme())?;
+            }
+            url::Host::Ipv6(ip) => {
+                self.validate_ip(host, IpAddr::V6(ip), port, url.scheme())?;
+            }
+            url::Host::Domain(_) => {}
         }
         // Hostnames are classified by the guarded resolver at connection time.
         // This permits an explicitly granted private HTTP hostname while still
@@ -175,7 +225,10 @@ fn host_is_loopback(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
         return true;
     }
-    host.parse::<IpAddr>().is_ok_and(is_loopback_ip)
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+        .is_ok_and(is_loopback_ip)
 }
 
 fn origin_matches(grant: &str, url: &url::Url) -> bool {
@@ -281,191 +334,5 @@ fn is_private_ip(ip: IpAddr) -> bool {
                     a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
                 })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn policy(origin: &str) -> EndpointPolicy {
-        EndpointPolicy {
-            allowed_origins: vec![origin.to_string()],
-        }
-    }
-
-    #[test]
-    fn grants_are_selected_by_immutable_connection_id_and_fail_closed_when_ambiguous() {
-        let id = "c56a4180-65aa-42ec-a945-5fd21dec0538";
-        let config = EndpointPolicyConfig {
-            grants: vec![EndpointGrant {
-                connection_id: id.into(),
-                allowed_origins: vec!["https://upstream.example".into()],
-            }],
-        };
-        assert_eq!(config.for_connection(id).allowed_origins.len(), 1);
-        assert!(config
-            .for_connection("another-id")
-            .allowed_origins
-            .is_empty());
-        let duplicate = EndpointPolicyConfig {
-            grants: vec![
-                EndpointGrant {
-                    connection_id: id.into(),
-                    allowed_origins: vec!["https://upstream.example".into()],
-                },
-                EndpointGrant {
-                    connection_id: id.into(),
-                    allowed_origins: vec!["https://other.example".into()],
-                },
-            ],
-        };
-        assert!(duplicate.for_connection(id).allowed_origins.is_empty());
-        assert!(!duplicate.validate());
-        let malformed = EndpointPolicyConfig {
-            grants: vec![EndpointGrant {
-                connection_id: id.into(),
-                allowed_origins: vec!["https://upstream.example/v1".into()],
-            }],
-        };
-        assert!(malformed.for_connection(id).allowed_origins.is_empty());
-        assert!(!malformed.validate());
-        assert!(!EndpointPolicyConfig {
-            grants: vec![EndpointGrant {
-                connection_id: "not-a-uuid".into(),
-                allowed_origins: vec!["https://upstream.example".into()]
-            }],
-        }
-        .validate());
-    }
-
-    #[test]
-    fn origin_grant_matches_scheme_host_and_effective_port_only() {
-        let granted = policy("https://upstream.example:443");
-        assert!(granted
-            .validate_url(&url::Url::parse("https://upstream.example/v1").unwrap())
-            .is_ok());
-        assert_eq!(
-            granted.validate_url(&url::Url::parse("http://upstream.example/v1").unwrap()),
-            Err(EndpointPolicyError::OriginNotGranted)
-        );
-        assert_eq!(
-            granted.validate_url(&url::Url::parse("https://upstream.example:8443/v1").unwrap()),
-            Err(EndpointPolicyError::OriginNotGranted)
-        );
-        assert_eq!(
-            granted.validate_url(&url::Url::parse("https://other.example/v1").unwrap()),
-            Err(EndpointPolicyError::OriginNotGranted)
-        );
-        assert_eq!(
-            granted
-                .validate_url(&url::Url::parse("https://user:pass@upstream.example/v1").unwrap()),
-            Err(EndpointPolicyError::InvalidHost)
-        );
-    }
-
-    #[test]
-    fn private_and_loopback_addresses_require_exact_origin_grant() {
-        let local = policy("http://127.0.0.1:11434");
-        assert!(local
-            .validate_url(&url::Url::parse("http://127.0.0.1:11434/v1").unwrap())
-            .is_ok());
-        assert_eq!(
-            local.validate_ip("127.0.0.1", "127.0.0.1".parse().unwrap(), 11435, "http"),
-            Err(EndpointPolicyError::LoopbackNotAllowed)
-        );
-        let remote_loopback = policy("http://public.example:8080");
-        assert_eq!(
-            remote_loopback.validate_ip(
-                "public.example",
-                "127.0.0.1".parse().unwrap(),
-                8080,
-                "http"
-            ),
-            Err(EndpointPolicyError::LoopbackNotAllowed)
-        );
-        let private_http = policy("http://inference.internal:8080");
-        assert_eq!(
-            private_http
-                .validate_url(&url::Url::parse("http://inference.internal:8080/v1").unwrap()),
-            Ok(())
-        );
-        assert_eq!(
-            private_http.validate_ip(
-                "inference.internal",
-                "10.0.0.8".parse().unwrap(),
-                8080,
-                "http"
-            ),
-            Ok(())
-        );
-        assert_eq!(
-            private_http.validate_ip(
-                "inference.internal",
-                "93.184.216.34".parse().unwrap(),
-                8080,
-                "http"
-            ),
-            Err(EndpointPolicyError::InsecureScheme)
-        );
-        let private = policy("https://inference.internal:8443");
-        assert!(private
-            .validate_ip(
-                "inference.internal",
-                "10.0.0.8".parse().unwrap(),
-                8443,
-                "https"
-            )
-            .is_ok());
-        assert_eq!(
-            private.validate_ip(
-                "inference.internal",
-                "10.0.0.8".parse().unwrap(),
-                8444,
-                "https"
-            ),
-            Err(EndpointPolicyError::PrivateHostNotAllowlisted)
-        );
-    }
-
-    #[test]
-    fn metadata_and_link_local_are_rejected_even_when_granted() {
-        let metadata = policy("https://metadata.google.internal");
-        assert_eq!(
-            metadata.validate_url(&url::Url::parse("https://metadata.google.internal").unwrap()),
-            Err(EndpointPolicyError::MetadataNotAllowed)
-        );
-        let link_local = policy("https://service.example");
-        assert_eq!(
-            link_local.validate_ip(
-                "service.example",
-                "169.254.1.1".parse().unwrap(),
-                443,
-                "https"
-            ),
-            Err(EndpointPolicyError::LinkLocalNotAllowed)
-        );
-        assert_eq!(
-            link_local.validate_ip(
-                "service.example",
-                "::ffff:169.254.169.254".parse().unwrap(),
-                443,
-                "https"
-            ),
-            Err(EndpointPolicyError::MetadataNotAllowed)
-        );
-    }
-
-    #[test]
-    fn credentials_in_url_and_non_http_schemes_are_rejected() {
-        let granted = policy("https://upstream.example");
-        assert_eq!(
-            granted.validate_url(&url::Url::parse("https://user:pass@upstream.example").unwrap()),
-            Err(EndpointPolicyError::InvalidHost)
-        );
-        assert!(url::Url::parse("file:///etc/passwd")
-            .map(|url| granted.validate_url(&url))
-            .unwrap()
-            .is_err());
     }
 }

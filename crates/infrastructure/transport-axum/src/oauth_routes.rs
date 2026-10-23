@@ -96,7 +96,7 @@ async fn authorize(
         name: request.name,
         priority: request.priority,
         is_active: request.is_active,
-        config: config_to_domain(request.config),
+        config: config_to_domain(request.config).map_err(|error| validation_error(&error))?,
         client_id: request.client_id,
         client_secret: request.client_secret,
         tenant_id: request.tenant_id,
@@ -256,8 +256,14 @@ fn flow_status_json(status: OAuthFlowStatus) -> serde_json::Value {
     })
 }
 
-fn config_to_domain(config: ConnectionConfigDto) -> rook_core::ConnectionConfig {
-    rook_core::ConnectionConfig {
+fn config_to_domain(config: ConnectionConfigDto) -> Result<rook_core::ConnectionConfig, String> {
+    let api_format = match config.api_format.as_deref() {
+        None => Some(rook_core::ApiFormat::OpenAI),
+        Some("openai") => Some(rook_core::ApiFormat::OpenAI),
+        Some("anthropic") => Some(rook_core::ApiFormat::Anthropic),
+        Some(_) => return Err("invalid apiFormat".to_string()),
+    };
+    Ok(rook_core::ConnectionConfig {
         max_concurrent: config.max_concurrent,
         quota_window_thresholds: rook_core::QuotaWindowThresholds {
             warning: config.quota_window_thresholds.warning,
@@ -270,15 +276,8 @@ fn config_to_domain(config: ConnectionConfigDto) -> rook_core::ConnectionConfig 
             .into_iter()
             .map(shared_kernel::ModelId::new)
             .collect(),
-        api_format: config
-            .api_format
-            .as_deref()
-            .and_then(|format| match format {
-                "openai" => Some(rook_core::ApiFormat::OpenAI),
-                "anthropic" => Some(rook_core::ApiFormat::Anthropic),
-                _ => None,
-            }),
-    }
+        api_format,
+    })
 }
 
 fn manage_connections(

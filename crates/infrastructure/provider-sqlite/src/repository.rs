@@ -288,7 +288,9 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
             .into(),
         match conn.config.api_format {
             Some(rook_core::ApiFormat::Anthropic) => "anthropic",
-            _ => "openai",
+            Some(rook_core::ApiFormat::OpenAI) => "openai",
+            None if conn.provider_kind == ProviderKind::Anthropic => "anthropic",
+            None => "openai",
         }
         .to_string()
         .into(),

@@ -116,7 +116,8 @@ async fn map_openai_http_error(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
     let raw_body = resp.text().await.unwrap_or_default();
-    let sanitized = redact_secrets(&sanitize_body(&raw_body), secrets);
+    let redacted = redact_secrets(&raw_body, secrets);
+    let sanitized = sanitize_body(&redacted);
 
     match status.as_u16() {
         401 => CortexError::auth_failed("OpenAI authentication failed"),
@@ -167,35 +168,23 @@ impl OpenAIProvider {
         config: OpenAIProviderConfig,
         policy: rook_core::EndpointPolicy,
     ) -> anyhow::Result<Self> {
-        let endpoint = super::endpoint_resolver::resolver_for_url(policy, &config.base_url)?;
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_secs))
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .dns_resolver(endpoint.resolver);
-        if let Some((host, addresses)) = endpoint.literal {
-            builder = builder.resolve_to_addrs(&host, &addresses);
-        }
-        let client = builder.build()?;
-        Ok(Self {
-            config,
-            client,
-            quota_recorder: None,
-            oauth_token_port: None,
-            connection_id: None,
-        })
+        Self::build(config, None, Some(policy))
     }
 
     fn build(
         config: OpenAIProviderConfig,
         quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
-        resolver: Option<Arc<dyn reqwest::dns::Resolve>>,
+        endpoint_policy: Option<rook_core::EndpointPolicy>,
     ) -> anyhow::Result<Self> {
         let mut builder = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none());
-        if let Some(resolver) = resolver {
-            builder = builder.dns_resolver(resolver);
+        if let Some(policy) = endpoint_policy {
+            let endpoint = super::endpoint_resolver::resolver_for_url(policy, &config.base_url)?;
+            builder = builder.no_proxy().dns_resolver(endpoint.resolver);
+            if let Some((host, addresses)) = endpoint.literal {
+                builder = builder.resolve_to_addrs(&host, &addresses);
+            }
         }
         let client = builder.build()?;
         Ok(Self {

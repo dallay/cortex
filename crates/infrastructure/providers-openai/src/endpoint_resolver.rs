@@ -87,29 +87,23 @@ pub(crate) fn resolver_for_url(
     policy.validate_url(&url).map_err(|error| {
         anyhow::anyhow!("upstream endpoint rejected by server policy: {error:?}")
     })?;
-    let literal = host
+    let literal_ip = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
         .parse::<IpAddr>()
-        .ok()
+        .ok();
+    let port = url.port_or_known_default().unwrap_or(443);
+    let literal = literal_ip
         .map(|ip| {
             policy
-                .validate_ip(
-                    host,
-                    ip,
-                    url.port_or_known_default().unwrap_or(443),
-                    url.scheme(),
-                )
+                .validate_ip(host, ip, port, url.scheme())
                 .map_err(|error| {
                     anyhow::anyhow!("upstream endpoint rejected by server policy: {error:?}")
                 })?;
-            Ok::<_, anyhow::Error>((
-                host.to_string(),
-                vec![SocketAddr::new(
-                    ip,
-                    url.port_or_known_default().unwrap_or(443),
-                )],
-            ))
+            Ok::<_, anyhow::Error>((host.to_string(), vec![SocketAddr::new(ip, port)]))
         })
         .transpose()?;
+
     Ok(ResolvedEndpointPolicy {
         resolver: Arc::new(GuardedResolver::new(
             policy,
