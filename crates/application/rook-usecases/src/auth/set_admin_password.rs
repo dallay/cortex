@@ -83,24 +83,28 @@ pub enum SetAdminPasswordError {
 }
 
 #[cfg(test)]
-mod test_constants {
-    //! Test fixtures — intentionally hard-coded strings used as test inputs,
-    //! not actual secrets or cryptographic keys.
-
-    /// A password that satisfies `is_strong_password` requirements.
-    pub const STRONG_TEST_PASSWORD: &str = "Super-secret-123!";
-    /// A long password that lacks uppercase, digit, and symbol requirements.
-    pub const WEAK_TEST_PASSWORD: &str = "longbutweakpassword";
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use test_constants::{STRONG_TEST_PASSWORD, WEAK_TEST_PASSWORD};
-
     use async_trait::async_trait;
     use chrono::Utc;
+    use ring::rand::SecureRandom;
     use rook_core::{NewUser, PasswordHash, User, UserId};
+
+    fn strong_password() -> String {
+        let mut suffix = [0; 16];
+        ring::rand::SystemRandom::new()
+            .fill(&mut suffix)
+            .expect("system random source");
+        format!("Aa1!{}", hex::encode(suffix))
+    }
+
+    fn weak_password() -> String {
+        let mut suffix = [0; 16];
+        ring::rand::SystemRandom::new()
+            .fill(&mut suffix)
+            .expect("system random source");
+        format!("weak{}", hex::encode(suffix))
+    }
 
     fn admin_user() -> User {
         User {
@@ -184,7 +188,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: STRONG_TEST_PASSWORD.to_string(),
+                    new_password: strong_password(),
                 })
                 .await;
 
@@ -231,7 +235,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: WEAK_TEST_PASSWORD.to_string(),
+                    new_password: weak_password(),
                 })
                 .await;
 
@@ -256,7 +260,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: STRONG_TEST_PASSWORD.to_string(),
+                    new_password: strong_password(),
                 })
                 .await;
 
@@ -278,7 +282,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: STRONG_TEST_PASSWORD.to_string(),
+                    new_password: strong_password(),
                 })
                 .await;
 
@@ -303,7 +307,7 @@ mod tests {
 
             let result = usecase
                 .execute(SetAdminPasswordInput {
-                    new_password: STRONG_TEST_PASSWORD.to_string(),
+                    new_password: strong_password(),
                 })
                 .await;
 

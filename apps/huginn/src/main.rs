@@ -18,6 +18,24 @@ use huginn_runtime::{
 use std::{collections::BTreeSet, io::Write, path::PathBuf, sync::Arc};
 use terminal::{Input, LinePrompt, Output};
 
+fn escape_terminal_value(value: &str) -> String {
+    value.chars().flat_map(char::escape_default).collect()
+}
+
+#[cfg(test)]
+mod terminal_value_tests {
+    use super::escape_terminal_value;
+
+    #[test]
+    fn escapes_control_characters_before_terminal_output() {
+        assert_eq!(
+            escape_terminal_value("workspace\nforged: value"),
+            "workspace\\nforged: value"
+        );
+        assert_eq!(escape_terminal_value("tab\tvalue"), "tab\\tvalue");
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "huginn", version, about = "Huginn, the Cortex coding agent")]
 struct Cli {
@@ -373,7 +391,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!(
             "Session: {}\nWorkspace: {}",
             session.id,
-            session.workspace.display()
+            escape_terminal_value(&session.workspace.display().to_string())
         );
     }
     if session.interrupted {

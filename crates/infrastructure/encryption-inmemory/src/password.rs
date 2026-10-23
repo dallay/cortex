@@ -72,6 +72,9 @@ impl PasswordHasher for Argon2idHasher {
 mod tests {
     use super::*;
 
+    const SAMPLE_PASSWORD: &str = "ordinary-sample-input";
+    const DIFFERENT_PASSWORD: &str = "different-sample-input";
+
     fn hasher() -> Argon2idHasher {
         Argon2idHasher::new()
     }
@@ -79,7 +82,9 @@ mod tests {
     #[test]
     fn hash_produces_argon2id_format() {
         let h = hasher();
-        let hash = h.hash_password("password123").expect("hash should succeed");
+        let hash = h
+            .hash_password(SAMPLE_PASSWORD)
+            .expect("hash should succeed");
         assert!(
             hash.as_str().starts_with("$argon2id$"),
             "hash should start with $argon2id$, got: {}",
@@ -91,7 +96,7 @@ mod tests {
     fn hash_does_not_contain_plaintext() {
         let h = hasher();
         let hash = h
-            .hash_password("super_secret_password_123")
+            .hash_password(SAMPLE_PASSWORD)
             .expect("hash should succeed");
         let hash_str = hash.as_str();
         assert!(
@@ -108,10 +113,10 @@ mod tests {
     fn verify_succeeds_for_correct_password() {
         let h = hasher();
         let hash = h
-            .hash_password("correct_password")
+            .hash_password(SAMPLE_PASSWORD)
             .expect("hash should succeed");
         let result = h
-            .verify_password("correct_password", &hash)
+            .verify_password(SAMPLE_PASSWORD, &hash)
             .expect("verify should return Ok");
         assert!(result, "verify should return true for correct password");
     }
@@ -120,10 +125,10 @@ mod tests {
     fn verify_fails_for_wrong_password() {
         let h = hasher();
         let hash = h
-            .hash_password("correct_password")
+            .hash_password(SAMPLE_PASSWORD)
             .expect("hash should succeed");
         let result = h
-            .verify_password("wrong_password", &hash)
+            .verify_password(DIFFERENT_PASSWORD, &hash)
             .expect("verify should return Ok");
         assert!(!result, "verify should return false for wrong password");
     }
