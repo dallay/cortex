@@ -925,3 +925,275 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
         ))
     ));
 }
+
+fn update_request(connection: &ProviderConnection) -> UpdateConnectionRequest {
+    UpdateConnectionRequest {
+        expected_updated_at: connection.updated_at,
+        provider_kind: None,
+        provider_runtime_id: None,
+        auth_type: None,
+        name: None,
+        priority: None,
+        is_active: None,
+        credentials: None,
+        config: None,
+    }
+}
+
+#[tokio::test]
+async fn inactive_create_validates_model_declarations_and_format_before_persisting() {
+    use rook_core::ValidationError::{EmptySupportedModels, UnsupportedApiFormat};
+
+    for (models, format, expected) in [
+        (vec![], Some(ApiFormat::OpenAI), EmptySupportedModels),
+        (vec![""], Some(ApiFormat::OpenAI), EmptySupportedModels),
+        (vec!["valid", " \t\n"], None, EmptySupportedModels),
+        (
+            vec!["valid"],
+            Some(ApiFormat::Anthropic),
+            UnsupportedApiFormat,
+        ),
+    ] {
+        let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+        let mut request = create_request(
+            RUNTIME_A,
+            "invalid",
+            "https://upstream.example/v1",
+            "secret-key",
+            &models,
+        );
+        request.is_active = false;
+        request.config.api_format = format;
+
+        let error = mc
+            .create(request)
+            .await
+            .expect_err("invalid declarations must be rejected");
+        assert!(
+            matches!(error, ManageConnectionsError::Validation(ref actual) if actual == &expected),
+            "{error:?}"
+        );
+        assert!(!error.to_string().contains("secret-key"));
+        assert!(repo.list().await.unwrap().is_empty());
+        assert!(registry.ids().is_empty());
+        assert!(builder.inputs().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn inactive_create_rejects_malformed_credential_bearing_and_metadata_endpoints() {
+    for endpoint in [
+        "not a URL",
+        "file:///etc/passwd",
+        "ftp://upstream.example/v1",
+        "https://user:password@upstream.example/v1",
+        "https://:password@upstream.example/v1",
+        "https://METADATA.GOOGLE.INTERNAL./v1",
+        "http://169.254.169.254/v1",
+        "https://[::ffff:169.254.169.254]/v1",
+        "https://[fd00:ec2::254]/v1",
+    ] {
+        let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+        let mut request = create_request(RUNTIME_A, "invalid", endpoint, "secret-key", &["model"]);
+        request.is_active = false;
+        assert!(
+            matches!(
+                mc.create(request).await,
+                Err(ManageConnectionsError::Validation(
+                    rook_core::ValidationError::InvalidBaseUrl
+                ))
+            ),
+            "{endpoint}"
+        );
+        assert!(repo.list().await.unwrap().is_empty());
+        assert!(registry.ids().is_empty());
+        assert!(builder.inputs().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn invalid_declaration_update_leaves_stored_connection_and_registry_unchanged() {
+    use rook_core::ValidationError::{EmptySupportedModels, UnsupportedApiFormat};
+
+    let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "original",
+        "https://upstream.example/v1",
+        "original-key",
+        &["model"],
+    );
+    request.is_active = false;
+    let connection = mc.create(request).await.unwrap();
+
+    for (models, format, expected) in [
+        (vec![], Some(ApiFormat::OpenAI), EmptySupportedModels),
+        (vec![ModelId::new(" \t")], None, EmptySupportedModels),
+        (
+            vec![ModelId::new("replacement")],
+            Some(ApiFormat::Anthropic),
+            UnsupportedApiFormat,
+        ),
+    ] {
+        let mut update = update_request(&connection);
+        update.name = Some("must not be saved".into());
+        update.credentials = Some(CredentialsInput::ApiKey {
+            api_key: "replacement-key".into(),
+        });
+        update.config = Some(rook_core::ConnectionConfig {
+            supported_models: models,
+            api_format: format,
+            ..connection.config.clone()
+        });
+        let error = mc
+            .update(&connection.id, update)
+            .await
+            .expect_err("invalid update");
+        assert!(
+            matches!(error, ManageConnectionsError::Validation(ref actual) if actual == &expected),
+            "{error:?}"
+        );
+
+        let stored = repo.find(&connection.id).await.unwrap().unwrap();
+        assert_eq!(stored.config, connection.config);
+        assert_eq!(stored.name, connection.name);
+        assert_eq!(stored.credentials, connection.credentials);
+        assert_eq!(stored.updated_at, connection.updated_at);
+        assert!(registry.ids().is_empty());
+        assert!(builder.inputs().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_grant_for_the_runtime_uuid_cannot_activate_another_connection() {
+    let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+    let runtime_uuid = "c56a4180-65aa-42ec-a945-5fd21dec0538";
+    let mut request = create_request(
+        runtime_uuid,
+        "runtime is not identity",
+        "https://upstream.example/v1",
+        "key",
+        &["model"],
+    );
+    request.is_active = false;
+    let connection = mc.create(request).await.unwrap();
+    let granted = ManageConnections::new(
+        repo.clone(),
+        registry.clone(),
+        Arc::new(PlainKeyManager),
+        builder.clone(),
+    )
+    .with_endpoint_policy(EndpointPolicyConfig {
+        grants: vec![EndpointGrant {
+            connection_id: runtime_uuid.into(),
+            allowed_origins: vec!["https://upstream.example".into()],
+        }],
+    });
+    let mut update = update_request(&connection);
+    update.is_active = Some(true);
+
+    assert!(matches!(
+        granted.update(&connection.id, update).await,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::InvalidBaseUrl
+        ))
+    ));
+    assert!(!repo.find(&connection.id).await.unwrap().unwrap().is_active);
+    assert!(registry.ids().is_empty());
+    assert!(builder.inputs().is_empty());
+}
+
+#[tokio::test]
+async fn inactive_connection_health_test_is_denied_even_with_an_operator_grant() {
+    let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "inactive",
+        "https://upstream.example/v1",
+        "key",
+        &["model"],
+    );
+    request.is_active = false;
+    let connection = mc.create(request).await.unwrap();
+    let granted = ManageConnections::new(
+        repo.clone(),
+        registry.clone(),
+        Arc::new(PlainKeyManager),
+        builder.clone(),
+    )
+    .with_endpoint_policy(EndpointPolicyConfig {
+        grants: vec![EndpointGrant {
+            connection_id: connection.id.to_string(),
+            allowed_origins: vec!["https://upstream.example".into()],
+        }],
+    });
+
+    assert!(matches!(
+        granted.test(&connection.id).await,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::InvalidBaseUrl
+        ))
+    ));
+    let stored = repo.find(&connection.id).await.unwrap().unwrap();
+    assert_eq!(stored.test_status, rook_core::TestStatus::NeverTested);
+    assert_eq!(stored.updated_at, connection.updated_at);
+    assert!(registry.ids().is_empty());
+    assert!(builder.inputs().is_empty());
+}
+
+#[tokio::test]
+async fn startup_refresh_skips_ungranted_connections_and_passes_only_connection_specific_grants() {
+    let (mc, repo, registry, builder) = usecase(EndpointPolicyConfig::default());
+    let mut stored = Vec::new();
+    for (runtime, endpoint, model) in [
+        (RUNTIME_A, "https://upstream-a.example/v1", "model-a"),
+        (RUNTIME_B, "https://upstream-b.example/v1", "model-b"),
+    ] {
+        let mut request = create_request(runtime, runtime, endpoint, "key", &[model]);
+        request.is_active = false;
+        let mut connection = mc.create(request).await.unwrap();
+        // Seed the persisted active state that a fresh process loads at startup.
+        connection.is_active = true;
+        repo.update(&connection, connection.updated_at)
+            .await
+            .unwrap();
+        stored.push(connection);
+    }
+    let granted = ManageConnections::new(
+        repo,
+        registry.clone(),
+        Arc::new(PlainKeyManager),
+        builder.clone(),
+    )
+    .with_endpoint_policy(EndpointPolicyConfig {
+        grants: vec![EndpointGrant {
+            connection_id: stored[0].id.to_string(),
+            allowed_origins: vec!["https://upstream-a.example".into()],
+        }],
+    });
+    granted.refresh_registry().await.unwrap();
+
+    assert_eq!(
+        registry.ids(),
+        vec![ProviderId::new(stored[0].id.to_string())]
+    );
+    let inputs = builder.inputs();
+    assert_eq!(
+        inputs.len(),
+        1,
+        "ungranted connection must not reach the builder"
+    );
+    assert_eq!(inputs[0].connection_id, stored[0].id);
+    assert_eq!(inputs[0].supported_models, vec![ModelId::new("model-a")]);
+    assert_eq!(inputs[0].api_format, Some(ApiFormat::OpenAI));
+    assert_eq!(
+        inputs[0].endpoint_policy.allowed_origins,
+        vec!["https://upstream-a.example"]
+    );
+    let provider = rook_core::ProviderRegistryPort::get(
+        &*registry,
+        &ProviderId::new(stored[0].id.to_string()),
+    )
+    .unwrap();
+    assert_eq!(provider.supported_models(), &[ModelId::new("model-a")]);
+}

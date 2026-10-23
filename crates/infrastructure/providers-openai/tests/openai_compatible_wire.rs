@@ -310,3 +310,95 @@ async fn upstream_failures_produce_bounded_errors_without_leaking_the_credential
     );
     assert!(message.len() < 500, "error must stay bounded: {message}");
 }
+
+#[tokio::test]
+async fn guarded_health_probe_preserves_the_base_path_and_sanitizes_upstream_errors() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/gateway/v1/models"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer compatible-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(503).set_body_string("failure for compatible-key"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(
+        "compatible",
+        "compatible-key",
+        format!("{}/gateway/v1", server.uri()),
+        &["model"],
+    );
+    match provider.health_check().await {
+        rook_core::HealthStatus::Unhealthy {
+            provider, error, ..
+        } => {
+            assert_eq!(provider, ProviderId::new("compatible"));
+            assert!(error.contains("503"));
+            assert!(!error.contains("compatible-key"));
+        }
+        other => panic!("expected unhealthy, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn guarded_stream_and_health_probe_never_follow_redirects() {
+    let target = wiremock::MockServer::start().await;
+    for status in [301, 302, 303, 307, 308] {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::any())
+            .respond_with(
+                wiremock::ResponseTemplate::new(status)
+                    .insert_header("Location", format!("{}/capture", target.uri())),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        let provider = provider("compatible", "redirect-secret", server.uri(), &["model"]);
+
+        let mut req = request("model");
+        req.stream = true;
+        let error = match provider.stream(&req).await {
+            Err(error) => error,
+            Ok(_) => panic!("HTTP {status} must not start a stream"),
+        };
+        assert!(!error.to_string().contains("redirect-secret"));
+        assert!(
+            matches!(
+                provider.health_check().await,
+                rook_core::HealthStatus::Unhealthy { .. }
+            ),
+            "HTTP {status}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    }
+    assert!(
+        target.received_requests().await.unwrap().is_empty(),
+        "redirects must not forward credentials to a different origin"
+    );
+}
+
+#[tokio::test]
+async fn guarded_resolver_rejects_an_unexpected_hostname_before_dns_lookup() {
+    use reqwest::dns::Resolve;
+
+    let resolver = providers_openai::endpoint_resolver::GuardedResolver::new(
+        EndpointPolicy {
+            allowed_origins: vec!["https://upstream.invalid".into()],
+        },
+        "https",
+        "upstream.invalid",
+        443,
+    );
+    let error = match resolver.resolve("other.invalid".parse().unwrap()).await {
+        Err(error) => error,
+        Ok(_) => panic!("resolver must not resolve a host other than its configured upstream"),
+    };
+    let io_error = error
+        .downcast_ref::<std::io::Error>()
+        .expect("policy rejection is an I/O error");
+    assert_eq!(io_error.kind(), std::io::ErrorKind::PermissionDenied);
+}
