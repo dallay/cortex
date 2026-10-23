@@ -6,8 +6,8 @@ import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "@/components/ui/table";
-import {PROVIDER_KINDS} from "@/config/providerCatalog";
 import {useProvidersQuota} from "@/composables/useProvidersQuota";
+import {PROVIDER_KINDS} from "@/config/providerCatalog";
 
 const {t, d, n} = useI18n();
 const {items, generatedAt, loading, error, stale, fetch} = useProvidersQuota();

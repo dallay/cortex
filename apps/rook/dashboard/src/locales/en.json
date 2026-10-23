@@ -224,7 +224,11 @@
 			"tokens": "tokens",
 			"trendCost": "Cost",
 			"empty": "No provider usage data is available.",
-			"availability": {"available": "Available", "no_data": "No usage in this period", "unavailable": "Unavailable"},
+			"availability": {
+				"available": "Available",
+				"no_data": "No usage in this period",
+				"unavailable": "Unavailable"
+			},
 			"level": {
 				"ok": "No local threshold crossed",
 				"warning": "Local warning threshold crossed",

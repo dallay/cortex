@@ -44,6 +44,7 @@ const categories = [
           <span v-if="isOverridden" class="text-xs text-muted-foreground">(custom)</span>
         </div>
         <button
+          type="button"
           @click="handleBaseUrlEdit"
           class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >

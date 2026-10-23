@@ -47,8 +47,8 @@ import {
   type ProviderKind,
 } from "@/config/providerCatalog";
 import {
-  OAUTH_FLOW_TYPES,
   type CreateProviderRequest,
+  OAUTH_FLOW_TYPES,
   type OAuthFlowType,
   type ProviderConnectionResponse,
   type TestConnectionResponse,

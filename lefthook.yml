@@ -29,6 +29,12 @@ pre-commit:
       run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
       glob: "*.md"
 
+    dashboard-biome:
+      root: "apps/rook/dashboard/"
+      glob: "*.{js,ts,vue,json,css}"
+      run: pnpm exec biome check --write --diagnostic-level=error --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+
 pre-push:
   parallel: false
   commands:

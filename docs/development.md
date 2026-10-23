@@ -98,6 +98,7 @@ just huginn-run
 | Tests Rust | `cargo test --workspace --all-features` | Verificación de los crates del workspace |
 | Dashboard | `pnpm --filter @dallay/rook-dashboard exec vitest run` | Tests de UI/Vue |
 | Tipos del dashboard | `pnpm --filter @dallay/rook-dashboard run typecheck` | Verificación de tipos con `vue-tsc` |
+| Lint/formato del dashboard | `pnpm --filter @dallay/rook-dashboard run lint` | Biome; `lint:fix` aplica formato y fixes seguros |
 | E2E con Docker | `just test-e2e` | Flujos integrados del dashboard y API |
 | E2E multi-distribución | [Dev Testing Guide](../dev/README.md) | Validación del binario en varias distribuciones |
 

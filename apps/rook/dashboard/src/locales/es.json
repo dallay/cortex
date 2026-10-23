@@ -224,7 +224,11 @@
 			"tokens": "tokens",
 			"trendCost": "Costo",
 			"empty": "No hay datos de uso de proveedores disponibles.",
-			"availability": {"available": "Disponible", "no_data": "Sin uso en este período", "unavailable": "No disponible"},
+			"availability": {
+				"available": "Disponible",
+				"no_data": "Sin uso en este período",
+				"unavailable": "No disponible"
+			},
 			"level": {
 				"ok": "No se superó el umbral local",
 				"warning": "Se superó el umbral local de advertencia",
