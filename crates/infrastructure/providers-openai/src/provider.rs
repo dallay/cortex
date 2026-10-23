@@ -88,7 +88,7 @@ fn redact_secrets(text: &str, secrets: &[&str]) -> String {
     let mut redacted = text.to_string();
     for secret in secrets {
         let secret = secret.trim();
-        if secret.len() < 8 || !redacted.contains(secret) {
+        if secret.is_empty() || !redacted.contains(secret) {
             continue;
         }
         redacted = redacted.replace(secret, "[redacted]");

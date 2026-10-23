@@ -339,6 +339,32 @@ async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_creden
 }
 
 #[tokio::test]
+async fn error_body_redacts_non_empty_secrets_shorter_than_eight_characters() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(500).set_body_string("invalid key: k7"))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "k7".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let error = provider
+        .complete(&stream_request())
+        .await
+        .expect_err("the upstream error response is returned as an error");
+
+    assert!(!error.to_string().contains("k7"));
+    assert!(error.to_string().contains("invalid key"));
+}
+
+#[tokio::test]
 async fn complete_returns_response_on_success() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))

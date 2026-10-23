@@ -841,7 +841,6 @@ impl ManageConnections {
             false,
         )?;
         validate_provider_auth_type(request.provider_kind, request.auth_type)?;
-
         let credentials = self.encrypt_credentials(&request.credentials)?;
         validate_credentials_not_expired(&credentials)?;
         if !credentials_matches_auth_type(request.auth_type, &credentials) {
@@ -849,6 +848,8 @@ impl ManageConnections {
         }
 
         let now = Utc::now();
+        let mut config = request.config;
+        normalize_api_format(request.provider_kind, &mut config);
         let conn = ProviderConnection {
             id: ConnectionId::new(),
             provider_kind: request.provider_kind,
@@ -858,7 +859,7 @@ impl ManageConnections {
             is_active: request.is_active,
             auth_type: request.auth_type,
             credentials,
-            config: request.config,
+            config,
             test_status: TestStatus::NeverTested,
             created_at: now,
             updated_at: now,
@@ -899,8 +900,9 @@ impl ManageConnections {
             .unwrap_or_else(|| existing.provider_runtime_id.clone());
         let name = request.name.unwrap_or_else(|| existing.name.clone());
         let priority = request.priority.unwrap_or(existing.priority);
-        let config = request.config.unwrap_or_else(|| existing.config.clone());
+        let mut config = request.config.unwrap_or_else(|| existing.config.clone());
         let provider_kind = request.provider_kind.unwrap_or(existing.provider_kind);
+        normalize_api_format(provider_kind, &mut config);
         let is_active = request.is_active.unwrap_or(existing.is_active);
         validate_base_fields(&provider_runtime_id, &name, priority, &config)?;
         let policy = self.policy_for(existing.id);
@@ -1968,6 +1970,15 @@ fn is_cloud_metadata_host(host: &str) -> bool {
 fn is_cloud_metadata_ipv4(ip: std::net::Ipv4Addr) -> bool {
     let octets = ip.octets();
     (octets[0] == 169 && octets[1] == 254) || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
+}
+
+fn normalize_api_format(provider_kind: ProviderKind, config: &mut ConnectionConfig) {
+    if config.api_format.is_none() {
+        config.api_format = Some(match provider_kind {
+            ProviderKind::Anthropic => rook_core::ApiFormat::Anthropic,
+            _ => rook_core::ApiFormat::OpenAI,
+        });
+    }
 }
 
 fn validate_provider_auth_type(

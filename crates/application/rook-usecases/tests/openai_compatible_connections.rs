@@ -737,6 +737,81 @@ async fn loopback_compatible_endpoint_requires_exact_connection_grant_to_activat
 }
 
 #[tokio::test]
+async fn create_defaults_missing_api_format_for_openai_compatible_connections() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "compat-a",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.is_active = false;
+    request.config.api_format = None;
+
+    let created = mc.create(request).await.expect("connection is valid");
+
+    assert_eq!(created.config.api_format, Some(ApiFormat::OpenAI));
+}
+
+#[tokio::test]
+async fn create_defaults_missing_api_format_for_anthropic_connections() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "anthropic",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.provider_kind = ProviderKind::Anthropic;
+    request.is_active = false;
+    request.config.api_format = None;
+
+    let created = mc.create(request).await.expect("connection is valid");
+
+    assert_eq!(created.config.api_format, Some(ApiFormat::Anthropic));
+}
+
+#[tokio::test]
+async fn update_defaults_missing_api_format_for_openai_compatible_connections() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "compat-a",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.is_active = false;
+    request.config.api_format = None;
+    let connection = mc.create(request).await.expect("connection is valid");
+
+    let updated = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider_kind: None,
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: None,
+                credentials: None,
+                config: Some(rook_core::ConnectionConfig {
+                    api_format: None,
+                    ..connection.config.clone()
+                }),
+            },
+        )
+        .await
+        .expect("connection update is valid");
+
+    assert_eq!(updated.config.api_format, Some(ApiFormat::OpenAI));
+}
+
+#[tokio::test]
 async fn compatible_connections_require_declared_models_and_openai_api_format() {
     let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
 
@@ -776,6 +851,7 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
         "key",
         &["model-a"],
     );
+    request.is_active = false;
     request.auth_type = rook_core::AuthType::OAuth;
     request.credentials = CredentialsInput::OAuth {
         email: "operator@example.com".into(),
@@ -789,9 +865,12 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
         oauth_client_secret: None,
         oauth_tenant_id: None,
     };
-    mc.create(request)
-        .await
-        .expect_err("OAuth authentication is rejected for compatible connections");
+    assert!(matches!(
+        mc.create(request).await,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::AuthTypeCredentialMismatch
+        ))
+    ));
 
     let mut request = create_request(
         RUNTIME_A,
@@ -800,8 +879,12 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
         "key",
         &["model-a"],
     );
+    request.is_active = false;
     request.config.base_url = None;
-    mc.create(request)
-        .await
-        .expect_err("a compatible connection without base_url is rejected");
+    assert!(matches!(
+        mc.create(request).await,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::InvalidBaseUrl
+        ))
+    ));
 }

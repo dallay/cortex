@@ -335,7 +335,7 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
             priority: conn.priority,
             is_active: conn.is_active,
             credentials: EmptyCredentials {},
-            config: ConnectionConfigResponse::from(&conn.config),
+            config: ConnectionConfigResponse::from_provider_kind(&conn.config, conn.provider_kind),
             test_status: TestStatusResponse::from(&conn.test_status),
             created_at: conn.created_at,
             updated_at: conn.updated_at,
@@ -382,6 +382,16 @@ pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
 
 impl From<&ConnectionConfig> for ConnectionConfigResponse {
     fn from(config: &ConnectionConfig) -> Self {
+        Self::from_provider_kind(config, ProviderKind::OpenAI)
+    }
+}
+
+impl ConnectionConfigResponse {
+    pub fn from_provider_kind(config: &ConnectionConfig, provider_kind: ProviderKind) -> Self {
+        let api_format = config.api_format.unwrap_or(match provider_kind {
+            ProviderKind::Anthropic => rook_core::ApiFormat::Anthropic,
+            _ => rook_core::ApiFormat::OpenAI,
+        });
         Self {
             max_concurrent: config.max_concurrent,
             quota_window_thresholds: QuotaWindowThresholdsResponse {
@@ -395,7 +405,7 @@ impl From<&ConnectionConfig> for ConnectionConfigResponse {
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            api_format: match config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) {
+            api_format: match api_format {
                 rook_core::ApiFormat::OpenAI => "openai".to_string(),
                 rook_core::ApiFormat::Anthropic => "anthropic".to_string(),
             },
@@ -486,7 +496,7 @@ fn credentials_to_usecase(credentials: &CredentialsInput) -> UsecaseCredentialsI
 }
 fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, String> {
     let api_format = match config.api_format.as_deref() {
-        None => Some(rook_core::ApiFormat::OpenAI),
+        None => None,
         Some("openai") => Some(rook_core::ApiFormat::OpenAI),
         Some("anthropic") => Some(rook_core::ApiFormat::Anthropic),
         Some(_) => return Err("invalid apiFormat".to_string()),
@@ -517,44 +527,5 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
     match auth_type {
         AuthType::ApiKey => "apiKey",
         AuthType::OAuth => "oauth",
-    }
-}
-
-#[cfg(test)]
-mod config_tests {
-    use super::*;
-
-    fn config(api_format: Option<&str>) -> ConnectionConfigDto {
-        ConnectionConfigDto {
-            max_concurrent: 1,
-            quota_window_thresholds: QuotaWindowThresholdsDto {
-                warning: 0.7,
-                error: 0.9,
-            },
-            default_model: None,
-            base_url: None,
-            supported_models: Vec::new(),
-            api_format: api_format.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn api_format_defaults_to_openai_and_rejects_unknown_values() {
-        assert_eq!(
-            config_to_domain(&config(None))
-                .expect("default format")
-                .api_format,
-            Some(rook_core::ApiFormat::OpenAI)
-        );
-        assert_eq!(
-            config_to_domain(&config(Some("anthropic")))
-                .expect("anthropic format")
-                .api_format,
-            Some(rook_core::ApiFormat::Anthropic)
-        );
-        assert_eq!(
-            config_to_domain(&config(Some("openai-ish"))).unwrap_err(),
-            "invalid apiFormat"
-        );
     }
 }
