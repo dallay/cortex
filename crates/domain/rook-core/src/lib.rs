@@ -9,6 +9,7 @@ pub mod model;
 pub mod ports;
 pub mod probes;
 pub mod provider_connection;
+pub mod quota;
 
 pub use api_key::*;
 pub use decrypted_credentials::*;
@@ -16,6 +17,7 @@ pub use endpoint_policy::*;
 pub use model::*;
 pub use ports::*;
 pub use provider_connection::*;
+pub use quota::*;
 
 // Re-export shared_kernel types that are used across the domain
 pub use shared_kernel::{

@@ -206,6 +206,61 @@ pub trait QuotaObservationRecorderPort: Send + Sync {
         &self,
         provider: Option<ProviderId>,
     ) -> CortexResult<Vec<QuotaObservation>>;
+
+    /// Latest observation of each quota series that matches the query.
+    ///
+    /// The result keeps only the newest observation per connection, metric,
+    /// scope, window, and source. Implementations with a persistence backend
+    /// should override this method with a bounded query instead of the default
+    /// in-memory reduction.
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        let observations = self.list_observations(query.provider.clone()).await?;
+        Ok(crate::quota::reduce_latest_observations(
+            observations,
+            query,
+        ))
+    }
+}
+
+/// Query for the latest upstream quota observations.
+#[derive(Debug, Clone, Default)]
+pub struct QuotaObservationQuery {
+    /// Connections to read. An empty list matches every connection.
+    pub connection_ids: Vec<ConnectionId>,
+    /// Provider runtime to read. `None` matches every provider.
+    pub provider: Option<ProviderId>,
+    /// Metric to read. `None` matches every metric.
+    pub metric: Option<String>,
+    /// Observation source to read. `None` matches every source.
+    pub source: Option<String>,
+    /// Maximum number of series to return.
+    pub limit: usize,
+}
+
+impl QuotaObservationQuery {
+    pub const DEFAULT_LIMIT: usize = 200;
+    pub const MAX_LIMIT: usize = 1000;
+
+    /// Query scoped to the given connections.
+    pub fn for_connections(connection_ids: Vec<ConnectionId>) -> Self {
+        Self {
+            connection_ids,
+            ..Self::default()
+        }
+    }
+
+    /// Effective limit, always bounded.
+    pub fn clamped_limit(&self) -> usize {
+        let limit = if self.limit == 0 {
+            Self::DEFAULT_LIMIT
+        } else {
+            self.limit
+        };
+        limit.min(Self::MAX_LIMIT)
+    }
 }
 
 // ---------------------------------------------------------------------------

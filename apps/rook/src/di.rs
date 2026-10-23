@@ -353,7 +353,8 @@ impl RookContainer {
                     config.model_aliases.clone().into(),
                     telemetry_tracker, // telemetry tracker from config
                 )
-                .with_combo_alias_repository(combo_alias_repo.clone()),
+                .with_combo_alias_repository(combo_alias_repo.clone())
+                .with_quota_observation_reader(quota_observation_recorder.clone()),
                 ManageProviders::new(router.clone()),
                 health_check,
                 authenticate_client_api.clone(),
@@ -1234,6 +1235,17 @@ impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
         provider: Option<ProviderId>,
     ) -> shared_kernel::CortexResult<Vec<QuotaObservation>> {
         self.recorder.list_observations(provider).await
+    }
+
+    /// Forward bounded reads to the shared store.
+    ///
+    /// The stored observations already carry the connection identity, so the
+    /// read needs no rewriting here.
+    async fn latest_observations(
+        &self,
+        query: &rook_core::QuotaObservationQuery,
+    ) -> shared_kernel::CortexResult<Vec<QuotaObservation>> {
+        self.recorder.latest_observations(query).await
     }
 }
 
