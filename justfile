@@ -263,8 +263,8 @@ ci-check: (_ci-header "4/9 cargo check...")
 ci-test-rust: (_ci-header "5/9 cargo test (Rust)...")
     @cargo test --workspace --all-features
 
-ci-test-vitest: (_ci-header "6/9 vitest (Frontend)...")
-    @cd apps/rook/dashboard && pnpm exec vitest run
+ci-test-vitest: (_ci-header "6/9 typecheck + vitest (Frontend)...")
+    @cd apps/rook/dashboard && pnpm run typecheck && pnpm exec vitest run
 
 ci-doc: (_ci-header "7/9 cargo doc...")
     @RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps
@@ -312,7 +312,7 @@ ci-local:
     run_step "3/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "4/9 architecture + cargo check" bash -c 'python3 .github/scripts/check-huginn-architecture.py && cargo check --workspace'
     run_step "5/9 cargo test"      cargo test --workspace --all-features
-    run_step "6/9 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "6/9 typecheck + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec vitest run'
     run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
     run_step "8/9 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     run_step "9/9 e2e"             ./dev/e2e/run-api-keys-e2e.sh --test
@@ -374,7 +374,7 @@ ci-ci:
     run_step "3/8 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "4/8 cargo check"     cargo check --workspace
     run_step "5/8 cargo test"      cargo test --workspace --all-features
-    run_step "6/8 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "6/8 typecheck + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec vitest run'
     run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
     run_step "8/8 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     TOTAL=$(( SECONDS - TOTAL_START ))

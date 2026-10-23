@@ -237,6 +237,9 @@ jobs:
           cache: 'pnpm'
       - name: Install dashboard dependencies
         run: pnpm install --filter @dallay/rook-dashboard
+      - name: Type-check dashboard
+        working-directory: apps/rook/dashboard
+        run: pnpm run typecheck
       - name: Run Vitest tests
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run
