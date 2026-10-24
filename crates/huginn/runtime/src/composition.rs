@@ -66,12 +66,19 @@ async fn build_native_plugin(
     providers: Box<dyn huginn_core::kernel::Plugin>,
     registry: crate::tools::Registry,
     sessions: Arc<dyn SessionStore>,
-    config: LoopConfig,
+    mut config: LoopConfig,
     timeout_secs: u64,
 ) -> Result<Supervisor> {
+    let skills = Arc::new(crate::skills::FilesystemSkillLoader::new(
+        std::env::var_os("HOME").map(Into::into),
+    ));
+    config.skills = Some(skills.clone());
     let mut supervisor = Supervisor::default();
     supervisor.register(providers)?;
     supervisor.register(Box::new(crate::tools::RegistryPlugin(registry)))?;
+    supervisor.register(Box::new(crate::tools::NativeToolPlugin(Arc::new(
+        huginn_application::skills::SkillTool(skills),
+    ))))?;
     for tool in crate::tools::native_tools(timeout_secs) {
         supervisor.register(Box::new(crate::tools::NativeToolPlugin(tool)))?;
     }

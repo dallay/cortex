@@ -207,6 +207,7 @@ async fn mcp_protocol_error_does_not_cancel_server_for_later_calls() {
     .unwrap();
     let tool = registry.get("mcp_fixture_0").unwrap();
     let ctx = huginn_core::ToolContext {
+        selected_skills: vec![],
         workspace: temp.path().into(),
         cancellation: CancellationToken::new(),
     };
@@ -274,6 +275,7 @@ async fn mcp_denied_launch_and_approved_discovery_call_and_shutdown() {
     assert_eq!(*policy.seen.lock().unwrap(), ["mcp.fixture.start"]);
     let tool = registry.get("mcp_fixture_0").unwrap();
     let ctx = ToolContext {
+        selected_skills: vec![],
         workspace: temp.path().to_path_buf(),
         cancellation: CancellationToken::new(),
     };
@@ -329,6 +331,7 @@ async fn mcp_crash_and_timeout_are_reported_and_shutdown_is_bounded() {
         .await
         .unwrap();
         let ctx = ToolContext {
+            selected_skills: vec![],
             workspace: temp.path().into(),
             cancellation: CancellationToken::new(),
         };
