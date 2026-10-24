@@ -172,6 +172,14 @@ Piped input, redirected output, `--json`, and `--line-mode` are rejected. There
 is no API-key argument or stdin secret-entry mode. OAuth and device-code login
 remain unsupported. Secrets must only be entered in the host-owned masked form.
 
+### Catálogo de Agent Skills
+
+`huginn skills list` muestra metadatos globales y del proyecto sin configurar
+un modelo, abrir SQLite ni iniciar MCP. `huginn --json skills list` devuelve
+entradas, diagnósticos y una huella SHA-256. Consulta el
+[contrato del catálogo](skills.md) para rutas, límites y política de enlaces.
+Las skills se consideran no confiables y no se cargan al modelo en esta fase.
+
 ### Command Reference
 
 | Command | Description |
