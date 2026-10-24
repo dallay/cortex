@@ -346,7 +346,7 @@ jobs:
       - name: Run Trivy filesystem + dependency scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          version: v0.76.0
+          version: v0.76.1
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig
@@ -439,7 +439,7 @@ jobs:
           sarif_file: reports/semgrep/semgrep-pr.sarif
           category: semgrep-pr
 
-  # === Coverage (optional, only after tests pass) ===
+  # === Coverage reports (required when matching source paths change) ===
   coverage:
     name: Coverage (Rust)
     runs-on: ubuntu-latest
@@ -465,7 +465,7 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov
       - name: Generate coverage report
-        run: cargo llvm-cov --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
@@ -589,6 +589,8 @@ jobs:
     if: always()
     needs:
       - changes
+      - coverage
+      - coverage-frontend
       - build-dashboard
       - fmt
       - markdown
@@ -629,6 +631,8 @@ jobs:
           RESULT_CHECK: ${{ needs.check.result }}
           RESULT_TEST: ${{ needs.test.result }}
           RESULT_TEST_FRONTEND: ${{ needs.test-frontend.result }}
+          RESULT_COVERAGE: ${{ needs.coverage.result }}
+          RESULT_COVERAGE_FRONTEND: ${{ needs.coverage-frontend.result }}
           RESULT_TEST_E2E: ${{ needs.test-e2e.result }}
           RESULT_DOC: ${{ needs.doc.result }}
           RESULT_AUDIT: ${{ needs.audit.result }}

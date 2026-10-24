@@ -57,6 +57,253 @@ export interface ListModelsResponse {
 	models: ProviderModelsGroup[];
 }
 
+// =============================================================================
+// Combo types
+// =============================================================================
+
+/**
+ * Wire format for the combo strategy. The backend accepts only `priority`
+ * (`ComboStrategy` in `rook-core`, validated by `parse_combo_strategy` in
+ * `combo_dto.rs`).
+ */
+export type ComboStrategy = "priority";
+
+/**
+ * Response step. Mirrors `ComboStepResponse` in
+ * `crates/infrastructure/transport-axum/src/combo_dto.rs`.
+ */
+export interface ComboStepResponse {
+	providerId: string;
+	model: string;
+	connectionId: string | null;
+	priority: number;
+}
+
+/**
+ * Response body for a single combo. Mirrors `ComboResponse` in `combo_dto.rs`.
+ */
+export interface ComboResponse {
+	id: string;
+	name: string;
+	strategy: ComboStrategy;
+	steps: ComboStepResponse[];
+	createdAt: string;
+	updatedAt: string;
+}
+
+/** Response body for `GET /api/combos`. Mirrors `ComboListResponse`. */
+export interface ComboListResponse {
+	combos: ComboResponse[];
+}
+
+/**
+ * Request step. The backend uses `deny_unknown_fields`, so this shape must
+ * stay identical to `CreateComboStepRequest` in `combo_dto.rs`.
+ */
+export interface ComboStepInput {
+	providerId: string;
+	model: string;
+	connectionId?: string | null;
+	priority: number;
+}
+
+/** Request body for `POST /api/combos` and `PUT /api/combos/{id}`. */
+export interface CreateComboRequest {
+	name: string;
+	strategy: ComboStrategy;
+	steps: ComboStepInput[];
+}
+
+export type UpdateComboRequest = CreateComboRequest;
+
+/** Dashboard representation of the combo alias response DTO. */
+export interface ComboAliasResponse {
+	alias: string;
+	comboId: string;
+}
+
+export interface ModelAliasResponse {
+	alias: string;
+	canonical: string;
+	providerId: string | null;
+	createdAt: string;
+}
+
+export interface CreateModelAliasRequest {
+	alias: string;
+	canonical: string;
+	providerId?: string | null;
+}
+
+export type RateLimitScope = "api-key" | "ip-address" | "global";
+
+export interface RateLimitRuleResponse {
+	id: string;
+	scope: RateLimitScope;
+	target: string;
+	requests_per_minute: number;
+	requests_per_day: number | null;
+	tokens_per_minute: number | null;
+}
+
+export interface CreateRateLimitRequest {
+	scope: RateLimitScope;
+	target: string;
+	requests_per_minute: number;
+	requests_per_day?: number | null;
+	tokens_per_minute?: number | null;
+}
+
+export type CircuitState = "open" | "closed" | "halfopen";
+
+export interface CircuitStateResponse {
+	provider: string;
+	failures: number;
+	state: CircuitState;
+	last_failure: string | null;
+	cooldown_until: string | null;
+	rate_limit_reset: number | null;
+}
+
+export interface ResilienceResponse {
+	circuit_states: CircuitStateResponse[];
+}
+
+export interface PercentileStatsResponse {
+	p50: number;
+	p95: number;
+	p99: number;
+	avg: number;
+	min: number;
+	max: number;
+	count: number;
+}
+
+export interface ProviderTelemetryResponse {
+	provider_id: string;
+	total_requests: number;
+	success_count: number;
+	failure_count: number;
+	rate_limited_count: number;
+	latency_stats?: PercentileStatsResponse;
+	ttft_stats?: PercentileStatsResponse;
+}
+
+export interface TelemetrySummaryResponse {
+	providers: ProviderTelemetryResponse[];
+}
+
+export interface CacheStatsResponse {
+	hits: number;
+	misses: number;
+	evictions: number;
+	entries: number;
+	max_entries: number;
+	token_cache?: {
+		hits: number;
+		misses: number;
+		tokens_saved: number;
+		estimated_cost_saved_usd: number;
+	};
+}
+
+export interface CacheSignatureResponse {
+	signature: string;
+	request_id: string;
+	model: string;
+	provider: string;
+	cached_at: string;
+	last_accessed: string;
+	request_metadata: {
+		message_count: number;
+		has_tools: boolean;
+		max_tokens: number | null;
+		temperature: number | null;
+	};
+}
+
+export interface CachedCompletionResponse {
+	id: string;
+	model: string;
+	choices: unknown[];
+	usage?: unknown;
+	[key: string]: unknown;
+}
+
+export interface RateLimitStatusResponse {
+	scope: RateLimitScope;
+	target: string;
+	current_minute_count: number;
+	current_day_count: number;
+	remaining_minute: number;
+	remaining_day: number;
+	reset_at: string;
+	active_requests_per_minute: number;
+	active_requests_per_day: number | null;
+}
+
+export interface UsageQuery {
+	provider?: string;
+	model?: string;
+	apiKeyId?: string;
+	connectionId?: string;
+	start?: string;
+	end?: string;
+	status?: string;
+	offset?: number;
+	limit?: number;
+}
+
+export interface UsageEntryResponse {
+	request_id: string;
+	provider: string;
+	model: string;
+	status: string;
+	requested_tier: string | null;
+	api_key_id: string | null;
+	connection_id: string | null;
+	tokens_prompt: number | null;
+	tokens_completion: number | null;
+	tokens_cache_read: number | null;
+	tokens_cache_creation: number | null;
+	tokens_reasoning: number | null;
+	ttft_ms: number | null;
+	latency_ms: number;
+	cost_usd: number | null;
+	timestamp: string;
+}
+
+export interface UsageListResponse {
+	entries: UsageEntryResponse[];
+	total: number;
+}
+
+export interface UsageSummaryResponse {
+	total_requests: number;
+	total_prompt_tokens: number;
+	total_completion_tokens: number;
+	total_cache_read_tokens: number;
+	total_cache_creation_tokens: number;
+	total_reasoning_tokens: number;
+	avg_ttft_ms: number | null;
+	avg_latency_ms: number;
+}
+
+export interface UsageCostResponse {
+	total_cost_usd: number;
+	known_cost_entries: number;
+	unknown_cost_entries: number;
+	by_provider: Record<string, number>;
+	by_model: Record<string, number>;
+	by_api_key: Record<string, number>;
+}
+
+/** Wire representation returned by the combo alias routes. */
+interface ComboAliasWireResponse {
+	alias: string;
+	combo_id: string;
+}
+
 export interface CreateApiKeyResponse {
 	key: ApiKeyRecordResponse;
 	plaintextKey: string;
@@ -374,6 +621,17 @@ export function setApiBaseUrl(url: string | null): void {
 	}
 }
 
+function queryString(query: UsageQuery): string {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query)) {
+		if (value !== undefined && value !== null && value !== "") {
+			params.set(key, String(value));
+		}
+	}
+	const serialized = params.toString();
+	return serialized ? `?${serialized}` : "";
+}
+
 function createApiClient() {
 	const baseUrl = getBaseUrl();
 
@@ -474,12 +732,10 @@ function createApiClient() {
 			throw new Error(`API Error ${response.status}: ${error}`);
 		}
 
-		// Handle 204 No Content
-		if (response.status === 204) {
-			return undefined as T;
-		}
-
-		return response.json();
+		// Read once as text so both null bodies and empty streams are handled.
+		const body = await response.text();
+		if (body.length === 0) return undefined as T;
+		return JSON.parse(body) as T;
 	}
 
 	async function getCsrfToken(): Promise<string> {
@@ -506,6 +762,13 @@ function createApiClient() {
 		baseUrl,
 
 		// Public endpoints
+		async getApiKeyCount(): Promise<number> {
+			const response = await request<ListApiKeysResponse>(
+				"/api/api-keys?limit=1&offset=0",
+			);
+			return response.pagination.total;
+		},
+
 		async getHealth(): Promise<HealthResponse> {
 			return request<HealthResponse>("/health");
 		},
@@ -725,6 +988,207 @@ function createApiClient() {
 			return request<CreateApiKeyResponse>(`/api/api-keys/${id}/rotate`, {
 				method: "POST",
 			});
+		},
+
+		// Combo management (requires session auth)
+		async getCombos(): Promise<ComboListResponse> {
+			return request<ComboListResponse>("/api/combos");
+		},
+
+		async getCombo(id: string): Promise<ComboResponse> {
+			return request<ComboResponse>(`/api/combos/${id}`);
+		},
+
+		async createCombo(data: CreateComboRequest): Promise<ComboResponse> {
+			return request<ComboResponse>("/api/combos", {
+				method: "POST",
+				body: JSON.stringify(data),
+			});
+		},
+
+		async updateCombo(
+			id: string,
+			data: UpdateComboRequest,
+		): Promise<ComboResponse> {
+			return request<ComboResponse>(`/api/combos/${id}`, {
+				method: "PUT",
+				body: JSON.stringify(data),
+			});
+		},
+
+		async deleteCombo(id: string): Promise<void> {
+			return request<void>(`/api/combos/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+			});
+		},
+
+		async getResilience(): Promise<ResilienceResponse> {
+			return request<ResilienceResponse>("/api/resilience");
+		},
+
+		async resetProviderResilience(
+			provider: string,
+		): Promise<{ reset: boolean }> {
+			return request<{ reset: boolean }>(
+				`/api/resilience/${encodeURIComponent(provider)}/reset`,
+				{ method: "POST" },
+			);
+		},
+
+		async getTelemetrySummary(): Promise<TelemetrySummaryResponse> {
+			return request<TelemetrySummaryResponse>("/api/telemetry/summary");
+		},
+
+		async getProviderTelemetry(
+			provider: string,
+		): Promise<ProviderTelemetryResponse> {
+			return request<ProviderTelemetryResponse>(
+				`/api/telemetry/${encodeURIComponent(provider)}`,
+			);
+		},
+
+		async getProviderLatency(
+			provider: string,
+		): Promise<PercentileStatsResponse> {
+			return request<PercentileStatsResponse>(
+				`/api/telemetry/${encodeURIComponent(provider)}/latency`,
+			);
+		},
+
+		async getCacheStats(): Promise<CacheStatsResponse> {
+			return request<CacheStatsResponse>("/api/cache/stats");
+		},
+
+		async getCacheSignatures(): Promise<CacheSignatureResponse[]> {
+			return request<CacheSignatureResponse[]>("/api/cache/signatures");
+		},
+
+		async getCacheSignature(
+			signature: string,
+		): Promise<CachedCompletionResponse> {
+			return request<CachedCompletionResponse>(
+				`/api/cache/signature/${encodeURIComponent(signature)}`,
+			);
+		},
+
+		async clearCache(): Promise<void> {
+			return request<void>("/api/cache", { method: "DELETE" });
+		},
+
+		async deleteCacheSignature(signature: string): Promise<void> {
+			return request<void>(`/api/cache/${encodeURIComponent(signature)}`, {
+				method: "DELETE",
+			});
+		},
+
+		async getRateLimits(): Promise<RateLimitRuleResponse[]> {
+			return request<RateLimitRuleResponse[]>("/api/rate-limits");
+		},
+
+		async createRateLimit(
+			data: CreateRateLimitRequest,
+		): Promise<RateLimitRuleResponse> {
+			return request<RateLimitRuleResponse>("/api/rate-limits", {
+				method: "POST",
+				body: JSON.stringify(data),
+			});
+		},
+
+		async updateRateLimit(
+			id: string,
+			data: Partial<
+				Pick<CreateRateLimitRequest, "requests_per_minute" | "requests_per_day">
+			>,
+		): Promise<RateLimitRuleResponse> {
+			return request<RateLimitRuleResponse>(
+				`/api/rate-limits/${encodeURIComponent(id)}`,
+				{ method: "PUT", body: JSON.stringify(data) },
+			);
+		},
+
+		async deleteRateLimit(id: string): Promise<void> {
+			return request<void>(`/api/rate-limits/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+			});
+		},
+
+		async getRateLimitStatus(
+			scope: RateLimitScope,
+			target: string,
+		): Promise<RateLimitStatusResponse> {
+			const pathScope =
+				scope === "api-key"
+					? "api_key"
+					: scope === "ip-address"
+						? "ip_address"
+						: scope;
+			return request<RateLimitStatusResponse>(
+				`/api/rate-limits/${pathScope}/${encodeURIComponent(target)}/status`,
+			);
+		},
+
+		async getUsage(query: UsageQuery = {}): Promise<UsageListResponse> {
+			return request<UsageListResponse>(`/api/usage${queryString(query)}`);
+		},
+
+		async getUsageSummary(
+			query: UsageQuery = {},
+		): Promise<UsageSummaryResponse> {
+			return request<UsageSummaryResponse>(
+				`/api/usage/summary${queryString(query)}`,
+			);
+		},
+
+		async getUsageCost(query: UsageQuery = {}): Promise<UsageCostResponse> {
+			return request<UsageCostResponse>(`/api/usage/cost${queryString(query)}`);
+		},
+
+		async getModelAliases(): Promise<ModelAliasResponse[]> {
+			return request<ModelAliasResponse[]>("/api/models/aliases");
+		},
+
+		async createModelAlias(data: CreateModelAliasRequest): Promise<void> {
+			return request<void>("/api/models/aliases", {
+				method: "POST",
+				body: JSON.stringify(data),
+			});
+		},
+
+		async deleteModelAlias(alias: string): Promise<void> {
+			return request<void>(`/api/models/aliases/${encodeURIComponent(alias)}`, {
+				method: "DELETE",
+			});
+		},
+
+		async getComboAliases(comboId: string): Promise<ComboAliasResponse[]> {
+			const response = await request<ComboAliasWireResponse[]>(
+				`/api/combos/${encodeURIComponent(comboId)}/aliases`,
+			);
+			return response.map(({ alias, combo_id }) => ({
+				alias,
+				comboId: combo_id,
+			}));
+		},
+
+		async createComboAlias(
+			comboId: string,
+			alias: string,
+		): Promise<ComboAliasResponse> {
+			const response = await request<ComboAliasWireResponse>(
+				`/api/combos/${encodeURIComponent(comboId)}/aliases`,
+				{
+					method: "POST",
+					body: JSON.stringify({ alias }),
+				},
+			);
+			return { alias: response.alias, comboId: response.combo_id };
+		},
+
+		async deleteComboAlias(comboId: string, alias: string): Promise<void> {
+			return request<void>(
+				`/api/combos/${encodeURIComponent(comboId)}/aliases/${encodeURIComponent(alias)}`,
+				{ method: "DELETE" },
+			);
 		},
 
 		// Model catalog (requires session auth)

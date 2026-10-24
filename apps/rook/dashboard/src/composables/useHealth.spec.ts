@@ -93,7 +93,7 @@ describe("useHealth", () => {
 			"p3",
 		]);
 		expect(health.unhealthyProviders.value).toHaveLength(1);
-		expect(health.unhealthyProviders.value[0]!.id).toBe("p2");
+		expect(health.unhealthyProviders.value[0]?.id).toBe("p2");
 		expect(health.averageLatency.value).toBe(150);
 	});
 

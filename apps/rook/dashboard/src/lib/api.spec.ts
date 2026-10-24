@@ -5,7 +5,10 @@ describe("Rook auth API client", () => {
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		localStorage.clear();
-		document.cookie = "csrf_token=; Max-Age=0; path=/";
+		Object.defineProperty(document, "cookie", {
+			configurable: true,
+			value: "",
+		});
 	});
 
 	it("fetches a CSRF token before logging in and echoes it in the login header", async () => {
@@ -180,13 +183,13 @@ describe("Rook auth API client", () => {
 		const result = await useApi().getAvailableModels();
 
 		expect(result.models).toHaveLength(2);
-		expect(result.models[0]!.providerId).toBe(
+		expect(result.models[0]?.providerId).toBe(
 			"00000000-0000-0000-0000-000000000001",
 		);
-		expect(result.models[0]!.providerName).toBe("OpenAI Primary");
-		expect(result.models[0]!.providerKind).toBe("openai");
-		expect(result.models[0]!.models).toEqual(["gpt-4o", "gpt-4-turbo"]);
-		expect(result.models[1]!.models).toEqual(["claude-3-5-sonnet-latest"]);
+		expect(result.models[0]?.providerName).toBe("OpenAI Primary");
+		expect(result.models[0]?.providerKind).toBe("openai");
+		expect(result.models[0]?.models).toEqual(["gpt-4o", "gpt-4-turbo"]);
+		expect(result.models[1]?.models).toEqual(["claude-3-5-sonnet-latest"]);
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/models",
 			expect.objectContaining({
@@ -543,7 +546,10 @@ describe("Rook OAuth API client", () => {
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		localStorage.clear();
-		document.cookie = "csrf_token=; Max-Age=0; path=/";
+		Object.defineProperty(document, "cookie", {
+			configurable: true,
+			value: "",
+		});
 	});
 
 	async function apiWithFetch(fetchMock: ReturnType<typeof vi.fn>) {
@@ -697,6 +703,596 @@ describe("Rook OAuth API client", () => {
 		expect(fetchMock).toHaveBeenNthCalledWith(
 			3,
 			"/api/oauth/azure-openai",
+			expect.objectContaining({ method: "DELETE" }),
+		);
+	});
+
+	it("lists combos from /api/combos and parses the camelCase payload", async () => {
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			okJson({
+				combos: [
+					{
+						id: "combo-1",
+						name: "Production Fallback",
+						strategy: "priority",
+						steps: [
+							{
+								providerId: "openai",
+								model: "gpt-4o",
+								connectionId: null,
+								priority: 1,
+							},
+						],
+						createdAt: "2026-10-24T00:00:00Z",
+						updatedAt: "2026-10-24T00:00:00Z",
+					},
+				],
+			}),
+		);
+		const api = await apiWithFetch(fetchMock);
+
+		const result = await api.getCombos();
+
+		expect(result.combos).toHaveLength(1);
+		const [combo] = result.combos;
+		expect(combo?.strategy).toBe("priority");
+		expect(combo?.steps[0]?.connectionId).toBeNull();
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/combos",
+			expect.objectContaining({ credentials: "include" }),
+		);
+	});
+
+	it("fetches a single combo by id", async () => {
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			okJson({
+				id: "combo-1",
+				name: "Production Fallback",
+				strategy: "priority",
+				steps: [],
+				createdAt: "2026-10-24T00:00:00Z",
+				updatedAt: "2026-10-24T00:00:00Z",
+			}),
+		);
+		const api = await apiWithFetch(fetchMock);
+
+		const combo = await api.getCombo("combo-1");
+
+		expect(combo.id).toBe("combo-1");
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/combos/combo-1",
+			expect.objectContaining({ credentials: "include" }),
+		);
+	});
+
+	it("creates a combo with CSRF and the backend contract fields", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-combo" }))
+			.mockResolvedValueOnce(
+				okJson({
+					id: "combo-2",
+					name: "Fast Responses",
+					strategy: "priority",
+					steps: [],
+					createdAt: "2026-10-24T00:00:00Z",
+					updatedAt: "2026-10-24T00:00:00Z",
+				}),
+			);
+		const api = await apiWithFetch(fetchMock);
+
+		const payload = {
+			name: "Fast Responses",
+			strategy: "priority" as const,
+			steps: [
+				{
+					providerId: "openai",
+					model: "gpt-4o",
+					connectionId: "conn-1",
+					priority: 1,
+				},
+			],
+		};
+		const created = await api.createCombo(payload);
+
+		expect(created.id).toBe("combo-2");
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/combos",
+			expect.objectContaining({
+				method: "POST",
+				credentials: "include",
+				headers: expect.objectContaining({
+					"X-CSRF-Token": "csrf-combo",
+				}),
+				body: JSON.stringify(payload),
+			}),
+		);
+	});
+
+	it("fetches usage summary and cost breakdown with query filters", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ total_requests: 42 }))
+			.mockResolvedValueOnce(okJson({ total_cost_usd: 12.5 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.getUsageSummary({
+			start: "2026-10-01T00:00:00Z",
+			provider: "openai",
+		});
+		await api.getUsageCost({ end: "2026-10-24T00:00:00Z" });
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			1,
+			"/api/usage/summary?start=2026-10-01T00%3A00%3A00Z&provider=openai",
+			expect.anything(),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/usage/cost?end=2026-10-24T00%3A00%3A00Z",
+			expect.anything(),
+		);
+	});
+
+	it("loads resilience state and resets an encoded provider with CSRF", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				okJson({
+					circuit_states: [
+						{
+							provider: "openai",
+							failures: 3,
+							state: "open",
+							last_failure: null,
+							cooldown_until: null,
+							rate_limit_reset: null,
+						},
+					],
+				}),
+			)
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-reset" }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+		expect(await api.getResilience()).toEqual({
+			circuit_states: [
+				{
+					provider: "openai",
+					failures: 3,
+					state: "open",
+					last_failure: null,
+					cooldown_until: null,
+					rate_limit_reset: null,
+				},
+			],
+		});
+		await api.resetProviderResilience("provider/with space");
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			1,
+			"/api/resilience",
+			expect.anything(),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			3,
+			"/api/resilience/provider%2Fwith%20space/reset",
+			expect.objectContaining({
+				method: "POST",
+				headers: expect.objectContaining({ "X-CSRF-Token": "csrf-reset" }),
+			}),
+		);
+	});
+
+	it("loads provider telemetry and latency distributions", async () => {
+		const summary = {
+			providers: [
+				{
+					provider_id: "openai",
+					total_requests: 12,
+					success_count: 10,
+					failure_count: 1,
+					rate_limited_count: 1,
+					latency_stats: {
+						p50: 120,
+						p95: 340.4,
+						p99: 500,
+						avg: 210,
+						min: 50,
+						max: 500,
+						count: 12,
+					},
+					ttft_stats: null,
+				},
+			],
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson(summary))
+			.mockResolvedValueOnce(okJson(summary.providers[0]))
+			.mockResolvedValueOnce(okJson(summary.providers[0]?.latency_stats));
+		const api = await apiWithFetch(fetchMock);
+		expect(await api.getTelemetrySummary()).toEqual(summary);
+		await api.getProviderTelemetry("openai");
+		await api.getProviderLatency("openai");
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			1,
+			"/api/telemetry/summary",
+			expect.anything(),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/telemetry/openai",
+			expect.anything(),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			3,
+			"/api/telemetry/openai/latency",
+			expect.anything(),
+		);
+	});
+
+	it("loads cache statistics and signatures, clears cache, and deletes a signature", async () => {
+		const signature = "a".repeat(64);
+		const stats = {
+			hits: 20,
+			misses: 5,
+			evictions: 1,
+			entries: 1,
+			max_entries: 100,
+			token_cache: {
+				hits: 2,
+				misses: 1,
+				tokens_saved: 300,
+				estimated_cost_saved_usd: 0.05,
+			},
+		};
+		const entry = {
+			signature,
+			request_id: "req-1",
+			model: "gpt-4o",
+			provider: "openai",
+			cached_at: "2026-10-24T00:00:00Z",
+			last_accessed: "2026-10-24T00:01:00Z",
+			request_metadata: {
+				message_count: 2,
+				has_tools: false,
+				max_tokens: null,
+				temperature: null,
+			},
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson(stats))
+			.mockResolvedValueOnce(okJson([entry]))
+			.mockResolvedValueOnce(okJson(entry))
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-cache" }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+		expect(await api.getCacheStats()).toEqual(stats);
+		expect(await api.getCacheSignatures()).toEqual([entry]);
+		expect(await api.getCacheSignature(signature)).toEqual(entry);
+		await api.clearCache();
+		await api.deleteCacheSignature(signature);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			5,
+			"/api/cache",
+			expect.objectContaining({ method: "DELETE" }),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			6,
+			`/api/cache/${signature}`,
+			expect.objectContaining({ method: "DELETE" }),
+		);
+	});
+
+	it("lists, creates, updates, deletes, and queries rate limit rules", async () => {
+		const rule = {
+			id: "rl-1",
+			scope: "api-key",
+			target: "key-1",
+			requests_per_minute: 60,
+			requests_per_day: 1000,
+			tokens_per_minute: null,
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson([rule]))
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-rate-limit" }))
+			.mockResolvedValueOnce(okJson(rule))
+			.mockResolvedValueOnce(okJson({ ...rule, requests_per_minute: 90 }))
+			.mockResolvedValueOnce(
+				okJson({
+					scope: "api-key",
+					target: "key-1",
+					current_minute_count: 2,
+					current_day_count: 12,
+					remaining_minute: 58,
+					remaining_day: 988,
+					reset_at: "2026-10-24T14:00:00Z",
+					active_requests_per_minute: 60,
+					active_requests_per_day: 1000,
+				}),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+		expect(await api.getRateLimits()).toEqual([rule]);
+		await api.createRateLimit({
+			scope: "api-key",
+			target: "key-1",
+			requests_per_minute: 60,
+			requests_per_day: 1000,
+		});
+		await api.updateRateLimit("rl-1", { requests_per_minute: 90 });
+		await api.getRateLimitStatus("api-key", "key-1");
+		await api.deleteRateLimit("rl-1");
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			3,
+			"/api/rate-limits",
+			expect.objectContaining({
+				method: "POST",
+				body: JSON.stringify({
+					scope: "api-key",
+					target: "key-1",
+					requests_per_minute: 60,
+					requests_per_day: 1000,
+				}),
+			}),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			5,
+			"/api/rate-limits/api_key/key-1/status",
+			expect.anything(),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			6,
+			"/api/rate-limits/rl-1",
+			expect.objectContaining({ method: "DELETE" }),
+		);
+	});
+
+	it("classifies usage cost as unknown when no records have known costs", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ entries: [], total: 0 }))
+			.mockResolvedValueOnce(
+				okJson({
+					total_requests: 0,
+					total_prompt_tokens: 0,
+					total_completion_tokens: 0,
+					total_cache_read_tokens: 0,
+					total_cache_creation_tokens: 0,
+					total_reasoning_tokens: 0,
+					avg_ttft_ms: null,
+					avg_latency_ms: 0,
+				}),
+			)
+			.mockResolvedValueOnce(
+				okJson({
+					total_cost_usd: 0,
+					known_cost_entries: 0,
+					unknown_cost_entries: 1,
+					by_provider: {},
+					by_model: {},
+					by_api_key: {},
+				}),
+			);
+		const api = await apiWithFetch(fetchMock);
+		const [list, summary, cost] = await Promise.all([
+			api.getUsage(),
+			api.getUsageSummary(),
+			api.getUsageCost(),
+		]);
+		expect(list.total).toBe(0);
+		expect(summary.total_requests).toBe(0);
+		expect(cost.unknown_cost_entries).toBe(1);
+	});
+
+	it("lists usage with filters and pagination", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ entries: [], total: 7 }));
+		const api = await apiWithFetch(fetchMock);
+		await api.getUsage({
+			apiKeyId: "key-1",
+			model: "gpt-4o",
+			offset: 25,
+			limit: 25,
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/usage?apiKeyId=key-1&model=gpt-4o&offset=25&limit=25",
+			expect.anything(),
+		);
+	});
+
+	it("lists model aliases using the camelCase backend DTO", async () => {
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			okJson([
+				{
+					alias: "chat-fast",
+					canonical: "gpt-4o-mini",
+					providerId: "openai",
+					createdAt: "2026-10-24T00:00:00Z",
+				},
+			]),
+		);
+		const api = await apiWithFetch(fetchMock);
+
+		const aliases = await api.getModelAliases();
+
+		expect(aliases[0]?.providerId).toBe("openai");
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/models/aliases",
+			expect.objectContaining({ credentials: "include" }),
+		);
+	});
+
+	it("creates a model alias with providerId and CSRF", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-model-alias" }))
+			.mockResolvedValueOnce(new Response(null, { status: 201 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.createModelAlias({
+			alias: "chat-fast",
+			canonical: "gpt-4o-mini",
+			providerId: "openai",
+		});
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/models/aliases",
+			expect.objectContaining({
+				method: "POST",
+				headers: expect.objectContaining({
+					"X-CSRF-Token": "csrf-model-alias",
+				}),
+				body: JSON.stringify({
+					alias: "chat-fast",
+					canonical: "gpt-4o-mini",
+					providerId: "openai",
+				}),
+			}),
+		);
+	});
+
+	it("accepts an empty 201 response body backed by a stream", async () => {
+		const emptyResponse = new Response(null, { status: 201 });
+		Object.defineProperty(emptyResponse, "body", {
+			value: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.close();
+				},
+			}),
+		});
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-model-alias" }))
+			.mockResolvedValueOnce(emptyResponse);
+		const api = await apiWithFetch(fetchMock);
+		await expect(
+			api.createModelAlias({
+				alias: "chat-fast",
+				canonical: "gpt-4o-mini",
+				providerId: "openai",
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it("deletes an encoded model alias with CSRF", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-model-alias" }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.deleteModelAlias("model/alias");
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/models/aliases/model%2Falias",
+			expect.objectContaining({
+				method: "DELETE",
+				headers: expect.objectContaining({
+					"X-CSRF-Token": "csrf-model-alias",
+				}),
+			}),
+		);
+	});
+
+	it("lists combo aliases as a raw array with snake_case combo_id", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				okJson([{ alias: "rook/coding", combo_id: "combo-1" }]),
+			);
+		const api = await apiWithFetch(fetchMock);
+
+		const aliases = await api.getComboAliases("combo/1");
+
+		expect(aliases).toEqual([{ alias: "rook/coding", comboId: "combo-1" }]);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/combos/combo%2F1/aliases",
+			expect.objectContaining({ credentials: "include" }),
+		);
+	});
+
+	it("creates a combo alias with CSRF and maps the backend response", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-alias" }))
+			.mockResolvedValueOnce(
+				okJson({ alias: "rook/coding", combo_id: "combo-1" }),
+			);
+		const api = await apiWithFetch(fetchMock);
+
+		const created = await api.createComboAlias("combo-1", "rook/coding");
+
+		expect(created).toEqual({ alias: "rook/coding", comboId: "combo-1" });
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/combos/combo-1/aliases",
+			expect.objectContaining({
+				method: "POST",
+				credentials: "include",
+				headers: expect.objectContaining({ "X-CSRF-Token": "csrf-alias" }),
+				body: JSON.stringify({ alias: "rook/coding" }),
+			}),
+		);
+	});
+
+	it("deletes an encoded combo alias with DELETE and CSRF", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-alias" }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.deleteComboAlias("combo/1", "rook/coding");
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/combos/combo%2F1/aliases/rook%2Fcoding",
+			expect.objectContaining({
+				method: "DELETE",
+				headers: expect.objectContaining({ "X-CSRF-Token": "csrf-alias" }),
+			}),
+		);
+	});
+
+	it("updates and deletes a combo with the expected methods and paths", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-combo" }))
+			.mockResolvedValueOnce(
+				okJson({
+					id: "combo-1",
+					name: "Renamed",
+					strategy: "priority",
+					steps: [],
+					createdAt: "2026-10-24T00:00:00Z",
+					updatedAt: "2026-10-24T01:00:00Z",
+				}),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.updateCombo("combo-1", {
+			name: "Renamed",
+			strategy: "priority",
+			steps: [],
+		});
+		await api.deleteCombo("combo-1");
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/combos/combo-1",
+			expect.objectContaining({ method: "PUT" }),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			3,
+			"/api/combos/combo-1",
 			expect.objectContaining({ method: "DELETE" }),
 		);
 	});
