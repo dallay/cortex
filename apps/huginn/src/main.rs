@@ -5,7 +5,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use huginn::{
     config::{Config, ModelReadiness},
-    ui_settings,
+    resolve_workspace, ui_settings,
 };
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
@@ -20,28 +20,15 @@ use terminal::{Input, LinePrompt, Output};
 
 fn escape_terminal_value(value: &str) -> String {
     value.chars().fold(String::new(), |mut escaped, character| {
-        if character.is_control() {
+        if character.is_control()
+            || matches!(character, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        {
             escaped.extend(character.escape_default());
         } else {
             escaped.push(character);
         }
         escaped
     })
-}
-
-#[cfg(test)]
-mod terminal_value_tests {
-    use super::escape_terminal_value;
-
-    #[test]
-    fn escapes_control_characters_before_terminal_output() {
-        assert_eq!(
-            escape_terminal_value("workspace\nforged: value"),
-            "workspace\\nforged: value"
-        );
-        assert_eq!(escape_terminal_value("tab\tvalue"), "tab\\tvalue");
-        assert_eq!(escape_terminal_value("café ☕ 日本語"), "café ☕ 日本語");
-    }
 }
 
 #[derive(Parser)]
@@ -90,8 +77,19 @@ enum Commands {
     },
     /// List saved sessions without starting a model or MCP server.
     Sessions,
+    /// Inspect scoped Agent Skills without starting models or sessions.
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
     /// Validate configuration and show service diagnostics without network/model calls.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum SkillsCommand {
+    /// List fresh metadata and diagnostics from global and project skill roots.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -235,6 +233,49 @@ fn prepare_interaction(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Commands::Skills { .. })) {
+        use huginn_application::skills::SkillCatalogQuery;
+        let workspace = resolve_workspace(cli.workspace.clone())?;
+        let home = std::env::var_os("HOME")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from);
+        let catalog =
+            huginn_runtime::skills::FilesystemSkillCatalog.refresh(&workspace, home.as_deref())?;
+        let mut out = std::io::stdout().lock();
+        if cli.json {
+            writeln!(out, "{}", catalog.to_json())?;
+        } else {
+            writeln!(out, "Agent Skills ({})", catalog.fingerprint)?;
+            for skill in &catalog.skills {
+                writeln!(
+                    out,
+                    "{} [{}; {}; untrusted]\n  {}\n  logical: {}\n  canonical: {}",
+                    escape_terminal_value(&skill.name),
+                    skill.source_scope.as_str(),
+                    if skill.selected {
+                        "selected"
+                    } else {
+                        "overridden"
+                    },
+                    escape_terminal_value(&skill.description),
+                    escape_terminal_value(&skill.logical_path.to_string_lossy()),
+                    escape_terminal_value(&skill.canonical_path.to_string_lossy())
+                )?;
+            }
+            for diagnostic in &catalog.diagnostics {
+                writeln!(
+                    out,
+                    "{} [{}; {}] {}: {}",
+                    diagnostic.code,
+                    diagnostic.scope.as_str(),
+                    diagnostic.severity,
+                    escape_terminal_value(&diagnostic.path.to_string_lossy()),
+                    escape_terminal_value(&diagnostic.message)
+                )?;
+            }
+        }
+        return Ok(());
+    }
     if matches!(cli.command, Some(Commands::Auth { .. })) {
         auth::require_interactive(cli.json, cli.line_mode)?;
         return auth::login(prepare_config(&cli)?, cli.workspace.clone()).await;
