@@ -37,7 +37,9 @@ describe("ResilienceView", () => {
 		expect(wrapper.text()).toContain("openai");
 		expect(wrapper.text()).toContain("open");
 		expect(wrapper.text()).toContain("3");
-		expect(wrapper.text()).toContain("4:00:00 PM");
+		expect(wrapper.text()).toContain(
+			new Date("2026-10-24T14:00:00Z").toLocaleString(),
+		);
 		await wrapper.find("button").trigger("click");
 		expect(resetProviderResilience).not.toHaveBeenCalled();
 	});

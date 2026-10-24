@@ -60,6 +60,7 @@
 		"tokens24h": "Tokens · 24 hours",
 		"cost7d": "Estimated cost · 7 days",
 		"costUnknown": "Unknown",
+		"costPartial": "partial",
 		"metricUnavailable": "Unavailable",
 		"subtitle": "Overview of your Rook instance",
 		"requestsToday": "Requests Today",
@@ -361,7 +362,11 @@
 			"provider_required": "Select a provider for each step",
 			"model_required": "Select a model for each step",
 			"priority_invalid": "Priority must be between 1 and 255",
-			"priority_duplicate": "Priorities must be unique"
+			"priority_duplicate": "Priorities must be unique",
+			"step_provider_required": "Select a provider for each step",
+			"step_model_required": "Select a model for each step",
+			"step_priority_invalid": "Priority must be between 1 and 255",
+			"step_priority_duplicate": "Priorities must be unique"
 		}
 	},
 	"settings": {

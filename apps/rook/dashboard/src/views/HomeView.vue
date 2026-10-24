@@ -18,8 +18,12 @@ const {t} = useI18n();
 const {apiKeyCount, usage, cost, fetch: fetchMetrics} = useHomeMetrics();
 onMounted(() => void fetchMetrics());
 const displayedCost = () => {
-  if (!cost.value || cost.value.known_cost_entries + cost.value.unknown_cost_entries === 0 || cost.value.known_cost_entries === 0) return null;
-  return new Intl.NumberFormat(undefined, {style: "currency", currency: "USD", maximumFractionDigits: 4}).format(cost.value.total_cost_usd);
+  if (!cost.value) return null;
+  const totalEntries = cost.value.known_cost_entries + cost.value.unknown_cost_entries;
+  if (totalEntries === 0) return new Intl.NumberFormat(undefined, {style: "currency", currency: "USD", maximumFractionDigits: 4}).format(0);
+  if (cost.value.known_cost_entries === 0) return null;
+  const formatted = new Intl.NumberFormat(undefined, {style: "currency", currency: "USD", maximumFractionDigits: 4}).format(cost.value.total_cost_usd);
+  return cost.value.unknown_cost_entries > 0 ? `${formatted} (${t("home.costPartial")})` : formatted;
 };
 const metricValue = (value: number | null | undefined) => value == null ? t("home.metricUnavailable") : value.toLocaleString();
 
@@ -77,7 +81,7 @@ const {
           <div>
             <p class="text-sm text-muted-foreground">{{ t('home.activeProviders') }}</p>
             <p class="text-2xl font-semibold">
-              {{ loading ? '...' : metricValue(healthyProviders.length) }}
+              {{ loading ? '...' : health ? metricValue(healthyProviders.length) : t('home.metricUnavailable') }}
               <span v-if="health" class="text-sm font-normal text-muted-foreground">
                 / {{ metricValue(health.providers.length) }}
               </span>
@@ -114,9 +118,9 @@ const {
       </div>
     </div>
 
-    <section v-if="usage || cost" class="grid gap-4 md:grid-cols-3" :aria-label="t('home.usageSummary')">
-      <div v-if="usage" class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.requests24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage.total_requests) }}</p></div>
-      <div v-if="usage" class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.tokens24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage.total_prompt_tokens + usage.total_completion_tokens) }}</p></div>
+    <section class="grid gap-4 md:grid-cols-3" :aria-label="t('home.usageSummary')">
+      <div class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.requests24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage?.total_requests) }}</p></div>
+      <div class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.tokens24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage ? usage.total_prompt_tokens + usage.total_completion_tokens : null) }}</p></div>
       <div class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.cost7d') }}</p><p class="text-2xl font-semibold">{{ displayedCost() ?? t('home.costUnknown') }}</p></div>
     </section>
 

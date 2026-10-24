@@ -60,6 +60,7 @@
 		"tokens24h": "Tokens · 24 horas",
 		"cost7d": "Costo estimado · 7 días",
 		"costUnknown": "Desconocido",
+		"costPartial": "parcial",
 		"metricUnavailable": "No disponible",
 		"subtitle": "Resumen de tu instancia de Rook",
 		"requestsToday": "Solicitudes Hoy",

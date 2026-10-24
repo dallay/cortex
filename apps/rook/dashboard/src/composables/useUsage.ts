@@ -31,7 +31,9 @@ export function useUsage() {
 		return "complete";
 	});
 
+	let latestRequest = 0;
 	async function fetch(nextQuery: UsageQuery = query.value): Promise<void> {
+		const requestId = ++latestRequest;
 		query.value = { ...nextQuery };
 		loading.value = true;
 		error.value = null;
@@ -42,22 +44,21 @@ export function useUsage() {
 				api.getUsageSummary(query.value),
 				api.getUsageCost(query.value),
 			]);
+			if (requestId !== latestRequest) return;
 			entries.value = results[0].entries;
 			total.value = results[0].total;
 			summary.value = results[1];
 			cost.value = results[2];
 		} catch (cause) {
+			if (requestId !== latestRequest) return;
 			const message =
 				cause instanceof Error ? cause.message : "Failed to load usage";
-			if (
-				message.includes("503") ||
-				message.includes("USAGE_RECORDER_UNAVAILABLE")
-			)
+			if (message.includes("USAGE_RECORDER_UNAVAILABLE"))
 				availability.value = "unavailable";
 			else availability.value = "error";
 			error.value = message;
 		} finally {
-			loading.value = false;
+			if (requestId === latestRequest) loading.value = false;
 		}
 	}
 

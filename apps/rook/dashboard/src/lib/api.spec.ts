@@ -1157,6 +1157,29 @@ describe("Rook OAuth API client", () => {
 		);
 	});
 
+	it("accepts an empty 201 response body backed by a stream", async () => {
+		const emptyResponse = new Response(null, { status: 201 });
+		Object.defineProperty(emptyResponse, "body", {
+			value: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.close();
+				},
+			}),
+		});
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-model-alias" }))
+			.mockResolvedValueOnce(emptyResponse);
+		const api = await apiWithFetch(fetchMock);
+		await expect(
+			api.createModelAlias({
+				alias: "chat-fast",
+				canonical: "gpt-4o-mini",
+				providerId: "openai",
+			}),
+		).resolves.toBeUndefined();
+	});
+
 	it("deletes an encoded model alias with CSRF", async () => {
 		const fetchMock = vi
 			.fn()

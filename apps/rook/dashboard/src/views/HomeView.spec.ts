@@ -11,7 +11,13 @@ const getApiKeyCount = vi.fn();
 vi.mock("@/lib/api", () => ({
 	useApi: () => ({ getHealth, getUsageSummary, getUsageCost, getApiKeyCount }),
 }));
-const homeMetrics = vi.hoisted(() => ({ unavailable: false }));
+const homeMetrics = vi.hoisted(() => ({
+	unavailable: false,
+	zeroCost: false,
+	partialCost: false,
+	noEntriesCost: false,
+	noKnownCost: false,
+}));
 vi.mock("@/composables/useHomeMetrics", async () => {
 	const { ref } = await import("vue");
 	return {
@@ -30,9 +36,16 @@ vi.mock("@/composables/useHomeMetrics", async () => {
 				homeMetrics.unavailable
 					? null
 					: {
-							total_cost_usd: 1.25,
-							known_cost_entries: 2,
-							unknown_cost_entries: 0,
+							total_cost_usd: homeMetrics.zeroCost ? 0 : 1.25,
+							known_cost_entries:
+								homeMetrics.noEntriesCost || homeMetrics.noKnownCost ? 0 : 2,
+							unknown_cost_entries: homeMetrics.noEntriesCost
+								? 0
+								: homeMetrics.noKnownCost
+									? 2
+									: homeMetrics.partialCost
+										? 1
+										: 0,
 						},
 			),
 			loading: ref(false),
@@ -70,6 +83,43 @@ describe("HomeView", () => {
 		expect(wrapper.text()).toContain("14");
 		expect(wrapper.text()).toContain("$1.25");
 		expect(wrapper.text()).toContain("82");
+	});
+	it("keeps a zero total visible when all entries have a known cost", async () => {
+		homeMetrics.zeroCost = true;
+		const wrapper = mount(HomeView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		expect(wrapper.text()).toContain("$0.00");
+		homeMetrics.zeroCost = false;
+	});
+	it("shows unavailable values when usage and health data are missing", async () => {
+		homeMetrics.unavailable = true;
+		healthState.unavailable = true;
+		const wrapper = mount(HomeView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		expect(wrapper.text()).toContain("Requests · 24 hours");
+		expect(wrapper.text()).toContain("Unavailable");
+		expect(wrapper.text()).not.toContain("/ 0");
+	});
+	it("shows unknown cost when all entries have unknown pricing", async () => {
+		homeMetrics.noKnownCost = true;
+		const wrapper = mount(HomeView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		expect(wrapper.text()).toContain(en.home.costUnknown);
+		homeMetrics.noKnownCost = false;
+	});
+	it("renders a zero cost when there are no entries", async () => {
+		homeMetrics.noEntriesCost = true;
+		const wrapper = mount(HomeView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		expect(wrapper.text()).toContain("$0.00");
+		homeMetrics.noEntriesCost = false;
+	});
+	it("labels a partially priced cost total", async () => {
+		homeMetrics.partialCost = true;
+		const wrapper = mount(HomeView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		expect(wrapper.text()).toContain("partial");
+		homeMetrics.partialCost = false;
 	});
 	it("renders explicit unavailable text instead of ambiguous dashes", async () => {
 		homeMetrics.unavailable = true;

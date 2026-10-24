@@ -100,15 +100,15 @@ A request has this shape (unknown fields are rejected):
 ```json
 {
   "name": "Primary then backup",
-  "strategy": "fallback",
+  "strategy": "priority",
   "steps": [
-    { "providerId": "openai", "model": "gpt-4o", "connectionId": null, "priority": 0 },
-    { "providerId": "anthropic", "model": "claude-sonnet", "connectionId": null, "priority": 1 }
+    { "providerId": "openai", "model": "gpt-4o", "connectionId": null, "priority": 1 },
+    { "providerId": "anthropic", "model": "claude-sonnet", "connectionId": null, "priority": 2 }
   ]
 }
 ```
 
-`ComboResponse` has `id`, `name`, `strategy`, `steps`, `createdAt`, and `updatedAt`; each step has `providerId`, `model`, `connectionId`, and `priority`. Validation failures return `400 VALIDATION_ERROR`; missing records return `404`; repository conflicts/errors use the handler's mapped HTTP error.
+`ComboResponse` has `id`, `name`, `strategy`, `steps`, `createdAt`, and `updatedAt`; each step has `providerId`, `model`, `connectionId`, and `priority`. The only supported strategy is `priority`. Names must contain 1–100 characters. A combo must contain 1–10 steps, each with a unique integer priority from 1 to 255. Validation failures return `400 VALIDATION_ERROR`; missing records return `404`; repository conflicts/errors use the handler's mapped HTTP error.
 
 ### Combo aliases
 

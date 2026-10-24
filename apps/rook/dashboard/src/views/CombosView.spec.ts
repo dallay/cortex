@@ -165,6 +165,28 @@ describe("CombosView", () => {
 		expect(mockGetComboAliases).toHaveBeenCalledWith("combo-1");
 	});
 
+	it("translates step-level validation errors in English", async () => {
+		const wrapper = mountView();
+		await flushPromises();
+		await wrapper.find('[data-testid="combo-edit-combo-1"]').trigger("click");
+		await flushPromises();
+		await wrapper.find('[data-testid="combo-step-provider-0"]').setValue("");
+		await wrapper.find('[data-testid="combo-step-model-0"]').setValue("");
+		await wrapper.find('[data-testid="combo-step-priority-1"]').setValue("1");
+		await wrapper.find('[data-testid="combo-form"]').trigger("submit");
+		await flushPromises();
+		expect(wrapper.text()).toContain(en.combos.errors.step_provider_required);
+		expect(wrapper.text()).toContain(en.combos.errors.step_priority_duplicate);
+		await wrapper
+			.find('[data-testid="combo-step-provider-0"]')
+			.setValue("provider-openai");
+		await wrapper.find('[data-testid="combo-step-model-0"]').setValue("");
+		await wrapper.find('[data-testid="combo-step-priority-1"]').setValue("2");
+		await wrapper.find('[data-testid="combo-form"]').trigger("submit");
+		await flushPromises();
+		expect(wrapper.text()).toContain(en.combos.errors.step_model_required);
+	});
+
 	it("shows the empty state with a create action when there are no combos", async () => {
 		mockGetCombos.mockResolvedValueOnce({ combos: [] });
 		const wrapper = mountView();

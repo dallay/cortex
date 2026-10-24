@@ -29,6 +29,7 @@ export function useCache() {
 		}
 	}
 	async function inspect(signature: string) {
+		error.value = null;
 		try {
 			selectedSignature.value = await api.getCacheSignature(signature);
 		} catch (cause) {
@@ -51,11 +52,18 @@ export function useCache() {
 		}
 	}
 	async function remove(signature: string) {
+		error.value = null;
 		try {
 			await api.deleteCacheSignature(signature);
+			const previousCount = signatures.value.length;
 			signatures.value = signatures.value.filter(
 				(entry) => entry.signature !== signature,
 			);
+			if (stats.value && signatures.value.length < previousCount)
+				stats.value = {
+					...stats.value,
+					entries: Math.max(0, stats.value.entries - 1),
+				};
 			if (selectedSignature.value?.signature === signature)
 				selectedSignature.value = null;
 			return true;

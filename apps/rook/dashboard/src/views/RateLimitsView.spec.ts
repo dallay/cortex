@@ -53,6 +53,21 @@ describe("RateLimitsView", () => {
 			expect(label.find("input, select").exists()).toBe(true);
 		}
 	});
+	it("allows clearing the optional daily limit and reports invalid limits", async () => {
+		const wrapper = mount(RateLimitsView, { global: { plugins: [i18n] } });
+		await flushPromises();
+		const inputs = wrapper.findAll('input[type="number"]');
+		await inputs[1]?.setValue(500);
+		await inputs[1]?.setValue("");
+		await wrapper.find("form").trigger("submit");
+		await flushPromises();
+		expect(createRateLimit).toHaveBeenCalledWith(
+			expect.objectContaining({ requests_per_day: undefined }),
+		);
+		await inputs[0]?.setValue(0);
+		await wrapper.find("form").trigger("submit");
+		expect(wrapper.text()).toContain("Enter a positive whole-number limit");
+	});
 	it("shows backend router absence as informational", async () => {
 		getRateLimits.mockRejectedValueOnce(new Error("API Error 404: Not Found"));
 		const wrapper = mount(RateLimitsView, { global: { plugins: [i18n] } });

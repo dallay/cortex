@@ -732,16 +732,10 @@ function createApiClient() {
 			throw new Error(`API Error ${response.status}: ${error}`);
 		}
 
-		// Handle successful responses without a body. The model-alias create
-		// endpoint returns 201 Created with no body; DELETE endpoints return 204.
-		if (
-			response.status === 204 ||
-			(response.status === 201 && response.body === null)
-		) {
-			return undefined as T;
-		}
-
-		return response.json();
+		// Read once as text so both null bodies and empty streams are handled.
+		const body = await response.text();
+		if (body.length === 0) return undefined as T;
+		return JSON.parse(body) as T;
 	}
 
 	async function getCsrfToken(): Promise<string> {

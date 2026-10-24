@@ -15,23 +15,42 @@ const { rules, status, loading, saving, error, availability, fetch, create, upda
 const scope = ref<RateLimitScope>("api-key");
 const target = ref("");
 const requestsPerMinute = ref(60);
-const requestsPerDay = ref<number | undefined>(undefined);
+const requestsPerDay = ref<number | "" | undefined>(undefined);
 const statusScope = ref<RateLimitScope>("api-key");
 const statusTarget = ref("");
 const actionError = ref<string | null>(null);
 
 async function submit() {
-	if (!Number.isInteger(requestsPerMinute.value) || requestsPerMinute.value < 1 || (requestsPerDay.value != null && (!Number.isInteger(requestsPerDay.value) || requestsPerDay.value < 1))) return;
-	const ok = await create({ scope: scope.value, target: target.value.trim(), requests_per_minute: requestsPerMinute.value, requests_per_day: requestsPerDay.value });
+	actionError.value = null;
+	const perDay = requestsPerDay.value === "" ? undefined : requestsPerDay.value;
+	if (
+		!Number.isInteger(requestsPerMinute.value) ||
+		requestsPerMinute.value < 1 ||
+		(perDay != null && (!Number.isInteger(perDay) || perDay < 1))
+	) {
+		actionError.value = t("rateLimits.invalidLimit");
+		return;
+	}
+	const ok = await create({
+		scope: scope.value,
+		target: target.value.trim(),
+		requests_per_minute: requestsPerMinute.value,
+		requests_per_day: perDay,
+	});
 	if (ok) target.value = "";
 	else actionError.value = error.value;
 }
 async function deleteRule(id: string) {
+	actionError.value = null;
 	if (!globalThis.confirm(t("rateLimits.deleteConfirm"))) return;
 	if (!(await remove(id))) actionError.value = error.value;
 }
-function checkStatus() { void fetchStatus(statusScope.value, statusTarget.value.trim()); }
+function checkStatus() {
+	actionError.value = null;
+	void fetchStatus(statusScope.value, statusTarget.value.trim());
+}
 async function changeRule(id: string, current: number) {
+	actionError.value = null;
 	const value = globalThis.prompt(t("rateLimits.changeRpm"), String(current));
 	if (value == null) return;
 	const numeric = Number(value);
