@@ -10,6 +10,8 @@ const resultKeys = {
   check: 'CHECK',
   test: 'TEST',
   'test-frontend': 'TEST_FRONTEND',
+  coverage: 'COVERAGE',
+  'coverage-frontend': 'COVERAGE_FRONTEND',
   'test-e2e': 'TEST_E2E',
   doc: 'DOC',
   audit: 'AUDIT',
@@ -39,6 +41,7 @@ const outcome = evaluateRequiredChecks({
 });
 
 for (const [job, result] of Object.entries(results)) console.log(`${job}: ${result}`);
+
 if (!outcome.ok) {
   for (const error of outcome.errors) console.error(`::error::${error}`);
   process.exitCode = 1;
