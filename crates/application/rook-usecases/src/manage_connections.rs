@@ -1867,5 +1867,5 @@ fn credentials_matches_auth_type(auth_type: AuthType, credentials: &Credentials)
 }
 
 #[cfg(test)]
-#[path = "manage_connections/tests.rs"]
+#[path = "manage_connections/tests/mod.rs"]
 mod tests;

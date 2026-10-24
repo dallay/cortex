@@ -1892,5 +1892,5 @@ impl RouteRequest {
 }
 
 #[cfg(test)]
-#[path = "route_request/tests.rs"]
+#[path = "route_request/tests/mod.rs"]
 mod tests;
