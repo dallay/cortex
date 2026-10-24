@@ -33,11 +33,15 @@ The Rook Dashboard is a **Vue 3 SPA** that provides a visual interface for manag
 │   ┌─────────────────────────────────────────────────────────────┐      │
 │   │  Views                    │  Components                     │      │
 │   │  ─────────────────────    │  ─────────────────────         │      │
-│   │  • Login                  │  • ProviderCard                 │      │
-│   │  • Dashboard              │  • ApiKeyTable                  │      │
-│   │  • Providers              │  • ComboEditor                  │      │
-│   │  • API Keys               │  • AuditLog                     │      │
-│   │  • Settings               │  • ChatInterface                │      │
+│   │  • Login                  │  • ProviderCatalogCard          │      │
+│   │  • Home                   │  • ConnectionListItem           │      │
+│   │  • Providers              │  • ApiKeyForm                   │      │
+│   │  • Provider Details       │  • DataTable                    │      │
+│   │  • Provider Quota         │  • EmptyState                   │      │
+│   │  • API Keys               │  • PageHeader                   │      │
+│   │  • Combos                 │                                 │      │
+│   │  • Endpoints              │                                 │      │
+│   │  • Settings               │                                 │      │
 │   └─────────────────────────────────────────────────────────────┘      │
 │        │                                                                │
 │        │  Vite Proxy (/api/* → port 3773)                             │
@@ -54,12 +58,22 @@ The Rook Dashboard is a **Vue 3 SPA** that provides a visual interface for manag
 | Feature | Description |
 |---------|-------------|
 | 🔐 **Authentication** | Secure login with Rook's admin credentials |
-| 🌍 **Provider Management** | Configure OpenAI, Anthropic, Gemini, Ollama, Groq |
-| 🔑 **API Key CRUD** | Create, view, and revoke API keys |
-| 🔄 **Combo Editor** | Visual builder for fallback chains |
-| 📊 **Audit Logs** | Searchable request/response history |
-| 💬 **Chat Interface** | Test requests directly in the browser |
+| 🌍 **Provider Management** | Configure OpenAI, Anthropic, Gemini, Ollama and Groq, including OAuth connections |
+| 📊 **Provider Quota** | Token, cost and rate-limit usage per provider |
+| 🔑 **API Key CRUD** | Create, view, rotate and revoke API keys with model and provider restrictions |
+| 🧠 **Model Catalog** | Inspect the models available from active provider connections |
+| 🧩 **Combos** | Build fallback chains of provider/model steps ordered by priority |
+| 📡 **Endpoints** | Reference of client-facing endpoints with copyable base URLs |
 | 🌐 **i18n** | English and Spanish translations |
+
+### Current coverage
+
+The dashboard covers authentication, health, providers (CRUD, connection test and OAuth), API
+keys, the model catalog, provider quota, combos, combo aliases, model aliases, cache, rate limits,
+usage and costs, telemetry and circuit-breaker resilience.
+
+The full parity contract and the prioritized tasks live in
+[`dashboard-parity.md`](../../../.agents/rpi/plan/tasks/dashboard-parity.md).
 
 ---
 
@@ -122,19 +136,24 @@ apps/rook/dashboard/
 │   │   ├── LoginView.vue
 │   │   ├── HomeView.vue
 │   │   ├── ProvidersView.vue
+│   │   ├── ProviderDetailsView.vue
+│   │   ├── ProvidersQuotaView.vue
 │   │   ├── ApiKeysView.vue
+│   │   ├── CombosView.vue
+│   │   ├── EndpointsView.vue
 │   │   └── SettingsView.vue
 │   │
 │   ├── components/     # 🧩 Reusable UI components
-│   │   ├── common/     # Buttons, inputs, cards
-│   │   ├── providers/  # Provider-specific components
-│   │   ├── api-keys/   # API key management
-│   │   └── audit/      # Audit log components
+│   │   ├── ui/         # shadcn-vue primitives
+│   │   └── *.vue       # Domain components (catalog, connections, keys)
+│   │
+│   ├── composables/    # 🔗 API-backed state (providers, keys, health)
+│   ├── config/         # ⚙️ Provider catalog and endpoint reference
 │   │
 │   ├── stores/         # 📦 Pinia state management
 │   │   ├── auth.ts
-│   │   ├── providers.ts
-│   │   └── audit.ts
+│   │   ├── theme.ts
+│   │   └── counter.ts
 │   │
 │   ├── router/        # 🛤️ Vue Router configuration
 │   │   └── index.ts

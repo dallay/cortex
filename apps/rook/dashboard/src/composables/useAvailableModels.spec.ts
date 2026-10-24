@@ -1,10 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
+import type { ProviderConnectionResponse } from "@/lib/api";
 
 // We mock the dependencies the composable relies on so the test can
 // drive the inputs deterministically.
-const mockProviders = ref<any[]>([]);
+const mockProviders = ref<ProviderConnectionResponse[]>([]);
 const mockGetAvailableModels = vi.fn();
+
+function makeProvider(
+	id: string,
+	name: string,
+	providerKind: ProviderConnectionResponse["providerKind"],
+	isActive: boolean,
+): ProviderConnectionResponse {
+	return {
+		id,
+		name,
+		providerKind,
+		providerRuntimeId: id,
+		authType: "apiKey",
+		priority: 0,
+		isActive,
+		config: {
+			maxConcurrent: 1,
+			quotaWindowThresholds: { warning: 0.5, error: 0.9 },
+			defaultModel: null,
+			baseUrl: null,
+		},
+		testStatus: {
+			status: "neverTested",
+			lastTestAt: null,
+			latencyMs: null,
+			error: null,
+		},
+		createdAt: "2026-01-01T00:00:00Z",
+		updatedAt: "2026-01-01T00:00:00Z",
+	};
+}
 
 vi.mock("@/composables/useProviders", () => ({
 	useProviders: () => ({
@@ -61,18 +93,8 @@ describe("useAvailableModels", () => {
 			],
 		});
 		mockProviders.value = [
-			{
-				id: "p1",
-				name: "OpenAI Primary",
-				providerKind: "openai",
-				isActive: true,
-			},
-			{
-				id: "p2",
-				name: "Anthropic",
-				providerKind: "anthropic",
-				isActive: true,
-			},
+			makeProvider("p1", "OpenAI Primary", "openai", true),
+			makeProvider("p2", "Anthropic", "anthropic", true),
 		];
 
 		const { useAvailableModels } = await import("./useAvailableModels");
@@ -84,9 +106,9 @@ describe("useAvailableModels", () => {
 		expect(c.loading.value).toBe(false);
 		expect(c.error.value).toBeNull();
 		expect(c.modelsByProvider.value).toHaveLength(2);
-		expect(c.modelsByProvider.value[0]!.provider.id).toBe("p1");
-		expect(c.modelsByProvider.value[0]!.models).toEqual(["gpt-4o"]);
-		expect(c.modelsByProvider.value[1]!.provider.id).toBe("p2");
+		expect(c.modelsByProvider.value[0]?.provider.id).toBe("p1");
+		expect(c.modelsByProvider.value[0]?.models).toEqual(["gpt-4o"]);
+		expect(c.modelsByProvider.value[1]?.provider.id).toBe("p2");
 	});
 
 	it("filters out inactive providers from the cross", async () => {
@@ -107,18 +129,8 @@ describe("useAvailableModels", () => {
 			],
 		});
 		mockProviders.value = [
-			{
-				id: "p1",
-				name: "OpenAI Primary",
-				providerKind: "openai",
-				isActive: true,
-			},
-			{
-				id: "p2",
-				name: "OpenAI Inactive",
-				providerKind: "openai",
-				isActive: false,
-			},
+			makeProvider("p1", "OpenAI Primary", "openai", true),
+			makeProvider("p2", "OpenAI Inactive", "openai", false),
 		];
 
 		const { useAvailableModels } = await import("./useAvailableModels");
@@ -128,7 +140,7 @@ describe("useAvailableModels", () => {
 
 		// Only the active provider is in the cross.
 		expect(c.modelsByProvider.value).toHaveLength(1);
-		expect(c.modelsByProvider.value[0]!.provider.id).toBe("p1");
+		expect(c.modelsByProvider.value[0]?.provider.id).toBe("p1");
 	});
 
 	it("filters out groups with no models", async () => {
@@ -149,8 +161,8 @@ describe("useAvailableModels", () => {
 			],
 		});
 		mockProviders.value = [
-			{ id: "p1", name: "OpenAI", providerKind: "openai", isActive: true },
-			{ id: "p2", name: "Empty", providerKind: "openai", isActive: true },
+			makeProvider("p1", "OpenAI", "openai", true),
+			makeProvider("p2", "Empty", "openai", true),
 		];
 
 		const { useAvailableModels } = await import("./useAvailableModels");
@@ -159,14 +171,12 @@ describe("useAvailableModels", () => {
 		await nextTick();
 
 		expect(c.modelsByProvider.value).toHaveLength(1);
-		expect(c.modelsByProvider.value[0]!.provider.id).toBe("p1");
+		expect(c.modelsByProvider.value[0]?.provider.id).toBe("p1");
 	});
 
 	it("surfaces errors and keeps groups empty", async () => {
 		mockGetAvailableModels.mockRejectedValue(new Error("network down"));
-		mockProviders.value = [
-			{ id: "p1", name: "OpenAI", providerKind: "openai", isActive: true },
-		];
+		mockProviders.value = [makeProvider("p1", "OpenAI", "openai", true)];
 
 		const { useAvailableModels } = await import("./useAvailableModels");
 		const c = useAvailableModels();
@@ -182,9 +192,7 @@ describe("useAvailableModels", () => {
 		// Server returned no group for p1, even though p1 is active.
 		// The composable should not crash and should drop the provider.
 		mockGetAvailableModels.mockResolvedValue({ models: [] });
-		mockProviders.value = [
-			{ id: "p1", name: "OpenAI", providerKind: "openai", isActive: true },
-		];
+		mockProviders.value = [makeProvider("p1", "OpenAI", "openai", true)];
 
 		const { useAvailableModels } = await import("./useAvailableModels");
 		const c = useAvailableModels();

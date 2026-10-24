@@ -13,7 +13,7 @@ const DASHBOARD_URL_BASE = (
 	process.env.DASHBOARD_URL || "http://localhost:4747/dashboard"
 ).replace(/\/+$/, "");
 // DASHBOARD_URL for navigation (includes trailing slash since Vite serves at /dashboard/)
-const DASHBOARD_URL = DASHBOARD_URL_BASE + "/";
+const DASHBOARD_URL = `${DASHBOARD_URL_BASE}/`;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Admin123!234";
 
 function cookieValue(setCookie: string | null, name: string): string | null {

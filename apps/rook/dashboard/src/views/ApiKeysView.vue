@@ -134,7 +134,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 function maskKey(keyPrefix: string): string {
-  return keyPrefix + "...";
+  return `${keyPrefix}...`;
 }
 
 async function handleCreate() {

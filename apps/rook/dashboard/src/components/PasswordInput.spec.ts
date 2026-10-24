@@ -78,6 +78,6 @@ describe("PasswordInput", () => {
 
 		const emitted = wrapper.emitted("update:modelValue");
 		expect(emitted).toBeTruthy();
-		expect(emitted![emitted!.length - 1]).toEqual(["new value"]);
+		expect(emitted?.[emitted?.length - 1]).toEqual(["new value"]);
 	});
 });

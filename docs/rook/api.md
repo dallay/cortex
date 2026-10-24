@@ -1,717 +1,220 @@
 # API Reference
 
-Rook exposes an OpenAI-compatible HTTP API on the configured host:port (default: `127.0.0.1:3773`).
+Rook serves its OpenAI-compatible API on the configured host and port (default: `127.0.0.1:3773`). Management APIs use the authenticated admin session unless stated otherwise. Mutating management requests require the CSRF token in the `X-CSRF-Token` header and the matching cookie.
 
-## Endpoints
+## Endpoint index
 
-| Method   | Path                   | Description                       | Auth    |
-|----------|------------------------|-----------------------------------|---------|
-| `POST`   | `/v1/chat/completions` | OpenAI-compatible completions     | None    |
-| `GET`    | `/v1/models`           | List available models (dynamic)   | None    |
-| `POST`   | `/v1/messages`         | Anthropic-compatible messages     | None    |
-| `GET`    | `/health`              | Health check with circuit state  | None    |
-| `GET`    | `/api/resilience`             | Detailed circuit breaker state   | Session |
-| `POST`   | `/api/resilience/:provider/reset` | Reset circuit for a provider    | Session |
-| `GET`    | `/api/api-keys`       | List API keys (paginated)       | Session |
-| `POST`   | `/api/api-keys`       | Create API key                  | Session |
-| `GET`    | `/api/api-keys/{id}`  | Get API key details             | Session |
-| `PUT`    | `/api/api-keys/{id}`  | Update API key                  | Session |
-| `DELETE` | `/api/api-keys/{id}`  | Revoke API key (soft delete)   | Session |
-| `GET`    | `/login`              | Get CSRF token for login       | None    |
-| `POST`   | `/login`              | Login (create session)         | None    |
-| `POST`   | `/logout`             | Logout (revoke session)        | Session |
+| Method | Path | Authentication | Availability |
+|---|---|---|---|
+| `POST` | `/v1/chat/completions` | API key if configured; otherwise public | Always |
+| `GET` | `/v1/models` | API key if configured; otherwise public | Always |
+| `POST` | `/v1/messages` | API key if configured; otherwise public | Always |
+| `GET` | `/health` | Public | Always |
+| `GET` | `/login` | Public | Always |
+| `POST` | `/login` | Public + CSRF | Always |
+| `POST` | `/logout` | Admin session + CSRF | Always |
+| `GET` | `/api/me` | Admin session | Always |
+| `GET` | `/api/models` | Admin session | Always |
+| `GET`, `POST` | `/api/models/aliases` | Admin session | Always |
+| `DELETE` | `/api/models/aliases/{alias}` | Admin session | Always |
+| `GET`, `POST` | `/api/combos` | Admin session | Combo repository enabled |
+| `GET`, `PUT`, `DELETE` | `/api/combos/{id}` | Admin session | Combo repository enabled |
+| `GET`, `POST` | `/api/combos/{id}/aliases` | Admin session | Combo and combo-alias repositories enabled |
+| `DELETE` | `/api/combos/{id}/aliases/{alias}` | Admin session | Combo and combo-alias repositories enabled |
+| `GET`, `DELETE` | `/api/cache/stats`, `/api/cache`, `/api/cache/signatures`, `/api/cache/signature/{sig}`, `/api/cache/{signature}` | Admin session | Always mounted; cache operations depend on configured cache |
+| `GET` | `/api/usage`, `/api/usage/summary`, `/api/usage/cost` | Admin session | Always mounted; recorder may be unavailable |
+| `GET`, `POST`, `PUT`, `DELETE` | `/api/rate-limits...` | Admin session | Rate-limit store enabled |
+| `GET` | `/api/telemetry/summary`, `/api/telemetry/{provider}`, `/api/telemetry/{provider}/latency` | Public | Always; telemetry may be disabled |
+| `GET`, `POST` | `/api/resilience`, `/api/resilience/{provider}/reset` | Admin session | Always |
+| `POST` | `/api/oauth/{provider}/authorize`, `/api/oauth/{provider}/refresh` | Admin session + CSRF for POST | Connection management enabled |
+| `GET` | `/api/oauth/{provider}/status`, `/api/oauth/callback` | Admin session for status; provider redirect for callback | Connection management enabled |
+| `DELETE` | `/api/oauth/{provider}` | Admin session + CSRF | Connection management enabled |
 
-## POST /v1/chat/completions
+The `/api/models/aliases` prefix stores ordinary aliases from an alias to a canonical model. The `rook/` prefix is reserved for virtual combo aliases and cannot be created as a model alias.
 
-OpenAI-compatible chat completions endpoint.
+## `GET /health`
 
-### Request
-
-```json
-{
-  "model": "gpt-4o",
-  "messages": [
-    {"role": "system", "content": "You are helpful."},
-    {"role": "user", "content": "Hello"}
-  ],
-  "stream": false,
-  "max_tokens": 1024,
-  "temperature": 0.7
-}
-```
-
-| Field         | Type    | Required | Default | Description                            |
-|---------------|---------|----------|---------|----------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID (e.g., `gpt-4o`) or virtual combo `rook/<alias>` (no `X-Rook-Combo` together: `400 AMBIGUOUS_ROUTE`) |
-| `messages`    | array   | Yes      | —       | Array of message objects               |
-| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
-| `max_tokens`  | integer | No       | —       | Maximum tokens to generate             |
-| `temperature` | float   | No       | —       | Sampling temperature (0.0–2.0)         |
-| `n`           | integer | No       | `1`     | Ignored for now                        |
-
-### Message Object
-
-```json
-{
-  "role": "user",
-  "content": "Hello, world!"
-}
-```
-
-Valid roles: `system`, `user`, `assistant`, `developer`
-
-### Response (success)
-
-```json
-{
-  "id": "rook-{uuid}",
-  "object": "chat.completion",
-  "created": 1735689600,
-  "model": "gpt-4o",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Hello! How can I help you today?"
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 12,
-    "completion_tokens": 11,
-    "total_tokens": 23
-  }
-}
-```
-
-### Response (error — 503 All Providers Unavailable)
-
-```json
-{
-  "error": {
-    "type": "internal_error",
-    "code": "all_providers_exhausted",
-    "message": "All providers failed or are unavailable"
-  }
-}
-```
-
-### Response (error — 429 Rate Limited)
-
-Returns `Retry-After` header with retry delay in seconds.
-
-```json
-{
-  "error": {
-    "type": "rate_limit_exceeded",
-    "code": "rate_limited",
-    "message": "rate limited by openai-primary, retry after 30s"
-  }
-}
-```
-
-### Response (error — 500 Internal)
-
-```json
-{
-  "error": {
-    "type": "internal_error",
-    "code": null,
-    "message": "provider error: connection timeout"
-  }
-}
-```
-
-### Routing errors — `POST /v1/chat/completions` wire shapes
-
-`combo_id_from_headers` failures return the generic `HttpError` shape
-(`{"error": "<message>", "code": "<CODE>"}`), not the OpenAI `error.type` shape:
-
-```json
-// 400 model 'rook/coding' + X-Rook-Combo together
-{"error": "model selects a virtual combo and X-Rook-Combo is also present; send only one (code: ambiguous_route)", "code": "AMBIGUOUS_ROUTE"}
-```
-
-Unknown virtual alias is resolution (usecase 404), and differs between
-non-streaming and streaming paths:
-
-```json
-// 404 non-streaming: OpenAI error shape, lowercase code
-{"error": {"type": "invalid_request_error", "code": "model_not_found", "message": "...", "param": "model"}}
-// 404 streaming: generic HttpError shape, uppercase code
-{"error": "...", "code": "MODEL_NOT_FOUND"}
-```
-
----
-
-## GET /v1/models
-
-Returns the models available to the caller: registered provider models as
-`{provider}/{model}` plus accessible virtual `rook/*` combo aliases
-(`owned_by: "combo"`). Filtered by the caller's key restrictions when present.
-
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "openai-primary/gpt-4o", "object": "model", "created": 0, "owned_by": "openai-primary"},
-    {"id": "rook/coding", "object": "model", "created": 0, "owned_by": "combo"}
-  ]
-}
-```
-
----
-
-## POST /v1/messages
-
-Anthropic-compatible messages endpoint.
-
-### Request
-
-```json
-{
-  "model": "claude-opus-4-5",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ],
-  "max_tokens": 1024,
-  "temperature": 0.7
-}
-```
-
-| Field         | Type    | Required | Default | Description                        |
-|---------------|---------|----------|---------|------------------------------------|
-| `model`       | string  | Yes      | —       | Model ID or virtual combo `rook/<alias>` (unknown → `404 model_not_found`) |
-| `messages`    | array   | Yes      | —       | Array of message objects           |
-| `stream`      | bool    | No       | `false` | Enable streaming (SSE; combo fallback only before first event) |
-| `max_tokens`  | integer | Yes      | —       | Must be >= 1                       |
-| `temperature` | float   | No       | —       | Sampling temperature               |
-
-### Response (success)
-
-```json
-{
-  "id": "rook-{uuid}",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "Hello! How can I help you today?"
-    }
-  ],
-  "model": "claude-opus-4-5",
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {
-    "input_tokens": 10,
-    "output_tokens": 12
-  }
-}
-```
-
-### Response (error — 503)
-
-```json
-All providers unavailable
-```
-
-### Response (error — 500)
-
-```json
-provider error: connection timeout
-```
-
-### Routing errors — `POST /v1/messages` wire shapes
-
-Unlike OpenAI, the non-streaming Anthropic handler returns bare bodies
-(no JSON envelope) for routing failures:
-
-```text
-// 400 model 'rook/coding' + X-Rook-Combo together: HttpError JSON
-{"error": "model selects a virtual combo and X-Rook-Combo is also present; send only one (code: ambiguous_route)", "code": "AMBIGUOUS_ROUTE"}
-// 404 unknown virtual alias, non-streaming: bare 404 text body (no JSON)
-unknown virtual model 'rook/unknown'
-// 404 unknown virtual alias, streaming: generic HttpError JSON
-{"error": "...", "code": "MODEL_NOT_FOUND"}
-```
-
----
-
-## GET /health
-
-Aggregated health status of all configured providers with circuit breaker state.
-
-### Response
+Returns the current health snapshot without session authentication. The response contains `status`, `app_name`, `version`, `providers`, and `cache_stats`. Each provider includes `id`, `healthy`, `latency_ms`, and `last_error`; `circuit_state`, `failure_count`, and `cooldown_until` appear when circuit data exists. `latency_p95_ms` and `latency_avg_ms` appear when telemetry has observations. Cache stats include hits, misses, evictions, entries, capacity, and token-cache metrics.
 
 ```json
 {
   "status": "healthy",
   "providers": [
-    {
-      "id": "openai-primary",
-      "healthy": true,
-      "latency_ms": 45,
-      "last_error": null,
-      "circuit_state": "closed",
-      "failure_count": 0,
-      "cooldown_until": null
-    },
-    {
-      "id": "anthropic-primary",
-      "healthy": false,
-      "latency_ms": null,
-      "last_error": "HTTP 401",
-      "circuit_state": "open",
-      "failure_count": 3,
-      "cooldown_until": "2026-06-04T10:45:30Z"
-    }
+    { "id": "openai", "healthy": true, "latency_ms": 82, "last_error": null }
   ]
 }
 ```
 
-**Status values:**
+`status` is `healthy`, `degraded`, or `no_providers_configured`. Provider fields always include `id`, `healthy`, `latency_ms` (nullable), and `last_error` (nullable). When circuit data exists, provider objects also include `circuit_state`, `failure_count`, and `cooldown_until`; latency percentile fields are included when telemetry has observations. The response also includes `cache_stats`.
 
-- `"healthy"` — all providers are healthy
-- `"degraded"` — some providers are unhealthy
-- `"no_providers_configured"` — no providers are configured
+## `GET /api/models`
 
-**Provider fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Provider identifier |
-| `healthy` | boolean | Whether the provider is currently healthy |
-| `latency_ms` | integer | Last health check latency in milliseconds |
-| `last_error` | string | Last error message, or null if healthy |
-| `circuit_state` | string | `"closed"` or `"open"` — circuit breaker state |
-| `failure_count` | integer | Number of consecutive failures |
-| `cooldown_until` | string | ISO 8601 timestamp when circuit will attempt recovery, or null if closed |
-
----
-
-## GET /api/resilience
-
-Detailed circuit breaker state for all providers. Requires session authentication.
-
-### Response
+Requires admin session authentication. Lists models grouped by active provider connection. Inactive connections and provider kinds without catalog entries are omitted. The response uses camelCase fields.
 
 ```json
 {
-  "circuit_states": [
-    {
-      "provider": "openai-primary",
-      "failures": 0,
-      "state": "closed",
-      "last_failure": null,
-      "cooldown_until": null,
-      "rate_limit_reset": null
-    },
-    {
-      "provider": "anthropic-primary",
-      "failures": 3,
-      "state": "open",
-      "last_failure": "2026-06-04T10:45:00Z",
-      "cooldown_until": "2026-06-04T10:45:30Z",
-      "rate_limit_reset": 1717499130
-    }
+  "models": [
+    { "providerId": "openai", "providerName": "Primary OpenAI", "providerKind": "openai", "models": ["gpt-4o"] }
   ]
 }
 ```
 
-**Authentication:** Requires valid session cookie (same as `/api/*` management endpoints).
+## Model aliases
 
-**Response fields:**
+All alias endpoints require an admin session. The router is mounted at `/api/models/aliases`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `provider` | string | Provider identifier |
-| `failures` | integer | Number of consecutive failures |
-| `state` | string | `"closed"` or `"open"` — circuit breaker state |
-| `last_failure` | string | ISO 8601 timestamp of last failure, or null |
-| `cooldown_until` | string | ISO 8601 timestamp when circuit will attempt recovery, or null |
-| `rate_limit_reset` | integer | Unix epoch seconds when rate limit resets, or null |
+### `GET /api/models/aliases`
 
----
+Returns an array of alias records:
 
-## Authentication
-
-Rook uses session-based authentication for management endpoints (`/api/*`). The dashboard UI handles this automatically.
-
-### CSRF Protection
-
-All state-changing requests (`POST`, `PUT`, `DELETE`) require CSRF protection via the double-submit cookie pattern:
-
-1. `GET /login` —获取 CSRF token and `csrf_token` cookie
-2. `POST /login` — Include both `csrf_token` cookie and `X-CSRF-Token` header with the token value
-
-### Login Flow
-
-```bash
-# 1. Get CSRF token
-curl -c cookies.txt http://localhost:3773/login
-
-# 2. Login (extract token from response body or cookies.txt)
-curl -X POST http://localhost:3773/login \
-  -H "Content-Type: application/json" \
-  -H "X-CSRF-Token: <token-from-step-1>" \
-  -b cookies.txt \
-  -d '{"username":"admin","password":"your-password"}'
+```json
+[{ "alias": "fast", "canonical": "gpt-4o", "providerId": null, "createdAt": "2026-01-01T00:00:00+00:00" }]
 ```
 
-### CLI: Seed Admin Password
+### `POST /api/models/aliases`
 
-For initial setup or E2E testing, use the `seed-admin` CLI command to set the admin password:
+Requires CSRF. Request fields: `alias` (string), `canonical` (string), optional `providerId` (string or null). Success is `201 Created` with an empty body. Errors include `400 INVALID_ALIAS`, `400 INVALID_CANONICAL`, `400 ALIAS_CYCLE`, `400 ALIAS_ALREADY_EXISTS`, and `500 REPOSITORY_ERROR`. The reserved `rook/` namespace is rejected.
 
-```bash
-# Set admin password
-rook seed-admin <password>
-
-# Requires ROOK_CONFIG and API_KEY_HASH_SECRET environment variables
-ROOK_CONFIG=/path/to/rook.toml API_KEY_HASH_SECRET="secret" rook seed-admin mypassword
+```json
+{ "alias": "fast", "canonical": "gpt-4o", "providerId": "openai" }
 ```
 
----
+### `DELETE /api/models/aliases/{alias}`
 
-## GET /api/api-keys
+Requires CSRF. Returns `204 No Content`; a missing alias returns `404 ALIAS_NOT_FOUND`. Repository failures return `500 REPOSITORY_ERROR`.
 
-List all API keys with pagination. Requires authenticated session.
+## Combos and virtual combo aliases
 
-### Query Parameters
+These routes require an admin session and are mounted only when the combo repository exists. Alias-management routes also require the combo-alias repository.
 
-| Parameter | Type    | Default | Description                |
-|-----------|---------|---------|----------------------------|
-| `limit`   | integer | `20`    | Max keys to return (1-100) |
-| `offset`  | integer | `0`     | Number of keys to skip     |
+### Combo CRUD
 
-### Response
+- `GET /api/combos` returns `{ "combos": [ComboResponse] }`.
+- `POST /api/combos` accepts `name`, `strategy`, and `steps`; returns `201 Created` and a `ComboResponse`.
+- `GET /api/combos/{id}` returns a `ComboResponse` or `404`.
+- `PUT /api/combos/{id}` accepts the same shape as create and returns the updated `ComboResponse`.
+- `DELETE /api/combos/{id}` returns `204 No Content`.
+
+A request has this shape (unknown fields are rejected):
 
 ```json
 {
-  "keys": [
-    {
-      "id": "key_abc123",
-      "label": "opencode-agent",
-      "keyPrefix": "rk_abc1",
-      "scopes": ["read", "write"],
-      "tier": "free",
-      "isActive": true,
-      "revokedAt": null,
-      "expiresAt": null,
-      "createdAt": "2025-05-31T12:00:00Z",
-      "lastUsedAt": null
-    }
-  ],
-  "pagination": {
-    "total": 1,
-    "limit": 20,
-    "offset": 0
-  }
+  "name": "Primary then backup",
+  "strategy": "priority",
+  "steps": [
+    { "providerId": "openai", "model": "gpt-4o", "connectionId": null, "priority": 1 },
+    { "providerId": "anthropic", "model": "claude-sonnet", "connectionId": null, "priority": 2 }
+  ]
 }
 ```
 
----
+`ComboResponse` has `id`, `name`, `strategy`, `steps`, `createdAt`, and `updatedAt`; each step has `providerId`, `model`, `connectionId`, and `priority`. The only supported strategy is `priority`. Names must contain 1–100 characters. A combo must contain 1–10 steps, each with a unique integer priority from 1 to 255. Validation failures return `400 VALIDATION_ERROR`; missing records return `404`; repository conflicts/errors use the handler's mapped HTTP error.
 
-## POST /api/api-keys
+### Combo aliases
 
-Create a new API key. The plaintext key is returned **only once** — save it securely.
+- `GET /api/combos/{id}/aliases` returns an array of `{ "alias": "rook/coding", "comboId": "…" }`.
+- `POST /api/combos/{id}/aliases` accepts `{ "alias": "rook/coding" }` and returns `201 Created` with that response.
+- `DELETE /api/combos/{id}/aliases/{alias}` deletes one alias and returns `204 No Content`.
 
-### Request
+Aliases must use the `rook/` namespace. Invalid aliases return `400 INVALID_ALIAS`; an unknown combo returns `404`; duplicate or repository failures return the mapped conflict/internal error. These aliases target fallback combos, not canonical models.
 
-```json
-{
-  "label": "my-agent",
-  "scopes": ["read", "write"],
-  "tier": "free",
-  "expiresAt": null
-}
-```
+## Cache administration
 
-| Field       | Type     | Required | Description                            |
-|-------------|----------|----------|----------------------------------------|
-| `label`     | string   | Yes      | Human-readable name                    |
-| `scopes`    | string[] | Yes      | Permissions: `"read"`, `"write"`       |
-| `tier`      | string   | Yes      | `"free"`, `"pro"`, `"enterprise"`      |
-| `expiresAt` | string   | No       | ISO 8601 timestamp, null for no expiry |
+Requires an admin session. All cache responses are JSON unless the status is `204`.
 
-### Response (201 Created)
+| Method and path | Success | Errors |
+|---|---|---|
+| `GET /api/cache/stats` | `CacheStats` JSON, including signature and token-cache statistics | `500` on cache error |
+| `GET /api/cache/signatures` | Array of signature metadata entries | `500` on cache error |
+| `GET /api/cache/signature/{sig}` | Cached `CompletionResponse` | `400` invalid signature; `404` missing/expired signature; `500` cache error |
+| `DELETE /api/cache` | `204 No Content` | `500` on cache error |
+| `DELETE /api/cache/{signature}` | `204 No Content` (idempotent) | `400` unless signature is 64 hexadecimal characters; `500` on cache error |
 
-```json
-{
-  "key": {
-    "id": "key_abc123",
-    "label": "my-agent",
-    "keyPrefix": "rk_abc1",
-    "scopes": ["read", "write"],
-    "tier": "free",
-    "isActive": true,
-    "revokedAt": null,
-    "expiresAt": null,
-    "createdAt": "2025-05-31T12:00:00Z",
-    "lastUsedAt": null
-  },
-  "plaintextKey": "rk_Nk7_PBl1teOf9z01kPXWR-sPLlTmwhB..."
-}
-```
+A signature-list entry contains the signature, request ID, model, provider, cache timestamps, and request metadata. The detail endpoint returns the cached completion, not the signature-list entry.
 
-> ⚠️ **Important:** The `plaintextKey` is shown **only once** at creation time. Store it securely — it cannot be retrieved again.
+## Usage and cost
 
----
+Requires an admin session. The endpoints are mounted even when the usage recorder is not available; in that case they return `503 USAGE_RECORDER_UNAVAILABLE`.
 
-## GET /api/api-keys/{id}
+All three endpoints accept optional filters: `provider`, `model`, `apiKeyId`, `connectionId` (UUID), `start` and `end` (RFC 3339 timestamps), and `status`. The list endpoint also accepts `offset` and `limit` (non-negative integers; the limit is clamped to the server maximum).
 
-Get details for a specific API key.
+### `GET /api/usage`
 
-### Response
+Returns `{ "entries": [UsageEntry], "total": 1 }`. Entries include request ID, provider, model, status, tier/key/connection IDs, token counts, latency, estimated cost, and timestamp.
 
-```json
-{
-  "id": "key_abc123",
-  "label": "my-agent",
-  "keyPrefix": "rk_abc1",
-  "scopes": ["read", "write"],
-  "tier": "free",
-  "isActive": true,
-  "revokedAt": null,
-  "expiresAt": null,
-  "createdAt": "2025-05-31T12:00:00Z",
-  "lastUsedAt": null
-}
-```
+### `GET /api/usage/summary`
 
----
+Returns `UsageSummary`: `total_requests`, prompt/completion/cache/reasoning token totals, nullable `avg_ttft_ms`, and `avg_latency_ms`.
 
-## PUT /api/api-keys/{id}
+### `GET /api/usage/cost`
 
-Update an API key's metadata.
+Returns `CostBreakdown`: `total_cost_usd`, `known_cost_entries`, `unknown_cost_entries`, and maps `by_provider`, `by_model`, `by_api_key`. Unknown cost is not represented as a fabricated zero-valued known entry.
 
-### Request
+Invalid query values return `400` with codes including `INVALID_CONNECTION_ID`, `INVALID_DATE`, `INVALID_DATE_RANGE`, `INVALID_STATUS`, `INVALID_OFFSET`, or `INVALID_LIMIT`.
 
-All fields are optional (only supplied fields are updated):
+## Rate limits
 
-```json
-{
-  "label": "updated-name",
-  "scopes": ["read"],
-  "tier": "pro",
-  "isActive": false,
-  "expiresAt": "2026-12-31T23:59:59Z"
-}
-```
+Requires an admin session and a configured rate-limit store. If the store is disabled, these routes are not mounted.
 
-### Response
+| Method | Path | Request / response |
+|---|---|---|
+| `GET` | `/api/rate-limits` | Returns an array of rate-limit rules |
+| `POST` | `/api/rate-limits` | Creates a rule; returns `201` and the rule |
+| `PUT` | `/api/rate-limits/{id}` | Updates request limits; returns the rule |
+| `DELETE` | `/api/rate-limits/{id}` | Deletes a rule; returns `204` |
+| `GET` | `/api/rate-limits/{scope}/{target}/status` | Returns current counters, remaining quota, reset time, and active limits |
 
-Returns the updated API key record (same format as GET).
+Create requests use `scope` (`api-key`, `ip-address`, or `global`), `target`, required positive `requests_per_minute`, optional `requests_per_day`, and optional `tokens_per_minute`. `tokens_per_minute` is not enforced and is rejected with `400 UNSUPPORTED_LIMIT` when supplied. Updates accept optional request-per-minute/day limits. Validation errors return `400 VALIDATION_ERROR`; missing rules return `404`; duplicate identities return conflict. Global rules require target `global`; IP targets must parse as IP addresses.
 
----
+## Telemetry
 
-## DELETE /api/api-keys/{id}
+These endpoints are public and return `501 Not Implemented` with `{ "error": "Telemetry not enabled" }` when telemetry is disabled.
 
-Revoke an API key (soft delete). Sets `isActive=false` and `revokedAt=now()`.
+- `GET /api/telemetry/summary` returns `{ "providers": [ProviderSummary] }`.
+- `GET /api/telemetry/{provider}` returns one `ProviderSummary`, or `404` when the provider has no observations.
+- `GET /api/telemetry/{provider}/latency` returns percentile statistics (`p50`, `p95`, `p99`, `avg`, `min`, `max`, `count`), or `404` when no observations exist.
 
-### Response
+A `ProviderSummary` contains `provider_id`, `total_requests`, `success_count`, `failure_count`, `rate_limited_count`, and optional `latency_stats` and `ttft_stats` percentile objects.
 
-`204 No Content` on success.
+## Resilience
 
-Revoked keys cannot be re-activated. Create a new key instead.
+Requires an admin session. `GET /api/resilience` returns `{ "circuit_states": [...] }`; each item has `provider`, `failures`, `state` (`open` or `closed`), `last_failure`, `cooldown_until`, and `rate_limit_reset` (nullable Unix seconds).
 
----
+`POST /api/resilience/{provider}/reset` requires CSRF and returns `{ "reset": true }`. This resets the provider circuit.
 
-## Error Response Format
+## First-run bootstrap
 
-All errors follow OpenAI-style format for `/v1/chat/completions`:
+Both endpoints are public and intended for initial setup.
 
-```json
-{
-  "error": {
-    "type": "internal_error",
-    "code": "optional_error_code",
-    "message": "Human-readable error message",
-    "param": null
-  }
-}
-```
+- `GET /api/bootstrap/status` returns the bootstrap state; a read failure returns `500` with `bootstrap_status_failed`.
+- `POST /api/bootstrap/setup` accepts `{ "setup_token": "…", "password": "…" }`. On success it returns `{ "api_key": "…" }` and consumes the one-time setup token. Errors include `401 invalid_setup_token`, `409 already_initialized`, `503 setup_token_missing` or `api_keys_disabled`, and `500 bootstrap_setup_failed`.
 
-## Rate Limiting Headers
+## OAuth connection management
 
-When a provider returns a rate limit error, Rook returns:
+Mounted only when connection management is enabled. Management calls require an admin session; state-changing calls require CSRF. The callback is reached by the provider's browser redirect.
 
-```
-HTTP/1.1 429 Too Many Requests
-Retry-After: 30
-Content-Type: application/json
-```
+### `POST /api/oauth/{provider}/authorize`
 
-The `Retry-After` header value is derived from the provider's rate limit response. If not available, defaults to 60 seconds. Dynamic provider connections also enforce their configured `max_concurrent`; when local capacity is exhausted, requests can return `429 Too Many Requests` without starting an upstream request or marking the provider unhealthy.
+Starts an `authorizationCode` or `deviceCode` flow. The camelCase request has `flowType`, optional `connectionId`, `providerRuntimeId`, `name`, `priority`, `isActive`, provider `config`, `clientId`, optional `clientSecret`, optional `tenantId`, `redirectUri`, and optional `projectId`. Returns the OAuth flow-start DTO. Invalid flow/configuration returns `400`; unsupported provider/flow errors use the mapped management error.
 
-## CORS
+### `GET /api/oauth/{provider}/status`
 
-Set `ALLOWED_ORIGINS` before starting Rook to a comma-separated list of browser origins (`scheme://host[:port]`). Whitespace around entries is trimmed. CORS compares each entry exactly with the request's `Origin` header: scheme, host spelling, and port must match; subdomains, trailing slashes, and other localhost ports are not implicitly allowed, including in debug builds.
+Pass `flowId` to inspect a flow, or `connectionId` to inspect an OAuth connection. A flow response has `flowId`, `providerKind`, `status`, `message`, and `connectionId`. A connection response has `connectionId`, `providerKind`, `status`, `expiresAt`, `updatedAt`, and optional `message`. Missing or mismatched records return `404`; absent or invalid identifiers return `400`.
 
-When unset, the allowed origins are `http://localhost:3000`, `http://localhost:4747`, and `http://127.0.0.1:3000`. Setting the variable replaces these defaults. An empty value allows no cross-origin browser access. Same-origin requests do not require a CORS allowance.
+### `POST /api/oauth/{provider}/refresh`
 
-Wildcard (`*`) entries are unsupported and fail closed: if `ALLOWED_ORIGINS` contains `*`, no cross-origin browser access is allowed and Rook logs a warning. Use explicit origins only. Exact matches receive `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials: true`, and `Vary: Origin`; unlisted origins receive neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Credentials`. CORS does not replace authentication or reject the HTTP request itself.
+Accepts `{ "connectionId": "uuid" }`. Returns `204 No Content` on success; provider, connection, or refresh errors use the mapped management error.
 
-Preflight `OPTIONS` requests return `204 No Content`. Allowed methods are `GET, POST, PUT, DELETE, OPTIONS`; allowed request headers are `Content-Type, Authorization, X-API-Key`; the preflight cache lifetime is 86400 seconds.
+### `DELETE /api/oauth/{provider}`
 
-See [browser and OAuth configuration](configuration.md#browser-origins-and-oauth-callbacks) for deployment examples.
+Accepts `{ "connectionId": "uuid" }`. Returns `204 No Content` on success; errors use the mapped management error.
 
-## OAuth Callback URLs
+### `GET /api/oauth/callback`
 
-Authorization-code flows started through `POST /api/oauth/{provider}/authorize` validate `redirectUri` before returning an authorization URL:
+The provider redirects with `state` and `code`; on cancellation it may send `error` and `state`. Returns a small HTML success/cancellation page. Missing state/code or a failed authorization returns the mapped HTTP error.
 
-- The URL must be absolute, use the exact path `/api/oauth/callback`, and contain no username, password, query, or fragment.
-- Non-loopback callbacks require HTTPS and an explicit origin in `ALLOWED_ORIGINS`. Matching uses scheme, case-insensitive host, and effective port (omitted HTTPS port equals `443`). Different ports and subdomains require separate entries.
-- `localhost`, `127.0.0.1`, and `[::1]` callbacks may use HTTP or HTTPS on any port without an allowlist entry. The path and other URL restrictions still apply. This exception does not expand the CORS allowlist.
-- `*` is unsupported for CORS and does not authorize OAuth callbacks. Configure each HTTPS callback origin explicitly.
+## Authentication and CSRF
 
-Invalid or unlisted callbacks return `400 Bad Request` with code `VALIDATION_ERROR` and message `OAuth operation failed`. Register the same callback URL with your OAuth provider.
+Management APIs use a session cookie. `GET /login` obtains a CSRF token and cookie. `POST /login` accepts the configured credentials and requires the CSRF cookie plus matching `X-CSRF-Token`; on success it creates the session. `POST /logout` revokes the session and also requires CSRF. Other mutating admin APIs follow the same CSRF requirement.
 
-## Model Alias Namespace
-
-`rook/*` names are reserved for virtual combo aliases. Creating an ordinary model alias through `POST /api/models/aliases` with a `rook/` prefix returns `400 Bad Request` with code `INVALID_ALIAS`. This check ignores case and surrounding whitespace. Virtual combo requests, including streams, enforce the API key's model and provider restrictions and may return `403 Forbidden` when access is denied.
-
-## Request IDs
-
-Each incoming request is assigned a `rook-{uuid}` ID for tracing. Audit entries record the original request ID for correlation.
-
----
-
-## Rate Limit Admin API
-
-When `[rate_limiting].enabled = true`, admin users can manage custom request-ingress rate limit rules via `/api/rate-limits` endpoints. Active global, API-key, and IP-address rules are enforced for authenticated `CLIENT_API` requests to `/v1/*`; the most restrictive matching rule applies. The admin API itself is excluded from these rules to prevent administrative lockout. This endpoint enforces requests per minute and requests per day only; token-per-minute limits are unsupported here because request token usage is not coupled to this ingress limiter. Provider-aware token limits belong to provider routing and usage accounting.
-
-All endpoints require admin session authentication.
-
-### GET /api/rate-limits
-
-List all rate limit rules.
-
-**Response:**
-
-```json
-[
-  {
-    "id": "rl_key_a1b2c3d4",
-    "scope": "api-key",
-    "target": "key_abc123",
-    "requests_per_minute": 120,
-    "requests_per_day": 5000
-  }
-]
-```
-
-### POST /api/rate-limits
-
-Create a new rate limit rule.
-
-**Request:**
-
-```json
-{
-  "scope": "api-key",
-  "target": "key_abc123",
-  "requests_per_minute": 120,
-  "requests_per_day": 5000
-}
-```
-
-| Field                  | Type   | Required | Description                                      |
-|------------------------|--------|----------|--------------------------------------------------|
-| `scope`                | enum   | Yes      | `"api-key"`, `"ip-address"`, or `"global"`       |
-| `target`               | string | Yes      | API key ID, IP address, or `"global"`            |
-| `requests_per_minute`  | u32    | Yes      | Maximum requests per minute (must be > 0)        |
-| `requests_per_day`     | u32    | No       | Maximum requests per day                         |
-| `tokens_per_minute`    | u32    | No       | Unsupported; non-null values are rejected with `UNSUPPORTED_LIMIT` |
-
-**Response:** `201 Created` with the created rule including generated `id`.
-
-**Validation:**
-- `target` cannot be empty
-- IP-address targets must be valid IPv4 or IPv6 addresses; invalid values return `400 Bad Request` with code `VALIDATION_ERROR`. Accepted addresses are stored and returned in canonical form (for example, `2001:0DB8:0:0:0:0:0:1` becomes `2001:db8::1`). Equivalent spellings identify the same rule.
-- `scope: "global"` must have `target: "global"`
-- `requests_per_minute` must be greater than 0
-- Non-null `tokens_per_minute` is rejected with `400 Bad Request` and code `UNSUPPORTED_LIMIT`.
-- Only one rule can exist for each `(scope, target)` pair; duplicates return `409 Conflict` with code `DUPLICATE_RULE`.
-
-### PUT /api/rate-limits/:id
-
-Update an existing rate limit rule.
-
-**Request:** all fields are optional. `tokens_per_minute` may be omitted or `null`; a non-null value is rejected.
-
-```json
-{
-  "requests_per_minute": 200,
-  "requests_per_day": 10000
-}
-```
-
-**Validation:** A non-null `tokens_per_minute` returns `400 Bad Request` with code `UNSUPPORTED_LIMIT`. Omit the field or send `null` to leave it unset.
-
-**Response:** `200 OK` with the updated rule.
-
-### DELETE /api/rate-limits/:id
-
-Delete a rate limit rule.
-
-**Response:** `204 No Content`
-
-### GET /api/rate-limits/:scope/:target/status
-
-Get current counters and active request limits for a specific target. Returns `404 Not Found` when that target has no rule. `reset_at` is the next minute boundary unless the daily limit is exhausted, in which case it is the next day boundary (the later reset applies when both limits are exhausted).
-
-Use `api_key`, `ip_address`, or `global` for the status URL's scope segment. Use the canonical IP returned at creation for IP status lookups.
-
-`reset_at` is the next minute boundary unless the daily quota is exhausted, in which case it is midnight UTC at the start of the next day. Daily exhaustion persists across minute boundaries. The request limiter uses the same daily reset for `Retry-After` and `X-Admin-RateLimit-Reset` when RPD blocks.
-
-**Example:** `GET /api/rate-limits/api_key/key_abc123/status`
-
-**Response:**
-
-```json
-{
-  "scope": "api-key",
-  "target": "key_abc123",
-  "current_minute_count": 45,
-  "current_day_count": 2300,
-  "remaining_minute": 55,
-  "remaining_day": 2700,
-  "active_requests_per_minute": 120,
-  "active_requests_per_day": 5000,
-  "reset_at": "2026-06-03T13:04:00Z"
-}
-```
-
----
-
-## Rate Limit Headers
-
-All API responses include rate limit metadata headers:
-
-| Header                  | Description                                    |
-|-------------------------|------------------------------------------------|
-| `X-RateLimit-Limit`     | Maximum requests in current window             |
-| `X-RateLimit-Remaining` | Remaining requests in current window           |
-| `X-RateLimit-Reset`     | Unix timestamp when limit resets               |
-
-When an administrator-defined ingress rule matches, responses also include `X-Admin-RateLimit-Limit`, `X-Admin-RateLimit-Remaining`, and `X-Admin-RateLimit-Reset`. These separate headers preserve the built-in authz tier limiter metadata. Requests without a matching custom rule do not receive these custom headers.
-
-When rate limited (HTTP 429):
-
-| Header        | Description                    |
-|---------------|--------------------------------|
-| `Retry-After` | Seconds until limit resets     |
-
-**Example 429 response:**
-
-```json
-{
-  "error": "rate_limit_exceeded",
-  "message": "API key rate limit exceeded. Please try again later.",
-  "code": "RATE_LIMITED",
-  "retry_after": 42
-}
-```
+For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, the CLI command is `rook seed-admin <password>`.
