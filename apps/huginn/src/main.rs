@@ -18,6 +18,13 @@ use huginn_runtime::{
 use std::{collections::BTreeSet, io::Write, path::PathBuf, sync::Arc};
 use terminal::{Input, LinePrompt, Output};
 
+fn resolve_workspace(explicit: Option<PathBuf>) -> std::io::Result<PathBuf> {
+    match explicit {
+        Some(workspace) => Ok(workspace),
+        None => std::env::current_dir(),
+    }
+}
+
 fn escape_terminal_value(value: &str) -> String {
     value.chars().fold(String::new(), |mut escaped, character| {
         if character.is_control()
@@ -34,6 +41,24 @@ fn escape_terminal_value(value: &str) -> String {
 #[cfg(test)]
 mod terminal_value_tests {
     use super::escape_terminal_value;
+    use std::path::PathBuf;
+
+    #[test]
+    fn uses_explicit_workspace_without_resolving_current_directory() {
+        let explicit = PathBuf::from("/workspace/that/does/not/need/current-dir");
+        assert_eq!(
+            super::resolve_workspace(Some(explicit.clone())).unwrap(),
+            explicit
+        );
+    }
+
+    #[test]
+    fn falls_back_to_current_directory_when_workspace_is_not_provided() {
+        assert_eq!(
+            super::resolve_workspace(None).unwrap(),
+            std::env::current_dir().unwrap()
+        );
+    }
 
     #[test]
     fn escapes_control_characters_before_terminal_output() {
@@ -254,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if matches!(cli.command, Some(Commands::Skills { .. })) {
         use huginn_application::skills::SkillCatalogQuery;
-        let workspace = cli.workspace.clone().unwrap_or(std::env::current_dir()?);
+        let workspace = resolve_workspace(cli.workspace.clone())?;
         let home = std::env::var_os("HOME")
             .filter(|p| !p.is_empty())
             .map(PathBuf::from);
