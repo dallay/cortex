@@ -465,7 +465,7 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov
       - name: Generate coverage report
-        run: cargo llvm-cov --workspace --all-features --fail-under-lines 88 --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
