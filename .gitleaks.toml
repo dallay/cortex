@@ -50,4 +50,5 @@ regexes = [
   '''fake_google_access_token''',
   '''resolve_api_key_secret''',
   '''generate_setup_token''',
+  '''strong_password_fixture''',
 ]
