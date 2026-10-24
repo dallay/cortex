@@ -1,4 +1,5 @@
 mod auth;
+mod prompts;
 mod terminal;
 
 use anyhow::Context;
@@ -474,6 +475,7 @@ async fn run_prompt_loop(
     router_configured: bool,
 ) -> anyhow::Result<()> {
     if let Some(prompt) = prompt {
+        let prompt = prompts::expand(session, prompt)?;
         prompt_adapter.reset_turn();
         let cancel = CancellationToken::new();
         return interruptible(
@@ -520,6 +522,13 @@ async fn run_prompt_loop(
             }
             continue;
         }
+        let line = match prompts::expand(session, line) {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("\n{error}");
+                continue;
+            }
+        };
         prompt_adapter.reset_turn();
         let cancel = CancellationToken::new();
         if let Err(error) = interruptible(
@@ -621,6 +630,27 @@ async fn tui_chat(
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
+    let catalog = prompts::catalog(session)?;
+    ui.set_prompt_templates(
+        catalog
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    format!("/prompts:{}", entry.name),
+                    format!(
+                        "{} {} [{}]",
+                        entry.description,
+                        entry.argument_hint,
+                        if entry.project { "proyecto" } else { "usuario" }
+                    ),
+                )
+            })
+            .collect(),
+    );
+    for diagnostic in catalog.diagnostics {
+        ui.notification(diagnostic);
+    }
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
@@ -636,6 +666,10 @@ async fn tui_chat(
                 ui.synchronize(session);
                 continue;
             }
+            let prompt = match prompts::expand(session, prompt) {
+                Ok(prompt) => prompt,
+                Err(error) => { ui.notification(error.to_string()); continue; }
+            };
             let cancel = CancellationToken::new();
             let operation = ui.begin(cancel.clone());
             let scoped_events = huginn_core::ScopedEventSink { sink: ui.as_ref(), operation };

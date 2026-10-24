@@ -17,6 +17,8 @@ test-hooks = ["huginn-application/test-hooks"]
 skip_feature_sets = [["test-hooks"]]
 
 [dependencies]
+cap-std = "=4.0.3"
+cap-fs-ext = "=4.0.3"
 huginn-application = { path = "../application" }
 huginn-core = { path = "../core" }
 async-trait.workspace = true

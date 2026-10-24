@@ -6,6 +6,7 @@ pub mod instructions;
 pub mod loop_engine;
 pub mod mcp;
 pub mod model;
+pub mod prompts;
 pub mod providers;
 pub mod sessions;
 pub mod skills;

@@ -500,6 +500,7 @@ pub struct Ui {
     pub save_ui_config: SaveUiConfig,
     requests: tokio::sync::Mutex<()>,
     prompts: tokio::sync::Mutex<mpsc::Receiver<String>>,
+    prompt_templates: Mutex<Vec<(String, String)>>,
 }
 impl Ui {
     pub fn new(
@@ -552,6 +553,7 @@ impl Ui {
             save_ui_config,
             requests: tokio::sync::Mutex::new(()),
             prompts: tokio::sync::Mutex::new(receiver),
+            prompt_templates: Mutex::new(Vec::new()),
         });
         (ui, sender)
     }
@@ -575,6 +577,9 @@ impl Ui {
 
     pub fn dispatch_command(&self, line: &str) -> bool {
         let line = line.trim();
+        if line.starts_with("/prompts:") {
+            return false;
+        }
         let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
         // Host short-circuit: `/settings` lives entirely inside presentation.
         // There is no plugin contribution for it, no CommandResult::Settings.
@@ -796,11 +801,21 @@ impl Ui {
         drop(retired);
         self.dirty.notify_one();
     }
+    /// Host supplies metadata only; presentation never reads template files.
+    pub fn set_prompt_templates(&self, templates: Vec<(String, String)>) {
+        *self
+            .prompt_templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = templates;
+        self.dirty.notify_one();
+    }
+
     pub fn refresh_completion(&self, model_configured: bool) -> bool {
         let mut commands: Vec<CatalogCommand> = self
             .contributions
             .commands()
             .into_iter()
+            .filter(|command| !command.name.starts_with("/prompts:"))
             .map(Into::into)
             .collect();
         commands.extend([
@@ -813,6 +828,16 @@ impl Ui {
                 CatalogCommand::host("/compact", "Summarize history with confirmation"),
                 CatalogCommand::host("/summarize", "Summarize history with confirmation"),
             ]);
+        }
+        for (name, description) in self
+            .prompt_templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+        {
+            if !commands.iter().any(|command| command.name == *name) {
+                commands.push(CatalogCommand::host(name, description));
+            }
         }
         let catalog: Vec<_> = commands
             .iter()
@@ -1431,6 +1456,9 @@ impl ApprovalPrompt for Ui {
 }
 #[async_trait]
 impl Interaction for Ui {
+    fn set_prompt_templates(&self, templates: Vec<(String, String)>) {
+        Self::set_prompt_templates(self, templates);
+    }
     async fn prompt(&self) -> Option<String> {
         let mut prompts = self.prompts.lock().await;
         let prompt = tokio::select! { biased; _ = self.stop.cancelled() => None, prompt = prompts.recv() => prompt };
