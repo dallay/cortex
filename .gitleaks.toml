@@ -18,6 +18,13 @@ id = "generic_secret"
 description = "Generic Secret"
 regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
+  [[rules.allowlists]]
+  description = "Generated password fixture in bootstrap status tests"
+  condition = "AND"
+  regexTarget = "match"
+  paths = ['''^crates/application/rook-usecases/src/auth/bootstrap_status\.rs$''']
+  regexes = ['''(?i)^password:\s*strong_password_fixture$''']
+
 [[rules]]
 id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"
@@ -50,5 +57,4 @@ regexes = [
   '''fake_google_access_token''',
   '''resolve_api_key_secret''',
   '''generate_setup_token''',
-  '''strong_password_fixture''',
 ]
