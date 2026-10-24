@@ -16,6 +16,64 @@ fn snapshot(workspace: &Path, home: &Path) -> huginn_application::skills::SkillC
         .unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn project_skills_root_symlink_outside_repository_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let repo = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    fs::write(repo.path().join(".git"), "gitdir: /elsewhere").unwrap();
+    write(external.path(), "outside", valid("outside"));
+    let project_skills = repo.path().join(".agents/skills");
+    fs::create_dir_all(project_skills.parent().unwrap()).unwrap();
+    symlink(external.path().join(".agents/skills"), &project_skills).unwrap();
+
+    let catalog = snapshot(repo.path(), home.path());
+
+    assert!(catalog.skills.is_empty());
+    let diagnostic = catalog
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "project_escape")
+        .unwrap();
+    assert_eq!(diagnostic.severity, "security");
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_skill_parent_path_is_rejected_without_panicking_during_serialization() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let non_utf8 = std::ffi::OsStr::from_bytes(b"bad-\xff");
+    let repo_path = temporary.path().join(non_utf8).join("repo");
+    fs::create_dir_all(&repo_path).unwrap();
+    fs::write(repo_path.join(".git"), "gitdir: /elsewhere").unwrap();
+    let directory = repo_path.join(".agents/skills/valid");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("SKILL.md"), valid("valid")).unwrap();
+
+    let catalog = snapshot(&repo_path, home.path());
+
+    assert_eq!(catalog.skills.len(), 1);
+    let identity = catalog.skills[0].identity();
+    let identity_fields: serde_json::Value = serde_json::from_str(&identity).unwrap();
+    assert!(identity_fields[1].as_str().unwrap().contains("6261642dff"));
+    let json = catalog.to_json();
+    assert_eq!(
+        json["skills"][0]["logical_path"],
+        catalog.skills[0].logical_path.to_string_lossy().as_ref()
+    );
+    let selected = [identity.clone()];
+    let announcement = catalog.announcement(&selected).unwrap();
+    let entries: serde_json::Value =
+        serde_json::from_str(announcement.lines().last().unwrap()).unwrap();
+    assert_eq!(entries[0]["identity"], identity);
+}
+
 #[test]
 fn scopes_nearest_git_precedence_sorting_and_no_recursion() {
     let repo = tempfile::tempdir().unwrap();

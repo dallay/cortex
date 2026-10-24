@@ -388,7 +388,7 @@ impl StandardLoop {
             if let Some(previous) = &session.skill_catalog_fingerprint {
                 if previous != &fingerprint {
                     let sources: Vec<_> = catalog.skills.iter().take(8).map(|entry| {
-                        serde_json::json!({"scope": entry.source_scope.as_str(), "canonical_path": entry.canonical_path})
+                        serde_json::json!({"scope": entry.source_scope.as_str(), "canonical_path": entry.canonical_path.to_string_lossy()})
                     }).collect();
                     let sources = crate::output::bounded_text(serde_json::to_string(&sources)?);
                     self.record(session, Event::Error { message: format!("Skill catalog changed (global/project sources in workspace {:?}): previous {previous}, current {fingerprint}. Current source sample: {sources}. Removed sources may be absent. Refresh skill identities; no instructions or effects were replayed.", session.workspace) }, sink).await?;

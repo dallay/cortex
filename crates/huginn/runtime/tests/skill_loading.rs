@@ -14,6 +14,46 @@ fn skill(root: &Path, name: &str, body: &str) {
     .unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn non_utf8_skill_path_loads_without_panicking() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let workspace = temporary
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"repo-\xff"));
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join(".git"), "gitdir: /elsewhere").unwrap();
+    let directory = workspace.join(".agents/skills/review");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("SKILL.md"),
+        "---\nname: review\ndescription: valid\n---\ninstructions\n",
+    )
+    .unwrap();
+
+    let catalog = FilesystemSkillCatalog.refresh(&workspace, None).unwrap();
+    let identity = catalog.skills[0].identity();
+    let loader = FilesystemSkillLoader::new(None);
+    let selected = [identity.clone()];
+    let result = loader
+        .load(&workspace, &identity, &selected, CancellationToken::new())
+        .await
+        .unwrap();
+    let encoded: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(encoded["identity"], identity);
+    assert!(encoded["canonical_path"]
+        .as_str()
+        .unwrap()
+        .contains("repo-"));
+    assert!(encoded["instructions"]
+        .as_str()
+        .unwrap()
+        .ends_with("instructions\n"));
+}
+
 #[tokio::test]
 async fn project_override_hides_same_name_global_from_announcement_and_loading() {
     let workspace = tempfile::tempdir().unwrap();
@@ -84,6 +124,40 @@ async fn metadata_is_global_only_and_load_revalidates_content() {
         )
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn non_utf8_skill_document_is_rejected_with_path_diagnostic() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let skill_dir = workspace.path().join(".agents/skills/binary");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            b"---\nname: binary\ndescription: test\n---\n\xff",
+        )
+        .unwrap();
+
+        let catalog = FilesystemSkillCatalog
+            .refresh(workspace.path(), None)
+            .unwrap();
+
+        assert!(catalog.skills.is_empty());
+        let diagnostic = catalog
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "invalid_utf8")
+            .expect("invalid UTF-8 must be reported, not silently loaded");
+        assert!(diagnostic
+            .path
+            .as_os_str()
+            .as_bytes()
+            .ends_with(b"SKILL.md"));
+        assert_eq!(diagnostic.severity, "error");
+    }
 }
 
 #[tokio::test]

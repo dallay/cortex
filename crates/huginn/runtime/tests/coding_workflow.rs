@@ -1291,9 +1291,19 @@ async fn skills_follow_normal_tool_context_and_warn_on_resume_without_replay() {
         original,
         serde_json::to_value(&resumed.messages[..session.messages.len()]).unwrap()
     );
-    assert!(events.0.lock().unwrap().iter().any(
-        |e| matches!(e, Event::Error { message } if message.contains("Skill catalog changed"))
-    ));
+    let events = events.0.lock().unwrap();
+    let warning = events
+        .iter()
+        .find_map(|event| match event {
+            Event::Error { message } if message.contains("Skill catalog changed") => Some(message),
+            _ => None,
+        })
+        .expect("catalog changes should be reported on resume");
+    assert!(warning.contains("huginn-skill-catalog-v1:"));
+    assert!(warning.contains("Current source sample:"));
+    assert!(warning.contains("Removed sources may be absent"));
+    assert!(warning.contains(workspace.path().to_str().unwrap()));
+    drop(events);
     assert_eq!(
         resumed
             .messages
