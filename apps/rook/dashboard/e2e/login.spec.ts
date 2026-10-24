@@ -29,7 +29,7 @@ test.describe("Login page — proxy bypass", () => {
 		await page.goto("/login");
 
 		// Raw JSON would be visible as plain text in <body>; make sure it is not
-		const bodyText = await page.locator("body").innerText();
+		const bodyText = await page.locator("body").textContent();
 		expect(bodyText).not.toMatch(/^\s*\{.*csrf_token.*\}\s*$/);
 	});
 });

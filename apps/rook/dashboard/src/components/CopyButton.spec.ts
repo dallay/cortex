@@ -181,8 +181,7 @@ describe("CopyButton", () => {
 		expect(wrapper.find("button").attributes("aria-label")).toBe("Copied");
 
 		// Restore
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		delete (document as any).execCommand;
+		Reflect.deleteProperty(document, "execCommand");
 	});
 
 	it("uses DOM fallback when clipboard is undefined (jsdom/no HTTPS)", async () => {
@@ -194,8 +193,7 @@ describe("CopyButton", () => {
 			value: execCommandMock,
 			configurable: true,
 		});
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		delete (navigator as any).clipboard;
+		Reflect.deleteProperty(navigator, "clipboard");
 
 		const wrapper = mount(CopyButton, {
 			props: { value: "no-clipboard-env" },
@@ -209,8 +207,7 @@ describe("CopyButton", () => {
 		expect(wrapper.find("button").attributes("aria-label")).toBe("Copied");
 
 		// Restore for other tests
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		delete (document as any).execCommand;
+		Reflect.deleteProperty(document, "execCommand");
 		if (desc) {
 			Object.defineProperty(navigator, "clipboard", desc);
 		}

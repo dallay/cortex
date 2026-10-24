@@ -19,7 +19,7 @@ import {CATEGORIES, type CategoryKind} from "@/config/providerCatalog";
 
 export type CategoryFilter = CategoryKind | "all";
 
-const props = defineProps<{
+const _props = defineProps<{
   searchQuery: string;
   activeCategory: CategoryFilter;
 }>();

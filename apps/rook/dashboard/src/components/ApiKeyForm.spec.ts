@@ -376,7 +376,7 @@ describe("ApiKeyForm", () => {
 			await adminCheckbox.setValue(true);
 			const emitted = wrapper.emitted("update:modelValue");
 			expect(emitted).toBeTruthy();
-			const last = (emitted!.at(-1) as unknown as [ApiKeyFormState])[0];
+			const last = emitted?.at(-1)?.[0] as ApiKeyFormState;
 			expect(last.scopes).toContain("admin");
 		});
 
@@ -388,7 +388,7 @@ describe("ApiKeyForm", () => {
 			await chatReadCheckbox.setValue(false);
 			const emitted = wrapper.emitted("update:modelValue");
 			expect(emitted).toBeTruthy();
-			const last = (emitted!.at(-1) as unknown as [ApiKeyFormState])[0];
+			const last = emitted?.at(-1)?.[0] as ApiKeyFormState;
 			expect(last.scopes).not.toContain("chat:read");
 		});
 	});
@@ -412,8 +412,8 @@ describe("ApiKeyForm", () => {
 			);
 			expect(cb.exists(), "provider checkbox should exist").toBe(true);
 			await cb.setValue(true);
-			const emitted = wrapper.emitted("update:modelValue")!;
-			const last = (emitted.at(-1) as unknown as [ApiKeyFormState])[0];
+			const emitted = wrapper.emitted("update:modelValue") ?? [];
+			const last = emitted.at(-1)?.[0] as ApiKeyFormState;
 			expect(last.allowedProviders).toContain("p1");
 		});
 
@@ -427,14 +427,14 @@ describe("ApiKeyForm", () => {
 
 			// Click group checkbox to check all openai providers (p1)
 			await groupCb.setValue(true);
-			const emittedOn = wrapper.emitted("update:modelValue")!;
-			const stateOn = (emittedOn.at(-1) as unknown as [ApiKeyFormState])[0];
+			const emittedOn = wrapper.emitted("update:modelValue") ?? [];
+			const stateOn = emittedOn.at(-1)?.[0] as ApiKeyFormState;
 			expect(stateOn.allowedProviders).toContain("p1");
 
 			// Click again to uncheck all openai providers
 			await groupCb.setValue(false);
-			const emittedOff = wrapper.emitted("update:modelValue")!;
-			const stateOff = (emittedOff.at(-1) as unknown as [ApiKeyFormState])[0];
+			const emittedOff = wrapper.emitted("update:modelValue") ?? [];
+			const stateOff = emittedOff.at(-1)?.[0] as ApiKeyFormState;
 			expect(stateOff.allowedProviders).not.toContain("p1");
 		});
 	});
@@ -476,8 +476,8 @@ describe("ApiKeyForm", () => {
 			);
 			expect(cb.exists(), "model checkbox should exist").toBe(true);
 			await cb.setValue(true);
-			const emitted = wrapper.emitted("update:modelValue")!;
-			const last = (emitted.at(-1) as unknown as [ApiKeyFormState])[0];
+			const emitted = wrapper.emitted("update:modelValue") ?? [];
+			const last = emitted.at(-1)?.[0] as ApiKeyFormState;
 			expect(last.allowedModels).toContain("gpt-4o");
 		});
 	});
@@ -519,8 +519,8 @@ describe("ApiKeyForm", () => {
 				'[data-testid="input-api-key-label"]',
 			);
 			await input.setValue("new-label");
-			const emitted = wrapper.emitted("update:modelValue")!;
-			const last = (emitted.at(-1) as unknown as [ApiKeyFormState])[0];
+			const emitted = wrapper.emitted("update:modelValue") ?? [];
+			const last = emitted.at(-1)?.[0] as ApiKeyFormState;
 			expect(last.label).toBe("new-label");
 		});
 	});

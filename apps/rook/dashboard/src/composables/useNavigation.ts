@@ -19,6 +19,22 @@ import { navigationConfig } from "@/config/navigation";
 // Key must match the `icon` field in navigation.ts config
 // Icons are default exports from their individual .mjs files
 const iconRegistry: Record<string, () => Promise<Component>> = {
+	ShieldCheck: () =>
+		import("@lucide/vue/dist/esm/icons/shield-check.mjs").then(
+			(m) => m.default,
+		),
+	Activity: () =>
+		import("@lucide/vue/dist/esm/icons/activity.mjs").then((m) => m.default),
+	Database: () =>
+		import("@lucide/vue/dist/esm/icons/database.mjs").then((m) => m.default),
+	ChartNoAxesCombined: () =>
+		import("@lucide/vue/dist/esm/icons/chart-no-axes-combined.mjs").then(
+			(m) => m.default,
+		),
+	Gauge: () =>
+		import("@lucide/vue/dist/esm/icons/gauge.mjs").then((m) => m.default),
+	Tags: () =>
+		import("@lucide/vue/dist/esm/icons/tags.mjs").then((m) => m.default),
 	CircleDot: () =>
 		import("@lucide/vue/dist/esm/icons/circle-dot.mjs").then((m) => m.default),
 	FileSliders: () =>
@@ -49,7 +65,11 @@ function resolveIcon(name: string): Component {
 		console.warn(
 			`[useNavigation] Icon "${name}" not found in registry. Falling back to Home.`,
 		);
-		return defineAsyncComponent(iconRegistry.Home!);
+		const fallbackIcon = iconRegistry.Home;
+		if (!fallbackIcon) {
+			throw new Error("Home icon is missing from the navigation registry.");
+		}
+		return defineAsyncComponent(fallbackIcon);
 	}
 	return defineAsyncComponent(loader);
 }

@@ -60,6 +60,36 @@ export const navigationConfig = {
 			icon: "CircleDot",
 		},
 		{
+			titleKey: "nav.modelAliases",
+			url: "/model-aliases",
+			icon: "Tags",
+		},
+		{
+			titleKey: "nav.usage",
+			url: "/usage",
+			icon: "ChartNoAxesCombined",
+		},
+		{
+			titleKey: "nav.rateLimits",
+			url: "/rate-limits",
+			icon: "Gauge",
+		},
+		{
+			titleKey: "nav.cache",
+			url: "/cache",
+			icon: "Database",
+		},
+		{
+			titleKey: "nav.telemetry",
+			url: "/telemetry",
+			icon: "Activity",
+		},
+		{
+			titleKey: "nav.resilience",
+			url: "/resilience",
+			icon: "ShieldCheck",
+		},
+		{
 			titleKey: "nav.settings",
 			url: "/settings",
 			icon: "Settings",

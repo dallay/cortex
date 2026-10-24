@@ -62,7 +62,7 @@ export default defineConfig({
 					// Browser navigation sends Accept: text/html — serve the SPA so
 					// Vue Router handles the /login route. XHR/fetch calls (CSRF token
 					// retrieval) send Accept: */* and must reach the backend.
-					const accept = req.headers["accept"] ?? "";
+					const accept = req.headers.accept ?? "";
 					if (req.method === "GET" && accept.includes("text/html")) {
 						return "/index.html";
 					}

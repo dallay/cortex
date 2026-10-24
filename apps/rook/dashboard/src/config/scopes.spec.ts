@@ -23,7 +23,7 @@ describe("SCOPES registry", () => {
 	it("flags the admin scope as dangerous", () => {
 		const admin = SCOPES.find((s) => s.value === "admin");
 		expect(admin).toBeDefined();
-		expect(admin!.danger).toBe(true);
+		expect(admin?.danger).toBe(true);
 	});
 
 	it("does not flag non-admin scopes as dangerous", () => {
