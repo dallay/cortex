@@ -45,6 +45,7 @@ pub trait Interaction: ApprovalPrompt + EventSink {
     fn notification(&self, text: String);
     fn status(&self, text: String);
     fn diagnostic(&self, text: String);
+    fn set_prompt_templates(&self, _templates: Vec<(String, String)>) {}
 }
 
 #[async_trait]

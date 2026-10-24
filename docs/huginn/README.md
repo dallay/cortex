@@ -18,6 +18,9 @@ Local Rust coding assistant with native tools and MCP integration
 
 ---
 
+Las [plantillas Markdown de tareas](prompt-templates.md) permiten reutilizar
+prompts con `/prompts:nombre` en la TUI, modo línea y `huginn run`.
+
 ## 🎯 What is Huginn?
 
 Huginn is a **local coding agent** built in Rust that works with your codebase. Unlike cloud-based AI assistants, Huginn runs entirely on your machine.

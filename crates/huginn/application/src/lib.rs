@@ -4,5 +4,6 @@ pub mod composition;
 pub mod connections;
 pub mod loop_engine;
 pub mod output;
+pub mod prompts;
 pub mod providers;
 pub mod skills;

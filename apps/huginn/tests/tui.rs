@@ -213,3 +213,30 @@ fn provider_onboarding_search_cancel_and_resize_restore_terminal() {
     let output = pty.finish(true);
     assert!(!output.contains("panicked"));
 }
+
+#[test]
+fn prompt_template_tui_submits_and_persists_expanded_user_text() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let root = workspace.path().join(".huginn/prompts");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("review.md"),
+        "Review $1 with focus $2; context: $@",
+    )
+    .unwrap();
+    let db = data.path().join("sessions.db");
+    let mut pty = Pty::start(command(workspace.path(), &db), true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[200~/prompts:review src/lib.rs \"thread safety\"\x1b[201~\r");
+    pty.wait_for("Offline mock: Review src/lib.rs");
+    pty.send("\x03");
+    pty.finish(true);
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let data: String = connection
+        .query_row("SELECT data FROM sessions LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&data).unwrap();
+    assert!(value["messages"].as_array().unwrap().iter().any(|m|
+        m["role"] == "user" && m["content"] == "Review src/lib.rs with focus thread safety; context: src/lib.rs thread safety"));
+}
