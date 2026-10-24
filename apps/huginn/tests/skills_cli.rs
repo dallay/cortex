@@ -1,8 +1,23 @@
+use huginn::resolve_workspace;
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+
+#[test]
+fn uses_explicit_workspace_without_resolving_current_directory() {
+    let explicit = PathBuf::from("/workspace/that/does/not/need/current-dir");
+    assert_eq!(resolve_workspace(Some(explicit.clone())).unwrap(), explicit);
+}
+
+#[test]
+fn falls_back_to_current_directory_when_workspace_is_not_provided() {
+    assert_eq!(
+        resolve_workspace(None).unwrap(),
+        std::env::current_dir().unwrap()
+    );
+}
 
 fn command(home: &Path, workspace: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_huginn"));

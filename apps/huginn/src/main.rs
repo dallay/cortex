@@ -5,7 +5,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use huginn::{
     config::{Config, ModelReadiness},
-    ui_settings,
+    resolve_workspace, ui_settings,
 };
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
@@ -18,13 +18,6 @@ use huginn_runtime::{
 use std::{collections::BTreeSet, io::Write, path::PathBuf, sync::Arc};
 use terminal::{Input, LinePrompt, Output};
 
-fn resolve_workspace(explicit: Option<PathBuf>) -> std::io::Result<PathBuf> {
-    match explicit {
-        Some(workspace) => Ok(workspace),
-        None => std::env::current_dir(),
-    }
-}
-
 fn escape_terminal_value(value: &str) -> String {
     value.chars().fold(String::new(), |mut escaped, character| {
         if character.is_control()
@@ -36,43 +29,6 @@ fn escape_terminal_value(value: &str) -> String {
         }
         escaped
     })
-}
-
-#[cfg(test)]
-mod terminal_value_tests {
-    use super::escape_terminal_value;
-    use std::path::PathBuf;
-
-    #[test]
-    fn uses_explicit_workspace_without_resolving_current_directory() {
-        let explicit = PathBuf::from("/workspace/that/does/not/need/current-dir");
-        assert_eq!(
-            super::resolve_workspace(Some(explicit.clone())).unwrap(),
-            explicit
-        );
-    }
-
-    #[test]
-    fn falls_back_to_current_directory_when_workspace_is_not_provided() {
-        assert_eq!(
-            super::resolve_workspace(None).unwrap(),
-            std::env::current_dir().unwrap()
-        );
-    }
-
-    #[test]
-    fn escapes_control_characters_before_terminal_output() {
-        assert_eq!(
-            escape_terminal_value("workspace\nforged: value"),
-            "workspace\\nforged: value"
-        );
-        assert_eq!(escape_terminal_value("tab\tvalue"), "tab\\tvalue");
-        assert_eq!(
-            escape_terminal_value("\u{061c}\u{200e}\u{200f}\u{0085}\u{2069}"),
-            "\\u{61c}\\u{200e}\\u{200f}\\u{85}\\u{2069}"
-        );
-        assert_eq!(escape_terminal_value("café ☕ 日本語"), "café ☕ 日本語");
-    }
 }
 
 #[derive(Parser)]
