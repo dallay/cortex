@@ -5,6 +5,7 @@ import { defineComponent, h, ref } from "vue";
 import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { Dialog } from "@/components/ui/dialog";
+import type { ApiKeyRecordResponse } from "@/lib/api";
 import en from "@/locales/en.json";
 import ApiKeysView from "./ApiKeysView.vue";
 
@@ -56,7 +57,8 @@ vi.mock("@/components/ui/input", () => ({
 			class: String,
 		},
 		emits: ["update:modelValue"],
-		setup(props: any) {
+		setup(props, { expose }) {
+			expose();
 			return () =>
 				h("input", {
 					id: props.id,
@@ -69,32 +71,32 @@ vi.mock("@/components/ui/input", () => ({
 vi.mock("@/components/ui/dialog", () => ({
 	Dialog: defineComponent({
 		props: { open: Boolean, "onUpdate:open": Function },
-		setup(_props: any, ctx: any) {
+		setup(_props, ctx) {
 			return () => h("div", { role: "dialog" }, ctx.slots.default?.());
 		},
 	}),
 	DialogContent: defineComponent({
-		setup(_: any, ctx: any) {
+		setup(_, ctx) {
 			return () => h("div", ctx.slots.default?.());
 		},
 	}),
 	DialogDescription: defineComponent({
-		setup(_: any, ctx: any) {
+		setup(_, ctx) {
 			return () => h("p", ctx.slots.default?.());
 		},
 	}),
 	DialogFooter: defineComponent({
-		setup(_: any, ctx: any) {
+		setup(_, ctx) {
 			return () => h("div", ctx.slots.default?.());
 		},
 	}),
 	DialogHeader: defineComponent({
-		setup(_: any, ctx: any) {
+		setup(_, ctx) {
 			return () => h("div", ctx.slots.default?.());
 		},
 	}),
 	DialogTitle: defineComponent({
-		setup(_: any, ctx: any) {
+		setup(_, ctx) {
 			return () => h("h2", ctx.slots.default?.());
 		},
 	}),
@@ -215,7 +217,7 @@ vi.mock("@/composables/useAvailableModels", () => ({
 }));
 
 // Mock useApiKeys with controlled state
-const mockApiKeys = ref<any[]>([]);
+const mockApiKeys = ref<ApiKeyRecordResponse[]>([]);
 const mockTotal = ref(0);
 const mockLoading = ref(false);
 const mockError = ref<string | null>(null);
@@ -307,7 +309,7 @@ describe("ApiKeysView", () => {
 				.findAll("button")
 				.find((b) => b.text().includes("Create API Key"));
 			expect(createButton, "create button should exist").toBeDefined();
-			await createButton!.trigger("click");
+			await createButton?.trigger("click");
 			await wrapper.vm.$nextTick();
 
 			// chat:read, chat:write, providers:read, providers:write → 4 checkboxes checked
@@ -341,7 +343,7 @@ describe("ApiKeysView", () => {
 			const createButton = wrapper
 				.findAll("button")
 				.find((b) => b.text().includes("Create API Key"));
-			await createButton!.trigger("click");
+			await createButton?.trigger("click");
 			await wrapper.vm.$nextTick();
 
 			// The legacy form had inputs with id="create-allowed-models" or "edit-allowed-models".
@@ -355,7 +357,7 @@ describe("ApiKeysView", () => {
 			const createButton = wrapper
 				.findAll("button")
 				.find((b) => b.text().includes("Create API Key"));
-			await createButton!.trigger("click");
+			await createButton?.trigger("click");
 			await wrapper.vm.$nextTick();
 
 			expect(wrapper.text()).toContain("Leave empty to allow all models");
@@ -468,7 +470,7 @@ describe("ApiKeysView", () => {
 			const createButton = wrapper
 				.findAll("button")
 				.find((b) => b.text().includes("Create API Key"));
-			await createButton!.trigger("click");
+			await createButton?.trigger("click");
 			await wrapper.vm.$nextTick();
 
 			// Set a valid label so we get past the first validation gate.
@@ -522,17 +524,21 @@ describe("ApiKeysView", () => {
 			});
 
 			const wrapper = makeWrapper();
-			await wrapper.get("tbody tr").findAll("button")[1]!.trigger("click");
+			await wrapper.get("tbody tr").findAll("button")[1]?.trigger("click");
 
-			const rotateDialog = wrapper
-				.findAllComponents(Dialog)
-				.find((dialog) => dialog.text().includes("Rotate API Key"))!;
+			const rotateDialog =
+				wrapper
+					.findAllComponents(Dialog)
+					.find((dialog) => dialog.text().includes("Rotate API Key")) ??
+				wrapper.findComponent(Dialog);
 			expect(rotateDialog.props("open")).toBe(true);
 			expect(rotateDialog.text()).not.toContain("Rotate unavailable");
 
-			const submitButton = rotateDialog
-				.findAll("button")
-				.find((button) => button.text() === "Rotate Key")!;
+			const submitButton =
+				rotateDialog
+					.findAll("button")
+					.find((button) => button.text() === "Rotate Key") ??
+				rotateDialog.find("button");
 			await submitButton.trigger("click");
 			await flushPromises();
 

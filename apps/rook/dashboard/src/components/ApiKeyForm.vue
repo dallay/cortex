@@ -123,7 +123,7 @@ const providersByKind = computed(() => {
     if (!groups.has(kind)) {
       groups.set(kind, []);
     }
-    groups.get(kind)!.push(provider);
+    groups.get(kind)?.push(provider);
   }
   return groups;
 });
@@ -319,7 +319,7 @@ function scopeSlug(value: string): string {
               />
               <span class="text-sm font-medium">
                 {{ getCatalogEntry(kind)?.displayNameKey
-                    ? $t(getCatalogEntry(kind)!.displayNameKey)
+                    ? $t(getCatalogEntry(kind)?.displayNameKey ?? kind)
                     : kind }}
               </span>
               <Badge variant="secondary" class="text-xs">

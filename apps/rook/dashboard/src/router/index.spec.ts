@@ -252,7 +252,7 @@ describe("router route definitions", () => {
 			(r) => r.name === "Provider Details",
 		);
 		expect(providerDetails?.beforeEnter).toBeDefined();
-		const beforeEnter = providerDetails!.beforeEnter as (to: {
+		const beforeEnter = providerDetails?.beforeEnter as (to: {
 			params: Record<string, unknown>;
 		}) => unknown;
 

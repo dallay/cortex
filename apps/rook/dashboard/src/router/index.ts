@@ -90,6 +90,36 @@ const routes: RouteRecordRaw[] = [
 				component: () => import("../views/CombosView.vue"),
 			},
 			{
+				path: "model-aliases",
+				name: "Model Aliases",
+				component: () => import("../views/ModelAliasesView.vue"),
+			},
+			{
+				path: "usage",
+				name: "Usage",
+				component: () => import("../views/UsageView.vue"),
+			},
+			{
+				path: "rate-limits",
+				name: "Rate Limits",
+				component: () => import("../views/RateLimitsView.vue"),
+			},
+			{
+				path: "cache",
+				name: "Cache",
+				component: () => import("../views/CacheView.vue"),
+			},
+			{
+				path: "resilience",
+				name: "Resilience",
+				component: () => import("../views/ResilienceView.vue"),
+			},
+			{
+				path: "telemetry",
+				name: "Telemetry",
+				component: () => import("../views/TelemetryView.vue"),
+			},
+			{
 				path: "settings",
 				name: "Settings",
 				component: () => import("../views/SettingsView.vue"),

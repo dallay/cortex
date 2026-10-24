@@ -8,11 +8,20 @@ import {
   Key,
   TrendingUp,
 } from "@lucide/vue";
+import {onMounted} from "vue";
 import {useI18n} from "vue-i18n";
 import {RouterLink} from "vue-router";
 import {useHealth} from "@/composables/useHealth";
+import {useHomeMetrics} from "@/composables/useHomeMetrics";
 
 const {t} = useI18n();
+const {apiKeyCount, usage, cost, fetch: fetchMetrics} = useHomeMetrics();
+onMounted(() => void fetchMetrics());
+const displayedCost = () => {
+  if (!cost.value || cost.value.known_cost_entries + cost.value.unknown_cost_entries === 0 || cost.value.known_cost_entries === 0) return null;
+  return new Intl.NumberFormat(undefined, {style: "currency", currency: "USD", maximumFractionDigits: 4}).format(cost.value.total_cost_usd);
+};
+const metricValue = (value: number | null | undefined) => value == null ? t("home.metricUnavailable") : value.toLocaleString();
 
 const {
   data: health,
@@ -53,7 +62,7 @@ const {
               <CheckCircle2 v-if="health?.status === 'healthy'" class="h-4 w-4 text-green-500" />
               <AlertCircle v-else-if="health?.status === 'degraded'" class="h-4 w-4 text-yellow-500" />
               <span class="text-lg font-semibold capitalize">
-                {{ health?.status || (loading ? '...' : 'unknown') }}
+                {{ health?.status || (loading ? '...' : t('home.metricUnavailable')) }}
               </span>
             </div>
           </div>
@@ -68,9 +77,9 @@ const {
           <div>
             <p class="text-sm text-muted-foreground">{{ t('home.activeProviders') }}</p>
             <p class="text-2xl font-semibold">
-              {{ loading ? '...' : healthyProviders.length }}
-              <span class="text-sm font-normal text-muted-foreground">
-                / {{ health?.providers.length || 0 }}
+              {{ loading ? '...' : metricValue(healthyProviders.length) }}
+              <span v-if="health" class="text-sm font-normal text-muted-foreground">
+                / {{ metricValue(health.providers.length) }}
               </span>
             </p>
           </div>
@@ -85,8 +94,8 @@ const {
           <div>
             <p class="text-sm text-muted-foreground">{{ t('home.avgLatency') }}</p>
             <p class="text-2xl font-semibold">
-              {{ loading ? '...' : (averageLatency ?? '—') }}
-              <span v-if="averageLatency" class="text-sm font-normal text-muted-foreground">ms</span>
+              {{ loading ? '...' : metricValue(averageLatency) }}
+              <span v-if="averageLatency != null" class="text-sm font-normal text-muted-foreground">ms</span>
             </p>
           </div>
         </div>
@@ -99,11 +108,17 @@ const {
           </div>
           <div>
             <p class="text-sm text-muted-foreground">{{ t('home.apiKeys') }}</p>
-            <p class="text-2xl font-semibold">—</p>
+            <p class="text-2xl font-semibold">{{ metricValue(apiKeyCount) }}</p>
           </div>
         </div>
       </div>
     </div>
+
+    <section v-if="usage || cost" class="grid gap-4 md:grid-cols-3" :aria-label="t('home.usageSummary')">
+      <div v-if="usage" class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.requests24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage.total_requests) }}</p></div>
+      <div v-if="usage" class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.tokens24h') }}</p><p class="text-2xl font-semibold">{{ metricValue(usage.total_prompt_tokens + usage.total_completion_tokens) }}</p></div>
+      <div class="rounded-lg border bg-card p-4"><p class="text-sm text-muted-foreground">{{ t('home.cost7d') }}</p><p class="text-2xl font-semibold">{{ displayedCost() ?? t('home.costUnknown') }}</p></div>
+    </section>
 
     <!-- Quick Actions -->
     <div class="grid gap-4 md:grid-cols-3">

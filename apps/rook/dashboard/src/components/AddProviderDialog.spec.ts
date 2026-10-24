@@ -916,7 +916,7 @@ describe("AddProviderDialog — edit mode", () => {
 		expect(mockState.remove).toHaveBeenCalledWith(conn.id);
 		const deleted = wrapper.emitted("deleted");
 		expect(deleted).toBeTruthy();
-		expect(deleted!.at(-1)).toEqual([conn.id]);
+		expect(deleted?.at(-1)).toEqual([conn.id]);
 	});
 });
 
