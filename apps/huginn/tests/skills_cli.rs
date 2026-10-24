@@ -155,7 +155,7 @@ fn absent_home_is_valid_and_skills_does_not_change_legacy_instructions() {
     assert!(before.contains("Existing rules"));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn json_handles_non_utf8_source_and_diagnostic_paths_without_panicking() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
