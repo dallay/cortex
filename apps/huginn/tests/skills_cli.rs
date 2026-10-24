@@ -21,9 +21,11 @@ fn falls_back_to_current_directory_when_workspace_is_not_provided() {
 
 fn command(home: &Path, workspace: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_huginn"));
+    command.env_clear().env("HOME", home);
+    if let Some(profile_file) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile_file);
+    }
     command
-        .env_clear()
-        .env("HOME", home)
         .arg("--workspace")
         .arg(workspace)
         .stdin(Stdio::null());
