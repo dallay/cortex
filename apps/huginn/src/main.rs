@@ -494,7 +494,11 @@ async fn run_prompt_loop(
         let Some(line) = line else {
             break;
         };
-        let line = line.trim().to_string();
+        let line = if line.trim_start().starts_with("/skill:") {
+            line
+        } else {
+            line.trim().to_string()
+        };
         if matches!(line.as_str(), "/quit" | "/exit") {
             break;
         }
@@ -629,26 +633,26 @@ async fn tui_chat(
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
+    let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+    let catalog = prompts::catalog(session)?;
+    let mut host_commands = implementation
+        .0
+        .skill_commands(&session.workspace, CancellationToken::new())
+        .await?;
+    host_commands.extend(catalog.entries.iter().map(|entry| {
+        (
+            format!("/prompts:{}", entry.name),
+            format!(
+                "{} {} [{}]",
+                entry.description,
+                entry.argument_hint,
+                if entry.project { "proyecto" } else { "usuario" }
+            ),
+        )
+    }));
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
-    let catalog = prompts::catalog(session)?;
-    ui.set_prompt_templates(
-        catalog
-            .entries
-            .iter()
-            .map(|entry| {
-                (
-                    format!("/prompts:{}", entry.name),
-                    format!(
-                        "{} {} [{}]",
-                        entry.description,
-                        entry.argument_hint,
-                        if entry.project { "proyecto" } else { "usuario" }
-                    ),
-                )
-            })
-            .collect(),
-    );
+    ui.set_prompt_templates(host_commands);
     for diagnostic in catalog.diagnostics {
         ui.notification(diagnostic);
     }
@@ -669,7 +673,11 @@ async fn tui_chat(
             }
             let prompt = match prompts::expand(session, prompt) {
                 Ok(prompt) => prompt,
-                Err(error) => { ui.notification(error.to_string()); continue; }
+                Err(error) => {
+                    ui.notification(error.to_string());
+                    ui.synchronize(session);
+                    continue;
+                }
             };
             let cancel = CancellationToken::new();
             let operation = ui.begin(cancel.clone());

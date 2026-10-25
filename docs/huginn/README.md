@@ -181,7 +181,10 @@ remain unsupported. Secrets must only be entered in the host-owned masked form.
 un modelo, abrir SQLite ni iniciar MCP. `huginn --json skills list` devuelve
 entradas, diagnósticos y una huella SHA-256. Consulta el
 [contrato del catálogo](skills.md) para rutas, límites y política de enlaces.
-Las skills se consideran no confiables y no se cargan al modelo en esta fase.
+El listado no carga cuerpos al modelo. Para invocar una skill, usa
+`/skill:<nombre> [tarea]` en la TUI, modo línea o `huginn run`.
+La TUI ofrece nombres y descripciones en el autocompletado. La carga conserva
+la procedencia no confiable y no concede permisos adicionales.
 
 ### Command Reference
 

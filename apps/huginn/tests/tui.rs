@@ -17,6 +17,122 @@ fn command(workspace: &Path, db: &Path) -> CommandBuilder {
     command.arg(db);
     command
 }
+
+#[test]
+fn rejected_template_expansion_releases_composer_without_starting_a_turn() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let directory = workspace.path().join(".huginn/prompts");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("indirect.md"), "/skill:review task").unwrap();
+    std::fs::write(directory.join("required.md"), "Review $2").unwrap();
+    let db = home.path().join("sessions.db");
+    let mut cmd = command(workspace.path(), &db);
+    cmd.env("HOME", home.path());
+    let mut pty = Pty::start(cmd, true);
+    pty.wait_for("Huginn");
+    for (input, error, follow_up) in [
+        (
+            "/prompts:indirect",
+            "prompt templates cannot invoke skills",
+            "after indirect rejection",
+        ),
+        ("/prompts:required one", "$2", "after missing argument"),
+    ] {
+        pty.send(&format!("\x1b[200~{input}\x1b[201~\r"));
+        pty.wait_for(error);
+        pty.send(&format!("\x1b[200~{follow_up}\x1b[201~\r"));
+        pty.wait_for(&format!("Offline mock: {follow_up}"));
+    }
+    pty.send("/quit\r");
+    pty.finish(true);
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let data: String = connection
+        .query_row("SELECT data FROM sessions LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&data).unwrap();
+    let messages = saved["messages"].as_array().unwrap();
+    let users: Vec<_> = messages
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .map(|message| message["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        users,
+        ["after indirect rejection", "after missing argument"]
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["role"] == "assistant")
+            .count(),
+        2
+    );
+    assert_eq!(
+        saved["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] == "turn_started")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn skills_complete_with_description_and_direct_unknown_requests_do_not_infer() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let directory = workspace.path().join(".agents/skills/review");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("SKILL.md"),
+        "---\nname: review\ndescription: Review local changes\n---\nReview safely",
+    )
+    .unwrap();
+    let db = home.path().join("sessions.db");
+    let mut cmd = command(workspace.path(), &db);
+    cmd.env("HOME", home.path());
+    let mut pty = Pty::start(cmd, true);
+    pty.wait_for("Huginn");
+    pty.send("/skill:rev");
+    pty.wait_for("/skill:review");
+    pty.wait_for("Review local changes");
+    // Tab inserts only; task text remains literal, including trailing spaces.
+    pty.send("\t");
+    pty.send("\x1b[200~  \"quoted\" \\path  \x1b[201~\r");
+    pty.wait_for("Offline mock: Explicit user skill request");
+    pty.send("\x1b[200~/skill:unknown task\x1b[201~\r");
+    pty.wait_for("unknown or unavailable skill");
+    // An unknown command must release the composer for the next direct invocation.
+    pty.send("\x1b[200~/skill:review direct\x1b[201~\r");
+    pty.wait_for("direct");
+    pty.send("/quit\r");
+    pty.finish(true);
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let data: String = connection
+        .query_row("SELECT data FROM sessions LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&data).unwrap();
+    let users: Vec<_> = saved["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .collect();
+    assert_eq!(users.len(), 2);
+    let envelope: serde_json::Value = serde_json::from_str(
+        users[0]["content"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(envelope["task"], " \"quoted\" \\path  ");
+    assert!(!data.contains("unknown task"));
+}
 #[test]
 fn first_run_opens_tui_without_configured_model() {
     let home = tempfile::tempdir().unwrap();
