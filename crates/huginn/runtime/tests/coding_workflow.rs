@@ -103,6 +103,98 @@ impl huginn_core::ApprovalPrompt for DenyPrompt {
     }
 }
 
+struct FailsAfterPreflight {
+    inner: huginn_runtime::skills::FilesystemSkillLoader,
+    catalog_calls: std::sync::atomic::AtomicUsize,
+    preflight_fingerprint: Mutex<Option<String>>,
+}
+#[async_trait]
+impl huginn_application::skills::SkillLoader for FailsAfterPreflight {
+    async fn catalog(
+        &self,
+        workspace: &std::path::Path,
+        cancel: CancellationToken,
+    ) -> Result<huginn_application::skills::SkillCatalog> {
+        use std::sync::atomic::Ordering;
+        if self.catalog_calls.fetch_add(1, Ordering::SeqCst) > 0 {
+            return Err(AgentError::Tool("unexpected catalog refresh".into()));
+        }
+        let catalog = self.inner.catalog(workspace, cancel).await?;
+        *self.preflight_fingerprint.lock().unwrap() = Some(catalog.fingerprint.clone());
+        Ok(catalog)
+    }
+
+    async fn load(
+        &self,
+        workspace: &std::path::Path,
+        identity: &str,
+        selected: &[String],
+        cancel: CancellationToken,
+    ) -> Result<String> {
+        self.inner.load(workspace, identity, selected, cancel).await
+    }
+}
+
+#[tokio::test]
+async fn explicit_skill_uses_preflight_catalog_after_user_persistence() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    write_invoked_skill(workspace.path(), "PRE-FLIGHT BODY");
+    let model = Arc::new(Script {
+        replies: Mutex::new(VecDeque::from([vec![
+            ModelDelta::Text("ok".into()),
+            ModelDelta::Finished,
+        ]])),
+        requests: Mutex::new(vec![]),
+    });
+    let (mut engine, _) = fixture(model.clone(), &data.path().join("sessions.db"));
+    let loader = Arc::new(FailsAfterPreflight {
+        inner: huginn_runtime::skills::FilesystemSkillLoader::new(None),
+        catalog_calls: std::sync::atomic::AtomicUsize::new(0),
+        preflight_fingerprint: Mutex::new(None),
+    });
+    engine.config.skills = Some(loader.clone());
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    engine
+        .run(
+            &mut session,
+            "/skill:review exact task".into(),
+            &Policy(false),
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    use std::sync::atomic::Ordering;
+    assert_eq!(loader.catalog_calls.load(Ordering::SeqCst), 1);
+    let fingerprint = loader
+        .preflight_fingerprint
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    assert_eq!(
+        session.skill_catalog_fingerprint.as_deref(),
+        Some(format!("huginn-skill-catalog-v1:{fingerprint}").as_str())
+    );
+    let requests = model.requests.lock().unwrap();
+    let user = requests[0]
+        .messages
+        .iter()
+        .find(|message| message.role == Role::User)
+        .unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(user.content.lines().last().unwrap()).unwrap();
+    assert_eq!(envelope["task"], "exact task");
+    assert_eq!(envelope["skill"]["trust"], "untrusted");
+    assert!(requests[0].messages.iter().any(|message| {
+        message.role == Role::System
+            && message.content.contains("Skill catalog")
+            && message.content.contains("review")
+    }));
+}
+
 #[tokio::test]
 async fn explicit_skill_is_lower_trust_and_cannot_grant_effect_authority_on_resume() {
     let workspace = tempfile::tempdir().unwrap();

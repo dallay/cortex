@@ -106,7 +106,8 @@ fn skills_complete_with_description_and_direct_unknown_requests_do_not_infer() {
     pty.wait_for("unknown or unavailable skill");
     // An unknown command must release the composer for the next direct invocation.
     pty.send("\x1b[200~/skill:review direct\x1b[201~\r");
-    pty.wait_for("direct");
+    pty.wait_for(r#""task":"direct""#);
+    pty.wait_for("Huginn — Enter sends / Alt+Enter newline / /help");
     pty.send("/quit\r");
     pty.finish(true);
     let connection = rusqlite::Connection::open(db).unwrap();

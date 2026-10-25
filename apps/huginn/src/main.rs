@@ -588,6 +588,34 @@ async fn run_compact(
     agent_loop.compact(session, output, cancel).await
 }
 
+fn skill_completion_result<E: std::fmt::Display>(
+    result: Result<Vec<(String, String)>, E>,
+) -> (Vec<(String, String)>, Option<String>) {
+    match result {
+        Ok(commands) => (commands, None),
+        Err(error) => (
+            Vec::new(),
+            Some(format!("Skill completion unavailable: {error}")),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod skill_completion_tests {
+    use super::skill_completion_result;
+
+    #[test]
+    fn discovery_failure_keeps_tui_completions_optional() {
+        let (commands, notification) =
+            skill_completion_result(Err(anyhow::anyhow!("catalog unavailable")));
+        assert!(commands.is_empty());
+        assert_eq!(
+            notification.as_deref(),
+            Some("Skill completion unavailable: catalog unavailable")
+        );
+    }
+}
+
 async fn tui_chat(
     config: &Config,
     cli_config: Option<&std::path::Path>,
@@ -633,12 +661,15 @@ async fn tui_chat(
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
-    let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
     let catalog = prompts::catalog(session)?;
-    let mut host_commands = implementation
-        .0
-        .skill_commands(&session.workspace, CancellationToken::new())
-        .await?;
+    let skill_result = {
+        let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+        implementation
+            .0
+            .skill_commands(&session.workspace, CancellationToken::new())
+            .await
+    };
+    let (mut host_commands, skill_error) = skill_completion_result(skill_result);
     host_commands.extend(catalog.entries.iter().map(|entry| {
         (
             format!("/prompts:{}", entry.name),
@@ -653,6 +684,9 @@ async fn tui_chat(
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
     ui.set_prompt_templates(host_commands);
+    if let Some(message) = skill_error {
+        ui.notification(message);
+    }
     for diagnostic in catalog.diagnostics {
         ui.notification(diagnostic);
     }
