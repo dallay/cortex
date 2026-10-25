@@ -18,6 +18,37 @@ fn command(workspace: &Path, db: &Path) -> CommandBuilder {
     command
 }
 #[test]
+fn first_run_opens_tui_without_configured_model() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    command.args(["--workspace"]);
+    command.arg(workspace.path());
+    command.args(["--db"]);
+    command.arg(&db);
+    command.env("HOME", home.path());
+    command.env("XDG_CONFIG_HOME", home.path());
+    command.env_remove("HUGINN_BASE_URL");
+    command.env_remove("HUGINN_MODEL");
+    command.env_remove("HUGINN_API_KEY");
+    command.env_remove("AGENT_BASE_URL");
+    command.env_remove("AGENT_MODEL");
+    command.env_remove("AGENT_API_KEY");
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.wait_for("No model configured");
+    pty.send("hello\r");
+    pty.wait_for("then /model. No restart needed.");
+    // Enter must work again after the unconfigured prompt is rejected.
+    pty.send("/quit\r");
+    let output = pty.finish(true);
+    assert!(!output.contains("Offline mock:"), "got: {output}");
+    assert!(!output.contains("Set HUGINN_BASE_URL and HUGINN_MODEL"));
+}
+
+#[test]
 fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
@@ -95,12 +126,16 @@ fn non_tty_default_fails_clearly_and_explicit_line_recovery_works() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"hello\n/quit\n")
+        .write_all(b"/settings\nhello\n/quit\n")
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Offline mock: hello"));
     assert!(!output.stdout.contains(&0x1b));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains("TUI settings"));
+    assert!(!text.contains("Settings saved"));
+    assert!(!text.contains("Settings discarded"));
 }
 #[test]
 fn json_chat_accepts_piped_stdin_without_tty_or_line_mode() {
@@ -130,4 +165,78 @@ fn json_chat_accepts_piped_stdin_without_tty_or_line_mode() {
         "got: {stdout}"
     );
     assert!(!output.stdout.contains(&0x1b));
+}
+
+#[test]
+fn provider_onboarding_search_cancel_and_resize_restore_terminal() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    command.arg("--workspace");
+    command.arg(workspace.path());
+    command.arg("--db");
+    command.arg(data.path().join("sessions.db"));
+    command.env("HOME", home.path());
+    command.env("XDG_CONFIG_HOME", home.path());
+    for key in [
+        "HUGINN_BASE_URL",
+        "HUGINN_MODEL",
+        "HUGINN_API_KEY",
+        "AGENT_BASE_URL",
+        "AGENT_MODEL",
+        "AGENT_API_KEY",
+    ] {
+        command.env_remove(key);
+    }
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("No model configured");
+    pty.send("/login\r");
+    pty.wait_for("Step 1 of 4");
+    pty.send("oLlAmA");
+    pty.wait_for("oLlAmA");
+    pty.send("\r");
+    pty.wait_for("Step 2 of 4");
+    pty.send("\r");
+    pty.wait_for("Step 3 of 4");
+    assert!(
+        !pty.screen_text().contains("API key"),
+        "local no-auth must not request a key"
+    );
+    pty.resize(14, 60);
+    pty.send("\x1b");
+    pty.wait_for("Step 2 of 4");
+    pty.send("\x03");
+    pty.wait_until_screen_not_contains("Step 2 of 4");
+    pty.resize(30, 100);
+    pty.send("/quit\r");
+    let output = pty.finish(true);
+    assert!(!output.contains("panicked"));
+}
+
+#[test]
+fn prompt_template_tui_submits_and_persists_expanded_user_text() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let root = workspace.path().join(".huginn/prompts");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("review.md"),
+        "Review $1 with focus $2; context: $@",
+    )
+    .unwrap();
+    let db = data.path().join("sessions.db");
+    let mut pty = Pty::start(command(workspace.path(), &db), true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[200~/prompts:review src/lib.rs \"thread safety\"\x1b[201~\r");
+    pty.wait_for("Offline mock: Review src/lib.rs");
+    pty.send("\x03");
+    pty.finish(true);
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let data: String = connection
+        .query_row("SELECT data FROM sessions LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&data).unwrap();
+    assert!(value["messages"].as_array().unwrap().iter().any(|m|
+        m["role"] == "user" && m["content"] == "Review src/lib.rs with focus thread safety; context: src/lib.rs thread safety"));
 }

@@ -11,25 +11,7 @@
 // - CSRF guard validation (unit tests already in csrf_guard.rs)
 // - Login rate limiter enforcement
 
-// =============================================================================
-// Test fixture passwords
-//
-// The following hard-coded strings are TEST DATA ONLY used in unit/integration
-// tests. They are arbitrary values used to test password hashing and verification
-// flows. These are NOT production passwords, secrets, or cryptographic keys.
-//
-// The CodeQL rule `rust/hard-coded-cryptographic-value` flags these because
-// the static analyzer cannot distinguish between real credentials and test
-// fixtures. The constants below are intentionally named and placed here as
-// explicit test data. Do not move, obfuscate, or make these dynamic.
-// =============================================================================
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_FIXTURE_PASSWORD: &str = "correct-password";
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_FIXTURE_PASSWORD_WRONG: &str = "wrong-password";
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_FIXTURE_PASSWORD_ANY: &str = "any-password";
-
+use ring::rand::SecureRandom;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -46,6 +28,14 @@ use std::net::IpAddr;
 use encryption_inmemory::Argon2idHasher;
 use rook_core::PasswordHasher;
 use transport_axum::middleware::{CsrfGuard, LoginRateLimiter};
+
+fn random_password() -> String {
+    let mut password = [0; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut password)
+        .expect("system random source");
+    format!("Aa1!{}", hex::encode(password))
+}
 
 /// Fake password hasher that delegates to real Argon2id implementation
 #[derive(Clone)]
@@ -267,14 +257,15 @@ mod login_tests {
     #[test]
     fn login_with_valid_credentials_returns_session_token() {
         runtime().block_on(async {
-            let (user_repo, hasher) = create_admin_with_password(TEST_FIXTURE_PASSWORD);
+            let password = random_password();
+            let (user_repo, hasher) = create_admin_with_password(&password);
             let session_repo = Arc::new(FakeSessionRepository::new());
 
             let login = LoginUsecase::new(user_repo, session_repo, hasher);
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: TEST_FIXTURE_PASSWORD.to_string(),
+                    password,
                 })
                 .await;
 
@@ -288,14 +279,16 @@ mod login_tests {
     #[test]
     fn login_with_wrong_password_returns_invalid_credentials() {
         runtime().block_on(async {
-            let (user_repo, hasher) = create_admin_with_password(TEST_FIXTURE_PASSWORD);
+            let password = random_password();
+            let wrong_password = random_password();
+            let (user_repo, hasher) = create_admin_with_password(&password);
             let session_repo = Arc::new(FakeSessionRepository::new());
 
             let login = LoginUsecase::new(user_repo, session_repo, hasher);
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: TEST_FIXTURE_PASSWORD_WRONG.to_string(),
+                    password: wrong_password,
                 })
                 .await;
 
@@ -309,14 +302,15 @@ mod login_tests {
     #[test]
     fn login_with_unknown_user_returns_not_found() {
         runtime().block_on(async {
-            let (user_repo, hasher) = create_admin_with_password(TEST_FIXTURE_PASSWORD);
+            let password = random_password();
+            let (user_repo, hasher) = create_admin_with_password(&password);
             let session_repo = Arc::new(FakeSessionRepository::new());
 
             let login = LoginUsecase::new(user_repo, session_repo, hasher);
             let result = login
                 .execute(LoginInput {
                     username: "unknown".to_string(),
-                    password: TEST_FIXTURE_PASSWORD_ANY.to_string(),
+                    password,
                 })
                 .await;
 
@@ -330,6 +324,7 @@ mod login_tests {
     #[test]
     fn login_with_password_not_set_returns_error() {
         runtime().block_on(async {
+            let password = random_password();
             let user_repo = create_admin_no_password();
             let hasher = Arc::new(FakePasswordHasher::new());
             let session_repo = Arc::new(FakeSessionRepository::new());
@@ -338,7 +333,7 @@ mod login_tests {
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: TEST_FIXTURE_PASSWORD_ANY.to_string(),
+                    password,
                 })
                 .await;
 
@@ -352,14 +347,15 @@ mod login_tests {
     #[test]
     fn login_creates_session_in_repository() {
         runtime().block_on(async {
-            let (user_repo, hasher) = create_admin_with_password(TEST_FIXTURE_PASSWORD);
+            let password = random_password();
+            let (user_repo, hasher) = create_admin_with_password(&password);
             let session_repo = Arc::new(FakeSessionRepository::new());
 
             let login = LoginUsecase::new(user_repo, session_repo.clone(), hasher);
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: TEST_FIXTURE_PASSWORD.to_string(),
+                    password,
                 })
                 .await;
 
@@ -385,14 +381,15 @@ mod login_tests {
     #[test]
     fn login_token_is_base64url_encoded_32_bytes() {
         runtime().block_on(async {
-            let (user_repo, hasher) = create_admin_with_password(TEST_FIXTURE_PASSWORD);
+            let password = random_password();
+            let (user_repo, hasher) = create_admin_with_password(&password);
             let session_repo = Arc::new(FakeSessionRepository::new());
 
             let login = LoginUsecase::new(user_repo, session_repo, hasher);
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: TEST_FIXTURE_PASSWORD.to_string(),
+                    password,
                 })
                 .await;
 
@@ -578,11 +575,7 @@ mod login_rate_limiter_tests {
 // Argon2id password hashing integration
 // =============================================================================
 
-// Test fixture: secure password used in hashing roundtrip tests.
-// This is NOT a production credential — it's arbitrary test data.
-// codeql[rust/hard-coded-cryptographic-value] Test fixture only
-const TEST_FIXTURE_SECURE_PASSWORD: &str = "SecurePass123!";
-
+// Random test values preserve the real password-validation and Argon2id paths.
 #[cfg(test)]
 mod password_hashing_tests {
     use super::*;
@@ -590,9 +583,10 @@ mod password_hashing_tests {
     #[test]
     fn argon2id_hash_and_verify_roundtrip() {
         let hasher = Argon2idHasher::new();
+        let password = random_password();
 
         let hash = hasher
-            .hash_password(TEST_FIXTURE_SECURE_PASSWORD)
+            .hash_password(&password)
             .expect("hash should succeed");
         assert!(
             hash.as_str().starts_with("$argon2id$"),
@@ -600,7 +594,7 @@ mod password_hashing_tests {
         );
 
         let verified = hasher
-            .verify_password(TEST_FIXTURE_SECURE_PASSWORD, &hash)
+            .verify_password(&password, &hash)
             .expect("verify should succeed");
         assert!(verified, "correct password should verify");
     }
@@ -608,13 +602,15 @@ mod password_hashing_tests {
     #[test]
     fn argon2id_verify_wrong_password_fails() {
         let hasher = Argon2idHasher::new();
+        let password = random_password();
+        let wrong_password = random_password();
 
         let hash = hasher
-            .hash_password(TEST_FIXTURE_SECURE_PASSWORD)
+            .hash_password(&password)
             .expect("hash should succeed");
 
         let verified = hasher
-            .verify_password(TEST_FIXTURE_PASSWORD_WRONG, &hash)
+            .verify_password(&wrong_password, &hash)
             .expect("verify should succeed");
         assert!(!verified, "wrong password should not verify");
     }
@@ -622,12 +618,13 @@ mod password_hashing_tests {
     #[test]
     fn argon2id_different_salts_produce_different_hashes() {
         let hasher = Argon2idHasher::new();
+        let password = random_password();
 
         let hash1 = hasher
-            .hash_password(TEST_FIXTURE_SECURE_PASSWORD)
+            .hash_password(&password)
             .expect("hash should succeed");
         let hash2 = hasher
-            .hash_password(TEST_FIXTURE_SECURE_PASSWORD)
+            .hash_password(&password)
             .expect("hash should succeed");
 
         assert_ne!(
@@ -640,9 +637,10 @@ mod password_hashing_tests {
     #[test]
     fn argon2id_verify_invalid_hash_returns_false() {
         let hasher = Argon2idHasher::new();
+        let password = random_password();
         let invalid_hash = CorePasswordHash::from("not-a-valid-hash".to_string());
 
-        let result = hasher.verify_password(TEST_FIXTURE_PASSWORD_ANY, &invalid_hash);
+        let result = hasher.verify_password(&password, &invalid_hash);
         assert!(result.is_ok(), "verify should not panic on invalid hash");
         assert!(!result.unwrap(), "invalid hash should not verify");
     }

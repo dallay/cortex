@@ -14,7 +14,8 @@ use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, Prov
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, SignatureEntry, StreamChunk, UsageEntry, UsageFilters, UsageSummary,
+    HealthStatus, Pagination, QuotaObservation, SignatureEntry, StreamChunk, UsageEntry,
+    UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
@@ -54,6 +55,17 @@ pub trait ProviderPort: Send + Sync + 'static {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
+}
+
+/// Supplies an OAuth access token for a provider connection.
+/// `force_refresh` is used only after the upstream rejects a request with 401.
+#[async_trait]
+pub trait OAuthTokenPort: Send + Sync {
+    async fn access_token(
+        &self,
+        connection_id: &ConnectionId,
+        force_refresh: bool,
+    ) -> CortexResult<String>;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +113,12 @@ pub trait RouterPort: Send + Sync {
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
+
+    /// Resolve the provider adapter registered for an exact connection.
+    /// Returns `None` when the connection is unavailable or unknown.
+    fn resolve_connection(&self, _connection_id: &ConnectionId) -> Option<Arc<dyn ProviderPort>> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +186,81 @@ pub trait UsageRecorderPort: Send + Sync {
     async fn summary(&self, filters: UsageFilters) -> CortexResult<UsageSummary>;
 
     async fn cost_breakdown(&self, filters: UsageFilters) -> CortexResult<CostBreakdown>;
+}
+
+/// Persistence boundary for actual upstream quota observations.
+#[async_trait]
+pub trait QuotaObservationRecorderPort: Send + Sync {
+    async fn record_observation(&self, observation: QuotaObservation) -> CortexResult<()>;
+
+    /// Record observations captured from one provider response as a batch.
+    /// Implementations may override this to preserve the response boundary.
+    async fn record_observations(&self, observations: Vec<QuotaObservation>) -> CortexResult<()> {
+        for observation in observations {
+            self.record_observation(observation).await?;
+        }
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        provider: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>>;
+
+    /// Latest observation of each quota series that matches the query.
+    ///
+    /// The result keeps only the newest observation per connection, metric,
+    /// scope, window, and source. Implementations with a persistence backend
+    /// should override this method with a bounded query instead of the default
+    /// in-memory reduction.
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        let observations = self.list_observations(query.provider.clone()).await?;
+        Ok(crate::quota::reduce_latest_observations(
+            observations,
+            query,
+        ))
+    }
+}
+
+/// Query for the latest upstream quota observations.
+#[derive(Debug, Clone, Default)]
+pub struct QuotaObservationQuery {
+    /// Connections to read. An empty list matches every connection.
+    pub connection_ids: Vec<ConnectionId>,
+    /// Provider runtime to read. `None` matches every provider.
+    pub provider: Option<ProviderId>,
+    /// Metric to read. `None` matches every metric.
+    pub metric: Option<String>,
+    /// Observation source to read. `None` matches every source.
+    pub source: Option<String>,
+    /// Maximum number of series to return.
+    pub limit: usize,
+}
+
+impl QuotaObservationQuery {
+    pub const DEFAULT_LIMIT: usize = 200;
+    pub const MAX_LIMIT: usize = 1000;
+
+    /// Query scoped to the given connections.
+    pub fn for_connections(connection_ids: Vec<ConnectionId>) -> Self {
+        Self {
+            connection_ids,
+            ..Self::default()
+        }
+    }
+
+    /// Effective limit, always bounded.
+    pub fn clamped_limit(&self) -> usize {
+        let limit = if self.limit == 0 {
+            Self::DEFAULT_LIMIT
+        } else {
+            self.limit
+        };
+        limit.min(Self::MAX_LIMIT)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +487,147 @@ pub trait PasswordHasher: Send + Sync {
 
 pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
 
+// ---------------------------------------------------------------------------
+// ModelCatalogPort — source of truth for "which models can an API key be
+// restricted to?"
+// ---------------------------------------------------------------------------
+//
+// Implementations live in `infrastructure/` crates. Today the catalog is
+// static (hardcoded by provider kind); it may become dynamic in the future
+// (per-provider fetch, real `/v1/models` aggregation, etc.). The wire format
+// and the consuming UI must NOT depend on the implementation details.
+
+/// One entry in the model catalog: a model id known to be supported by a
+/// given provider kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCatalogEntry {
+    pub model_id: String,
+    pub provider_kind: ProviderKind,
+}
+
+#[async_trait]
+pub trait ModelCatalogPort: Send + Sync {
+    /// Returns the full list of model catalog entries known to the proxy.
+    async fn list(&self) -> Vec<ModelCatalogEntry>;
+}
+
+// ---------------------------------------------------------------------------
+// ComboRepositoryPort — persistence for combo fallback chains
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ComboRepositoryError {
+    #[error("combo not found: {0}")]
+    NotFound(ComboId),
+    #[error("combo with name '{0}' already exists")]
+    DuplicateName(String),
+    #[error("validation error: {0}")]
+    Validation(ComboValidationError),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ComboRepositoryPort: Send + Sync {
+    /// List all combos ordered by created_at descending
+    async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError>;
+
+    /// Find a combo by its ID
+    async fn find(&self, id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError>;
+
+    /// Find a combo by its name (case-insensitive)
+    async fn find_by_name(&self, name: &str) -> Result<Option<Combo>, ComboRepositoryError>;
+
+    /// Create a new combo (validates before persisting)
+    async fn create(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
+
+    /// Update an existing combo (validates before persisting, replaces all steps)
+    async fn update(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
+
+    /// Delete a combo by its ID (cascades to steps)
+    async fn delete(&self, id: &ComboId) -> Result<(), ComboRepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// ModelAliasRepositoryPort — persistence for model alias mappings
+// ---------------------------------------------------------------------------
+
+use crate::ModelAlias;
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ModelAliasRepositoryError {
+    #[error("alias not found: {0}")]
+    NotFound(ModelId),
+    #[error("alias already exists: {0}")]
+    AlreadyExists(ModelId),
+    #[error("invalid alias: {0}")]
+    InvalidAlias(String),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ModelAliasRepositoryPort: Send + Sync {
+    /// Resolve alias to canonical model. Returns None if not found.
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+        provider_id: Option<&ProviderId>,
+    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError>;
+
+    /// List all aliases ordered by alias name
+    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError>;
+
+    /// Create new alias. Returns AlreadyExists if duplicate.
+    async fn create(&self, alias: ModelAlias) -> Result<(), ModelAliasRepositoryError>;
+
+    /// Delete alias by name. Returns true if deleted, false if not found.
+    async fn delete(&self, alias: &ModelId) -> Result<bool, ModelAliasRepositoryError>;
+
+    /// Seed aliases idempotently. Returns count of new aliases inserted.
+    async fn seed(&self, aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError>;
+}
+
+// ---------------------------------------------------------------------------
+// ComboAliasRepositoryPort — persistence for virtual combo (rook/*) mappings
+// ---------------------------------------------------------------------------
+
+use crate::ComboAlias;
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ComboAliasRepositoryError {
+    #[error("combo alias not found: {0}")]
+    NotFound(ModelId),
+    #[error("combo alias already exists: {0}")]
+    AlreadyExists(ModelId),
+    #[error("invalid combo alias: {0}")]
+    InvalidAlias(String),
+    #[error("combo not found for alias: {0}")]
+    ComboNotFound(ComboId),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+#[async_trait]
+pub trait ComboAliasRepositoryPort: Send + Sync {
+    /// Resolve virtual model to combo alias. Returns None if not found.
+    /// Exact match only; `rook/` prefix is required by validation, not by lookup.
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+    ) -> Result<Option<ComboAlias>, ComboAliasRepositoryError>;
+
+    /// List all combo aliases ordered by alias name.
+    async fn list(&self) -> Result<Vec<ComboAlias>, ComboAliasRepositoryError>;
+
+    /// Create new alias. Validates `rook/*` shape; returns AlreadyExists on
+    /// duplicate, ComboNotFound if the combo does not exist.
+    async fn create(&self, alias: ComboAlias) -> Result<(), ComboAliasRepositoryError>;
+
+    /// Delete alias by name. Returns true if deleted, false if not found.
+    async fn delete(&self, alias: &ModelId) -> Result<bool, ComboAliasRepositoryError>;
+}
+
 #[cfg(test)]
 mod usage_port_tests {
     use super::*;
@@ -526,105 +760,4 @@ mod usage_port_tests {
         assert_eq!(found, Some(connection_id));
         assert_eq!(missing, None);
     }
-}
-
-// ---------------------------------------------------------------------------
-// ModelCatalogPort — source of truth for "which models can an API key be
-// restricted to?"
-// ---------------------------------------------------------------------------
-//
-// Implementations live in `infrastructure/` crates. Today the catalog is
-// static (hardcoded by provider kind); it may become dynamic in the future
-// (per-provider fetch, real `/v1/models` aggregation, etc.). The wire format
-// and the consuming UI must NOT depend on the implementation details.
-
-/// One entry in the model catalog: a model id known to be supported by a
-/// given provider kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelCatalogEntry {
-    pub model_id: String,
-    pub provider_kind: ProviderKind,
-}
-
-#[async_trait]
-pub trait ModelCatalogPort: Send + Sync {
-    /// Returns the full list of model catalog entries known to the proxy.
-    async fn list(&self) -> Vec<ModelCatalogEntry>;
-}
-
-// ---------------------------------------------------------------------------
-// ComboRepositoryPort — persistence for combo fallback chains
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum ComboRepositoryError {
-    #[error("combo not found: {0}")]
-    NotFound(ComboId),
-    #[error("combo with name '{0}' already exists")]
-    DuplicateName(String),
-    #[error("validation error: {0}")]
-    Validation(ComboValidationError),
-    #[error("database error: {0}")]
-    Database(String),
-}
-
-#[async_trait]
-pub trait ComboRepositoryPort: Send + Sync {
-    /// List all combos ordered by created_at descending
-    async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError>;
-
-    /// Find a combo by its ID
-    async fn find(&self, id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError>;
-
-    /// Find a combo by its name (case-insensitive)
-    async fn find_by_name(&self, name: &str) -> Result<Option<Combo>, ComboRepositoryError>;
-
-    /// Create a new combo (validates before persisting)
-    async fn create(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
-
-    /// Update an existing combo (validates before persisting, replaces all steps)
-    async fn update(&self, combo: &Combo) -> Result<(), ComboRepositoryError>;
-
-    /// Delete a combo by its ID (cascades to steps)
-    async fn delete(&self, id: &ComboId) -> Result<(), ComboRepositoryError>;
-}
-
-// ---------------------------------------------------------------------------
-// ModelAliasRepositoryPort — persistence for model alias mappings
-// ---------------------------------------------------------------------------
-
-use crate::ModelAlias;
-
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum ModelAliasRepositoryError {
-    #[error("alias not found: {0}")]
-    NotFound(ModelId),
-    #[error("alias already exists: {0}")]
-    AlreadyExists(ModelId),
-    #[error("invalid alias: {0}")]
-    InvalidAlias(String),
-    #[error("database error: {0}")]
-    Database(String),
-}
-
-#[async_trait]
-pub trait ModelAliasRepositoryPort: Send + Sync {
-    /// Resolve alias to canonical model. Returns None if not found.
-    async fn find_by_alias(
-        &self,
-        alias: &ModelId,
-        provider_id: Option<&ProviderId>,
-    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError>;
-
-    /// List all aliases ordered by alias name
-    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError>;
-
-    /// Create new alias. Returns AlreadyExists if duplicate.
-    async fn create(&self, alias: ModelAlias) -> Result<(), ModelAliasRepositoryError>;
-
-    /// Delete alias by name. Returns true if deleted, false if not found.
-    async fn delete(&self, alias: &ModelId) -> Result<bool, ModelAliasRepositoryError>;
-
-    /// Seed aliases idempotently. Returns count of new aliases inserted.
-    async fn seed(&self, aliases: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError>;
 }

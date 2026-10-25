@@ -124,7 +124,7 @@ pub fn bootstrap_test_router(usecases: Arc<rook_usecases::RookUsecases>) -> axum
 }
 
 // ---------------------------------------------------------------------------
-// Stub implementations — never called by bootstrap tests
+// Stub implementations for isolated transport integration tests
 // ---------------------------------------------------------------------------
 
 struct StubCache;
@@ -144,7 +144,14 @@ impl CachePort for StubCache {
         unreachable!("cache not called by bootstrap tests")
     }
     async fn stats(&self) -> CortexResult<rook_core::CacheStats> {
-        unreachable!("cache not called by bootstrap tests")
+        Ok(rook_core::CacheStats {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            entries: 0,
+            max_entries: 0,
+            token_cache: rook_core::TokenCacheStats::default(),
+        })
     }
     async fn delete_by_signature(&self, _: &str) -> CortexResult<usize> {
         unreachable!("cache not called by bootstrap tests")
@@ -204,16 +211,24 @@ struct StubSessionRepo;
 impl SessionRepositoryPort for StubSessionRepo {
     async fn create(
         &self,
-        _session: &NewSession,
-        _token_hash: &str,
+        session: &NewSession,
+        token_hash: &str,
     ) -> Result<Session, SessionRepositoryError> {
-        unreachable!("session_repo not called by bootstrap tests")
+        let now = chrono::Utc::now();
+        Ok(Session {
+            id: SessionId::new(),
+            token_hash: token_hash.to_owned(),
+            user_id: session.user_id.clone(),
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(24),
+            revoked: false,
+        })
     }
     async fn find_by_token_hash(
         &self,
         _token_hash: &str,
     ) -> Result<Option<Session>, SessionRepositoryError> {
-        unreachable!("session_repo not called by bootstrap tests")
+        Ok(None)
     }
     async fn revoke(&self, _session_id: &SessionId) -> Result<(), SessionRepositoryError> {
         unreachable!("session_repo not called by bootstrap tests")

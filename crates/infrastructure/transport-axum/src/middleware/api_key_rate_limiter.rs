@@ -300,14 +300,12 @@ impl ApiKeyRateLimiter {
     }
 
     /// Get current token count for a key (for testing/debugging)
-    #[allow(dead_code)]
     pub async fn tokens_for(&self, key_id: &str) -> f64 {
         let buckets = self.buckets.lock().await;
         buckets.get(key_id).map(|b| b.tokens()).unwrap_or(100.0) // Default capacity
     }
 
     /// Reset rate limit for a key (for testing)
-    #[allow(dead_code)]
     pub async fn reset(&self, key_id: &str) {
         let mut buckets = self.buckets.lock().await;
         buckets.remove(key_id);

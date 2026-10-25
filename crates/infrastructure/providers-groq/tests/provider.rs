@@ -40,6 +40,39 @@ async fn health_check_returns_healthy_on_2xx() {
 }
 
 #[tokio::test]
+async fn health_check_does_not_follow_redirects() {
+    let target = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::any())
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&target)
+        .await;
+    let source = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/openai/v1/models"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(302)
+                .insert_header("Location", format!("{}/target", target.uri())),
+        )
+        .mount(&source)
+        .await;
+
+    let provider = GroqProvider::new(GroqProviderConfig {
+        id: ProviderId::new("groq-redirect-test"),
+        api_key: "gsk-test".to_string(),
+        base_url: Some(source.uri()),
+        models: vec![ModelId::new("llama-3.3-70b")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+
+    let status = provider.health_check().await;
+
+    assert!(matches!(status, HealthStatus::Unhealthy { .. }));
+    assert_eq!(source.received_requests().await.unwrap().len(), 1);
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn health_check_returns_warning_on_429() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))

@@ -28,11 +28,13 @@ pub fn run_migrations(db_path: &str) -> anyhow::Result<usize> {
 pub fn run_on_connection(conn: &mut rusqlite::Connection) -> anyhow::Result<usize> {
     let runner = build_runner();
 
-    // For in-memory databases with cache=shared, multiple connections may attempt
-    // migrations concurrently. Before running migrations, check if the schema is
-    // already up-to-date by inspecting the applied migrations table.
-    // (If migrations table doesn't exist yet — this is the first run, return empty vec)
-    let applied = runner.get_applied_migrations(conn).unwrap_or_default();
+    // A new database has no migration table yet. Refinery reports that expected
+    // condition as an error; other errors must not be masked as an empty schema.
+    let applied = match runner.get_applied_migrations(conn) {
+        Ok(applied) => applied,
+        Err(error) if is_missing_migration_table(&error) => Vec::new(),
+        Err(error) => return Err(error.into()),
+    };
 
     // If migrations are already fully applied, skip.
     let all_migrations_runner = embedded::migrations::runner();
@@ -71,6 +73,21 @@ pub fn run_on_connection(conn: &mut rusqlite::Connection) -> anyhow::Result<usiz
         tracing::debug!("database schema is current");
     }
     Ok(count)
+}
+
+fn is_missing_migration_table(error: &refinery::Error) -> bool {
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if let Some(sqlite_error) = cause.downcast_ref::<rusqlite::Error>() {
+            return matches!(
+                sqlite_error,
+                rusqlite::Error::SqliteFailure(_, Some(message))
+                    if message == "no such table: _migrations"
+            );
+        }
+        source = cause.source();
+    }
+    false
 }
 
 /// Migration runner for CLI use cases.
@@ -124,4 +141,58 @@ pub struct MigrationStatus {
 pub struct AppliedMigration {
     pub version: i32,
     pub name: String,
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_database_runs_embedded_migrations() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        assert!(run_on_connection(&mut conn).is_ok());
+        let applied = build_runner().get_applied_migrations(&mut conn).unwrap();
+        assert_eq!(
+            applied.len(),
+            embedded::migrations::runner().get_migrations().len()
+        );
+    }
+
+    #[test]
+    fn database_with_applied_migrations_is_idempotent() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let applied = run_on_connection(&mut conn).unwrap();
+        assert!(applied > 0);
+        assert_eq!(run_on_connection(&mut conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn migration_runner_reports_status_after_applying_migrations() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("rook.sqlite");
+        let runner = MigrationRunner::new(db_path.to_string_lossy().into_owned());
+
+        let applied_count = runner.run().unwrap();
+        let status = runner.status().unwrap();
+
+        assert_eq!(status.applied.len(), applied_count);
+        assert!(status.current_version.is_some());
+        assert_eq!(
+            status.current_version,
+            status.applied.last().map(|m| m.version)
+        );
+    }
+
+    #[test]
+    fn run_migrations_applies_and_then_skips_current_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("rook.sqlite");
+        let db_path = db_path.to_string_lossy().into_owned();
+
+        let first_run = run_migrations(&db_path).unwrap();
+        let second_run = run_migrations(&db_path).unwrap();
+
+        assert!(first_run > 0);
+        assert_eq!(second_run, 0);
+    }
 }

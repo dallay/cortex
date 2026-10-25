@@ -5,7 +5,8 @@
 // `ProviderKind`. When the backend gains the ability to introspect real
 // provider capabilities (e.g. fetch `/v1/models` from each active provider
 // kind and union the results), this is the only file that should need to
-// change.
+// change. Azure OpenAI deployments are connection-specific and are surfaced
+// from each connection's configured `default_model`, not this static list.
 
 use async_trait::async_trait;
 use rook_core::{ModelCatalogEntry, ModelCatalogPort, ProviderKind};

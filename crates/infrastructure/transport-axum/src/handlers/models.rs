@@ -33,11 +33,27 @@ pub fn compute_models_by_provider(
         .iter()
         .filter(|c| c.is_active)
         .map(|conn| {
-            let models: Vec<String> = catalog
-                .iter()
-                .filter(|entry| entry.provider_kind == conn.provider_kind)
-                .map(|entry| entry.model_id.clone())
-                .collect();
+            let models: Vec<String> = if conn.provider_kind == rook_core::ProviderKind::AzureOpenAI
+            {
+                conn.config
+                    .default_model
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .into_iter()
+                    .collect()
+            } else if conn.provider_kind == rook_core::ProviderKind::OpenAiCompatible {
+                conn.config
+                    .supported_models
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect()
+            } else {
+                catalog
+                    .iter()
+                    .filter(|entry| entry.provider_kind == conn.provider_kind)
+                    .map(|entry| entry.model_id.clone())
+                    .collect()
+            };
             ProviderModelsGroup {
                 provider_id: conn.id.to_string(),
                 provider_name: conn.name.clone(),

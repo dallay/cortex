@@ -16,6 +16,14 @@ pub struct SqliteSessions {
 pub struct SessionLease {
     _file: File,
 }
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        // Closing only this descriptor is insufficient when a concurrent
+        // fork inherited it before exec. Unlock the shared file description
+        // explicitly so a child cannot extend the conversation's lease.
+        let _ = FileExt::unlock(&self._file);
+    }
+}
 impl SqliteSessions {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {

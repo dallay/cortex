@@ -72,9 +72,8 @@ impl LinePrompt {
     pub fn reset_turn(&self) {
         *self.turn_count.lock().expect("policy turn_count poisoned") = 0;
     }
-    /// Inspect the current per-turn approval count. Exposed for tests and
-    /// any future UI that wants to summarize a turn's approvals.
-    #[allow(dead_code)]
+    /// Inspect the current per-turn approval count.
+    #[cfg(test)]
     pub fn turn_count(&self) -> u64 {
         *self.turn_count.lock().expect("policy turn_count poisoned")
     }
@@ -115,6 +114,7 @@ impl EventSink for Output {
             return;
         }
         match event {
+            Event::ConnectionChanged { .. } => {} // Observability, never conversation.
             Event::Text { text } => {
                 print!("{}", safe(&text));
                 let _ = std::io::stdout().flush();
@@ -127,7 +127,14 @@ impl EventSink for Output {
             } => eprintln!("\nTool failed: {}", safe(&output)),
             Event::Compacted { .. } => eprintln!("\nContext compacted; original history retained."),
             Event::TurnFinished => println!(),
-            _ => {}
+            Event::TurnStarted { .. }
+            | Event::ApprovalRequested { .. }
+            | Event::ApprovalResolved { .. }
+            | Event::ToolFinished {
+                is_error: false, ..
+            }
+            | Event::Usage { .. }
+            | Event::Error { .. } => {}
         }
     }
 }

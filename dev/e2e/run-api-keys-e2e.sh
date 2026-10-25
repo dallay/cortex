@@ -8,7 +8,7 @@
 # Prerequisites:
 #   - Docker must be running
 #   - Build the image first: docker build -f Dockerfile.dev -t rook:e2e-api-keys .
-#   - Dashboard deps installed: cd apps/rook/dashboard && pnpm install
+#   - Dashboard deps installed: pnpm install (from repository root)
 #
 # Usage:
 #   ./dev/e2e/run-api-keys-e2e.sh           # Start container for manual testing

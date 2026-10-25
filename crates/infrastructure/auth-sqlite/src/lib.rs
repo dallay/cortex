@@ -776,8 +776,6 @@ fn db_error(error: rusqlite::Error) -> ApiKeyRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use chrono::{Duration, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier, NewSession as CoreNewSession,
@@ -785,8 +783,7 @@ mod tests {
         UserRepositoryPort,
     };
     use rusqlite::params;
-    use std::fs;
-    use std::path::Path;
+    use std::path::PathBuf;
 
     use super::{
         SqliteApiKeyRepository, SqliteSessionRepository, SqliteUserRepository, TestApiKeyRecord,
@@ -798,38 +795,14 @@ mod tests {
             .expect("runtime")
     }
 
-    // Monotonic counter for unique test DB paths. Two tests that both call
-    // shared_test_db() in the same nanosecond (which happens in parallel runs)
-    // used to collide on the same file and race the migration runner, causing
-    // "table provider_connections already exists" failures.
-    static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    // Shared temp file path for tests that need both repos.
-    //
-    // Uniqueness is guaranteed by combining:
-    //   * PID        — distinct test binaries
-    //   * nanos      — wall-clock time, so paths sort roughly by creation
-    //   * atomic seq — monotonic fallback if two calls land in the same nanosecond
-    //
-    // We intentionally do NOT share a path between tests. Even with idempotent
-    // migrations, two Connection::open() on the same file running migrations in
-    // parallel is a TOCTOU race that Refinery does not handle.
-    fn shared_test_db() -> impl AsRef<Path> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let seq = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let pid = std::process::id();
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("rook_test_auth_{pid}_{nanos}_{seq}.db"));
+    // Each test owns an isolated directory. Keep the directory alive while the
+    // SQLite repositories use the database, then let TempDir remove only files
+    // created by this test.
+    fn shared_test_db() -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().expect("temporary test directory");
+        let path = directory.path().join("auth.db");
         db_migration::run_migrations(&path.to_string_lossy()).expect("migrations");
-        path
-    }
-
-    fn cleanup_test_db(path: &Path) {
-        let _ = fs::remove_file(path);
+        (directory, path)
     }
 
     #[test]
@@ -1131,7 +1104,7 @@ mod tests {
 
     #[test]
     fn session_repository_create_and_find() {
-        let db_path = shared_test_db();
+        let (_db_dir, db_path) = shared_test_db();
         let user_repo = SqliteUserRepository::new(&db_path).expect("repo");
         let session_repo = SqliteSessionRepository::new(&db_path).expect("repo");
 
@@ -1164,8 +1137,6 @@ mod tests {
             assert_eq!(found.user_id, user.id);
             assert!(!found.revoked);
         });
-
-        cleanup_test_db(db_path.as_ref());
     }
 
     #[test]
@@ -1182,7 +1153,7 @@ mod tests {
 
     #[test]
     fn session_repository_revoke() {
-        let db_path = shared_test_db();
+        let (_db_dir, db_path) = shared_test_db();
         let user_repo = SqliteUserRepository::new(&db_path).expect("repo");
         let session_repo = SqliteSessionRepository::new(&db_path).expect("repo");
 
@@ -1217,13 +1188,11 @@ mod tests {
                 .expect("find by token hash");
             assert!(found.is_none());
         });
-
-        cleanup_test_db(db_path.as_ref());
     }
 
     #[test]
     fn session_repository_delete_expired() {
-        let db_path = shared_test_db();
+        let (_db_dir, db_path) = shared_test_db();
         let user_repo = SqliteUserRepository::new(&db_path).expect("repo");
         let session_repo = SqliteSessionRepository::new(&db_path).expect("repo");
 
@@ -1258,8 +1227,6 @@ mod tests {
                 .expect("find by token hash");
             assert!(found.is_none());
         });
-
-        cleanup_test_db(db_path.as_ref());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-// usage_retention — startup and periodic retention sweep for usage_history
+// usage_retention — startup and periodic sweeps for local usage and upstream observations
 //
 // Runs before the server accepts traffic and then on a configured interval.
 // Failures warn but do not crash the server.
@@ -9,15 +9,20 @@ use std::time::Duration;
 use tokio::time;
 use tracing::warn;
 
-/// Run a single retention sweep, deleting usage records older than `retention_days`.
+/// Run a sweep using the configured retention for both independent histories.
 pub async fn run_startup_usage_retention_sweep(
     usage_repo: &SqliteUsageRepository,
     retention_days: u32,
 ) -> anyhow::Result<u64> {
-    let deleted = usage_repo
+    let usage_deleted = usage_repo
         .delete_older_than(retention_days)
         .await
         .map_err(|e| anyhow::anyhow!("startup retention sweep failed: {e}"))?;
+    let quota_deleted = usage_repo
+        .delete_quota_observations_older_than(retention_days)
+        .await
+        .map_err(|e| anyhow::anyhow!("startup quota retention sweep failed: {e}"))?;
+    let deleted = usage_deleted + quota_deleted;
     tracing::info!(
         deleted_rows = deleted,
         retention_days = retention_days,
@@ -26,7 +31,7 @@ pub async fn run_startup_usage_retention_sweep(
     Ok(deleted)
 }
 
-/// Spawn a background task that runs a retention sweep every `sweep_interval_hours`.
+/// Spawn a background task that runs both history retention sweeps every interval.
 ///
 /// The task logs failures with `tracing::warn!` but does not crash.
 /// The task runs until the runtime shuts down.
@@ -44,17 +49,25 @@ pub fn spawn_periodic_usage_retention_sweep(
 
         loop {
             ticker.tick().await;
-            match usage_repo.delete_older_than(retention_days).await {
-                Ok(deleted) => {
+            let usage_result = usage_repo.delete_older_than(retention_days).await;
+            let quota_result = usage_repo
+                .delete_quota_observations_older_than(retention_days)
+                .await;
+            match (usage_result, quota_result) {
+                (Ok(usage_deleted), Ok(quota_deleted)) => {
+                    let deleted = usage_deleted + quota_deleted;
                     if deleted > 0 {
-                        tracing::info!(deleted_rows = deleted, "periodic retention sweep complete");
+                        tracing::info!(
+                            deleted_rows = deleted,
+                            "periodic history retention sweep complete"
+                        );
                     }
                 }
-                Err(e) => {
+                (Err(e), _) | (_, Err(e)) => {
                     warn!(
                         error = %e,
                         retention_days = retention_days,
-                        "usage retention sweep failed"
+                        "history retention sweep failed"
                     );
                 }
             }

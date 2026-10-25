@@ -1,4 +1,5 @@
 use anyhow::Context;
+use huginn_presentation::settings::UiConfig;
 use huginn_runtime::mcp::ServerConfig;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub provider: String,
     pub base_url: Option<String>,
+    pub allow_loopback_http: bool,
     pub model: Option<String>,
     pub api_key_env: Option<String>,
     pub db: PathBuf,
@@ -17,6 +19,34 @@ pub struct Config {
     pub context_tokens: usize,
     pub max_output_tokens: u32,
     pub mcp: Vec<ServerConfig>,
+    /// TUI preferences — populated from `[ui]` in `config.toml`. REQ-10,
+    /// REQ-11: default-tolerant; inner structs do **not** carry
+    /// `deny_unknown_fields`.
+    #[serde(default)]
+    pub ui: UiConfig,
+    #[serde(skip)]
+    pub provider_explicit: bool,
+}
+
+/// Shared resolution order: readers and writers must agree on one file.
+pub fn resolve_with(explicit: Option<&Path>, primary: &Path, legacy: &Path) -> PathBuf {
+    if let Some(path) = explicit {
+        return path.to_path_buf();
+    }
+    if primary.exists() {
+        return primary.to_path_buf();
+    }
+    if legacy.exists() {
+        return legacy.to_path_buf();
+    }
+    primary.to_path_buf()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelReadiness {
+    Ready,
+    Unconfigured,
+    Invalid,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -36,6 +66,7 @@ impl Default for Config {
         Self {
             provider: "openai".into(),
             base_url: None,
+            allow_loopback_http: false,
             model: None,
             api_key_env: Some("HUGINN_API_KEY".into()),
             db: root.join("sessions.db"),
@@ -45,6 +76,8 @@ impl Default for Config {
             context_tokens: 32768,
             max_output_tokens: 4096,
             mcp: vec![],
+            ui: UiConfig::defaults(),
+            provider_explicit: false,
         }
     }
 }
@@ -53,6 +86,33 @@ impl Config {
     /// environment variables, falling back to the legacy `AGENT_*` names
     /// with a one-shot deprecation warning. Custom values explicitly
     /// configured in TOML or via CLI flags are preserved.
+    pub fn model_readiness(&self) -> ModelReadiness {
+        if self.provider == "mock" {
+            return ModelReadiness::Ready;
+        }
+        if self.base_url.is_none() && self.model.is_none() && !self.provider_explicit {
+            return ModelReadiness::Unconfigured;
+        }
+        if self.base_url.is_none() || self.model.is_none() {
+            return ModelReadiness::Invalid;
+        }
+        if self.validate_model().is_ok() {
+            ModelReadiness::Ready
+        } else {
+            ModelReadiness::Invalid
+        }
+    }
+
+    pub fn require_model(&self) -> anyhow::Result<()> {
+        match self.model_readiness() {
+            ModelReadiness::Ready => Ok(()),
+            ModelReadiness::Unconfigured => anyhow::bail!(
+                "No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL in your Huginn configuration."
+            ),
+            ModelReadiness::Invalid => self.validate_model(),
+        }
+    }
+
     pub fn fill_from_env(&mut self) {
         if self.base_url.is_none() {
             self.base_url = Self::env_with_legacy_fallback("HUGINN_BASE_URL", "AGENT_BASE_URL");
@@ -92,45 +152,76 @@ impl Config {
         None
     }
 
+    pub fn primary_config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("cortex/huginn/config.toml")
+    }
+
+    pub fn legacy_config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("cortex/agent/config.toml")
+    }
+
+    /// Resolve the configuration file that `load` reads.
+    ///
+    /// Persistence must derive its target from this: patching a path `load`
+    /// would not read creates a shadow file that hides an entire legacy
+    /// configuration. When this resolves to the legacy path, seed the primary
+    /// file from it instead of writing in place.
+    pub fn resolve_path(explicit: Option<&Path>) -> PathBuf {
+        resolve_with(
+            explicit,
+            &Self::primary_config_path(),
+            &Self::legacy_config_path(),
+        )
+    }
+
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
         // Resolution order, all read-only:
         // 1. Explicit --config (highest priority, never falls back).
         // 2. Platform config dir / cortex/huginn/config.toml.
         // 3. Legacy platform config dir / cortex/agent/config.toml — only when
         //    the new path is absent; never overwritten or deleted.
-        let primary_default = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/huginn/config.toml");
-        let legacy_default = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/agent/config.toml");
-        let explicit = path.is_some();
-        let primary_path = path.unwrap_or(&primary_default);
-        match std::fs::read_to_string(primary_path) {
-            Ok(text) => toml::from_str(&text).context("invalid Huginn TOML configuration"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !explicit => {
-                if legacy_default != primary_default && legacy_default.exists() {
-                    eprintln!(
-                        "warning: using legacy configuration {} — move the file to {} to silence this notice",
-                        legacy_default.display(),
-                        primary_default.display()
-                    );
-                    let text = std::fs::read_to_string(&legacy_default).with_context(|| {
-                        format!(
-                            "cannot read legacy configuration {}",
-                            legacy_default.display()
-                        )
-                    })?;
-                    toml::from_str(&text).context("invalid Huginn TOML configuration")
-                } else {
-                    Ok(Self::default())
-                }
+        let resolved = Self::resolve_path(path);
+        if path.is_none() && resolved != Self::primary_config_path() {
+            eprintln!(
+                "warning: using legacy configuration {} — move the file to {} to silence this notice",
+                resolved.display(),
+                Self::primary_config_path().display()
+            );
+        }
+        // The path comes from the explicit CLI option or fixed platform paths;
+        // keep it as a PathBuf so it cannot be confused with shell input.
+        match std::fs::read_to_string(&resolved) {
+            Ok(text) => Self::parse(&text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_none() => {
+                Ok(Self::default())
             }
             Err(error) => Err(error)
-                .with_context(|| format!("cannot read configuration {}", primary_path.display())),
+                .with_context(|| format!("cannot read configuration {}", resolved.display())),
         }
     }
+
+    fn parse(text: &str) -> anyhow::Result<Self> {
+        let provider_explicit = toml::from_str::<toml::Value>(text)
+            .ok()
+            .and_then(|value| value.as_table().map(|table| table.contains_key("provider")))
+            .unwrap_or(false);
+        toml::from_str::<Self>(text)
+            .map(|mut config| {
+                config.provider_explicit = provider_explicit;
+                config
+            })
+            .context("invalid Huginn TOML configuration")
+    }
     pub fn create_model(&self) -> anyhow::Result<std::sync::Arc<dyn huginn_core::ModelProvider>> {
+        if self.model_readiness() == ModelReadiness::Unconfigured {
+            return Ok(std::sync::Arc::new(
+                huginn_runtime::model::UnconfiguredModelProvider,
+            ));
+        }
         let factories = huginn_runtime::model::ProviderFactories::builtin();
         let key =
             if factories.uses_credentials(&self.provider)? {
@@ -150,19 +241,11 @@ impl Config {
                 model: self.model.clone(),
                 key,
                 timeout_secs: self.timeout_secs,
+                allow_loopback_http: self.allow_loopback_http,
             },
         )?)
     }
-    pub fn validate(&self) -> anyhow::Result<()> {
-        huginn_runtime::model::ProviderFactories::builtin().create(
-            &self.provider,
-            &huginn_runtime::model::ProviderConfig {
-                base_url: self.base_url.clone(),
-                model: self.model.clone(),
-                key: None,
-                timeout_secs: self.timeout_secs,
-            },
-        )?;
+    pub fn validate_common(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             (1..=3600).contains(&self.timeout_secs) && (1..=3600).contains(&self.tool_timeout_secs),
             "timeouts must be between 1 and 3600 seconds"
@@ -177,6 +260,20 @@ impl Config {
                 && (self.max_output_tokens as usize) < self.context_tokens / 2,
             "invalid context/output token limits"
         );
+        Ok(())
+    }
+
+    fn validate_model(&self) -> anyhow::Result<()> {
+        huginn_runtime::model::ProviderFactories::builtin().create(
+            &self.provider,
+            &huginn_runtime::model::ProviderConfig {
+                base_url: self.base_url.clone(),
+                model: self.model.clone(),
+                key: None,
+                timeout_secs: self.timeout_secs,
+                allow_loopback_http: self.allow_loopback_http,
+            },
+        )?;
         Ok(())
     }
 }

@@ -62,7 +62,6 @@ area/providers:
       - any-glob-to-any-file:
           - 'crates/infrastructure/providers-*/**'
           - 'crates/infrastructure/providers-core/**'
-          - 'crates/infrastructure/provider-utils/**'
 
 area/dashboard:
   - changed-files:

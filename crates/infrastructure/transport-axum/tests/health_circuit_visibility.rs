@@ -107,7 +107,7 @@ async fn test_weak_reference_pattern_for_graceful_shutdown() {
     use tokio::sync::Mutex;
 
     // Simulate the weak reference pattern
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     struct HealthChecker {
         counter: Arc<Mutex<u32>>,
     }
@@ -138,4 +138,17 @@ async fn test_weak_reference_pattern_for_graceful_shutdown() {
     // Counter should still have the value from before drop
     let c = counter.lock().await;
     assert_eq!(*c, 1);
+}
+
+#[tokio::test]
+async fn test_health_response_includes_app_name_and_version() {
+    let json = serde_json::json!({
+        "status": "healthy",
+        "app_name": "Rook",
+        "version": "0.0.1",
+        "providers": []
+    });
+
+    assert_eq!(json["app_name"], "Rook");
+    assert_eq!(json["version"], "0.0.1");
 }

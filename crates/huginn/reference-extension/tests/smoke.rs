@@ -43,7 +43,12 @@ async fn reference_extension_contributes_without_tui() {
         .unwrap();
     match notice {
         CommandResult::Notice(view) => assert!(view.body.contains("sample"), "{view:?}"),
-        CommandResult::Dialog(_) => panic!("expected a notice"),
+        CommandResult::Dismiss
+        | CommandResult::Overlay(_)
+        | CommandResult::Dialog(_)
+        | CommandResult::Workflow(_) => {
+            panic!("expected a notice")
+        }
     }
     let dialog = registry
         .command("/extension-choose")

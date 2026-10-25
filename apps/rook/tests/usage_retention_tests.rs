@@ -6,6 +6,7 @@
 //
 // The actual SQLite delete logic is tested in audit-sqlite tests.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,25 +16,21 @@ use rook::usage_retention::{
 use tokio::time::sleep;
 
 // Helper to create a file-based usage repo (not :memory: — migrations need schema)
-fn usage_repo() -> audit_sqlite::SqliteUsageRepository {
-    static TEST_DB_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let db_name = format!("rook_usage_retention_test_{}.db", n);
-    let db_path = std::env::temp_dir().join(&db_name);
+fn usage_repo() -> (tempfile::TempDir, audit_sqlite::SqliteUsageRepository) {
+    let directory = tempfile::tempdir().expect("temporary test directory");
+    let db_path = directory.path().join("usage.db");
     let db_path_str = db_path.to_string_lossy().into_owned();
-    let _ = std::fs::remove_file(&db_path);
     db_migration::run_migrations(&db_path_str).expect("migrations");
-    // Leak a clone of the path string to keep the file alive for the test's duration.
-    Box::leak(db_path_str.clone().into_boxed_str());
-    audit_sqlite::SqliteUsageRepository::new(std::path::Path::new(&db_path_str))
-        .expect("usage repo should be creatable")
+    let repo = audit_sqlite::SqliteUsageRepository::new(Path::new(&db_path_str))
+        .expect("usage repo should be creatable");
+    (directory, repo)
 }
 
 // T7.2 — startup sweep executes and returns deleted count
 // We test with a fresh repo (no records) to verify the sweep runs and returns 0
 #[tokio::test]
 async fn startup_sweep_returns_zero_on_empty_repo() {
-    let repo = usage_repo();
+    let (_db_dir, repo) = usage_repo();
 
     // No records inserted — sweep should still succeed and return 0
     let deleted = run_startup_usage_retention_sweep(&repo, 90)
@@ -47,7 +44,8 @@ async fn startup_sweep_returns_zero_on_empty_repo() {
 // This verifies the spawn function signature matches what's called in server.rs
 #[tokio::test]
 async fn periodic_sweep_returns_abortable_join_handle() {
-    let repo = Arc::new(usage_repo());
+    let (_db_dir, repo) = usage_repo();
+    let repo = Arc::new(repo);
 
     let handle = spawn_periodic_usage_retention_sweep(
         repo.clone(),
@@ -63,7 +61,8 @@ async fn periodic_sweep_returns_abortable_join_handle() {
 // Using 0 sweep_interval_hours causes the ticker to fire immediately once
 #[tokio::test]
 async fn periodic_sweep_handles_zero_interval_without_panic() {
-    let repo = Arc::new(usage_repo());
+    let (_db_dir, repo) = usage_repo();
+    let repo = Arc::new(repo);
 
     let handle = spawn_periodic_usage_retention_sweep(
         repo.clone(),

@@ -31,6 +31,9 @@ pub enum Credentials {
         scope: EncryptedBlob,
         id_token: EncryptedBlob,
         project_id: EncryptedBlob,
+        oauth_client_id: String,
+        oauth_client_secret: Option<EncryptedBlob>,
+        oauth_tenant_id: Option<String>,
     },
 }
 
@@ -46,6 +49,10 @@ pub struct ConnectionConfig {
     pub quota_window_thresholds: QuotaWindowThresholds,
     pub default_model: Option<ModelId>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub supported_models: Vec<ModelId>,
+    #[serde(default)]
+    pub api_format: Option<crate::ApiFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -75,22 +82,27 @@ pub enum TestStatus {
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     OpenAI,
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
     Anthropic,
     Ollama,
     OllamaCloud,
     Gemini,
     Groq,
+    AzureOpenAI,
 }
 
 impl ProviderKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAI => "openai",
+            Self::OpenAiCompatible => "openai-compatible",
             Self::Anthropic => "anthropic",
             Self::Ollama => "ollama",
             Self::OllamaCloud => "ollama-cloud",
             Self::Gemini => "gemini",
             Self::Groq => "groq",
+            Self::AzureOpenAI => "azure-openai",
         }
     }
 }
@@ -101,11 +113,13 @@ impl TryFrom<&str> for ProviderKind {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.to_ascii_lowercase().as_str() {
             "openai" => Ok(Self::OpenAI),
+            "openai-compatible" => Ok(Self::OpenAiCompatible),
             "anthropic" => Ok(Self::Anthropic),
             "ollama" => Ok(Self::Ollama),
             "ollama-cloud" => Ok(Self::OllamaCloud),
             "gemini" => Ok(Self::Gemini),
             "groq" => Ok(Self::Groq),
+            "azure-openai" => Ok(Self::AzureOpenAI),
             _ => Err(ValidationError::InvalidProviderKind),
         }
     }
@@ -142,6 +156,13 @@ pub enum ValidationError {
     OAuthFieldMissing(&'static str),
     OAuthEmailInvalid,
     OAuthExpiresAtPast,
+    CloudMetadataEndpointNotAllowed,
+    InvalidBaseUrl,
+    EmptySupportedModels,
+    UnsupportedApiFormat,
+    AzureOpenAIRequiresEndpoint,
+    AzureOpenAIRequiresDeployment,
+    AzureOpenAIRequiresOAuth,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -164,6 +185,36 @@ impl std::fmt::Display for ValidationError {
             Self::OAuthFieldMissing(field) => write!(f, "OAuth {field} must not be empty"),
             Self::OAuthEmailInvalid => write!(f, "OAuth email format is invalid"),
             Self::OAuthExpiresAtPast => write!(f, "OAuth expires_at must be in the future"),
+            Self::CloudMetadataEndpointNotAllowed => {
+                write!(
+                    f,
+                    "provider endpoint must not target cloud metadata services"
+                )
+            }
+            Self::InvalidBaseUrl => write!(
+                f,
+                "provider endpoint is invalid or blocked by server policy"
+            ),
+            Self::EmptySupportedModels => write!(
+                f,
+                "OpenAI-compatible providers require at least one supported model"
+            ),
+            Self::UnsupportedApiFormat => write!(
+                f,
+                "OpenAI-compatible providers currently support only OpenAI Chat Completions"
+            ),
+            Self::AzureOpenAIRequiresEndpoint => {
+                write!(f, "Azure OpenAI requires a valid HTTPS resource endpoint")
+            }
+            Self::AzureOpenAIRequiresDeployment => {
+                write!(
+                    f,
+                    "Azure OpenAI requires a deployment name as default_model"
+                )
+            }
+            Self::AzureOpenAIRequiresOAuth => {
+                write!(f, "Azure OpenAI connections require OAuth authentication")
+            }
         }
     }
 }
@@ -282,5 +333,59 @@ mod tests {
         ] {
             assert_eq!(ProviderKind::try_from(kind.as_str()), Ok(kind));
         }
+    }
+
+    #[test]
+    fn cloud_metadata_validation_error_has_specific_display_message() {
+        assert_eq!(
+            ValidationError::CloudMetadataEndpointNotAllowed.to_string(),
+            "provider endpoint must not target cloud metadata services"
+        );
+    }
+
+    #[test]
+    fn test_status_accessors_expose_only_the_matching_outcome_data() {
+        let timestamp = Utc::now();
+        let active = TestStatus::Active {
+            last_test_at: timestamp,
+            latency_ms: 42,
+        };
+        assert_eq!(active.latency_ms(), Some(42));
+        assert_eq!(active.last_test_at(), Some(timestamp));
+        assert_eq!(active.error_msg(), None);
+        assert_eq!(active.expires_at(), None);
+
+        let unhealthy = TestStatus::Unhealthy {
+            last_test_at: timestamp,
+            error: "unauthorized".into(),
+        };
+        assert_eq!(unhealthy.error_msg().as_deref(), Some("unauthorized"));
+        assert_eq!(unhealthy.latency_ms(), None);
+        assert_eq!(unhealthy.expires_at(), None);
+        assert_eq!(unhealthy.last_test_at(), Some(timestamp));
+
+        let expired = TestStatus::Expired {
+            last_test_at: timestamp,
+            expires_at: 1_800_000_000,
+        };
+        assert_eq!(expired.expires_at(), Some(1_800_000_000));
+        assert_eq!(expired.last_test_at(), Some(timestamp));
+        assert_eq!(expired.error_msg(), None);
+
+        let unknown = TestStatus::Unknown {
+            last_test_at: timestamp,
+            reason: "provider returned an unknown state".into(),
+        };
+        assert_eq!(
+            unknown.error_msg().as_deref(),
+            Some("provider returned an unknown state")
+        );
+        assert_eq!(unknown.last_test_at(), Some(timestamp));
+
+        let never_tested = TestStatus::NeverTested;
+        assert_eq!(never_tested.last_test_at(), None);
+        assert_eq!(never_tested.latency_ms(), None);
+        assert_eq!(never_tested.error_msg(), None);
+        assert_eq!(never_tested.expires_at(), None);
     }
 }

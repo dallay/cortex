@@ -1,9 +1,9 @@
 # Stage 1: Build
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.99-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS builder
 
 WORKDIR /app
 
-# Install build dependencies (Debian) + Node.js 20
+# Install build dependencies (Debian) + Node.js 24
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g pnpm \
     && rm -rf /var/lib/apt/lists/*
@@ -21,20 +21,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files (node_modules excluded by .dockerignore)
 COPY Cargo.lock* ./
 COPY Cargo.toml ./
+COPY package.json ./
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
 COPY rust-toolchain.toml ./
 COPY crates crates
 COPY apps apps
 
-# Install dashboard deps FIRST (before any further COPY overwrites node_modules)
-WORKDIR /app/apps/rook/dashboard
+# Install workspace dashboard deps from root
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build the project
-WORKDIR /app
 RUN cargo build --bin rook --release 2>&1
 
 # Stage 2: Minimal runtime
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 WORKDIR /app
 

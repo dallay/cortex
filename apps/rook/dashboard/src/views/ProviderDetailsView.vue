@@ -26,7 +26,6 @@ import LoadingState from "@/components/LoadingState.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
-import {useProviderCatalog} from "@/composables/useProviderCatalog";
 import {useProviders} from "@/composables/useProviders";
 import {
   findCatalogEntry,
@@ -67,10 +66,9 @@ const providerName = computed(() =>
   entry.value ? t(entry.value.displayNameKey) : "",
 );
 
-const {providers, loading, error, fetch, test, update, remove} =
+const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
   useProviders();
 const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
-const {byKind} = useProviderCatalog();
 
 onMounted(() => {
   fetch();
@@ -133,6 +131,19 @@ async function handleTest(id: string) {
   }
 }
 
+async function handleOAuthRefresh(id: string) {
+  if (!providerKindParam.value) return;
+  busyIds.value = new Set([...busyIds.value, id]);
+  try {
+    // refreshOAuth already refetches the provider list on success.
+    await refreshOAuth(providerKindParam.value, id);
+  } finally {
+    const next = new Set(busyIds.value);
+    next.delete(id);
+    busyIds.value = next;
+  }
+}
+
 async function handleToggle({ id, enabled }: { id: string; enabled: boolean }) {
   const conn = providers.value.find((p) => p.id === id);
   if (!conn) return;
@@ -172,22 +183,14 @@ function openEditDialog(id: string) {
   editDialogOpen.value = true;
 }
 
-function onDialogSaved() {
+function closeProviderDialog() {
   addDialogOpen.value = false;
   editDialogOpen.value = false;
   editingId.value = null;
   fetch();
 }
 
-function onDialogDeleted() {
-  addDialogOpen.value = false;
-  editDialogOpen.value = false;
-  editingId.value = null;
-  fetch();
-}
 
-// Suppress unused byKind reference (kept for future per-kind stats).
-void byKind;
 </script>
 
 <template>
@@ -261,6 +264,7 @@ void byKind;
         :testing="isTesting(conn.id)"
         :busy="isBusy(conn.id)"
         @test="handleTest"
+        @refresh="handleOAuthRefresh"
         @edit="openEditDialog"
         @delete="handleDelete"
         @toggle="handleToggle"
@@ -284,8 +288,8 @@ void byKind;
       v-model:open="addDialogOpen"
       :provider-kind="providerKindParam ?? undefined"
       mode="create"
-      @saved="onDialogSaved"
-      @deleted="onDialogDeleted"
+      @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
 
     <AddProviderDialog
@@ -294,8 +298,8 @@ void byKind;
       :provider-kind="providerKindParam ?? undefined"
       mode="edit"
       @update:open="editDialogOpen = $event"
-      @saved="onDialogSaved"
-      @deleted="onDialogDeleted"
+      @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
   </div>
 </template>

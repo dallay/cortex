@@ -63,11 +63,12 @@ async fn http_adapter_sends_auth_and_assembles_tool_calls() {
             ([("content-type", "text/event-stream")], data)
         }
     }))).await;
-    let provider = OpenAiProvider::new(
+    let provider = OpenAiProvider::with_transport(
         &url,
         "fixture-model".into(),
         Some("fixture-secret".into()),
         2,
+        true,
     )
     .unwrap();
     let mut model_request = request();
@@ -100,7 +101,9 @@ async fn http_errors_timeout_and_cancellation_do_not_leak_credentials() {
         post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "fixture-secret").into_response() }),
     ))
     .await;
-    let provider = OpenAiProvider::new(&url, "m".into(), Some("fixture-secret".into()), 1).unwrap();
+    let provider =
+        OpenAiProvider::with_transport(&url, "m".into(), Some("fixture-secret".into()), 1, true)
+            .unwrap();
     let error = match provider.stream(request(), CancellationToken::new()).await {
         Err(e) => e,
         Ok(_) => panic!("expected HTTP error"),
@@ -116,7 +119,7 @@ async fn http_errors_timeout_and_cancellation_do_not_leak_credentials() {
         }),
     ))
     .await;
-    let provider = OpenAiProvider::new(&url, "m".into(), None, 1).unwrap();
+    let provider = OpenAiProvider::with_transport(&url, "m".into(), None, 1, true).unwrap();
     assert!(provider
         .stream(request(), CancellationToken::new())
         .await
@@ -155,7 +158,7 @@ async fn active_response_stream_can_exceed_the_header_timeout() {
             ([ ("content-type", "text/event-stream") ], Body::from_stream(chunks))
         }),
     )).await;
-    let provider = OpenAiProvider::new(&url, "m".into(), None, 1).unwrap();
+    let provider = OpenAiProvider::with_transport(&url, "m".into(), None, 1, true).unwrap();
     let deltas: Vec<_> = provider
         .stream(request(), CancellationToken::new())
         .await
@@ -204,6 +207,7 @@ async fn mcp_protocol_error_does_not_cancel_server_for_later_calls() {
     .unwrap();
     let tool = registry.get("mcp_fixture_0").unwrap();
     let ctx = huginn_core::ToolContext {
+        selected_skills: vec![],
         workspace: temp.path().into(),
         cancellation: CancellationToken::new(),
     };
@@ -264,13 +268,14 @@ async fn mcp_denied_launch_and_approved_discovery_call_and_shutdown() {
         &registry,
         &policy,
         CancellationToken::new(),
-        2,
+        10,
     )
     .await
     .unwrap();
     assert_eq!(*policy.seen.lock().unwrap(), ["mcp.fixture.start"]);
     let tool = registry.get("mcp_fixture_0").unwrap();
     let ctx = ToolContext {
+        selected_skills: vec![],
         workspace: temp.path().to_path_buf(),
         cancellation: CancellationToken::new(),
     };
@@ -326,6 +331,7 @@ async fn mcp_crash_and_timeout_are_reported_and_shutdown_is_bounded() {
         .await
         .unwrap();
         let ctx = ToolContext {
+            selected_skills: vec![],
             workspace: temp.path().into(),
             cancellation: CancellationToken::new(),
         };

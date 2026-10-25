@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -14,12 +11,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rook_core::{ApiKeyId, ApiKeyTier};
 use rook_usecases::{
     AuthenticateClientApi, AuthenticateClientApiError, BootstrapStatus, ValidateSession,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::middleware::{ApiKeyRateLimiter, RateLimitSnapshot};
@@ -36,6 +31,8 @@ const TRUSTED_HEADERS: &[&str] = &[
     "x-authz-auth-scopes",
     "x-authz-allowed-models",
     "x-authz-allowed-providers",
+    "x-authz-tier",
+    "x-authz-requested-tier",
 ];
 
 #[derive(Clone)]
@@ -191,7 +188,7 @@ pub struct CorsConfig {
 
 impl CorsConfig {
     fn from_env() -> Self {
-        let allowed_origins = std::env::var("ALLOWED_ORIGINS")
+        let mut allowed_origins: Vec<String> = std::env::var("ALLOWED_ORIGINS")
             .unwrap_or_else(|_| {
                 "http://localhost:3000,http://localhost:4747,http://127.0.0.1:3000".to_string()
             })
@@ -200,17 +197,18 @@ impl CorsConfig {
             .filter(|origin| !origin.is_empty())
             .map(ToOwned::to_owned)
             .collect();
+        if allowed_origins.iter().any(|origin| origin == "*") {
+            tracing::warn!(
+                "ALLOWED_ORIGINS contains '*'; wildcard CORS is unsafe with cookie-authenticated management routes, disabling all CORS origins"
+            );
+            allowed_origins.clear();
+        }
         Self { allowed_origins }
     }
 
     fn allow_origin(&self, origin: Option<&HeaderValue>) -> Option<HeaderValue> {
         let origin = origin.and_then(|value| value.to_str().ok())?;
-        if self.allowed_origins.iter().any(|allowed| allowed == "*")
-            || self.allowed_origins.iter().any(|allowed| allowed == origin)
-            || (cfg!(debug_assertions)
-                && (origin.starts_with("http://localhost:")
-                    || origin.starts_with("http://127.0.0.1:")))
-        {
+        if self.allowed_origins.iter().any(|allowed| allowed == origin) {
             HeaderValue::from_str(origin).ok()
         } else {
             None
@@ -221,7 +219,11 @@ impl CorsConfig {
 impl Default for CorsConfig {
     fn default() -> Self {
         Self {
-            allowed_origins: vec!["*".to_string()],
+            allowed_origins: vec![
+                "http://localhost:3000".to_string(),
+                "http://localhost:4747".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+            ],
         }
     }
 }
@@ -268,6 +270,9 @@ pub struct Subject {
     pub scopes: Vec<String>,
     pub allowed_models: Vec<String>,
     pub allowed_providers: Vec<String>,
+    /// Authenticated service tier — the ONLY server-side source for tiered
+    /// decisions. Never populated from client headers.
+    pub tier: ApiKeyTier,
 }
 
 impl Subject {
@@ -279,6 +284,7 @@ impl Subject {
             scopes: Vec::new(),
             allowed_models: Vec::new(),
             allowed_providers: Vec::new(),
+            tier: ApiKeyTier::Free,
         }
     }
 }
@@ -466,6 +472,7 @@ pub fn stamp_trusted_headers(
     insert_header(headers, "x-authz-auth-id", &subject.id);
     insert_header(headers, "x-authz-auth-label", &subject.label);
     insert_header(headers, "x-authz-auth-scopes", &subject.scopes.join(","));
+    insert_header(headers, "x-authz-tier", subject.tier.as_str());
     insert_header(
         headers,
         "x-authz-allowed-models",
@@ -599,6 +606,7 @@ async fn client_api_policy(
                         .iter()
                         .map(|p| p.as_str().to_string())
                         .collect(),
+                    tier: api_key_subject.tier,
                 };
                 if let Some(rejection) = check_scope(method, path, &subject) {
                     return rejection;
@@ -652,6 +660,7 @@ async fn client_api_policy(
         scopes: credential.scopes.clone(),
         allowed_models: Vec::new(),
         allowed_providers: Vec::new(),
+        tier: credential.tier,
     };
     if let Some(rejection) = check_scope(method, path, &subject) {
         return rejection;
@@ -705,6 +714,7 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
                 scopes: vec!["admin".to_string()],
                 allowed_models: Vec::new(),
                 allowed_providers: Vec::new(),
+                tier: ApiKeyTier::Free,
             };
             AuthOutcome::allow(subject)
         }
@@ -718,59 +728,6 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
             AuthOutcome::reject(StatusCode::INTERNAL_SERVER_ERROR, "AUTH_BACKEND_ERROR")
         }
     }
-}
-
-// verify_jwt is kept for backward compatibility with existing JWT-based auth
-// but is no longer used for MANAGEMENT routes (replaced by session validation)
-#[allow(dead_code)]
-fn verify_jwt(token: &str, secret: &str) -> Result<Subject, &'static str> {
-    let mut parts = token.split('.');
-    let header = parts.next().ok_or("INVALID_TOKEN")?;
-    let payload = parts.next().ok_or("INVALID_TOKEN")?;
-    let signature = parts.next().ok_or("INVALID_TOKEN")?;
-    if parts.next().is_some() {
-        return Err("INVALID_TOKEN");
-    }
-
-    let signing_input = format!("{header}.{payload}");
-    let signature = URL_SAFE_NO_PAD
-        .decode(signature)
-        .map_err(|_| "INVALID_TOKEN")?;
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
-    ring::hmac::verify(&key, signing_input.as_bytes(), &signature).map_err(|_| "INVALID_TOKEN")?;
-
-    let payload = URL_SAFE_NO_PAD
-        .decode(payload)
-        .map_err(|_| "INVALID_TOKEN")?;
-    let payload: Value = serde_json::from_slice(&payload).map_err(|_| "INVALID_TOKEN")?;
-    if !payload
-        .get("authenticated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Err("INVALID_TOKEN");
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "INVALID_TOKEN")?
-        .as_secs();
-    if payload.get("exp").and_then(Value::as_u64).unwrap_or(0) <= now {
-        return Err("TOKEN_EXPIRED");
-    }
-
-    let id = payload
-        .get("sub")
-        .and_then(Value::as_str)
-        .unwrap_or("dashboard")
-        .to_string();
-    Ok(Subject {
-        kind: AuthKind::Session,
-        id: id.clone(),
-        label: id,
-        scopes: vec!["admin".to_string()],
-        allowed_models: Vec::new(),
-        allowed_providers: Vec::new(),
-    })
 }
 
 /// Middleware that rejects requests lacking the `admin` scope in the trusted
@@ -804,11 +761,13 @@ pub fn extract_api_key_id(req: &Request) -> Option<ApiKeyId> {
 pub fn extract_api_key_id_from_headers(headers: &HeaderMap) -> Option<ApiKeyId> {
     // Only extract API key ID when the auth kind explicitly indicates an API key.
     // This prevents incorrectly interpreting other auth types (e.g., JWT) as API keys.
+    // The middleware stamps "api_key" (AuthKind::ApiKey::as_header); "apikey"
+    // is kept as a legacy alias.
     let is_api_key = headers
         .get("x-authz-auth-kind")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .filter(|k| *k == "apikey")
+        .filter(|k| *k == "api_key" || *k == "apikey")
         .is_some();
 
     if !is_api_key {
@@ -978,6 +937,7 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use chrono::{DateTime, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
@@ -1319,6 +1279,49 @@ mod tests {
     }
 
     #[test]
+    fn extract_api_key_id_accepts_stamped_api_key_kind() {
+        // stamp_trusted_headers writes "api_key" (AuthKind::ApiKey::as_header),
+        // so the extractor must accept it — not only the legacy "apikey".
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-auth-kind", HeaderValue::from_static("api_key"));
+        headers.insert("x-authz-auth-id", HeaderValue::from_static(" key_abc123 "));
+
+        let api_key_id = extract_api_key_id_from_headers(&headers);
+
+        assert_eq!(
+            api_key_id.map(|id| id.to_string()),
+            Some("key_abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_id_roundtrips_through_stamp_trusted_headers() {
+        let subject = Subject {
+            kind: AuthKind::ApiKey,
+            id: "key_roundtrip".to_string(),
+            label: "Roundtrip".to_string(),
+            scopes: vec!["chat:read".to_string()],
+            allowed_models: Vec::new(),
+            allowed_providers: Vec::new(),
+            tier: ApiKeyTier::Free,
+        };
+        let mut headers = HeaderMap::new();
+        stamp_trusted_headers(
+            &mut headers,
+            "550e8400-e29b-41d4-a716-446655440000",
+            AuthTier::ClientApi,
+            &subject,
+        );
+
+        let api_key_id = extract_api_key_id_from_headers(&headers);
+
+        assert_eq!(
+            api_key_id.map(|id| id.to_string()),
+            Some("key_roundtrip".to_string())
+        );
+    }
+
+    #[test]
     fn removes_client_supplied_trusted_headers_before_stamping_subject() {
         let mut headers = HeaderMap::new();
         headers.insert("x-authz-auth-id", HeaderValue::from_static("spoofed"));
@@ -1348,6 +1351,67 @@ mod tests {
                 .and_then(|h| h.to_str().ok()),
             Some("550e8400-e29b-41d4-a716-446655440000")
         );
+    }
+
+    #[test]
+    fn spoofed_tier_headers_are_stripped_and_stamped_from_subject() {
+        // A01+A09: client-supplied `x-authz-tier` / `x-authz-requested-tier`
+        // must never survive; tier comes only from the authenticated subject.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-tier", HeaderValue::from_static("enterprise"));
+        headers.insert(
+            "x-authz-requested-tier",
+            HeaderValue::from_static("enterprise"),
+        );
+        let subject = Subject::anonymous();
+
+        stamp_trusted_headers(
+            &mut headers,
+            "550e8400-e29b-41d4-a716-446655440000",
+            AuthTier::Public,
+            &subject,
+        );
+
+        assert_eq!(
+            headers.get("x-authz-tier").and_then(|h| h.to_str().ok()),
+            Some("free"),
+            "spoofed tier must be replaced by the subject tier (free)"
+        );
+        assert!(
+            headers.get("x-authz-requested-tier").is_none(),
+            "x-authz-requested-tier is never stamped; client value must be stripped"
+        );
+    }
+
+    #[test]
+    fn stamped_tier_reflects_authenticated_api_key_tier() {
+        for (tier, expected) in [
+            (ApiKeyTier::Pro, "pro"),
+            (ApiKeyTier::Enterprise, "enterprise"),
+        ] {
+            let subject = Subject {
+                kind: AuthKind::ApiKey,
+                id: "key_tier".to_string(),
+                label: "Tier Key".to_string(),
+                scopes: vec!["chat:read".to_string()],
+                allowed_models: Vec::new(),
+                allowed_providers: Vec::new(),
+                tier,
+            };
+            let mut headers = HeaderMap::new();
+            stamp_trusted_headers(
+                &mut headers,
+                "550e8400-e29b-41d4-a716-446655440000",
+                AuthTier::ClientApi,
+                &subject,
+            );
+            assert_eq!(
+                headers.get("x-authz-tier").and_then(|h| h.to_str().ok()),
+                Some(expected),
+                "authenticated tier must flow via server-side stamp"
+            );
+            assert!(headers.get("x-authz-requested-tier").is_none());
+        }
     }
 
     #[test]
@@ -1383,6 +1447,29 @@ mod tests {
         assert!(headers.get("access-control-allow-origin").is_none());
         assert!(headers.get("access-control-allow-credentials").is_none());
         assert!(headers.get("content-type").is_none());
+    }
+
+    #[test]
+    fn default_cors_config_rejects_arbitrary_credentialed_origin() {
+        let cors = CorsConfig::default();
+        let origin = HeaderValue::from_static("https://evil.example.com");
+        let mut headers = HeaderMap::new();
+
+        apply_cors_headers(&mut headers, Some(&origin), &cors);
+
+        assert!(headers.get("access-control-allow-origin").is_none());
+        assert!(headers.get("access-control-allow-credentials").is_none());
+    }
+
+    #[test]
+    fn cors_does_not_allow_unlisted_localhost_port() {
+        let cors = CorsConfig {
+            allowed_origins: vec!["http://localhost:3000".to_string()],
+        };
+
+        assert!(cors
+            .allow_origin(Some(&HeaderValue::from_static("http://localhost:9999")))
+            .is_none());
     }
 
     #[test]

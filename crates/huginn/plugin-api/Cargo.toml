@@ -1,12 +1,14 @@
 [package]
 name = "huginn-plugin-api"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.89"
 publish = false
 
 [dependencies]
 huginn-core = { path = "../core" }
+futures.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

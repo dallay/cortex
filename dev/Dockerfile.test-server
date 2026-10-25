@@ -9,7 +9,7 @@
 # =============================================================================
 
 # Stage 1: Build
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.99-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS builder
 
 WORKDIR /app
 
@@ -22,8 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 20 and pnpm
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Install Node.js 24 and pnpm
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g pnpm \
     && rm -rf /var/lib/apt/lists/*
@@ -41,7 +41,7 @@ RUN cd apps/rook/dashboard && pnpm install && pnpm build
 RUN cargo clean && cargo build --bin rook 2>&1
 
 # Stage 2: Minimal runtime
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 WORKDIR /app
 

@@ -7,7 +7,7 @@ use rook_core::{
     StreamChunk, TokenUsage,
 };
 use serde::Deserialize;
-use shared_kernel::{CortexError, CortexResult, ModelId as KModelId, ProviderId};
+use shared_kernel::{ConnectionId, CortexError, CortexResult, ModelId as KModelId, ProviderId};
 use std::sync::Arc;
 
 fn map_gemini_finish_reason(reason: &str) -> Option<rook_core::FinishReason> {
@@ -31,24 +31,17 @@ struct GeminiGenerateResponse {
 struct GeminiCandidate {
     content: GeminiContent,
     #[serde(rename = "finishReason")]
-    #[allow(dead_code)]
     finish_reason: Option<String>,
-    #[allow(dead_code)]
-    index: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GeminiContent {
-    #[allow(dead_code)]
-    role: String,
     parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GeminiPart {
     text: Option<String>,
-    #[allow(dead_code)]
-    function_call: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,14 +66,43 @@ pub struct GeminiProviderConfig {
 pub struct GeminiProvider {
     config: GeminiProviderConfig,
     client: Client,
+    oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
+    connection_id: Option<ConnectionId>,
+    project_id: Option<String>,
 }
 
 impl GeminiProvider {
     pub fn new(config: GeminiProviderConfig) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        Ok(Arc::new(Self {
+            config,
+            client,
+            oauth_token_port: None,
+            connection_id: None,
+            project_id: None,
+        }))
+    }
+
+    pub fn new_with_oauth(
+        config: GeminiProviderConfig,
+        connection_id: ConnectionId,
+        project_id: String,
+        oauth_token_port: Arc<dyn rook_core::OAuthTokenPort>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Arc::new(Self {
+            config,
+            client,
+            oauth_token_port: Some(oauth_token_port),
+            connection_id: Some(connection_id),
+            project_id: Some(project_id),
+        }))
     }
 
     fn base_url(&self) -> String {
@@ -88,6 +110,76 @@ impl GeminiProvider {
             .base_url
             .clone()
             .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string())
+    }
+
+    async fn access_token(&self, force_refresh: bool) -> Result<String, String> {
+        match (&self.oauth_token_port, &self.connection_id) {
+            (Some(port), Some(connection_id)) => port
+                .access_token(connection_id, force_refresh)
+                .await
+                .map_err(|error| error.to_string()),
+            _ => Ok(self.config.api_key.clone()),
+        }
+    }
+
+    async fn send_models_request(&self, url: &str) -> Result<reqwest::Response, String> {
+        for attempt in 0..=1 {
+            let token = self.access_token(attempt == 1).await?;
+            let mut request = self.client.get(url);
+            if self.oauth_token_port.is_some() {
+                request = request.header("Authorization", format!("Bearer {token}"));
+                if let Some(project_id) = &self.project_id {
+                    request = request.header("x-goog-user-project", project_id);
+                }
+            } else {
+                request = request.header("x-goog-api-key", token);
+            }
+            let response = request.send().await.map_err(|error| error.to_string())?;
+            if response.status() != reqwest::StatusCode::UNAUTHORIZED
+                || self.oauth_token_port.is_none()
+                || attempt == 1
+            {
+                return Ok(response);
+            }
+        }
+        unreachable!("retry loop always returns a response")
+    }
+
+    async fn send_generate_request(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> CortexResult<reqwest::Response> {
+        for attempt in 0..=1 {
+            let token = self
+                .access_token(attempt == 1)
+                .await
+                .map_err(|_| CortexError::auth_failed("Gemini OAuth token unavailable"))?;
+            let mut request = self
+                .client
+                .post(url)
+                .header("content-type", "application/json");
+            if self.oauth_token_port.is_some() {
+                request = request.header("Authorization", format!("Bearer {token}"));
+                if let Some(project_id) = &self.project_id {
+                    request = request.header("x-goog-user-project", project_id);
+                }
+            } else {
+                request = request.header("x-goog-api-key", token);
+            }
+            let response = request
+                .json(body)
+                .send()
+                .await
+                .map_err(|error| CortexError::provider(format!("request failed: {error}")))?;
+            if response.status() != reqwest::StatusCode::UNAUTHORIZED
+                || self.oauth_token_port.is_none()
+                || attempt == 1
+            {
+                return Ok(response);
+            }
+        }
+        unreachable!("retry loop always returns a response")
     }
 }
 
@@ -103,13 +195,13 @@ impl ProviderPort for GeminiProvider {
         ApiFormat::OpenAI
     }
     fn is_available(&self) -> bool {
-        !self.config.api_key.is_empty()
+        self.oauth_token_port.is_some() || !self.config.api_key.is_empty()
     }
 
     async fn health_check(&self) -> HealthStatus {
         // No API key configured — surface as a yellow warning so the
         // user can still Save and add a key later via Edit.
-        if self.config.api_key.is_empty() {
+        if !self.is_available() {
             return HealthStatus::Warning {
                 provider: self.config.id.clone(),
                 latency_ms: 0,
@@ -119,13 +211,7 @@ impl ProviderPort for GeminiProvider {
 
         let start = std::time::Instant::now();
         let probe_url = format!("{}/v1beta/models", self.base_url());
-        match self
-            .client
-            .get(&probe_url)
-            .header("x-goog-api-key", &self.config.api_key)
-            .send()
-            .await
-        {
+        match self.send_models_request(&probe_url).await {
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 let status = resp.status();
@@ -222,15 +308,7 @@ impl ProviderPort for GeminiProvider {
             model
         );
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("x-goog-api-key", &self.config.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CortexError::provider(format!("request failed: {e}")))?;
+        let resp = self.send_generate_request(&url, &body).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

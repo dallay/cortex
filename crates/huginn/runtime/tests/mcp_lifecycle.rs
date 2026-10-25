@@ -119,6 +119,7 @@ async fn mcp_plugin_unload_revokes_registered_and_retained_tools() {
                 arguments: json!({})
             },
             &ToolContext {
+                selected_skills: vec![],
                 workspace: temp.path().into(),
                 cancellation: CancellationToken::new()
             }

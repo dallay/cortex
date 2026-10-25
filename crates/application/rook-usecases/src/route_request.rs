@@ -15,17 +15,94 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, ComboRepositoryPort, CompletionRequest,
+    evaluate_connection_quota, ApiFormat, AuditEntry, AuditPort, CachePort,
+    ComboAliasRepositoryPort, ComboRepositoryPort, ComboStep, CompletionRequest,
     CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
-    ProviderRepositoryPort, RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry,
-    UsageRecorderPort,
+    ProviderRepositoryPort, QuotaEligibilityPolicy, QuotaObservationQuery,
+    QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort, StreamChunk, TokenUsage,
+    ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ComboId, ConnectionId, ProviderId, RestrictionViolation};
+use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
+use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
+
+fn record_combo_skip(
+    errors: &mut Vec<(ProviderId, String)>,
+    provider_id: &ProviderId,
+    step_index: usize,
+    reason: &str,
+) {
+    tracing::warn!(
+        step_index = step_index + 1,
+        provider_id = %provider_id,
+        skip_reason = reason,
+        "skipping combo step"
+    );
+    errors.push((provider_id.clone(), reason.to_string()));
+}
+
+/// Build the skip reason of an exhausted connection.
+///
+/// The reason carries quota provenance only: provider, metric, counters, and
+/// timing. Credentials and account identifiers never reach this string.
+fn quota_skip_reason(state: &QuotaState) -> String {
+    match state.evidence() {
+        Some(evidence) => format!("quota_exhausted: {}", evidence.describe()),
+        None => "quota_exhausted".to_string(),
+    }
+}
+
+/// Decision taken for a resolved connection-bound adapter before any upstream call.
+///
+/// The preflight authorization and the execution loop share this evaluation so
+/// both paths classify a step identically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConnectionAdapterDecision {
+    /// The adapter cannot serve the step; the step is skipped with the reason.
+    Unusable(&'static str),
+    /// The adapter is usable but the key is not allowed to use it.
+    Disallowed(ProviderId),
+    /// The adapter is usable and authorized.
+    Authorized,
+}
+
+/// Classify a resolved connection-bound adapter.
+///
+/// Usability is evaluated before the provider restriction, so an adapter that
+/// cannot serve the step is a deterministic skip in every path, while a usable
+/// but unauthorized adapter is always rejected with 403.
+fn classify_connection_adapter(
+    provider: &dyn rook_core::ProviderPort,
+    adapter_id: &ProviderId,
+    model: &ModelId,
+    allowed: &[ProviderId],
+) -> ConnectionAdapterDecision {
+    if !provider.is_available() {
+        return ConnectionAdapterDecision::Unusable("provider_unavailable");
+    }
+    if !provider.supports_model(model) {
+        return ConnectionAdapterDecision::Unusable("model_unsupported");
+    }
+    if !allowed.is_empty() && !allowed.contains(adapter_id) {
+        return ConnectionAdapterDecision::Disallowed(adapter_id.clone());
+    }
+    ConnectionAdapterDecision::Authorized
+}
+
+async fn notify_provider_failure(
+    router: &dyn RouterPort,
+    provider: &ProviderId,
+    error: &CortexError,
+) {
+    if !error.is_local_backpressure() {
+        router.on_failure(provider, error).await;
+    }
+}
 
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
+const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Grouped parameters for success handling to avoid excessive parameter count
 struct SuccessContext {
@@ -47,6 +124,18 @@ struct UsageMetrics<'a> {
     latency_ms: u64,
 }
 
+/// Grouped identity of a combo step for audit and usage recording
+struct ComboStepContext {
+    combo_id: ComboId,
+    step_index: usize,
+    /// Effective adapter identity that served the step
+    provider_id: ProviderId,
+    /// Connection the step resolved to, when the step is connection-bound
+    connection_id: Option<ConnectionId>,
+    /// Logical provider runtime that owns the connection
+    runtime_id: Option<ProviderId>,
+}
+
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 
@@ -62,6 +151,11 @@ pub struct RouteRequest {
     alias_repository: Arc<dyn ModelAliasRepositoryPort>,
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
+    combo_alias_repository: Option<Arc<dyn ComboAliasRepositoryPort>>,
+    /// Reader for upstream quota observations used by the eligibility preflight.
+    quota_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    /// Policy that decides when quota evidence is trustworthy.
+    quota_policy: QuotaEligibilityPolicy,
 }
 
 /// Configuration for model alias resolution
@@ -98,7 +192,41 @@ impl RouteRequest {
             alias_repository,
             alias_config,
             telemetry,
+            combo_alias_repository: None,
+            quota_reader: None,
+            quota_policy: QuotaEligibilityPolicy::default(),
         }
+    }
+
+    /// Wire the reader for upstream quota observations.
+    ///
+    /// With no reader the preflight stays disabled and every connection keeps
+    /// its eligibility.
+    pub fn with_quota_observation_reader(
+        mut self,
+        reader: Arc<dyn QuotaObservationRecorderPort>,
+    ) -> Self {
+        self.quota_reader = Some(reader);
+        self
+    }
+
+    /// Override the policy that decides when quota evidence is trustworthy.
+    pub fn with_quota_policy(mut self, policy: QuotaEligibilityPolicy) -> Self {
+        self.quota_policy = policy;
+        self
+    }
+
+    /// Builder-style wiring for virtual combo (`rook/*`) resolution.
+    /// `None` (default) means virtual aliases are unconfigured: `rook/*`
+    /// models resolve to `404 model_not_found` via the shared lookup helper.
+    pub fn with_combo_alias_repository(mut self, repo: Arc<dyn ComboAliasRepositoryPort>) -> Self {
+        self.combo_alias_repository = Some(repo);
+        self
+    }
+
+    /// Get combo-alias repository reference (for HTTP layer wiring).
+    pub fn combo_alias_repository(&self) -> Option<Arc<dyn ComboAliasRepositoryPort>> {
+        self.combo_alias_repository.clone()
     }
 
     /// Get combo repository reference (for HTTP layer wiring)
@@ -127,18 +255,50 @@ impl RouteRequest {
 
     pub async fn execute_with_format(
         &self,
-        mut req: CompletionRequest,
+        req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        // 0. Resolve model alias if enabled (BEFORE combo dispatch and
-        // restrictions check, so combo execution also uses the canonical model)
-        self.resolve_model_alias(&mut req).await;
+        let (req, combo_response) = self
+            .resolve_alias_and_dispatch_combo(req, client_format)
+            .await?;
+        if let Some(response) = combo_response {
+            return Ok(response);
+        }
+        self.execute_standard_request(req, client_format).await
+    }
 
-        // 0a. Check if combo execution is requested
-        if let Some(combo_id) = req.metadata.combo_id {
-            return self.execute_combo(&combo_id, req, client_format).await;
+    async fn resolve_alias_and_dispatch_combo(
+        &self,
+        mut req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
+        // Resolve aliases before combo dispatch and restrictions checks so combo
+        // execution also uses the canonical model. Virtual models are combo aliases.
+        if !is_virtual_model(&req.model) {
+            self.resolve_model_alias(&mut req).await;
         }
 
+        let combo_response = if is_virtual_model(&req.model) {
+            Some(
+                self.execute_virtual_combo(req.clone(), client_format)
+                    .await?,
+            )
+        } else if let Some(combo_id) = req.metadata.combo_id {
+            Some(
+                self.execute_legacy_combo(&combo_id, req.clone(), client_format)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        Ok((req, combo_response))
+    }
+
+    async fn execute_standard_request(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
         let cache_key = req.cache_key();
         let start = Instant::now();
 
@@ -151,15 +311,53 @@ impl RouteRequest {
         }
 
         // 2. Retry loop: select provider, execute, failover on recoverable errors
-        let mut excluded: Vec<ProviderId> = Vec::new();
+        let excluded: Vec<ProviderId> = Vec::new();
+        let local_backpressure = None;
+        let provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
-        let max_attempts = MAX_RETRY_ATTEMPTS.min(total_providers.max(1));
+        let selection_budget = total_providers.max(1);
+        let max_attempts = MAX_RETRY_ATTEMPTS.min(selection_budget);
+        let provider_attempts = 0;
 
-        for attempt in 0..max_attempts {
+        self.execute_provider_attempts(
+            req,
+            client_format,
+            cache_key,
+            start,
+            selection_budget,
+            max_attempts,
+            total_providers,
+            excluded,
+            local_backpressure,
+            provider_attempt_failed,
+            provider_attempts,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_provider_attempts(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+        cache_key: rook_core::CacheKey,
+        start: Instant,
+        selection_budget: usize,
+        max_attempts: usize,
+        total_providers: usize,
+        mut excluded: Vec<ProviderId>,
+        mut local_backpressure: Option<CortexError>,
+        mut provider_attempt_failed: bool,
+        mut provider_attempts: usize,
+    ) -> Result<CompletionResponse, CortexError> {
+        for _ in 0..selection_budget {
+            if provider_attempts >= max_attempts {
+                break;
+            }
             // Create span for this retry attempt
             let _attempt_span = tracing::info_span!(
                 "router.retry.attempt",
-                attempt = attempt + 1,
+                attempt = provider_attempts + 1,
                 max_attempts = max_attempts,
                 excluded_count = excluded.len()
             );
@@ -168,13 +366,52 @@ impl RouteRequest {
             let _select_span = tracing::debug_span!("router.select_excluding");
             let provider = match self.router.select_excluding(&req, &excluded).await {
                 Ok(p) => p,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    if !provider_attempt_failed {
+                        if let Some(error) = local_backpressure {
+                            return Err(error);
+                        }
+                    }
+                    return Err(e);
+                }
             };
             let provider_id = provider.id().clone();
-            let connection_id = self.resolve_connection_id(&provider_id).await;
+            let connection = if self.provider_repository.is_some() {
+                self.resolve_connection(&provider_id).await
+            } else {
+                None
+            };
+            let connection_id = connection.as_ref().map(|(id, _)| *id);
 
             // Provider restriction check (after selection, before execution)
-            self.check_provider_restriction(&req, &provider_id)?;
+            if let Err(error) = self.check_provider_restriction(&req, &provider_id) {
+                if local_backpressure.is_some() {
+                    excluded.push(provider_id);
+                    continue;
+                }
+                return Err(error);
+            }
+
+            // Skip connections with fresh, authoritative exhaustion evidence.
+            // The check runs after authorization and before any upstream I/O.
+            if self.quota_reader.is_some() {
+                if let Some((connection_id, runtime_id)) = connection.as_ref() {
+                    let state = self
+                        .connection_quota_state(connection_id, runtime_id.as_ref())
+                        .await;
+                    if state.is_exhausted() {
+                        let reason = quota_skip_reason(&state);
+                        tracing::info!(
+                            provider = %provider_id,
+                            %connection_id,
+                            skip_reason = %reason,
+                            "skipping connection with exhausted upstream quota"
+                        );
+                        excluded.push(provider_id);
+                        continue;
+                    }
+                }
+            }
 
             let provider_format = provider.api_format();
             let provider_req = match self.format_translator.translate_request(
@@ -187,6 +424,7 @@ impl RouteRequest {
             };
 
             // Execute
+            provider_attempts += 1;
             let result = provider.complete(&provider_req).await;
             let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -196,7 +434,7 @@ impl RouteRequest {
                     if !excluded.is_empty() {
                         tracing::info!(
                             provider = %provider_id,
-                            attempt = attempt + 1,
+                            attempt = provider_attempts,
                             excluded_providers = ?excluded,
                             "failover successful"
                         );
@@ -216,7 +454,12 @@ impl RouteRequest {
                 }
                 Err(e) => {
                     // Record failure for circuit breaker (before checking retryability)
-                    self.router.on_failure(&provider_id, &e).await;
+                    notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
+                    if e.is_local_backpressure() {
+                        local_backpressure = Some(CortexError::local_backpressure());
+                    } else {
+                        provider_attempt_failed = true;
+                    }
                     let final_latency = start.elapsed().as_millis() as u64;
 
                     // Non-retryable errors: record audit/usage/telemetry and return
@@ -243,7 +486,7 @@ impl RouteRequest {
                     // Log retry attempt
                     tracing::warn!(
                         provider = %provider_id,
-                        attempt = attempt + 1,
+                        attempt = provider_attempts,
                         max_attempts = max_attempts,
                         error = %e,
                         "provider failed, trying next"
@@ -252,7 +495,7 @@ impl RouteRequest {
                     // Record retry attempt metric (via tracing for now)
                     tracing::debug!(
                         provider = %provider_id,
-                        attempt = attempt + 1,
+                        attempt = provider_attempts,
                         "retry attempt"
                     );
 
@@ -261,6 +504,11 @@ impl RouteRequest {
 
                     // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
                     if excluded.len() >= total_providers {
+                        if !provider_attempt_failed {
+                            if let Some(error) = local_backpressure {
+                                return Err(error);
+                            }
+                        }
                         tracing::error!(
                             providers = ?self.router.providers(),
                             excluded = ?excluded,
@@ -288,7 +536,20 @@ impl RouteRequest {
             }
         }
 
+        self.finish_provider_attempts(provider_attempt_failed, local_backpressure)
+    }
+
+    fn finish_provider_attempts(
+        &self,
+        provider_attempt_failed: bool,
+        local_backpressure: Option<CortexError>,
+    ) -> Result<CompletionResponse, CortexError> {
         // This should not be reached, but safety fallback
+        if !provider_attempt_failed {
+            if let Some(error) = local_backpressure {
+                return Err(error);
+            }
+        }
         Err(CortexError::all_providers_exhausted())
     }
 
@@ -418,6 +679,13 @@ impl RouteRequest {
         Ok(resp)
     }
 
+    /// Execute a virtual combo request (`model: "rook/*"`).
+    ///
+    /// Single policy: lookup alias -> verify combo exists -> fail-closed
+    /// authorization -> execute with `requested_model` preserved for the client
+    /// and physical step models sent upstream. Unknown alias maps to HTTP 404
+    /// (`CortexError::not_found`); any unauthorized step rejects the whole
+    /// combo with 403 — steps are never silently pruned.
     pub async fn execute_stream(
         &self,
         req: CompletionRequest,
@@ -435,54 +703,109 @@ impl RouteRequest {
     {
         let start = Instant::now();
 
-        // 0. Resolve model alias if enabled (BEFORE restrictions check)
-        if self.alias_config.enabled {
-            match self.alias_repository.find_by_alias(&req.model, None).await {
-                Ok(Some(alias_entry)) => {
-                    tracing::debug!(
-                        alias = %req.model,
-                        canonical = %alias_entry.canonical,
-                        "Resolved model alias"
-                    );
-                    req.model = alias_entry.canonical;
-                }
-                Ok(None) => {
-                    // No alias found, proceed with original model
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        model = %req.model,
-                        "Alias resolution failed, using original model"
-                    );
-                }
-            }
+        // 0. Resolve model alias if enabled (BEFORE restrictions check).
+        // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
+        // they are combo aliases handled below. Shared helper with the
+        // non-streaming path so both enforce the same invariant.
+        if !is_virtual_model(&req.model) {
+            self.resolve_model_alias(&mut req).await;
         }
 
-        // 0a. Model restriction check (AFTER alias resolution)
+        // 0a. Combo + streaming: combos resolve BEFORE the first byte.
+        // There is no transparent provider switch mid-stream (R2 point of no
+        // return): run the combo to completion, then stream the single result
+        // as one chunk. Fallback inside the combo loop still applies for
+        // 429/5xx/timeouts because no SSE event has been emitted yet.
+        // Unknown alias -> 404, unauthorized step -> 403, same as non-stream.
+        if is_virtual_model(&req.model) || req.metadata.combo_id.is_some() {
+            return self.execute_combo_stream(req, client_format).await;
+        }
+
+        // 0b. Model restriction check (AFTER alias resolution)
         if !req.restrictions.allowed_models.is_empty()
             && !req.restrictions.allowed_models.contains(&req.model)
         {
             return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
         }
 
-        let provider = self.router.select(&req).await?;
-        let provider_id = provider.id().clone();
-        let connection_id = self.resolve_connection_id(&provider_id).await;
-
-        // 0a. Provider restriction check
-        if !req.restrictions.allowed_providers.is_empty()
-            && !req.restrictions.allowed_providers.contains(&provider_id)
-        {
-            return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
-        }
-        let provider_format = provider.api_format();
-        let provider_req = self.format_translator.translate_request(
-            client_format,
-            provider_format,
-            req.clone(),
-        )?;
-        let mut upstream = provider.stream(&provider_req).await?;
+        // Local connection saturation happens before the provider starts a
+        // stream, so it is safe to try another provider before any SSE bytes
+        // are exposed to the caller. Bound attempts by registered providers.
+        let total_providers = self.router.providers().len();
+        let selection_budget = total_providers.max(1);
+        let max_attempts = selection_budget.min(MAX_RETRY_ATTEMPTS);
+        let mut provider_attempts = 0;
+        let mut excluded = Vec::new();
+        let mut local_backpressure = None;
+        let (provider_id, connection_id, mut upstream) = 'select: {
+            for _ in 0..selection_budget {
+                if provider_attempts >= max_attempts {
+                    break;
+                }
+                let provider = match self.router.select_excluding(&req, &excluded).await {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        return Err(local_backpressure.unwrap_or(error));
+                    }
+                };
+                let provider_id = provider.id().clone();
+                if !req.restrictions.allowed_providers.is_empty()
+                    && !req.restrictions.allowed_providers.contains(&provider_id)
+                {
+                    if local_backpressure.is_some() {
+                        excluded.push(provider_id);
+                        continue;
+                    }
+                    return Err(
+                        RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into(),
+                    );
+                }
+                let provider_format = provider.api_format();
+                // Skip connections with fresh, authoritative exhaustion
+                // evidence before the stream starts and exposes SSE bytes.
+                let connection = if self.provider_repository.is_some() {
+                    self.resolve_connection(&provider_id).await
+                } else {
+                    None
+                };
+                let connection_id = connection.as_ref().map(|(id, _)| *id);
+                if self.quota_reader.is_some() {
+                    if let Some((connection_id, runtime_id)) = connection.as_ref() {
+                        let state = self
+                            .connection_quota_state(connection_id, runtime_id.as_ref())
+                            .await;
+                        if state.is_exhausted() {
+                            let reason = quota_skip_reason(&state);
+                            tracing::info!(
+                                provider = %provider_id,
+                                %connection_id,
+                                skip_reason = %reason,
+                                "skipping connection with exhausted upstream quota"
+                            );
+                            excluded.push(provider_id);
+                            continue;
+                        }
+                    }
+                }
+                let provider_req = self.format_translator.translate_request(
+                    client_format,
+                    provider_format,
+                    req.clone(),
+                )?;
+                provider_attempts += 1;
+                match provider.stream(&provider_req).await {
+                    Ok(upstream) => {
+                        break 'select (provider_id, connection_id, upstream);
+                    }
+                    Err(error) if error.is_local_backpressure() => {
+                        excluded.push(provider_id);
+                        local_backpressure = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
+        };
         let audit = self.audit.clone();
         let router = self.router.clone();
         let usage_recorder = self.usage_recorder.clone();
@@ -509,7 +832,7 @@ impl RouteRequest {
                         yield chunk;
                     }
                     Err(error) => {
-                        router.on_failure(&provider_id, &error).await;
+                        notify_provider_failure(router.as_ref(), &provider_id, &error).await;
                         let status = if error.is_rate_limited() {
                             RequestStatus::RateLimited
                         } else {
@@ -649,10 +972,226 @@ impl RouteRequest {
     /// Overall combo timeout: 60 seconds
     const COMBO_TOTAL_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// Execute a request using a multi-step fallback combo.
+    /// Execute a virtual combo request (`model: "rook/*"`).
     ///
-    /// Loads the combo from the repository, then iterates through steps in priority order,
-    /// attempting each provider until one succeeds or all fail.
+    /// Single policy: lookup alias -> verify combo exists -> fail-closed
+    /// authorization -> execute with `requested_model` preserved for the client
+    /// and physical step models sent upstream. Unknown alias maps to HTTP 404
+    /// (`CortexError::not_found`); any unauthorized step rejects the whole
+    /// combo with 403 — steps are never silently pruned.
+    pub async fn execute_virtual_combo(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
+        let requested = req.model.clone();
+        let combo_id = self.resolve_virtual_alias(&requested).await?;
+        let combo = self.load_combo(&combo_id).await?;
+        self.check_combo_authorization(&req, &combo, Some(&requested))?;
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
+        // External contract uses the requested virtual model; audit keeps
+        // provider/step details via record_combo_success.
+        resp.model = requested;
+        Ok(resp)
+    }
+
+    /// Execute a legacy header combo (`X-Rook-Combo` + physical model).
+    /// Preserves the existing model check on the requested model and adds the
+    /// fail-closed physical-step authorization (R2).
+    async fn execute_legacy_combo(
+        &self,
+        combo_id: &ComboId,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<CompletionResponse, CortexError> {
+        self.check_model_restriction(&req)?;
+        let combo = self.load_combo(combo_id).await?;
+        self.check_combo_authorization(&req, &combo, None)?;
+        let requested = req.model.clone();
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
+        resp.model = requested;
+        Ok(resp)
+    }
+
+    /// Shared alias lookup used by every transport path (and only here).
+    /// Returns the combo id or 404; a dangling alias (combo deleted but alias
+    /// present — impossible with FK CASCADE) surfaces as an integrity error.
+    async fn resolve_virtual_alias(&self, alias: &ModelId) -> Result<ComboId, CortexError> {
+        let repo = self
+            .combo_alias_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::not_found(format!("unknown virtual model '{alias}'")))?;
+        let entry = repo
+            .find_by_alias(alias)
+            .await
+            .map_err(|e| CortexError::provider(format!("combo alias lookup failed: {e}")))?;
+        match entry {
+            None => Err(CortexError::not_found(format!(
+                "unknown virtual model '{alias}'"
+            ))),
+            Some(a) => Ok(a.combo_id),
+        }
+    }
+
+    /// Load a combo or map absence to 404 (unknown/deleted).
+    async fn load_combo(&self, combo_id: &ComboId) -> Result<rook_core::Combo, CortexError> {
+        let repo = self
+            .combo_repository
+            .as_ref()
+            .ok_or_else(|| CortexError::provider("combo repository not configured".to_string()))?;
+        match repo
+            .find(combo_id)
+            .await
+            .map_err(|e| CortexError::provider(format!("combo repository error: {e}")))?
+        {
+            Some(c) => Ok(c),
+            None => Err(CortexError::combo_not_found(*combo_id)),
+        }
+    }
+
+    /// Fail-closed authorization for combo execution (R2).
+    ///
+    /// - Virtual: the key must allow the alias itself (exact `rook/*` entry in
+    ///   `allowed_models` when restrictive) AND every physical step model and
+    ///   provider. `allowed_models` accepts exact `rook/*` ids (no schema change).
+    /// - Legacy: the requested physical model was already checked by the caller;
+    ///   every step model/provider is checked here.
+    /// - Any unauthorized step rejects the whole combo with 403. Empty vecs mean
+    ///   unrestricted (existing semantics).
+    fn check_combo_authorization(
+        &self,
+        req: &CompletionRequest,
+        combo: &rook_core::Combo,
+        virtual_alias: Option<&ModelId>,
+    ) -> Result<(), CortexError> {
+        if let Some(alias) = virtual_alias {
+            if !req.restrictions.allowed_models.is_empty()
+                && !req.restrictions.allowed_models.contains(alias)
+            {
+                return Err(RestrictionViolation::ModelNotAllowed(alias.clone()).into());
+            }
+        }
+        for step in &combo.steps {
+            if !req.restrictions.allowed_models.is_empty()
+                && !req.restrictions.allowed_models.contains(&step.model)
+            {
+                return Err(RestrictionViolation::ModelNotAllowed(step.model.clone()).into());
+            }
+            // Legacy steps persist adapter IDs in provider_id, so preserve their
+            // existing preflight check. Connection-bound steps authorize only
+            // after repository resolution yields the effective adapter identity.
+            if step.connection_id.is_none()
+                && !req.restrictions.allowed_providers.is_empty()
+                && !req
+                    .restrictions
+                    .allowed_providers
+                    .contains(&step.provider_id)
+            {
+                return Err(
+                    RestrictionViolation::ProviderNotAllowed(step.provider_id.clone()).into(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Combo execution for streaming requests: resolve + authorize exactly like
+    /// non-streaming, run the combo loop BEFORE any SSE event is emitted, then
+    /// emit the single result as one chunk with the REQUESTED model.
+    /// A failure after this point surfaces as a stream error event — never a
+    /// silent switch to another provider mid-stream.
+    async fn execute_combo_stream(
+        &self,
+        req: CompletionRequest,
+        client_format: ApiFormat,
+    ) -> Result<
+        futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>,
+        CortexError,
+    > {
+        let requested = req.model.clone();
+        let (combo_id, virtual_alias) = match req.metadata.combo_id {
+            Some(id) => (id, None),
+            None => {
+                let id = self.resolve_virtual_alias(&requested).await?;
+                (id, Some(requested.clone()))
+            }
+        };
+        let combo = self.load_combo(&combo_id).await?;
+        if virtual_alias.is_none() {
+            self.check_model_restriction(&req)?;
+        }
+        self.check_combo_authorization(&req, &combo, virtual_alias.as_ref())?;
+        let mut resp = self.execute_combo(&combo, req, client_format).await?;
+        resp.model = requested.clone();
+        // Two chunks: content (text + tool-call fragments, no finish) then a
+        // terminal chunk (stop summaries + finish + usage). A single chunk
+        // would drop tool calls for streaming clients.
+        let content_chunk = StreamChunk {
+            id: resp.id.clone(),
+            model: requested.clone(),
+            delta: resp.content.clone(),
+            thinking: resp.thinking.clone(),
+            tool_calls: resp
+                .tool_calls
+                .iter()
+                .enumerate()
+                .flat_map(|(index, call)| {
+                    let index = index as u32;
+                    let args = call.arguments.to_string();
+                    vec![
+                        ToolCallDelta {
+                            index,
+                            id: call.id.clone(),
+                            function: ToolCallFunctionDelta {
+                                name: Some(call.name.clone()),
+                                arguments: None,
+                            },
+                        },
+                        ToolCallDelta {
+                            index,
+                            id: None,
+                            function: ToolCallFunctionDelta {
+                                name: None,
+                                arguments: Some(args),
+                            },
+                        },
+                    ]
+                })
+                .collect(),
+            finish_reason: None,
+            usage: None,
+        };
+        let final_chunk = StreamChunk {
+            id: resp.id,
+            model: requested,
+            delta: String::new(),
+            thinking: None,
+            tool_calls: resp
+                .tool_calls
+                .iter()
+                .enumerate()
+                .map(|(index, call)| ToolCallDelta {
+                    index: index as u32,
+                    id: call.id.clone(),
+                    function: ToolCallFunctionDelta {
+                        name: Some(call.name.clone()),
+                        arguments: None,
+                    },
+                })
+                .collect(),
+            finish_reason: resp.finish_reason,
+            usage: Some(resp.usage),
+        };
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(content_chunk),
+            Ok(final_chunk),
+        ])))
+    }
+
+    /// Execute a request using an already-loaded, already-authorized combo.
+    ///
+    /// Takes the `Combo` snapshot so authorization and execution observe the
+    /// same combo state (no reload race between the check and the run).
     ///
     /// ## Streaming Limitation
     ///
@@ -675,26 +1214,11 @@ impl RouteRequest {
     /// If all steps fail, returns `AllProvidersExhausted`.
     pub async fn execute_combo(
         &self,
-        combo_id: &ComboId,
+        combo: &rook_core::Combo,
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
-        let combo_repo = self
-            .combo_repository
-            .as_ref()
-            .ok_or_else(|| CortexError::provider("combo repository not configured"))?;
-
-        // 1. Load combo from repository
-        let combo = match combo_repo.find(combo_id).await {
-            Ok(Some(combo)) => combo,
-            Ok(None) => return Err(CortexError::combo_not_found(*combo_id)),
-            Err(e) => {
-                return Err(CortexError::provider(format!(
-                    "combo repository error: {}",
-                    e
-                )))
-            }
-        };
+        let combo_id = &combo.id;
 
         tracing::info!(
             combo_id = %combo.id,
@@ -707,9 +1231,16 @@ impl RouteRequest {
         let sorted_steps: Vec<_> = combo.sorted_steps().into_iter().collect();
         let total_steps = sorted_steps.len();
 
+        // Authorize every usable connection-bound step before upstream I/O.
+        // Invalid or unavailable connections retain their fallback skip behavior.
+        self.preflight_connection_authorization(&req, &sorted_steps)
+            .await?;
+
         // Track errors for the final AllProvidersExhausted
         let mut steps_attempted = 0;
         let mut errors: Vec<(ProviderId, String)> = Vec::new();
+        let mut local_backpressure = None;
+        let mut provider_attempt_failed = false;
 
         // Overall combo timeout
         let combo_start = Instant::now();
@@ -723,6 +1254,7 @@ impl RouteRequest {
 
             let provider_id = &step.provider_id;
             let model = &step.model;
+            let effective_connection_id = step.connection_id.as_ref();
 
             tracing::info!(
                 step_index = step_index + 1,
@@ -733,55 +1265,67 @@ impl RouteRequest {
                 "trying combo step"
             );
 
-            // 3a. Check circuit breaker — skip if open
-            // Router doesn't expose is_circuit_open directly, so we rely on
-            // router.providers() to check if provider is registered and
-            // the on_failure call to update circuit state.
-            let available_providers = self.router.providers();
-            if !available_providers.contains(provider_id) {
-                tracing::warn!(
-                    step_index = step_index + 1,
-                    provider_id = %provider_id,
-                    "skipping step: provider not in registry"
-                );
-                continue;
-            }
+            let mut step_req = req.clone();
+            step_req.model = model.clone();
 
-            // 3b. Get provider from router (we need to find the actual provider instance)
-            let provider = match self.router.select(&req).await {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!(
-                        step_index = step_index + 1,
-                        error = %e,
-                        "failed to select provider for step"
-                    );
-                    errors.push((provider_id.clone(), e.to_string()));
-                    steps_attempted += 1;
+            // Skip connections with fresh, authoritative exhaustion evidence.
+            // The check runs before any upstream I/O and never replaces the
+            // authorization preflight.
+            if let Some(connection_id) = effective_connection_id {
+                let state = self
+                    .connection_quota_state(connection_id, Some(provider_id))
+                    .await;
+                if state.is_exhausted() {
+                    let reason = quota_skip_reason(&state);
+                    record_combo_skip(&mut errors, provider_id, step_index, &reason);
                     continue;
                 }
+            }
+
+            let resolved = if let Some(connection_id) = effective_connection_id {
+                self.resolve_connection_combo_step(
+                    connection_id,
+                    provider_id,
+                    model,
+                    &req,
+                    step_index,
+                    &mut errors,
+                )
+                .await?
+            } else {
+                self.resolve_legacy_combo_step(
+                    provider_id,
+                    &step_req,
+                    step_index,
+                    &mut errors,
+                    &mut steps_attempted,
+                )
+                .await
+            };
+            let Some((provider, audit_provider_id, runtime_id, exact_connection_id)) = resolved
+            else {
+                continue;
             };
 
-            // Verify it's the right provider (router may have its own selection logic)
-            // For combo execution we want the specific provider_id, so we check
-            // and skip if router selected a different one
-            if provider.id() != provider_id {
-                tracing::warn!(
-                    step_index = step_index + 1,
-                    selected = %provider.id(),
-                    expected = %provider_id,
-                    "router selected different provider, skipping to maintain combo order"
-                );
-                continue;
-            }
+            let step_context = ComboStepContext {
+                combo_id: *combo_id,
+                step_index,
+                provider_id: audit_provider_id.clone(),
+                connection_id: exact_connection_id
+                    .or_else(|| ConnectionId::parse_str(audit_provider_id.as_str()).ok()),
+                runtime_id,
+            };
 
             // 3c. Execute with per-step timeout
             let provider_format = provider.api_format();
-            let provider_req = self.format_translator.translate_request(
+            let mut provider_req = self.format_translator.translate_request(
                 client_format,
                 provider_format,
-                req.clone(),
+                step_req.clone(),
             )?;
+            // The provider must receive the STEP's physical model, never a
+            // virtual `rook/*` alias or another step's model.
+            provider_req.model = model.clone();
 
             let step_start = Instant::now();
             let step_result =
@@ -789,8 +1333,6 @@ impl RouteRequest {
                     .await;
 
             let latency_ms = step_start.elapsed().as_millis() as u64;
-            steps_attempted += 1;
-
             match step_result {
                 Ok(Ok(provider_resp)) => {
                     // SUCCESS
@@ -807,19 +1349,18 @@ impl RouteRequest {
                     );
 
                     // Record success (fire-and-forget)
-                    self.record_combo_success(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &req,
-                        &resp,
-                    )
-                    .await;
+                    self.record_combo_success(&step_context, latency_ms, &step_req, &resp)
+                        .await;
 
                     return Ok(resp);
                 }
                 Ok(Err(e)) => {
+                    if e.is_local_backpressure() {
+                        local_backpressure = Some(e);
+                        continue;
+                    }
+                    steps_attempted += 1;
+                    provider_attempt_failed = true;
                     // Provider returned an error
                     errors.push((provider_id.clone(), e.to_string()));
 
@@ -834,18 +1375,11 @@ impl RouteRequest {
                     );
 
                     // Record failure (fire-and-forget)
-                    self.record_combo_failure(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &req,
-                        &e,
-                    )
-                    .await;
+                    self.record_combo_failure(&step_context, latency_ms, &step_req, &e)
+                        .await;
 
                     // Notify router of failure (circuit breaker)
-                    self.router.on_failure(provider_id, &e).await;
+                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
 
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
@@ -855,6 +1389,8 @@ impl RouteRequest {
                     continue;
                 }
                 Err(_timeout) => {
+                    steps_attempted += 1;
+                    provider_attempt_failed = true;
                     // Step timed out
                     let err = CortexError::provider(format!(
                         "step {} timed out after {:?}",
@@ -869,23 +1405,21 @@ impl RouteRequest {
                         "combo step timed out"
                     );
 
-                    self.record_combo_failure(
-                        combo_id,
-                        step_index,
-                        provider_id,
-                        latency_ms,
-                        &req,
-                        &err,
-                    )
-                    .await;
+                    self.record_combo_failure(&step_context, latency_ms, &step_req, &err)
+                        .await;
 
-                    self.router.on_failure(provider_id, &err).await;
+                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &err).await;
                     continue;
                 }
             }
         }
 
         // All steps exhausted
+        if !provider_attempt_failed {
+            if let Some(error) = local_backpressure {
+                return Err(error);
+            }
+        }
         let total_latency_ms = combo_start.elapsed().as_millis() as u64;
         tracing::error!(
             combo_id = %combo_id,
@@ -901,40 +1435,218 @@ impl RouteRequest {
         ))
     }
 
+    async fn preflight_connection_authorization(
+        &self,
+        req: &CompletionRequest,
+        steps: &[&ComboStep],
+    ) -> Result<(), CortexError> {
+        let allowed = &req.restrictions.allowed_providers;
+        if allowed.is_empty() {
+            return Ok(());
+        }
+        let Some(repository) = self.provider_repository.as_ref() else {
+            return Ok(());
+        };
+
+        for step in steps {
+            self.authorize_connection_combo_step(repository.as_ref(), allowed, step)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn authorize_connection_combo_step(
+        &self,
+        repository: &dyn ProviderRepositoryPort,
+        allowed: &[ProviderId],
+        step: &ComboStep,
+    ) -> Result<(), CortexError> {
+        let Some(connection_id) = step.connection_id.as_ref() else {
+            return Ok(());
+        };
+        let Ok(Some(connection)) = repository.find(connection_id).await else {
+            return Ok(());
+        };
+        if !connection.is_active || connection.provider_runtime_id != step.provider_id {
+            return Ok(());
+        }
+
+        let adapter_id = ProviderId::new(connection.id.to_string());
+        let Some(provider) = self.router.resolve_connection(&connection.id) else {
+            return Ok(());
+        };
+        if provider.id() != &adapter_id {
+            return Ok(());
+        }
+        match classify_connection_adapter(provider.as_ref(), &adapter_id, &step.model, allowed) {
+            ConnectionAdapterDecision::Unusable(_) => Ok(()),
+            ConnectionAdapterDecision::Disallowed(adapter_id) => {
+                Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into())
+            }
+            ConnectionAdapterDecision::Authorized => Ok(()),
+        }
+    }
+
+    async fn resolve_connection_combo_step(
+        &self,
+        connection_id: &ConnectionId,
+        runtime_id: &ProviderId,
+        model: &ModelId,
+        req: &CompletionRequest,
+        step_index: usize,
+        errors: &mut Vec<(ProviderId, String)>,
+    ) -> Result<
+        Option<(
+            Arc<dyn rook_core::ProviderPort>,
+            ProviderId,
+            Option<ProviderId>,
+            Option<ConnectionId>,
+        )>,
+        CortexError,
+    > {
+        let Some(repository) = self.provider_repository.as_ref() else {
+            record_combo_skip(
+                errors,
+                runtime_id,
+                step_index,
+                "connection_repository_unavailable",
+            );
+            return Ok(None);
+        };
+        let connection = match repository.find(connection_id).await {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                record_combo_skip(errors, runtime_id, step_index, "connection_not_found");
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_lookup_failed", "skipping combo step");
+                errors.push((runtime_id.clone(), "connection_lookup_failed".to_string()));
+                return Ok(None);
+            }
+        };
+        if !connection.is_active {
+            record_combo_skip(errors, runtime_id, step_index, "connection_inactive");
+            return Ok(None);
+        }
+        if connection.provider_runtime_id != *runtime_id {
+            record_combo_skip(errors, runtime_id, step_index, "provider_runtime_mismatch");
+            return Ok(None);
+        }
+
+        let adapter_id = ProviderId::new(connection.id.to_string());
+        let Some(provider) = self.router.resolve_connection(&connection.id) else {
+            record_combo_skip(errors, &adapter_id, step_index, "adapter_unavailable");
+            return Ok(None);
+        };
+        if provider.id() != &adapter_id {
+            record_combo_skip(errors, &adapter_id, step_index, "adapter_identity_mismatch");
+            return Ok(None);
+        }
+        let allowed = &req.restrictions.allowed_providers;
+        match classify_connection_adapter(provider.as_ref(), &adapter_id, model, allowed) {
+            ConnectionAdapterDecision::Unusable(reason) => {
+                record_combo_skip(errors, &adapter_id, step_index, reason);
+                return Ok(None);
+            }
+            ConnectionAdapterDecision::Disallowed(adapter_id) => {
+                return Err(RestrictionViolation::ProviderNotAllowed(adapter_id).into());
+            }
+            ConnectionAdapterDecision::Authorized => {}
+        }
+        tracing::debug!(
+            connection_id = %connection.id,
+            runtime_id = %connection.provider_runtime_id,
+            "resolved exact combo connection"
+        );
+        Ok(Some((
+            provider,
+            adapter_id,
+            Some(connection.provider_runtime_id),
+            Some(connection.id),
+        )))
+    }
+
+    async fn resolve_legacy_combo_step(
+        &self,
+        provider_id: &ProviderId,
+        step_req: &CompletionRequest,
+        step_index: usize,
+        errors: &mut Vec<(ProviderId, String)>,
+        steps_attempted: &mut usize,
+    ) -> Option<(
+        Arc<dyn rook_core::ProviderPort>,
+        ProviderId,
+        Option<ProviderId>,
+        Option<ConnectionId>,
+    )> {
+        if !self.router.providers().contains(provider_id) {
+            tracing::warn!(
+                step_index = step_index + 1,
+                provider_id = %provider_id,
+                "skipping step: provider not in registry"
+            );
+            return None;
+        }
+        match self.router.select(step_req).await {
+            Ok(provider) if provider.id() == provider_id => {
+                Some((provider, provider_id.clone(), None, None))
+            }
+            Ok(provider) => {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    selected = %provider.id(),
+                    expected = %provider_id,
+                    "router selected different provider, skipping to maintain combo order"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    error = %error,
+                    "failed to select provider for step"
+                );
+                errors.push((provider_id.clone(), error.to_string()));
+                *steps_attempted += 1;
+                None
+            }
+        }
+    }
+
     /// Record combo success — fire-and-forget audit + usage.
     async fn record_combo_success(
         &self,
-        combo_id: &ComboId,
-        step_index: usize,
-        provider_id: &ProviderId,
+        step: &ComboStepContext,
         latency_ms: u64,
         req: &CompletionRequest,
         resp: &CompletionResponse,
     ) {
         // Audit entry with combo metadata
-        let entry = AuditEntry::success_with_combo(
+        let mut entry = AuditEntry::success_with_combo(
             &req.id,
-            provider_id,
+            &step.provider_id,
             &req.model,
             Some(resp.usage.clone()),
             latency_ms,
-            Some(*combo_id),
-            Some(step_index),
+            Some(step.combo_id),
+            Some(step.step_index),
         );
+        entry.connection_id = step.connection_id;
+        entry.provider_runtime_id = step.runtime_id.clone();
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record combo audit entry");
         }
 
-        // Usage recording
-        let connection_id = self.resolve_connection_id(provider_id).await;
+        // `connection_id` is derived once when the step context is created.
         let entry = UsageEntry {
             request_id: req.id.clone(),
-            provider: provider_id.clone(),
+            provider: step.provider_id.clone(),
             model: req.model.clone(),
             status: RequestStatus::Success,
             requested_tier: req.metadata.requested_tier.clone(),
             api_key_id: req.metadata.api_key_id.clone(),
-            connection_id,
+            connection_id: step.connection_id,
             tokens_prompt: Some(resp.usage.prompt_tokens as u64),
             tokens_completion: Some(resp.usage.completion_tokens as u64),
             tokens_cache_read: resp.usage.cache_read_tokens,
@@ -944,7 +1656,7 @@ impl RouteRequest {
             latency_ms,
             cost_usd: crate::estimate_cost_usd(
                 &self.pricing,
-                provider_id,
+                &step.provider_id,
                 &req.model,
                 Some(&resp.usage),
             ),
@@ -961,9 +1673,7 @@ impl RouteRequest {
     /// Record combo failure — fire-and-forget audit + usage.
     async fn record_combo_failure(
         &self,
-        combo_id: &ComboId,
-        step_index: usize,
-        provider_id: &ProviderId,
+        step: &ComboStepContext,
         latency_ms: u64,
         req: &CompletionRequest,
         error: &CortexError,
@@ -975,29 +1685,30 @@ impl RouteRequest {
         };
 
         // Audit entry with combo metadata
-        let entry = AuditEntry::failure_with_combo(
+        let mut entry = AuditEntry::failure_with_combo(
             &req.id,
-            provider_id,
+            &step.provider_id,
             &req.model,
             status,
             latency_ms,
-            Some(*combo_id),
-            Some(step_index),
+            Some(step.combo_id),
+            Some(step.step_index),
         );
+        entry.connection_id = step.connection_id;
+        entry.provider_runtime_id = step.runtime_id.clone();
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record combo failure audit");
         }
 
-        // Usage recording
-        let connection_id = self.resolve_connection_id(provider_id).await;
+        // `connection_id` is derived once when the step context is created.
         let entry = UsageEntry {
             request_id: req.id.clone(),
-            provider: provider_id.clone(),
+            provider: step.provider_id.clone(),
             model: req.model.clone(),
             status,
             requested_tier: req.metadata.requested_tier.clone(),
             api_key_id: req.metadata.api_key_id.clone(),
-            connection_id,
+            connection_id: step.connection_id,
             tokens_prompt: None,
             tokens_completion: None,
             tokens_cache_read: None,
@@ -1005,7 +1716,7 @@ impl RouteRequest {
             tokens_reasoning: None,
             ttft_ms: None,
             latency_ms,
-            cost_usd: crate::estimate_cost_usd(&self.pricing, provider_id, &req.model, None),
+            cost_usd: crate::estimate_cost_usd(&self.pricing, &step.provider_id, &req.model, None),
             timestamp: Utc::now(),
         };
 
@@ -1016,16 +1727,88 @@ impl RouteRequest {
         }
     }
 
-    async fn resolve_connection_id(&self, provider_id: &ProviderId) -> Option<ConnectionId> {
+    async fn resolve_connection(
+        &self,
+        provider_id: &ProviderId,
+    ) -> Option<(ConnectionId, Option<ProviderId>)> {
         let repository = self.provider_repository.as_ref()?;
 
+        // Connection adapters use the connection UUID as their ProviderId.
+        // Return the runtime ID from the same record to avoid a second lookup.
+        if let Ok(connection_id) = ConnectionId::parse_str(provider_id.as_str()) {
+            match repository.find(&connection_id).await {
+                Ok(Some(connection)) => {
+                    return Some((connection_id, Some(connection.provider_runtime_id)));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%connection_id, error = %error, "failed to resolve provider connection by id");
+                }
+            }
+        }
+
         match repository.find_connection_id_by_runtime(provider_id).await {
-            Ok(connection_id) => connection_id,
+            Ok(Some(connection_id)) => Some((connection_id, Some(provider_id.clone()))),
+            Ok(None) => None,
             Err(error) => {
                 tracing::warn!(provider = %provider_id, error = %error, "failed to resolve provider connection id");
                 None
             }
         }
+    }
+
+    /// Evaluate the quota state of a connection from upstream evidence.
+    ///
+    /// The evaluation fails open: an unreadable store leaves the connection
+    /// eligible, and only fresh, applicable exhaustion evidence removes it.
+    /// Authorization never depends on this result.
+    async fn connection_quota_state(
+        &self,
+        connection_id: &ConnectionId,
+        runtime_id: Option<&ProviderId>,
+    ) -> QuotaState {
+        let Some(reader) = self.quota_reader.as_ref() else {
+            return QuotaState::Unknown;
+        };
+
+        let query = QuotaObservationQuery {
+            connection_ids: vec![*connection_id],
+            provider: runtime_id.cloned(),
+            ..QuotaObservationQuery::default()
+        };
+
+        let observations = match tokio::time::timeout(
+            QUOTA_READ_TIMEOUT,
+            reader.latest_observations(&query),
+        )
+        .await
+        {
+            Ok(Ok(observations)) => observations,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %connection_id,
+                    error = %error,
+                    "failed to read quota observations; keeping connection eligible"
+                );
+                return QuotaState::Unknown;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    %connection_id,
+                    timeout_ms = QUOTA_READ_TIMEOUT.as_millis(),
+                    "quota observation read timed out; keeping connection eligible"
+                );
+                return QuotaState::Unknown;
+            }
+        };
+
+        evaluate_connection_quota(
+            &observations,
+            connection_id,
+            runtime_id,
+            Utc::now(),
+            &self.quota_policy,
+        )
     }
 
     async fn record_failure_audit_usage(
@@ -1109,1184 +1892,5 @@ impl RouteRequest {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use futures::{stream, StreamExt};
-    use rook_core::{
-        ApiKeyId, CacheStats, Combo, ComboRepositoryError, CostBreakdown, HealthStatus, Message,
-        ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId, ProviderPort,
-        ProviderRepositoryPort, RequestMetadata, Role, SignatureEntry, StreamChunk,
-        TokenCacheStats, TokenUsage, UsageEntry, UsageFilters, UsageRecorderPort, UsageSummary,
-    };
-    use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    struct TestProvider {
-        id: ProviderId,
-        complete_error: Option<CortexError>,
-    }
-
-    #[async_trait]
-    impl ProviderPort for TestProvider {
-        fn id(&self) -> &ProviderId {
-            &self.id
-        }
-
-        fn supported_models(&self) -> &[ModelId] {
-            std::slice::from_ref(&TEST_MODEL)
-        }
-
-        fn api_format(&self) -> ApiFormat {
-            ApiFormat::OpenAI
-        }
-
-        fn is_available(&self) -> bool {
-            true
-        }
-
-        async fn health_check(&self) -> HealthStatus {
-            HealthStatus::Healthy {
-                provider: self.id.clone(),
-                latency_ms: 1,
-            }
-        }
-
-        async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-            if self.complete_error.is_some() {
-                return Err(CortexError::provider("provider failed"));
-            }
-
-            Ok(CompletionResponse {
-                id: req.id.clone(),
-                provider: self.id.clone(),
-                model: req.model.clone(),
-                content: "cached path".to_string(),
-                content_blocks: vec![rook_core::MessageContent::Text("cached path".to_string())],
-                thinking: None,
-                tool_calls: vec![],
-                finish_reason: None,
-                usage: TokenUsage {
-                    prompt_tokens: 1,
-                    completion_tokens: 1,
-                    total_tokens: 2,
-                    cache_read_tokens: None,
-                    cache_creation_tokens: None,
-                    reasoning_tokens: None,
-                    estimated_cost_usd: None,
-                },
-                latency_ms: 1,
-                cache_hit: Some(true),
-            })
-        }
-
-        async fn stream(
-            &self,
-            _req: &CompletionRequest,
-        ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-            Ok(Box::pin(stream::iter(vec![
-                Ok(StreamChunk {
-                    id: RequestId::new(),
-                    model: TEST_MODEL.clone(),
-                    delta: "hel".to_string(),
-                    thinking: None,
-                    tool_calls: vec![],
-                    finish_reason: None,
-                    usage: None,
-                }),
-                Ok(StreamChunk {
-                    id: RequestId::new(),
-                    model: TEST_MODEL.clone(),
-                    delta: "lo".to_string(),
-                    thinking: None,
-                    tool_calls: vec![],
-                    finish_reason: Some(rook_core::FinishReason::Stop),
-                    usage: Some(TokenUsage {
-                        prompt_tokens: 2,
-                        completion_tokens: 3,
-                        total_tokens: 5,
-                        cache_read_tokens: None,
-                        cache_creation_tokens: None,
-                        reasoning_tokens: None,
-                        estimated_cost_usd: None,
-                    }),
-                }),
-            ])))
-        }
-    }
-
-    struct TestRouter {
-        provider: Arc<dyn ProviderPort>,
-    }
-
-    #[async_trait]
-    impl RouterPort for TestRouter {
-        async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-            Ok(self.provider.clone())
-        }
-
-        async fn select_excluding(
-            &self,
-            _req: &CompletionRequest,
-            _excluded: &[ProviderId],
-        ) -> CortexResult<Arc<dyn ProviderPort>> {
-            Ok(self.provider.clone())
-        }
-
-        async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {}
-
-        fn providers(&self) -> Vec<ProviderId> {
-            vec![self.provider.id().clone()]
-        }
-    }
-
-    struct TestCache {
-        get_calls: Mutex<u32>,
-        set_calls: Mutex<u32>,
-    }
-
-    #[async_trait]
-    impl CachePort for TestCache {
-        async fn get(&self, _key: &CacheKey) -> CortexResult<Option<CompletionResponse>> {
-            *self.get_calls.lock().unwrap() += 1;
-            Ok(None)
-        }
-
-        async fn set(
-            &self,
-            _key: &CacheKey,
-            _value: &CompletionResponse,
-            _ttl: Duration,
-        ) -> CortexResult<()> {
-            *self.set_calls.lock().unwrap() += 1;
-            Ok(())
-        }
-
-        async fn delete(&self, _key: &CacheKey) -> CortexResult<()> {
-            Ok(())
-        }
-
-        async fn clear(&self) -> CortexResult<()> {
-            Ok(())
-        }
-
-        async fn stats(&self) -> CortexResult<CacheStats> {
-            Ok(CacheStats {
-                hits: 0,
-                misses: 0,
-                evictions: 0,
-                entries: 0,
-                max_entries: 0,
-                token_cache: TokenCacheStats::default(),
-            })
-        }
-
-        async fn delete_by_signature(&self, _signature: &str) -> CortexResult<usize> {
-            Ok(0)
-        }
-
-        async fn list_signatures(&self) -> CortexResult<Vec<SignatureEntry>> {
-            Ok(Vec::new())
-        }
-
-        async fn get_by_signature(
-            &self,
-            _signature: &str,
-        ) -> CortexResult<Option<CompletionResponse>> {
-            Ok(None)
-        }
-
-        async fn increment_token_cache_hit(
-            &self,
-            _tokens: u64,
-            _cost_usd: f64,
-        ) -> CortexResult<()> {
-            Ok(())
-        }
-
-        async fn increment_token_cache_miss(&self) -> CortexResult<()> {
-            Ok(())
-        }
-    }
-
-    struct TestAudit {
-        entries: Mutex<Vec<AuditEntry>>,
-    }
-
-    #[async_trait]
-    impl AuditPort for TestAudit {
-        async fn record(&self, entry: AuditEntry) -> CortexResult<()> {
-            self.entries.lock().unwrap().push(entry);
-            Ok(())
-        }
-    }
-
-    struct TestUsageRecorder {
-        entries: Mutex<Vec<UsageEntry>>,
-        fail_recording: bool,
-    }
-
-    #[async_trait]
-    impl UsageRecorderPort for TestUsageRecorder {
-        async fn record(&self, entry: UsageEntry) -> CortexResult<()> {
-            if self.fail_recording {
-                return Err(CortexError::provider("usage recording failed"));
-            }
-            self.entries.lock().unwrap().push(entry);
-            Ok(())
-        }
-
-        async fn list(
-            &self,
-            _filters: UsageFilters,
-            _pagination: Pagination,
-        ) -> CortexResult<Vec<UsageEntry>> {
-            Ok(vec![])
-        }
-
-        async fn count(&self, _filters: UsageFilters) -> CortexResult<u64> {
-            Ok(0)
-        }
-
-        async fn summary(&self, _filters: UsageFilters) -> CortexResult<UsageSummary> {
-            Ok(UsageSummary::default())
-        }
-
-        async fn cost_breakdown(&self, _filters: UsageFilters) -> CortexResult<CostBreakdown> {
-            Ok(CostBreakdown::default())
-        }
-    }
-
-    struct TestProviderRepository {
-        connection_id: Option<ConnectionId>,
-        fail_lookup: bool,
-    }
-
-    #[async_trait]
-    impl ProviderRepositoryPort for TestProviderRepository {
-        async fn list(
-            &self,
-        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn find(
-            &self,
-            _id: &ConnectionId,
-        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-            Ok(None)
-        }
-
-        async fn find_connection_id_by_runtime(
-            &self,
-            _provider: &ProviderId,
-        ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
-            if self.fail_lookup {
-                Err(rook_core::RepositoryError::Database(
-                    "lookup failed".to_string(),
-                ))
-            } else {
-                Ok(self.connection_id)
-            }
-        }
-
-        async fn create(
-            &self,
-            _conn: &rook_core::ProviderConnection,
-        ) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-
-        async fn update(
-            &self,
-            _conn: &rook_core::ProviderConnection,
-            _expected_updated_at: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-    }
-
-    /// Test stub for ModelAliasRepositoryPort — returns no aliases
-    struct TestAliasRepository;
-
-    #[async_trait]
-    impl ModelAliasRepositoryPort for TestAliasRepository {
-        async fn find_by_alias(
-            &self,
-            _alias: &shared_kernel::ModelId,
-            _provider_id: Option<&ProviderId>,
-        ) -> Result<Option<rook_core::ModelAlias>, rook_core::ModelAliasRepositoryError> {
-            Ok(None) // No aliases in tests by default
-        }
-
-        async fn list(
-            &self,
-        ) -> Result<Vec<rook_core::ModelAlias>, rook_core::ModelAliasRepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn create(
-            &self,
-            _alias: rook_core::ModelAlias,
-        ) -> Result<(), rook_core::ModelAliasRepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(
-            &self,
-            _alias: &shared_kernel::ModelId,
-        ) -> Result<bool, rook_core::ModelAliasRepositoryError> {
-            Ok(false)
-        }
-
-        async fn seed(
-            &self,
-            _aliases: Vec<rook_core::ModelAlias>,
-        ) -> Result<usize, rook_core::ModelAliasRepositoryError> {
-            Ok(0)
-        }
-    }
-
-    fn test_alias_config() -> ModelAliasesConfig {
-        ModelAliasesConfig {
-            enabled: false, // Disabled by default in tests
-            auto_seed: false,
-        }
-    }
-
-    struct FailingProviderRepository;
-
-    #[async_trait]
-    impl ProviderRepositoryPort for FailingProviderRepository {
-        async fn list(
-            &self,
-        ) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn find(
-            &self,
-            _id: &ConnectionId,
-        ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
-            Ok(None)
-        }
-
-        async fn find_connection_id_by_runtime(
-            &self,
-            _provider: &ProviderId,
-        ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
-            Err(rook_core::RepositoryError::Database(
-                "lookup failed".to_string(),
-            ))
-        }
-
-        async fn create(
-            &self,
-            _conn: &rook_core::ProviderConnection,
-        ) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-
-        async fn update(
-            &self,
-            _conn: &rook_core::ProviderConnection,
-            _expected_updated_at: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
-            Ok(())
-        }
-    }
-
-    struct TestFormatTranslator;
-
-    impl FormatTranslatorPort for TestFormatTranslator {
-        fn translate_request(
-            &self,
-            _from: ApiFormat,
-            _to: ApiFormat,
-            req: CompletionRequest,
-        ) -> CortexResult<CompletionRequest> {
-            Ok(req)
-        }
-
-        fn translate_response(
-            &self,
-            _from: ApiFormat,
-            _to: ApiFormat,
-            resp: CompletionResponse,
-        ) -> CortexResult<CompletionResponse> {
-            Ok(resp)
-        }
-    }
-
-    static TEST_MODEL: std::sync::LazyLock<ModelId> =
-        std::sync::LazyLock::new(|| ModelId::new("gpt-test"));
-
-    fn request() -> CompletionRequest {
-        CompletionRequest {
-            id: RequestId::new(),
-            model: TEST_MODEL.clone(),
-            messages: vec![Message {
-                tool_calls: vec![],
-                role: Role::User,
-                content: "hello".into(),
-            }],
-            stream: true,
-            max_tokens: None,
-            temperature: None,
-            tools: None,
-            tool_choice: None,
-            metadata: RequestMetadata {
-                origin: "test".to_string(),
-                cacheable: true,
-                priority: 1,
-                api_key_id: None,
-                requested_tier: None,
-                combo_id: None,
-            },
-            restrictions: rook_core::ApiKeyRestrictions::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn execute_stream_bypasses_cache_and_audits_final_usage() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let cache = Arc::new(TestCache {
-            get_calls: Mutex::new(0),
-            set_calls: Mutex::new(0),
-        });
-        let audit = Arc::new(TestAudit {
-            entries: Mutex::new(Vec::new()),
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            cache.clone(),
-            audit.clone(),
-            None,
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let mut stream = usecase
-            .execute_stream(request())
-            .await
-            .expect("stream starts");
-        let chunks: Vec<_> = stream
-            .by_ref()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .expect("stream chunks succeed");
-
-        assert_eq!(
-            chunks
-                .iter()
-                .map(|chunk| chunk.delta.as_str())
-                .collect::<String>(),
-            "hello"
-        );
-        assert_eq!(*cache.get_calls.lock().unwrap(), 0);
-        assert_eq!(*cache.set_calls.lock().unwrap(), 0);
-
-        let entries = audit.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].status, RequestStatus::Success);
-        assert_eq!(entries[0].usage.as_ref().unwrap().total_tokens, 5);
-    }
-
-    fn make_usecase() -> RouteRequest {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            None,
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        )
-    }
-
-    struct AliasLookupSpy {
-        called: Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    #[async_trait]
-    impl ModelAliasRepositoryPort for AliasLookupSpy {
-        async fn find_by_alias(
-            &self,
-            alias: &ModelId,
-            _provider_id: Option<&ProviderId>,
-        ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
-            assert_eq!(alias.as_str(), "gpt-4-turbo");
-            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(Some(ModelAlias {
-                alias: ModelId::new("gpt-4-turbo"),
-                canonical: ModelId::new("gpt-4-turbo-2024-04-09"),
-                provider_id: None,
-                created_at: Utc::now(),
-            }))
-        }
-
-        async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn create(&self, _alias: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _alias: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
-            Ok(false)
-        }
-
-        async fn seed(
-            &self,
-            _aliases: Vec<ModelAlias>,
-        ) -> Result<usize, ModelAliasRepositoryError> {
-            Ok(0)
-        }
-    }
-
-    struct AliasOrderingComboRepository {
-        alias_lookup_called: Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    #[async_trait]
-    impl ComboRepositoryPort for AliasOrderingComboRepository {
-        async fn list(&self) -> Result<Vec<Combo>, ComboRepositoryError> {
-            Ok(vec![])
-        }
-
-        async fn find(&self, _id: &ComboId) -> Result<Option<Combo>, ComboRepositoryError> {
-            assert!(
-                self.alias_lookup_called
-                    .load(std::sync::atomic::Ordering::SeqCst),
-                "combo dispatch must happen after model alias resolution"
-            );
-            Ok(None)
-        }
-
-        async fn find_by_name(&self, _name: &str) -> Result<Option<Combo>, ComboRepositoryError> {
-            Ok(None)
-        }
-
-        async fn create(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
-            Ok(())
-        }
-
-        async fn update(&self, _combo: &Combo) -> Result<(), ComboRepositoryError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: &ComboId) -> Result<(), ComboRepositoryError> {
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn execute_with_format_resolves_alias_before_combo_dispatch() {
-        let alias_lookup_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            None,
-            None,
-            Some(Arc::new(AliasOrderingComboRepository {
-                alias_lookup_called: alias_lookup_called.clone(),
-            })),
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(AliasLookupSpy {
-                called: alias_lookup_called.clone(),
-            }),
-            ModelAliasesConfig {
-                enabled: true,
-                auto_seed: false,
-            },
-            None,
-        );
-        let mut req = request();
-        req.model = ModelId::new("gpt-4-turbo");
-        req.metadata.combo_id = Some(ComboId::new());
-
-        // The combo is intentionally absent; reaching its lookup proves the
-        // alias lookup happened first. The expected not-found is incidental.
-        let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
-
-        assert!(result.is_err());
-        assert!(alias_lookup_called.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_connection_lookup_failure(
-    ) {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            None,
-            Some(Arc::new(FailingProviderRepository)),
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let result = usecase.execute(request()).await;
-
-        assert!(
-            result.is_ok(),
-            "lookup failure should not fail routing: {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: false,
-        });
-        let connection_id = ConnectionId::new();
-        let mut pricing = crate::PricingConfig::default();
-        pricing.providers.insert(
-            "test-provider".to_string(),
-            HashMap::from([(
-                TEST_MODEL.as_str().to_string(),
-                crate::PricingEntry {
-                    prompt_per_million: 1.0,
-                    completion_per_million: 2.0,
-                    cache_read_per_million: None,
-                    cache_creation_per_million: None,
-                    reasoning_per_million: None,
-                },
-            )]),
-        );
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            Some(Arc::new(TestProviderRepository {
-                connection_id: Some(connection_id),
-                fail_lookup: false,
-            })),
-            None,
-            Arc::new(pricing),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-        let mut req = request();
-        req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
-        req.metadata.requested_tier = Some("premium".to_string());
-
-        let response = usecase.execute(req.clone()).await.expect("success");
-
-        assert_eq!(response.content, "cached path");
-        let entries = usage_recorder.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.request_id, req.id);
-        assert_eq!(entry.provider, ProviderId::new("test-provider"));
-        assert_eq!(entry.model, TEST_MODEL.clone());
-        assert_eq!(entry.status, RequestStatus::Success);
-        assert_eq!(entry.requested_tier.as_deref(), Some("premium"));
-        assert_eq!(entry.api_key_id, Some(ApiKeyId::new("key_123")));
-        assert_eq!(entry.connection_id, Some(connection_id));
-        assert_eq!(entry.tokens_prompt, Some(1));
-        assert_eq!(entry.tokens_completion, Some(1));
-        assert_eq!(entry.tokens_cache_read, None);
-        assert_eq!(entry.tokens_cache_creation, None);
-        assert_eq!(entry.tokens_reasoning, None);
-        assert_eq!(entry.ttft_ms, Some(entry.latency_ms));
-        assert_eq!(entry.cost_usd, Some(0.000003));
-    }
-
-    #[tokio::test]
-    async fn non_stream_usage_records_failure_with_nullable_tokens_and_ttft() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: Some(CortexError::provider("provider failed")),
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: false,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-        let req = request();
-
-        let result = usecase.execute(req.clone()).await;
-
-        assert!(result.is_err());
-        let entries = usage_recorder.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.request_id, req.id);
-        assert_eq!(entry.status, RequestStatus::Failure);
-        assert_eq!(entry.tokens_prompt, None);
-        assert_eq!(entry.tokens_completion, None);
-        assert_eq!(entry.tokens_cache_read, None);
-        assert_eq!(entry.tokens_cache_creation, None);
-        assert_eq!(entry.tokens_reasoning, None);
-        assert_eq!(entry.ttft_ms, None);
-        assert_eq!(entry.cost_usd, None);
-    }
-
-    #[tokio::test]
-    async fn non_stream_usage_recording_failure_does_not_fail_successful_client_response() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: true,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let result = usecase.execute(request()).await;
-
-        assert!(
-            result.is_ok(),
-            "usage recorder failures should not fail response: {result:?}"
-        );
-        assert!(usage_recorder.entries.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn non_stream_usage_missing_pricing_records_null_cost_not_zero() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: false,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let result = usecase.execute(request()).await;
-
-        assert!(result.is_ok());
-        let entries = usage_recorder.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].cost_usd, None);
-    }
-
-    #[tokio::test]
-    async fn execute_is_forbidden_when_model_not_in_allowed_list() {
-        let usecase = make_usecase();
-        let mut req = request();
-        req.restrictions.allowed_models =
-            vec![ModelId::new("gpt-4"), ModelId::new("claude-3-opus")];
-        // TEST_MODEL is "gpt-test" — not in the allowed list
-
-        let result = usecase.execute(req).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.is_forbidden(), "expected forbidden, got: {err}");
-    }
-
-    #[tokio::test]
-    async fn execute_succeeds_when_model_is_in_allowed_list() {
-        let usecase = make_usecase();
-        let mut req = request();
-        req.restrictions.allowed_models = vec![TEST_MODEL.clone()];
-
-        let result = usecase.execute(req).await;
-        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
-    }
-
-    #[tokio::test]
-    async fn execute_succeeds_when_allowed_models_is_empty() {
-        let usecase = make_usecase();
-        // default restrictions — empty = unrestricted
-        let result = usecase.execute(request()).await;
-        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
-    }
-
-    #[tokio::test]
-    async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
-        let usecase = make_usecase();
-        let mut req = request();
-        // test-provider is the provider selected; restrict to a different one
-        req.restrictions.allowed_providers = vec![ProviderId::new("anthropic")];
-
-        let result = usecase.execute(req).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.is_forbidden(), "expected forbidden, got: {err}");
-    }
-
-    #[tokio::test]
-    async fn execute_succeeds_when_provider_is_in_allowed_list() {
-        let usecase = make_usecase();
-        let mut req = request();
-        req.restrictions.allowed_providers = vec![ProviderId::new("test-provider")];
-
-        let result = usecase.execute(req).await;
-        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
-    }
-
-    #[tokio::test]
-    async fn execute_stream_is_forbidden_when_model_not_allowed() {
-        let usecase = make_usecase();
-        let mut req = request();
-        req.restrictions.allowed_models = vec![ModelId::new("gpt-4")];
-
-        let result = usecase.execute_stream(req).await;
-        assert!(result.is_err());
-        assert!(result.err().unwrap().is_forbidden());
-    }
-
-    #[tokio::test]
-    async fn execute_stream_is_forbidden_when_provider_not_allowed() {
-        let usecase = make_usecase();
-        let mut req = request();
-        req.restrictions.allowed_providers = vec![ProviderId::new("openai")];
-
-        let result = usecase.execute_stream(req).await;
-        assert!(result.is_err());
-        assert!(result.err().unwrap().is_forbidden());
-    }
-
-    #[tokio::test]
-    async fn streaming_usage_records_ttft_from_first_chunk_and_final_usage_on_success() {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: false,
-        });
-        let connection_id = ConnectionId::new();
-        let mut pricing = crate::PricingConfig::default();
-        pricing.providers.insert(
-            "test-provider".to_string(),
-            HashMap::from([(
-                TEST_MODEL.as_str().to_string(),
-                crate::PricingEntry {
-                    prompt_per_million: 1.0,
-                    completion_per_million: 2.0,
-                    cache_read_per_million: None,
-                    cache_creation_per_million: None,
-                    reasoning_per_million: None,
-                },
-            )]),
-        );
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            Some(Arc::new(TestProviderRepository {
-                connection_id: Some(connection_id),
-                fail_lookup: false,
-            })),
-            None,
-            Arc::new(pricing),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-        let mut req = request();
-        req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
-
-        let stream = usecase
-            .execute_stream(req.clone())
-            .await
-            .expect("stream starts");
-        let _chunks: Vec<_> = stream.collect::<Vec<_>>().await;
-
-        let entries = usage_recorder.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1, "should record one usage entry");
-        let entry = &entries[0];
-        assert_eq!(entry.request_id, req.id);
-        assert_eq!(entry.status, RequestStatus::Success);
-        assert_eq!(entry.tokens_prompt, Some(2));
-        assert_eq!(entry.tokens_completion, Some(3));
-        assert!(
-            entry.ttft_ms.is_some(),
-            "ttft_ms should be captured from first chunk"
-        );
-        assert!(
-            entry.ttft_ms.unwrap() <= entry.latency_ms,
-            "ttft should be <= total latency"
-        );
-        assert_eq!(entry.api_key_id, Some(ApiKeyId::new("key_streaming")));
-        assert_eq!(entry.connection_id, Some(connection_id));
-        assert!(entry.cost_usd.is_some(), "cost should be calculated");
-    }
-
-    #[tokio::test]
-    async fn streaming_usage_records_failure_with_nullable_tokens_and_rate_limited_status() {
-        struct FailingStreamProvider {
-            id: ProviderId,
-        }
-
-        #[async_trait]
-        impl ProviderPort for FailingStreamProvider {
-            fn id(&self) -> &ProviderId {
-                &self.id
-            }
-
-            fn supported_models(&self) -> &[ModelId] {
-                std::slice::from_ref(&TEST_MODEL)
-            }
-
-            fn api_format(&self) -> ApiFormat {
-                ApiFormat::OpenAI
-            }
-
-            fn is_available(&self) -> bool {
-                true
-            }
-
-            async fn health_check(&self) -> HealthStatus {
-                HealthStatus::Healthy {
-                    provider: self.id.clone(),
-                    latency_ms: 1,
-                }
-            }
-
-            async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-                Err(CortexError::rate_limited(self.id.clone(), 60))
-            }
-
-            async fn stream(
-                &self,
-                _req: &CompletionRequest,
-            ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>>
-            {
-                Ok(Box::pin(stream::iter(vec![
-                    Ok(StreamChunk {
-                        id: RequestId::new(),
-                        model: TEST_MODEL.clone(),
-                        delta: "start".to_string(),
-                        thinking: None,
-                        tool_calls: vec![],
-                        finish_reason: None,
-                        usage: None,
-                    }),
-                    Err(CortexError::rate_limited(self.id.clone(), 60)),
-                ])))
-            }
-        }
-
-        let provider: Arc<dyn ProviderPort> = Arc::new(FailingStreamProvider {
-            id: ProviderId::new("test-provider"),
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: false,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let mut stream = usecase
-            .execute_stream(request())
-            .await
-            .expect("stream starts");
-        let _first_chunk = stream.next().await.expect("first chunk").expect("ok");
-        let second_result = stream.next().await.expect("second item");
-        assert!(second_result.is_err(), "second chunk should error");
-
-        let entries = usage_recorder.entries.lock().unwrap();
-        assert_eq!(entries.len(), 1, "should record failure");
-        let entry = &entries[0];
-        assert_eq!(entry.status, RequestStatus::RateLimited);
-        assert_eq!(entry.tokens_prompt, None);
-        assert_eq!(entry.tokens_completion, None);
-        assert!(
-            entry.ttft_ms.is_some(),
-            "ttft captured before failure from first chunk"
-        );
-        assert_eq!(entry.cost_usd, None);
-    }
-
-    #[tokio::test]
-    async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_without_aborting_stream(
-    ) {
-        let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
-            id: ProviderId::new("test-provider"),
-            complete_error: None,
-        });
-        let usage_recorder = Arc::new(TestUsageRecorder {
-            entries: Mutex::new(Vec::new()),
-            fail_recording: true,
-        });
-        let usecase = RouteRequest::new(
-            Arc::new(TestRouter { provider }),
-            Arc::new(TestCache {
-                get_calls: Mutex::new(0),
-                set_calls: Mutex::new(0),
-            }),
-            Arc::new(TestAudit {
-                entries: Mutex::new(Vec::new()),
-            }),
-            Some(usage_recorder.clone()),
-            None,
-            None,
-            Arc::new(crate::PricingConfig::default()),
-            Arc::new(TestFormatTranslator),
-            Arc::new(TestAliasRepository),
-            test_alias_config(),
-            None, // telemetry
-        );
-
-        let stream = usecase
-            .execute_stream(request())
-            .await
-            .expect("stream starts");
-        let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
-
-        assert_eq!(
-            chunks.len(),
-            2,
-            "stream should complete despite recording failure"
-        );
-        assert!(
-            chunks.iter().all(|c| c.is_ok()),
-            "all chunks should succeed"
-        );
-        assert!(
-            usage_recorder.entries.lock().unwrap().is_empty(),
-            "recording should have failed"
-        );
-    }
-}
+#[path = "route_request/tests/mod.rs"]
+mod tests;

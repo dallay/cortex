@@ -139,6 +139,26 @@ mod tests {
     };
     use std::sync::Mutex;
 
+    fn setup_token_fixture() -> String {
+        use ring::rand::SecureRandom;
+
+        let mut token = [0; 32];
+        ring::rand::SystemRandom::new()
+            .fill(&mut token)
+            .expect("system random source");
+        token.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn strong_password_fixture() -> String {
+        use ring::rand::SecureRandom;
+
+        let mut suffix = [0; 16];
+        ring::rand::SystemRandom::new()
+            .fill(&mut suffix)
+            .expect("system random source");
+        format!("Aa1!{}", hex::encode(suffix))
+    }
+
     /// Fake repository controlled by a pre-built `find_by_username` result.
     struct FakeUserRepository {
         admin_user: Option<User>,
@@ -506,13 +526,14 @@ mod tests {
             let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepository::no_admin());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "token".to_string(),
-                        expected_setup_token: "token".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: token.clone(),
+                        expected_setup_token: token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     Some(&manage_keys),
@@ -533,13 +554,14 @@ mod tests {
                 Arc::new(FakeUserRepository::admin_with_password());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "token".to_string(),
-                        expected_setup_token: "token".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: token.clone(),
+                        expected_setup_token: token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     Some(&manage_keys),
@@ -560,13 +582,15 @@ mod tests {
                 Arc::new(FakeUserRepository::admin_without_password());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let invalid_token = setup_token_fixture();
+            let expected_token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "wrong".to_string(),
-                        expected_setup_token: "correct".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: invalid_token,
+                        expected_setup_token: expected_token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     Some(&manage_keys),
@@ -587,13 +611,14 @@ mod tests {
                 Arc::new(FakeUserRepository::admin_without_password());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let expected_token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "".to_string(),
-                        expected_setup_token: "correct".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: String::new(),
+                        expected_setup_token: expected_token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     Some(&manage_keys),
@@ -614,13 +639,14 @@ mod tests {
                 Arc::new(FakeUserRepository::admin_without_password());
             let (set_pw, _) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "token".to_string(),
-                        expected_setup_token: "token".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: token.clone(),
+                        expected_setup_token: token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     None, // <-- no manage_api_keys
@@ -641,13 +667,14 @@ mod tests {
                 Arc::new(FakeUserRepository::admin_without_password());
             let (set_pw, manage_keys) = make_setup_deps(user_repo.clone());
             let bs = BootstrapStatus::new(user_repo);
+            let token = setup_token_fixture();
 
             let result = bs
                 .setup(
                     BootstrapSetupInput {
-                        setup_token: "token".to_string(),
-                        expected_setup_token: "token".to_string(),
-                        new_password: "Super-secret-123!".to_string(),
+                        setup_token: token.clone(),
+                        expected_setup_token: token,
+                        new_password: strong_password_fixture(),
                     },
                     &set_pw,
                     Some(&manage_keys),

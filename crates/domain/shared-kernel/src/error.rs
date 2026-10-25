@@ -48,6 +48,18 @@ impl CortexError {
         }
     }
 
+    /// Local admission rejection. It maps to HTTP 429 but must not affect
+    /// upstream provider health or cooldown state.
+    pub fn local_backpressure() -> Self {
+        Self {
+            source: Box::new(LocalBackpressureError),
+        }
+    }
+
+    pub fn is_local_backpressure(&self) -> bool {
+        self.source.is::<LocalBackpressureError>()
+    }
+
     pub fn all_providers_exhausted() -> Self {
         Self {
             source: Box::new(AllProvidersExhaustedError),
@@ -113,10 +125,13 @@ impl CortexError {
     }
 
     pub fn is_rate_limited(&self) -> bool {
-        self.source.is::<RateLimitedError>()
+        self.source.is::<RateLimitedError>() || self.is_local_backpressure()
     }
 
     pub fn retry_after_secs(&self) -> Option<u64> {
+        if self.is_local_backpressure() {
+            return Some(1);
+        }
         self.source
             .downcast_ref::<RateLimitedError>()
             .map(|e| e.retry_after_secs)
@@ -162,13 +177,32 @@ impl CortexError {
         }
     }
 
+    /// Skip reasons recorded when every combo step was exhausted.
+    ///
+    /// The reasons describe why each step was skipped, for example an
+    /// exhausted upstream quota. They never carry credentials.
+    pub fn combo_skip_reasons(&self) -> Option<&[(super::ProviderId, String)]> {
+        self.source
+            .downcast_ref::<AllProvidersExhaustedComboError>()
+            .map(|combo_error| combo_error.errors.as_slice())
+    }
+
     // --- Error classification helpers ---
+
+    /// Returns true for resource-not-found errors (unknown virtual alias,
+    /// deleted combo, missing record). Maps to HTTP 404.
+    pub fn is_not_found(&self) -> bool {
+        self.source.is::<NotFoundError>() || self.source.is::<ComboNotFoundError>()
+    }
 
     /// Returns true if the error represents an HTTP 4xx status (client error),
     /// excluding 429 (rate limiting).
     pub fn is_4xx(&self) -> bool {
         // Check for structured errors that map to 4xx
-        self.is_invalid_request() || self.is_auth_failed() || self.is_forbidden()
+        self.is_invalid_request()
+            || self.is_auth_failed()
+            || self.is_forbidden()
+            || self.is_not_found()
     }
 
     /// Returns true if the error is retryable (5xx, network errors, or rate limiting).
@@ -192,6 +226,17 @@ impl CortexError {
         true
     }
 }
+
+#[derive(Debug)]
+struct LocalBackpressureError;
+
+impl fmt::Display for LocalBackpressureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "provider connection concurrency limit reached")
+    }
+}
+
+impl std::error::Error for LocalBackpressureError {}
 
 #[derive(Debug)]
 pub struct ProviderError(pub String);

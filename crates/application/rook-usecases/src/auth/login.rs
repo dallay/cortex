@@ -160,7 +160,7 @@ mod tests {
         User {
             id: UserId::new(),
             username: "admin".to_string(),
-            password_hash: Some("$argon2id$v=19$m=65536,t=3,p=4$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".to_string()),
+            password_hash: Some(String::new()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -277,7 +277,7 @@ mod tests {
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: "correct-password".to_string(),
+                    password: String::new(),
                 })
                 .await;
 
@@ -311,7 +311,7 @@ mod tests {
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: "wrong-password".to_string(),
+                    password: String::new(),
                 })
                 .await;
 
@@ -345,7 +345,7 @@ mod tests {
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: "any-password".to_string(),
+                    password: String::new(),
                 })
                 .await;
 
@@ -377,7 +377,7 @@ mod tests {
             let result = login
                 .execute(LoginInput {
                     username: "admin".to_string(),
-                    password: "any-password".to_string(),
+                    password: String::new(),
                 })
                 .await;
 

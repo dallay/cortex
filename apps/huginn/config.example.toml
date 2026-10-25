@@ -1,6 +1,9 @@
 # Copy to the OS config directory at cortex/huginn/config.toml, or use --config.
 provider = "openai" # "mock" for an offline diagnostic
 base_url = "http://127.0.0.1:8000/v1"
+# Required for this local HTTP example; defaults to false. Never permits LAN HTTP.
+# HTTPS uses normal certificate validation. Use literal 127.0.0.1 or [::1], not DNS.
+allow_loopback_http = true
 model = "your-tool-capable-model"
 api_key_env = "HUGINN_API_KEY" # empty string disables authentication
 # Only HUGINN_API_KEY falls back to legacy AGENT_API_KEY when unavailable.
@@ -19,3 +22,22 @@ max_output_tokens = 4096
 # args = ["--stdio"]
 # env = { PATH = "/usr/local/bin:/usr/bin:/bin" }
 # env_from = { SERVICE_TOKEN = "MY_SERVICE_TOKEN" }
+
+# Optional TUI preferences. The settings dialog (open with `/settings`)
+# writes the user's choices here on Enter and discards on Esc. Defaults
+# are shown below. v1 is shell + persistence only — none of these values
+# are wired into their runtime subsystems yet.
+# [ui.theme]
+# name = "one-dark"
+# [ui.sound]
+# bell = false
+# [ui.toasts]
+# level = "info"   # info | warn | error
+# duration_secs = 3 # 3 | 5 | 10 | off (0)
+# [ui.indicators]
+# scrollbar = true
+# breadcrumbs = true
+# line_numbers = true
+# [ui.integrations]
+# entries = []
+

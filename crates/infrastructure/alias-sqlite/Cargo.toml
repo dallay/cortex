@@ -1,6 +1,6 @@
 [package]
 name = "alias-sqlite"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -16,4 +16,4 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-tempfile = "3"
+tempfile = "=3.27.0"

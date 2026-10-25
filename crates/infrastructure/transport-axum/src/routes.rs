@@ -12,7 +12,11 @@ use axum::{
     Router,
 };
 use futures::StreamExt;
-use rook_core::{ApiFormat, ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus};
+use rook_core::{
+    ApiFormat, ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus,
+    ProviderRegistryPort,
+};
+use rook_usecases::{classify_route, RouteSelection};
 use shared_kernel::{ComboId, CortexError, ModelId, ProviderId};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::error;
@@ -83,7 +87,9 @@ pub fn router(
         .with_state(usecases.clone());
 
     if usecases.manage_connections.is_some() {
-        router = router.merge(provider_routes::router(usecases.clone()));
+        router = router
+            .merge(provider_routes::router(usecases.clone()))
+            .merge(crate::oauth_routes::router(usecases.clone()));
     }
 
     if usecases.manage_api_keys.is_some() {
@@ -95,6 +101,13 @@ pub fn router(
         router = router.merge(combo_routes::router(
             usecases.route_request.combo_repository().unwrap(),
         ));
+        // Virtual combo alias admin shares the combo auth surface (R2).
+        if let Some(alias_repo) = usecases.route_request.combo_alias_repository() {
+            router = router.merge(combo_routes::alias_router(
+                usecases.route_request.combo_repository().unwrap(),
+                alias_repo,
+            ));
+        }
     }
 
     // Alias routes (model alias repository is always available)
@@ -115,7 +128,11 @@ pub fn router(
 
     // Rate limit admin API (if enabled)
     if let Some(store) = rate_limit_store {
-        router = router.merge(rate_limits_routes(store));
+        router = router.merge(rate_limits_routes(store.clone()));
+        router = router.layer(middleware::from_fn_with_state(
+            store,
+            admin_rate_limit_middleware,
+        ));
     }
 
     router
@@ -133,7 +150,7 @@ pub fn router(
             ip_rate_limiter_middleware,
         ))
         // API key rate limiter — applied to authenticated CLIENT_API routes
-        // Runs after CSRF guard but before authz to read headers stamped by authz
+        // Runs after authz so it reads the server-side stamped `x-authz-tier`
         .layer(middleware::from_fn_with_state(
             api_key_rate_limiter.clone(),
             api_key_rate_limiter_middleware,
@@ -149,6 +166,82 @@ pub fn router(
             csrf_guard,
             csrf_guard::csrf_guard_middleware,
         ))
+}
+
+/// Applies administrator-defined request limits only to authenticated CLIENT_API ingress.
+pub async fn admin_rate_limit_middleware(
+    State(store): State<handlers::rate_limits::RateLimitRuleStore>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    let path = request.uri().path();
+    let headers = request.headers();
+    if !path.starts_with("/v1/")
+        || headers
+            .get("x-authz-route-class")
+            .and_then(|v| v.to_str().ok())
+            != Some("CLIENT_API")
+    {
+        return next.run(request).await;
+    }
+    let auth_kind = headers
+        .get("x-authz-auth-kind")
+        .and_then(|v| v.to_str().ok());
+    let api_key_id = if auth_kind == Some("api_key") {
+        headers.get("x-authz-auth-id").and_then(|v| v.to_str().ok())
+    } else {
+        None
+    };
+    let decision = store
+        .check_request(
+            api_key_id,
+            Some(extract_client_ip(&request)),
+            chrono::Utc::now(),
+        )
+        .await;
+    if decision.allowed {
+        let mut response = next.run(request).await;
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
+        response
+    } else {
+        let body = serde_json::json!({
+            "error": "rate_limit_exceeded",
+            "message": "Administrative request rate limit exceeded.",
+            "code": "RATE_LIMITED",
+            "retry_after": decision.retry_after_secs,
+        });
+        let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            axum::http::HeaderValue::from(decision.retry_after_secs),
+        );
+        if decision.matched {
+            set_admin_rate_limit_headers(response.headers_mut(), &decision);
+        }
+        response
+    }
+}
+
+fn set_admin_rate_limit_headers(
+    headers: &mut HeaderMap,
+    decision: &handlers::rate_limits::RateLimitDecision,
+) {
+    // Keep the admin-policy metadata distinct from the built-in authz tier
+    // limiter, whose standard x-ratelimit-* headers are stamped outside this layer.
+    headers.insert(
+        "x-admin-ratelimit-limit",
+        axum::http::HeaderValue::from(decision.limit),
+    );
+    headers.insert(
+        "x-admin-ratelimit-remaining",
+        axum::http::HeaderValue::from(decision.remaining),
+    );
+    headers.insert(
+        "x-admin-ratelimit-reset",
+        axum::http::HeaderValue::from(decision.reset_unix),
+    );
 }
 
 /// Login rate limiter middleware — applies to POST /login only
@@ -184,29 +277,14 @@ pub async fn login_rate_limiter_middleware(
     }
 }
 
-/// Extract client IP from request — checks X-Forwarded-For, X-Real-IP headers
-/// (for reverse-proxy setups), then falls back to axum's ConnectInfo extension.
+/// Extract client IP from the TCP connection only.
+///
+/// `X-Forwarded-For` and `X-Real-IP` are intentionally ignored: they are
+/// client-controlled and must not feed rate limiting or audit decisions
+/// unless an explicitly configured trusted proxy strips them first.
+/// Proxy support is a follow-up (TRUSTED_PROXIES CIDR); until then the
+/// socket address from `ConnectInfo` is the only trusted source.
 fn extract_client_ip(request: &axum::extract::Request) -> std::net::IpAddr {
-    // Prefer X-Forwarded-For header (first comma-separated IP)
-    if let Some(fwd) = request.headers().get("x-forwarded-for") {
-        if let Ok(s) = fwd.to_str() {
-            let ip = s.split(',').next().map(|s| s.trim()).unwrap_or(s);
-            if let Ok(addr) = ip.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Fall back to X-Real-IP header
-    if let Some(real) = request.headers().get("x-real-ip") {
-        if let Ok(s) = real.to_str() {
-            if let Ok(addr) = s.parse() {
-                return addr;
-            }
-        }
-    }
-
-    // Last resort: connect info from the socket
     request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
@@ -230,8 +308,10 @@ pub async fn api_key_rate_limiter_middleware(
         return next.run(request).await;
     }
 
-    // Extract rate limit context from authz headers (set by authz middleware)
-    // x-authz-tier: free | pro | enterprise
+    // Extract rate limit context from authz-stamped headers (the authz
+    // middleware strips any client-supplied `x-authz-*` and stamps these
+    // server-side, so they are trusted here).
+    // x-authz-tier: free | pro | enterprise (stamped from the ApiKey tier)
     // x-authz-auth-id: api_key_xyz or "_anonymous"
     let headers = request.headers();
     let tier_str = headers
@@ -428,6 +508,50 @@ fn parse_csv_header(headers: &HeaderMap, name: &'static str) -> Result<Vec<Strin
         .collect())
 }
 
+/// Shared combo/header policy for both protocols (R2).
+///
+/// Single classification lives in `rook_usecases::classify_route`; this helper
+/// only extracts raw header values (ALL of them, via `get_all`, so duplicates
+/// are detected) and maps `RouteError` to `HttpError`. Resolution + auth stay
+/// in `RouteRequest`. Non-UTF8 header values are a 400, never silently dropped.
+///
+/// Returns the legacy `combo_id` when present; virtual (`rook/*`) and normal
+/// models need no header action here.
+fn combo_id_from_headers(headers: &HeaderMap, model: &str) -> Result<Option<ComboId>, HttpError> {
+    let mut values: Vec<String> = Vec::new();
+    for v in headers.get_all("x-rook-combo").iter() {
+        match v.to_str() {
+            Ok(s) => values.push(s.to_string()),
+            Err(_) => {
+                return Err(HttpError {
+                    status: StatusCode::BAD_REQUEST,
+                    code: "INVALID_COMBO_ID",
+                    message: "Invalid X-Rook-Combo header: value is not valid UTF-8".to_string(),
+                });
+            }
+        }
+    }
+    match classify_route(model, &values) {
+        Ok(RouteSelection::LegacyCombo { combo_id }) => Ok(Some(combo_id)),
+        Ok(_) => Ok(None),
+        Err(rook_usecases::RouteError::Ambiguous) => Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "AMBIGUOUS_ROUTE",
+            message: "model selects a virtual combo and X-Rook-Combo is also present; send only one (code: ambiguous_route)".to_string(),
+        }),
+        Err(rook_usecases::RouteError::InvalidHeader(msg)) => Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_COMBO_ID",
+            message: format!("Invalid X-Rook-Combo header: {msg}"),
+        }),
+        Err(rook_usecases::RouteError::InvalidAlias(msg)) => Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_MODEL",
+            message: format!("Invalid virtual model '{model}': {msg}"),
+        }),
+    }
+}
+
 /// POST /v1/chat/completions — OpenAI-compatible
 async fn chat_completions(
     State(usecases): State<Usecases>,
@@ -441,27 +565,12 @@ async fn chat_completions(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
-    // Extract X-Rook-Combo header if present
-    if let Some(combo_header) = headers.get("x-rook-combo") {
-        let combo_str = combo_header.to_str().map_err(|_| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "INVALID_HEADER",
-            message: "X-Rook-Combo header must be valid UTF-8".to_string(),
-        })?;
-        let combo_id = ComboId::parse_str(combo_str).map_err(|_| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "INVALID_COMBO_ID",
-            message: format!("Invalid combo ID: must be a valid UUID, got: {}", combo_str),
-        })?;
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
+    // Extract X-Rook-Combo header if present (shared R2 policy: get_all +
+    // classify; duplicates/malformed/ambiguous become 400 here).
+    if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
         req.metadata.combo_id = Some(combo_id);
     }
 
@@ -488,6 +597,17 @@ async fn chat_completions(
                 },
             };
             Ok((StatusCode::FORBIDDEN, Json(body)).into_response())
+        }
+        Err(e) if e.is_not_found() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "invalid_request_error".to_string(),
+                    code: Some("model_not_found".to_string()),
+                    message: e.to_string(),
+                    param: Some("model".to_string()),
+                },
+            };
+            Ok((StatusCode::NOT_FOUND, Json(body)).into_response())
         }
         Err(e) if e.is_all_providers_exhausted() => {
             let body = OpenAIErrorResponse {
@@ -543,6 +663,7 @@ async fn chat_completions_stream(
     {
         Ok(stream) => stream,
         Err(error) if error.is_forbidden() => return Err(map_forbidden_openai(&error)),
+        Err(error) if error.is_not_found() => return Err(map_not_found_openai(&error)),
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
         Err(error) => {
             let error_event = openai_error_event(error);
@@ -582,6 +703,16 @@ fn map_forbidden_openai(error: &CortexError) -> HttpError {
             "provider_not_allowed" => "PROVIDER_NOT_ALLOWED",
             _ => "MODEL_NOT_ALLOWED",
         },
+        message: error.to_string(),
+    }
+}
+
+/// Map a `not_found` `CortexError` (unknown virtual alias / deleted combo)
+/// to the 404 used by streaming and non-streaming paths alike.
+fn map_not_found_openai(error: &CortexError) -> HttpError {
+    HttpError {
+        status: StatusCode::NOT_FOUND,
+        code: "MODEL_NOT_FOUND",
         message: error.to_string(),
     }
 }
@@ -635,15 +766,92 @@ fn apply_sse_headers(headers: &mut axum::http::HeaderMap) {
 }
 
 /// GET /v1/models — list available models
-/// NOTE: returns a static list until ManageProviders exposes provider refs.
-async fn list_models(State(_usecases): State<Usecases>) -> impl IntoResponse {
-    Json(serde_json::json!({
-        "object": "list",
-        "data": [
-            {"id": "openai-primary/gpt-4o", "object": "model", "created": 0, "owned_by": "openai-primary"},
-            {"id": "anthropic-primary/claude-opus-4-5", "object": "model", "created": 0, "owned_by": "anthropic-primary"},
-        ]
-    }))
+///
+/// Dynamic (R5): provider models from the live router registry plus virtual
+/// `rook/*` combo aliases, filtered by the caller's key restrictions.
+/// Entry ids keep the `{provider}/{model}` convention; aliases keep `rook/*`.
+/// A restriction entry matches a composite id, a bare model, or an alias.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModelEntry {
+    id: String,
+    owned_by: String,
+}
+
+fn compute_model_entries(
+    providers: &[(String, Vec<String>)],
+    aliases: &[String],
+    allowed_models: &[String],
+) -> Vec<ModelEntry> {
+    let mut entries: Vec<ModelEntry> = Vec::new();
+    for (provider, models) in providers {
+        for model in models {
+            entries.push(ModelEntry {
+                id: format!("{provider}/{model}"),
+                owned_by: provider.clone(),
+            });
+        }
+    }
+    for alias in aliases {
+        entries.push(ModelEntry {
+            id: alias.clone(),
+            owned_by: "combo".to_string(),
+        });
+    }
+    if allowed_models.is_empty() {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .filter(|entry| {
+            allowed_models.iter().any(|allowed| {
+                allowed == &entry.id
+                    || (entry.owned_by != "combo" && entry.id.ends_with(&format!("/{allowed}")))
+            })
+        })
+        .collect()
+}
+
+async fn list_models(State(usecases): State<Usecases>, headers: HeaderMap) -> impl IntoResponse {
+    let restrictions = restrictions_from_headers(&headers).unwrap_or_default();
+    let provider_ids = usecases.fallback_router.providers();
+    let providers: Vec<(String, Vec<String>)> = provider_ids
+        .iter()
+        .map(|id| {
+            let models = usecases
+                .fallback_router
+                .get(id)
+                .map(|p| p.supported_models().iter().map(|m| m.to_string()).collect())
+                .unwrap_or_default();
+            (id.to_string(), models)
+        })
+        .collect();
+    let aliases: Vec<String> = match usecases.route_request.combo_alias_repository() {
+        Some(repo) => repo
+            .list()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.alias.to_string())
+            .collect(),
+        None => Vec::new(),
+    };
+    let allowed: Vec<String> = restrictions
+        .allowed_models
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+    let data: Vec<serde_json::Value> = compute_model_entries(&providers, &aliases, &allowed)
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "id": entry.id,
+                "object": "model",
+                "created": 0,
+                "owned_by": entry.owned_by,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "object": "list", "data": data }))
 }
 
 /// POST /v1/messages — Anthropic-compatible
@@ -659,27 +867,11 @@ async fn anthropic_messages(
     if let Some(api_key_id) = authz::extract_api_key_id_from_headers(&headers) {
         req.metadata.api_key_id = Some(api_key_id);
     }
-    // Extract requested_tier from trusted header if present.
-    if let Some(tier) = headers
-        .get("x-authz-requested-tier")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        req.metadata.requested_tier = Some(tier.to_string());
-    }
-    // Extract X-Rook-Combo header if present
-    if let Some(combo_header) = headers.get("x-rook-combo") {
-        let combo_str = combo_header.to_str().map_err(|_| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "INVALID_HEADER",
-            message: "X-Rook-Combo header must be valid UTF-8".to_string(),
-        })?;
-        let combo_id = ComboId::parse_str(combo_str).map_err(|_| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            code: "INVALID_COMBO_ID",
-            message: format!("Invalid combo ID: must be a valid UUID, got: {}", combo_str),
-        })?;
+    // NOTE: `x-authz-requested-tier` is stripped by the authz middleware and
+    // never stamped — it must never feed usage/quota. `requested_tier` stays
+    // `None`; tiered decisions use the server-side stamped `x-authz-tier`.
+    // Extract X-Rook-Combo header if present (shared R2 policy).
+    if let Some(combo_id) = combo_id_from_headers(&headers, req.model.as_str())? {
         req.metadata.combo_id = Some(combo_id);
     }
 
@@ -697,6 +889,7 @@ async fn anthropic_messages(
             Ok(Json(anthropic_resp).into_response())
         }
         Err(e) if e.is_forbidden() => Ok((StatusCode::FORBIDDEN, e.to_string()).into_response()),
+        Err(e) if e.is_not_found() => Ok((StatusCode::NOT_FOUND, e.to_string()).into_response()),
         Err(e) if e.is_all_providers_exhausted() => {
             Ok((StatusCode::SERVICE_UNAVAILABLE, "All providers unavailable").into_response())
         }
@@ -724,6 +917,13 @@ async fn anthropic_messages_stream(
                 message: error.to_string(),
             });
         }
+        Err(error) if error.is_not_found() => {
+            return Err(HttpError {
+                status: StatusCode::NOT_FOUND,
+                code: "MODEL_NOT_FOUND",
+                message: error.to_string(),
+            });
+        }
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
         Err(error) => {
             let error_event = serde_json::to_string(&AnthropicSseEvent::from(error))
@@ -741,29 +941,34 @@ async fn anthropic_messages_stream(
     };
 
     let events = stream
-        .map(|chunk| match chunk {
-            Ok(chunk) => {
-                let event: AnthropicSseEvent = (&chunk).into();
-                serde_json::to_string(&event)
-                    .map(|data| Event::default().data(data))
-                    .unwrap_or_else(|e| {
-                        Event::default().data(
-                            serde_json::to_string(&AnthropicSseEvent::from(
-                                CortexError::provider(format!("serialization error: {e}")),
-                            ))
-                            .unwrap_or_else(|_| r#"{"type":"error","error":{"type":"internal_error","message":"serialization error"}}"#.to_string()),
-                        )
+        .flat_map(|chunk| {
+            let events: Vec<Event> = match chunk {
+                Ok(chunk) => AnthropicSseEvent::events_from_chunk(&chunk)
+                    .into_iter()
+                    .map(|event| {
+                        serde_json::to_string(&event)
+                            .map(|data| Event::default().data(data))
+                            .unwrap_or_else(|e| {
+                                Event::default().data(
+                                    serde_json::to_string(&AnthropicSseEvent::from(
+                                        CortexError::provider(format!("serialization error: {e}")),
+                                    ))
+                                    .unwrap_or_else(|_| r#"{"type":"error","error":{"type":"internal_error","message":"serialization error"}}"#.to_string()),
+                                )
+                            })
                     })
-            }
-            Err(error) => {
-                serde_json::to_string(&AnthropicSseEvent::from(error))
-                    .map(|data| Event::default().data(data))
-                    .unwrap_or_else(|_| {
-                        Event::default().data(
-                            r#"{"type":"error","error":{"type":"internal_error","message":"stream error"}}"#,
-                        )
-                    })
-            }
+                    .collect(),
+                Err(error) => vec![
+                    serde_json::to_string(&AnthropicSseEvent::from(error))
+                        .map(|data| Event::default().data(data))
+                        .unwrap_or_else(|_| {
+                            Event::default().data(
+                                r#"{"type":"error","error":{"type":"internal_error","message":"stream error"}}"#,
+                            )
+                        }),
+                ],
+            };
+            futures::stream::iter(events)
         })
         .chain(futures::stream::once(async { Event::default().data("[DONE]") }))
         .map(Ok::<Event, Infallible>);
@@ -809,6 +1014,8 @@ async fn health_check(State(usecases): State<Usecases>) -> impl IntoResponse {
 
     Json(serde_json::json!({
         "status": status,
+        "app_name": "Rook",
+        "version": "0.0.1",
         "providers": statuses.iter().map(|s| {
             let provider_id = s.provider_id();
 
@@ -996,4 +1203,402 @@ fn cache_routes(usecases: Usecases) -> Router {
         )
         .layer(middleware::from_fn(authz::require_admin))
         .layer(axum::extract::Extension(cache))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use shared_kernel::{RateLimitRule, RateLimitScope};
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
+    fn headers_with(values: &[&str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for v in values {
+            headers.append("x-rook-combo", v.parse().unwrap());
+        }
+        headers
+    }
+
+    #[tokio::test]
+    async fn cors_http_contract_matches_configured_origins_exactly() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("ALLOWED_ORIGINS", "");
+        for (setting, cases) in [
+            (
+                None,
+                vec![
+                    ("http://localhost:3000", true),
+                    ("http://localhost:4747", true),
+                    ("http://127.0.0.1:3000", true),
+                    ("http://localhost:9999", false),
+                    ("https://dashboard.example", false),
+                ],
+            ),
+            (
+                Some(" https://dashboard.example:8443 , http://localhost:8080 "),
+                vec![
+                    ("https://dashboard.example:8443", true),
+                    ("http://localhost:8080", true),
+                    ("https://dashboard.example", false),
+                    ("https://dashboard.example:8443/", false),
+                    ("https://sub.dashboard.example:8443", false),
+                    ("http://localhost:3000", false),
+                ],
+            ),
+            (Some("*"), vec![("https://arbitrary.example", false)]),
+        ] {
+            match setting {
+                Some(value) => std::env::set_var("ALLOWED_ORIGINS", value),
+                None => std::env::remove_var("ALLOWED_ORIGINS"),
+            }
+            let app = Router::new()
+                .route("/health", get(|| async { "ok" }))
+                .layer(middleware::from_fn_with_state(
+                    authz::AuthzConfig::from_env(),
+                    authz::middleware,
+                ));
+            for (origin, allowed) in cases {
+                for method in ["GET", "OPTIONS"] {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            axum::http::Request::builder()
+                                .method(method)
+                                .uri("/health")
+                                .header("origin", origin)
+                                .header("access-control-request-method", "GET")
+                                .body(axum::body::Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if method == "OPTIONS" {
+                            StatusCode::NO_CONTENT
+                        } else {
+                            StatusCode::OK
+                        }
+                    );
+                    let headers = response.headers();
+                    assert_eq!(
+                        headers
+                            .get("access-control-allow-origin")
+                            .map(|v| v.to_str().unwrap()),
+                        allowed.then_some(origin),
+                        "{setting:?}: {origin}"
+                    );
+                    assert_eq!(
+                        headers.get("access-control-allow-credentials").is_some(),
+                        allowed
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-methods"],
+                        "GET, POST, PUT, DELETE, OPTIONS"
+                    );
+                    assert_eq!(
+                        headers["access-control-allow-headers"],
+                        "Content-Type, Authorization, X-API-Key"
+                    );
+                    if allowed {
+                        assert!(headers["vary"].to_str().unwrap().contains("Origin"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_rule_allows_first_request_and_rejects_second() {
+        let _guard = ENV_LOCK.lock().await;
+        // The API key config is read only to build this isolated authz stack.
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        store.insert(RateLimitRule {
+            id: "rl-test".into(),
+            scope: RateLimitScope::ApiKey,
+            target: "key_1".into(),
+            requests_per_minute: 1,
+            requests_per_day: None,
+            tokens_per_minute: None,
+            burst: None,
+            provider_limits: HashMap::new(),
+        });
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer admin-rate-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["x-admin-ratelimit-limit"], "1");
+
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
+        assert_eq!(second.headers()["x-admin-ratelimit-limit"], "1");
+        assert_eq!(second.headers()["x-admin-ratelimit-remaining"], "0");
+        let body = second.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("RATE_LIMITED"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_api_without_custom_rule_has_no_admin_limit_headers() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "admin-rate-no-rule-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+        let store = handlers::rate_limits::RateLimitRuleStore::new();
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                store,
+                admin_rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/test")
+                    .header("authorization", "Bearer admin-rate-no-rule-key")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key("x-admin-ratelimit-limit"));
+        assert!(!response
+            .headers()
+            .contains_key("x-admin-ratelimit-remaining"));
+        assert!(!response.headers().contains_key("x-admin-ratelimit-reset"));
+    }
+
+    #[tokio::test]
+    async fn api_key_limiter_observes_server_stamped_authz_identity() {
+        let _guard = ENV_LOCK.lock().await;
+        let _env = EnvVarGuard::set("CLIENT_API_KEYS", "middleware-order-test-key");
+        let authz_config = authz::AuthzConfig::from_env_with_client_auth(None, true);
+
+        let mut config = crate::middleware::api_key_rate_limiter::RateLimiterConfig::default();
+        config
+            .tiers
+            .get_mut(&rook_core::ApiKeyTier::Free)
+            .expect("free tier config")
+            .requests_per_minute = 1;
+        let limiter = Arc::new(ApiKeyRateLimiter::with_config(Arc::new(config)));
+        let app = Router::new()
+            .route("/v1/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter,
+                api_key_rate_limiter_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                authz_config,
+                authz::middleware,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .uri("/v1/test")
+                .header("authorization", "Bearer middleware-order-test-key")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key(header::RETRY_AFTER));
+    }
+
+    #[test]
+    fn virtual_without_header_needs_no_header_action() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            combo_id_from_headers(&headers, "rook/coding").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn virtual_with_header_is_ambiguous_400() {
+        let id = ComboId::new().to_string();
+        let headers = headers_with(&[&id]);
+        let err = combo_id_from_headers(&headers, "rook/coding").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "AMBIGUOUS_ROUTE");
+    }
+
+    #[test]
+    fn physical_without_header_is_none() {
+        let headers = HeaderMap::new();
+        assert_eq!(combo_id_from_headers(&headers, "gpt-4.1").unwrap(), None);
+    }
+
+    #[test]
+    fn physical_with_header_returns_combo_id() {
+        let id = ComboId::new();
+        let headers = headers_with(&[&id.to_string()]);
+        assert_eq!(
+            combo_id_from_headers(&headers, "gpt-4.1").unwrap(),
+            Some(id)
+        );
+    }
+
+    #[test]
+    fn unknown_virtual_needs_no_header_action_404_is_resolution() {
+        // Existence is resolution (usecase 404), not classification.
+        let headers = HeaderMap::new();
+        assert_eq!(
+            combo_id_from_headers(&headers, "rook/unknown").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn bare_prefix_is_400() {
+        let headers = HeaderMap::new();
+        let err = combo_id_from_headers(&headers, "rook/").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "INVALID_MODEL");
+    }
+
+    #[test]
+    fn malformed_header_is_400() {
+        let headers = headers_with(&["not-a-uuid"]);
+        let err = combo_id_from_headers(&headers, "gpt-4.1").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "INVALID_COMBO_ID");
+    }
+
+    #[test]
+    fn duplicate_headers_are_400() {
+        let id = ComboId::new().to_string();
+        let headers = headers_with(&[&id, &id]);
+        let err = combo_id_from_headers(&headers, "gpt-4.1").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn empty_header_is_400() {
+        let headers = headers_with(&[""]);
+        let err = combo_id_from_headers(&headers, "gpt-4.1").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn non_utf8_header_is_400_not_silently_dropped() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "x-rook-combo",
+            axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        let err = combo_id_from_headers(&headers, "gpt-4o").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "INVALID_COMBO_ID");
+    }
+
+    // R5: dynamic model catalog entries ---------------------------------
+
+    #[test]
+    fn catalog_lists_provider_models_and_aliases() {
+        let entries = compute_model_entries(
+            &[("openai-a".to_string(), vec!["gpt-4o".to_string()])],
+            &["rook/coding".to_string()],
+            &[],
+        );
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"openai-a/gpt-4o"));
+        assert!(ids.contains(&"rook/coding"));
+    }
+
+    #[test]
+    fn catalog_restrictions_filter_entries() {
+        let providers = &[(
+            "openai-a".to_string(),
+            vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()],
+        )];
+        // Bare model match.
+        let entries = compute_model_entries(
+            providers,
+            &["rook/coding".to_string()],
+            &["gpt-4o".to_string()],
+        );
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["openai-a/gpt-4o"]
+        );
+        // Alias match.
+        let entries = compute_model_entries(
+            providers,
+            &["rook/coding".to_string()],
+            &["rook/coding".to_string()],
+        );
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["rook/coding"]
+        );
+        // Composite id match.
+        let entries = compute_model_entries(providers, &[], &["openai-a/gpt-4o-mini".to_string()]);
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["openai-a/gpt-4o-mini"]
+        );
+    }
+
+    #[test]
+    fn catalog_bare_model_restriction_does_not_match_virtual_alias() {
+        let entries =
+            compute_model_entries(&[], &["rook/coding".to_string()], &["coding".to_string()]);
+
+        assert!(
+            entries.is_empty(),
+            "bare model must not expose virtual alias"
+        );
+    }
 }

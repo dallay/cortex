@@ -6,57 +6,67 @@
  * - Running behind a reverse proxy with different external URL
  * - Using a custom domain for the API
  */
-import {computed, ref} from "vue";
+import { computed, ref } from "vue";
 
 const STORAGE_KEY = "rook-api-base-url";
 
+/**
+ * `localStorage` is missing in non-browser runtimes (SSR, workers, tests).
+ * The cast keeps the "may be absent" contract explicit for the type checker.
+ */
+function getLocalStorage(): Storage | undefined {
+	return globalThis.localStorage as Storage | undefined;
+}
+
 function getStoredOverride(): string | null {
-  if (typeof globalThis.localStorage === "undefined") return null;
-  return globalThis.localStorage.getItem(STORAGE_KEY);
+	const storage = getLocalStorage();
+	if (storage === undefined) return null;
+	return storage.getItem(STORAGE_KEY);
 }
 
 function storeOverride(url: string | null): void {
-  if (typeof globalThis.localStorage === "undefined") return;
-  if (url) {
-    globalThis.localStorage.setItem(STORAGE_KEY, url);
-  } else {
-    globalThis.localStorage.removeItem(STORAGE_KEY);
-  }
+	const storage = getLocalStorage();
+	if (storage === undefined) return;
+	if (url) {
+		storage.setItem(STORAGE_KEY, url);
+	} else {
+		storage.removeItem(STORAGE_KEY);
+	}
 }
 
 function detectOrigin(): string {
-  return globalThis.location?.origin ?? "http://127.0.0.1:3773";
+	return globalThis.location?.origin ?? "http://127.0.0.1:3773";
 }
 
 export function useBaseUrl() {
-  const override = ref<string | null>(getStoredOverride());
-  const detectedOrigin = ref(detectOrigin());
+	const override = ref<string | null>(getStoredOverride());
+	const detectedOrigin = ref(detectOrigin());
 
-  const baseUrl = computed(() => {
-    if (override.value) {
-      return override.value;
-    }
-    return detectedOrigin.value;
-  });
+	const baseUrl = computed(() => {
+		if (override.value) {
+			return override.value;
+		}
+		return detectedOrigin.value;
+	});
 
-  const fullBaseUrl = computed(() => `${baseUrl.value}/v1`);
+	const fullBaseUrl = computed(() => `${baseUrl.value}/v1`);
 
-  const isOverridden = computed(() => !!override.value);
+	const isOverridden = computed(() => !!override.value);
 
-  function setOverride(url: string | null) {
-    override.value = url;
-    storeOverride(url);
-  }
+	function setOverride(url: string | null) {
+		override.value = url;
+		storeOverride(url);
+	}
 
-  function clearOverride() {
-    setOverride(null);
-  }
+	function clearOverride() {
+		setOverride(null);
+	}
 
-  return {
-    baseUrl,
-    fullBaseUrl,
-    isOverridden,
-    setOverride,
-    clearOverride,
-  };
+	return {
+		baseUrl,
+		fullBaseUrl,
+		isOverridden,
+		setOverride,
+		clearOverride,
+	};
 }

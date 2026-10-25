@@ -24,6 +24,33 @@ fn huginn_command(workspace: &Path, db: &Path) -> Command {
 }
 
 #[test]
+fn auth_login_is_discoverable_and_rejects_piped_input_without_creating_storage() {
+    let help = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&help.stdout).contains("auth"));
+    let help = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["auth", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("login"));
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("absent/sessions.db");
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .arg("--db")
+        .arg(&db)
+        .args(["auth", "login"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
+    assert!(!db.parent().unwrap().exists());
+}
+
+#[test]
 fn json_read_only_turn_lists_and_resumes_a_session() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
@@ -61,6 +88,64 @@ fn json_read_only_turn_lists_and_resumes_a_session() {
     assert!(doctor.status.success());
     let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
     assert_eq!(doctor["rook_compatibility"], "unsupported");
+}
+
+#[test]
+fn run_without_model_fails_with_configuration_guidance() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["--workspace"])
+        .arg(workspace.path())
+        .args(["--db"])
+        .arg(data.path().join("sessions.db"))
+        .args(["run", "hello"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("HUGINN_BASE_URL")
+        .env_remove("HUGINN_MODEL")
+        .env_remove("HUGINN_API_KEY")
+        .env_remove("AGENT_BASE_URL")
+        .env_remove("AGENT_MODEL")
+        .env_remove("AGENT_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No model configured"), "got: {stderr}");
+    assert!(stderr.contains("HUGINN_BASE_URL"), "got: {stderr}");
+}
+
+#[test]
+fn doctor_reports_unconfigured_without_api_key_or_network() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .args(["--workspace"])
+        .arg(workspace.path())
+        .args(["--db"])
+        .arg(data.path().join("sessions.db"))
+        .arg("doctor")
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("HUGINN_BASE_URL")
+        .env_remove("HUGINN_MODEL")
+        .env_remove("HUGINN_API_KEY")
+        .env_remove("AGENT_BASE_URL")
+        .env_remove("AGENT_MODEL")
+        .env_remove("AGENT_API_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["model_readiness"], "unconfigured");
+    assert_eq!(report["api_key_resolved"], false);
 }
 
 #[test]

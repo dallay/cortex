@@ -24,58 +24,69 @@ pub fn approval_header(action: &str, number: u64) -> String {
 /// Conservative by design: returning `None` is always safe (the header
 /// omits the `Effect:` line).
 pub fn effect_line(preview: &str) -> Option<String> {
-    for line in preview.lines() {
+    for (index, line) in preview.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix("Directory:") {
-            let dir = rest.trim();
-            if dir.is_empty() {
-                return Some("run command in workspace".to_string());
-            }
-            return Some(format!("run command in workspace ({dir})"));
-        }
-        if trimmed.starts_with("Trusted local MCP server") {
-            return Some(trimmed.to_string());
-        }
-        if let Some(rest) = trimmed.strip_prefix("Server:") {
-            return Some(format!("start MCP server {}", rest.trim()));
-        }
-        if let Some(rest) = trimmed.strip_prefix("Server/action:") {
-            // The first non-empty line carries the MCP server name; the
-            // subsequent `Tool:` line carries the remote tool name. Surface
-            // both so the user knows which exact tool the approval is for,
-            // not just the configured server.
-            let server = rest.trim();
-            for line in preview.lines().skip(1) {
-                if let Some(tool) = line.trim().strip_prefix("Tool:") {
-                    let tool = tool.trim();
-                    if tool.is_empty() {
-                        return Some(format!("call MCP tool {server}"));
-                    }
-                    return Some(format!("call MCP tool {server}.{tool}"));
-                }
-            }
-            return Some(format!("call MCP tool {server}"));
-        }
-        if let Some(rest) = trimmed.strip_prefix("MCP tool:") {
-            return Some(format!("call MCP tool {}", rest.trim()));
-        }
-        if let Some(rest) = trimmed.strip_prefix("--- ") {
-            let target = rest.split_whitespace().next().unwrap_or("");
-            if target.is_empty() {
-                return Some("edit file".to_string());
-            }
-            return Some(format!("edit {target}"));
-        }
-        if let Some(rest) = trimmed.strip_prefix("+++ ") {
-            let target = rest.split_whitespace().next().unwrap_or("");
-            if target.is_empty() {
-                return Some("create file".to_string());
-            }
-            return Some(format!("create {target}"));
+        if let Some(effect) = directory_effect(trimmed)
+            .or_else(|| trusted_server_effect(trimmed))
+            .or_else(|| server_effect(trimmed))
+            .or_else(|| server_action_effect(preview, index, trimmed))
+            .or_else(|| mcp_tool_effect(trimmed))
+            .or_else(|| file_effect(trimmed, "--- ", "edit file", "edit"))
+            .or_else(|| file_effect(trimmed, "+++ ", "create file", "create"))
+        {
+            return Some(effect);
         }
     }
     None
+}
+
+fn directory_effect(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("Directory:")?;
+    let directory = rest.trim();
+    Some(if directory.is_empty() {
+        "run command in workspace".to_string()
+    } else {
+        format!("run command in workspace ({directory})")
+    })
+}
+
+fn trusted_server_effect(line: &str) -> Option<String> {
+    line.starts_with("Trusted local MCP server")
+        .then(|| line.to_string())
+}
+
+fn server_effect(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("Server:")?;
+    Some(format!("start MCP server {}", rest.trim()))
+}
+
+fn server_action_effect(preview: &str, index: usize, line: &str) -> Option<String> {
+    let server = line.strip_prefix("Server/action:")?.trim();
+    let tool = preview
+        .lines()
+        .skip(index + 1)
+        .find_map(|line| line.trim().strip_prefix("Tool:"))
+        .map(str::trim);
+    Some(match tool {
+        Some("") | None => format!("call MCP tool {server}"),
+        Some(tool) => format!("call MCP tool {server}.{tool}"),
+    })
+}
+
+fn mcp_tool_effect(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("MCP tool:")?;
+    Some(format!("call MCP tool {}", rest.trim()))
+}
+
+fn file_effect(line: &str, prefix: &str, empty: &str, action: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?;
+    let target = rest.split_whitespace().next().unwrap_or("");
+    Some(if target.is_empty() {
+        empty.to_string()
+    } else {
+        format!("{action} {target}")
+    })
 }

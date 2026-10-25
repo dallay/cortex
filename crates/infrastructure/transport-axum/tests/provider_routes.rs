@@ -43,6 +43,8 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
             },
             default_model: Some(ModelId::new("gpt-4o")),
             base_url: None,
+            api_format: Some(rook_core::ApiFormat::OpenAI),
+            supported_models: Vec::new(),
         },
         test_status: TestStatus::NeverTested,
         created_at: chrono::Utc::now(),
@@ -74,6 +76,8 @@ fn connection_config_response_includes_base_url() {
         },
         default_model: Some(ModelId::new("gpt-4o")),
         base_url: Some("https://api.openai.com".to_string()),
+        api_format: Some(rook_core::ApiFormat::OpenAI),
+        supported_models: Vec::new(),
     };
 
     let response = ConnectionConfigResponse::from(&config);
@@ -102,6 +106,8 @@ fn connection_config_response_base_url_is_null_when_none() {
         },
         default_model: None,
         base_url: None,
+        api_format: Some(rook_core::ApiFormat::OpenAI),
+        supported_models: Vec::new(),
     };
 
     let response = ConnectionConfigResponse::from(&config);
@@ -124,6 +130,37 @@ fn provider_connection_response_has_empty_credentials() {
 
     // Verify credentials is always empty
     assert!(matches!(response.credentials, EmptyCredentials {}));
+}
+
+#[test]
+fn oauth_connection_response_exposes_status_but_never_tokens_or_client_secret() {
+    use transport_axum::provider_dto::ProviderConnectionResponse;
+
+    let mut connection = test_connection("00000000-0000-0000-0000-000000000044", "Azure OAuth");
+    connection.provider_kind = ProviderKind::AzureOpenAI;
+    connection.auth_type = rook_core::AuthType::OAuth;
+    connection.credentials = Credentials::OAuth {
+        email: EncryptedBlob("encrypted-email".to_string()),
+        access_token: EncryptedBlob("access-secret".to_string()),
+        refresh_token: EncryptedBlob("refresh-secret".to_string()),
+        expires_at: chrono::Utc::now().timestamp() + 3600,
+        scope: EncryptedBlob("encrypted-scope".to_string()),
+        id_token: EncryptedBlob("id-token-secret".to_string()),
+        project_id: EncryptedBlob("encrypted-project".to_string()),
+        oauth_client_id: "safe-client-id".to_string(),
+        oauth_client_secret: Some(EncryptedBlob("client-secret-value".to_string())),
+        oauth_tenant_id: Some("tenant-guid".to_string()),
+    };
+
+    let response = ProviderConnectionResponse::from(&connection);
+    let serialized = serde_json::to_string(&response).expect("serialize response");
+
+    assert_eq!(response.oauth_status.as_deref(), Some("connected"));
+    assert_eq!(response.oauth_client_id.as_deref(), Some("safe-client-id"));
+    assert!(!serialized.contains("access-secret"));
+    assert!(!serialized.contains("refresh-secret"));
+    assert!(!serialized.contains("id-token-secret"));
+    assert!(!serialized.contains("client-secret-value"));
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +526,8 @@ fn create_provider_request_converts_to_create_connection_request() {
             },
             default_model: Some("gpt-4o".to_string()),
             base_url: Some("https://custom.openai.com".to_string()),
+            api_format: None,
+            supported_models: Vec::new(),
         },
     };
 
@@ -573,7 +612,7 @@ fn test_status_enum_has_expected_variants() {
 // Tests: Mock registry for compile-time verification
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 mod mock_registry {
     use super::*;
     use std::sync::Arc;

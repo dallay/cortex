@@ -81,6 +81,7 @@ async fn unload_revokes_stale_handles_and_reactivation_has_new_generation() {
     supervisor.start().await.unwrap();
     assert!(registry.generation(&name).unwrap() > previous);
     let ctx = ToolContext {
+        selected_skills: vec![],
         workspace: ".".into(),
         cancellation: CancellationToken::new(),
     };
@@ -107,6 +108,7 @@ fn provider_factories_accept_extensions_and_reject_ambiguous_names() {
         .register("custom", false, |_| Ok(Arc::new(MockProvider)))
         .unwrap();
     let config = ProviderConfig {
+        allow_loopback_http: false,
         base_url: None,
         model: None,
         key: None,
@@ -118,4 +120,41 @@ fn provider_factories_accept_extensions_and_reject_ambiguous_names() {
         .register("custom", true, |_| Ok(Arc::new(MockProvider)))
         .is_err());
     assert!(factories.create("missing", &config).is_err());
+}
+
+#[tokio::test]
+async fn production_skill_tool_is_lifecycle_owned_and_read_only() {
+    let registry = Registry::default();
+    let workspace = tempfile::tempdir().unwrap();
+    let sessions = Arc::new(
+        huginn_runtime::sessions::SqliteSessions::open(&workspace.path().join("sessions.db"))
+            .unwrap(),
+    );
+    let mut supervisor = huginn_runtime::composition::build_native(
+        Arc::new(huginn_runtime::model::MockProvider),
+        registry.clone(),
+        sessions,
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+    )
+    .await
+    .unwrap();
+    let tool = registry
+        .get("load_skill")
+        .expect("production must advertise loader");
+    let ctx = ToolContext {
+        workspace: workspace.path().into(),
+        cancellation: CancellationToken::new(),
+        selected_skills: vec![],
+    };
+    let call = ToolCall {
+        id: "read".into(),
+        name: "load_skill".into(),
+        arguments: serde_json::json!({"identity":"unavailable"}),
+    };
+    assert!(tool.prepare(&call, &ctx).await.unwrap().approval.is_none());
+    supervisor.remove("native.load_skill").await.unwrap();
+    assert!(registry.get("load_skill").is_none());
+    assert!(tool.prepare(&call, &ctx).await.is_err());
+    supervisor.shutdown().await;
 }

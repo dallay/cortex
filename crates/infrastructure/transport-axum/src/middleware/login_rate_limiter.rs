@@ -108,7 +108,6 @@ impl LoginRateLimiter {
     }
 
     /// Get current token count for an IP (for testing/debugging)
-    #[allow(dead_code)]
     pub async fn tokens_for(&self, ip: IpAddr) -> f64 {
         let buckets = self.buckets.lock().await;
         buckets
@@ -118,7 +117,6 @@ impl LoginRateLimiter {
     }
 
     /// Reset rate limit for an IP (for testing)
-    #[allow(dead_code)]
     pub async fn reset(&self, ip: IpAddr) {
         let mut buckets = self.buckets.lock().await;
         buckets.remove(&ip);

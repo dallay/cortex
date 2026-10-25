@@ -221,6 +221,24 @@ clean:
     cargo clean
     cargo llvm-cov clean --workspace
 
+push *args:
+    git push "$@" && just clean
+
+# === Build artifact diagnostics ===
+
+# Show the largest top-level Cargo artifact directories before cleaning.
+target-size:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! -d target ]]; then
+      echo "target/ does not exist — no local Cargo artifacts to measure"
+      exit 0
+    fi
+    shopt -s nullglob
+    paths=(target target/*)
+    printf 'Cargo target size by directory (GiB):\n'
+    du -sk "${paths[@]}" | sort -n | tail -20 | awk '{ printf "%7.2f GiB  %s\n", $1 / 1048576, $2 }'
+
 # === Full CI (local) ===
 # Each ci-* recipe is independent and can be run standalone.
 # ci-local chains them sequentially — stops on first failure with a clear banner.
@@ -245,8 +263,8 @@ ci-check: (_ci-header "4/9 cargo check...")
 ci-test-rust: (_ci-header "5/9 cargo test (Rust)...")
     @cargo test --workspace --all-features
 
-ci-test-vitest: (_ci-header "6/9 vitest (Frontend)...")
-    @cd apps/rook/dashboard && pnpm exec vitest run
+ci-test-vitest: (_ci-header "6/9 typecheck + biome + vitest (Frontend)...")
+    @cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run
 
 ci-doc: (_ci-header "7/9 cargo doc...")
     @RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps
@@ -294,7 +312,7 @@ ci-local:
     run_step "3/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "4/9 architecture + cargo check" bash -c 'python3 .github/scripts/check-huginn-architecture.py && cargo check --workspace'
     run_step "5/9 cargo test"      cargo test --workspace --all-features
-    run_step "6/9 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "6/9 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
     run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
     run_step "8/9 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     run_step "9/9 e2e"             ./dev/e2e/run-api-keys-e2e.sh --test
@@ -356,7 +374,7 @@ ci-ci:
     run_step "3/8 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "4/8 cargo check"     cargo check --workspace
     run_step "5/8 cargo test"      cargo test --workspace --all-features
-    run_step "6/8 vitest"          bash -c 'cd apps/rook/dashboard && pnpm exec vitest run'
+    run_step "6/8 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
     run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
     run_step "8/8 cargo audit"     bash -c 'cargo audit --no-fetch || true'
     TOTAL=$(( SECONDS - TOTAL_START ))
@@ -403,6 +421,7 @@ help:
     @echo "  just build        - Build release (all targets)"
     @echo "  just build-app    - Build rook binary"
     @echo "  just build-targets - Cross-compile for all platforms"
+    @echo "  just target-size  - Show Cargo artifact sizes before cleaning"
     @echo ""
     @echo "Dev:"
     @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
@@ -410,6 +429,7 @@ help:
     @echo "  just run             - Run rook backend"
     @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
     @echo "  just dashboard-install - Install dashboard npm dependencies"
+    @echo "  just push [args...]   - Push and clean Cargo artifacts on success"
     @echo ""
     @echo "DB:"
     @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"

@@ -42,6 +42,16 @@ impl Plugin for Extension {
                 handler: Arc::new(|_| Ok(CommandResult::Dialog("extension.dialog".into()))),
             },
         )?;
+        assert!(registry
+            .register(
+                ctx,
+                "extension.prompt_collision".into(),
+                Contribution::Command {
+                    name: "/prompts:review".into(),
+                    handler: Arc::new(|_| Ok(CommandResult::Dialog("extension.dialog".into()))),
+                },
+            )
+            .is_err());
         registry.register(
             ctx,
             "extension.dialog".into(),
@@ -83,6 +93,8 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
         &Session::new(".".into()),
         registry,
         CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new(|_: &huginn_presentation::settings::UiConfig| Ok(())),
     )
     .0;
     (supervisor, ui)
@@ -91,16 +103,16 @@ async fn setup() -> (Supervisor, Arc<Ui>) {
 async fn command_dialog_and_widget_cleanup_is_host_projected() {
     let (mut supervisor, ui) = setup().await;
     assert!(ui.dispatch_command("/select with arguments"));
-    assert!(ui.lock().plugin_dialog.is_some());
+    assert!(ui.lock().plugin_dialog().is_some());
     assert!(
-        ui.lock().modal.is_none(),
+        ui.lock().modal().is_none(),
         "plugin selection has no approval authority"
     );
     ui.refresh_contributions();
     assert_eq!(ui.lock().widgets.len(), 1);
     supervisor.remove("extension").await.unwrap();
     ui.refresh_contributions();
-    assert!(ui.lock().plugin_dialog.is_none());
+    assert!(ui.lock().plugin_dialog().is_none());
     assert!(ui.lock().widgets.is_empty());
     assert!(!ui.dispatch_command("/select"));
 }
@@ -120,7 +132,7 @@ async fn tool_renderer_dispatches_by_call_id_for_live_and_resumed_results() {
     });
     assert!(ui.lock().tail.contains("CUSTOM live"));
     assert!(
-        ui.lock().status_error,
+        ui.lock().status.diagnostic,
         "renderer cannot hide authoritative failure"
     );
     let mut session = Session::new(".".into());
@@ -133,10 +145,63 @@ async fn tool_renderer_dispatches_by_call_id_for_live_and_resumed_results() {
     ui.synchronize(&session);
     assert!(ui
         .lock()
-        .committed
+        .conversation
         .iter()
         .any(|text| text.contains("CUSTOM resumed")));
-    let count = ui.lock().committed.len();
+    let count = ui.lock().conversation.len();
     ui.synchronize(&session);
-    assert_eq!(ui.lock().committed.len(), count);
+    assert_eq!(ui.lock().conversation.len(), count);
+}
+
+#[tokio::test]
+async fn prompt_namespace_bypasses_plugin_dispatch() {
+    let registry = Arc::new(Contributions::default());
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(Host(registry.clone())))
+        .unwrap();
+    supervisor.register(Box::new(Extension)).unwrap();
+    supervisor.start().await.unwrap();
+    let ui = Ui::new(
+        &Session::new(".".into()),
+        registry,
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::default()),
+        Arc::new(|_| Ok(())),
+    )
+    .0;
+    ui.set_prompt_templates(vec![("/prompts:review".into(), "Review".into())]);
+    assert!(!ui.dispatch_command("/prompts:review file.rs"));
+    assert!(ui.state.lock().unwrap().overlays.snapshot().is_none());
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn prompt_metadata_is_available_in_completion_without_a_plugin_handle() {
+    let registry = Arc::new(Contributions::default());
+    let ui = Ui::new(
+        &Session::new(".".into()),
+        registry,
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::default()),
+        Arc::new(|_| Ok(())),
+    )
+    .0;
+    ui.set_prompt_templates(vec![(
+        "/prompts:review".into(),
+        "Revisión [proyecto]".into(),
+    )]);
+    {
+        let mut state = ui.state.lock().unwrap();
+        state.editor.text = "/prompts:rev".into();
+        state.editor.cursor = state.editor.text.len();
+    }
+    ui.refresh_completion(true);
+    let state = ui.state.lock().unwrap();
+    assert!(state
+        .completion
+        .items
+        .iter()
+        .any(|item| item.label == "/prompts:review" && item.description == "Revisión [proyecto]"));
+    drop(state);
 }

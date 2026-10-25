@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use shared_kernel::{CacheKey, ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
 
-use crate::ApiKeyId;
+use crate::{ApiKeyId, ProviderKind};
 
 // ============================================================================
 // User — admin user for MANAGEMENT routes
@@ -485,6 +485,10 @@ pub struct AuditEntry {
     pub combo_id: Option<ComboId>,
     /// Step index within the combo (0-based) if applicable
     pub combo_step_index: Option<usize>,
+    /// Effective configured connection used for this request, when known.
+    pub connection_id: Option<ConnectionId>,
+    /// Logical provider runtime identity, distinct from the adapter instance ID.
+    pub provider_runtime_id: Option<ProviderId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -505,6 +509,27 @@ pub struct UsageEntry {
     pub latency_ms: u64,
     pub cost_usd: Option<f64>,
     pub timestamp: DateTime<Utc>,
+}
+
+/// A quota/rate-limit value actually reported by an upstream provider.
+/// This is deliberately separate from locally measured [`UsageEntry`] data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuotaObservation {
+    /// Provider family and runtime instance are both retained: multiple configured
+    /// runtimes of one family may report different limits.
+    pub provider_kind: ProviderKind,
+    pub provider: ProviderId,
+    pub connection_id: Option<ConnectionId>,
+    pub metric: String,
+    pub source: String,
+    pub scope: Option<String>,
+    pub window: Option<String>,
+    pub limit: Option<f64>,
+    pub remaining: Option<f64>,
+    pub reset_at: Option<DateTime<Utc>>,
+    /// Documented relative reset duration in milliseconds, anchored to `observed_at`.
+    pub reset_after_milliseconds: Option<u64>,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -560,6 +585,10 @@ pub struct UsageSummary {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CostBreakdown {
     pub total_cost_usd: f64,
+    /// Number of matching usage records with a known estimated cost.
+    pub known_cost_entries: u64,
+    /// Number of matching usage records without a known estimated cost.
+    pub unknown_cost_entries: u64,
     pub by_provider: HashMap<ProviderId, f64>,
     pub by_model: HashMap<ModelId, f64>,
     pub by_api_key: HashMap<ApiKeyId, f64>,
@@ -645,6 +674,63 @@ impl std::fmt::Display for ComboValidationError {
 }
 
 impl std::error::Error for ComboValidationError {}
+
+// ============================================================================
+// ComboAlias — virtual model (rook/*) mapping to a combo fallback chain
+// ============================================================================
+
+/// A virtual combo alias: `rook/coding` -> combo_id.
+/// Separate from `ModelAlias` (alias -> canonical model). Exact match only,
+/// namespace `rook/` reserved. Regex: `^rook/[a-z0-9][a-z0-9_-]{0,63}$`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComboAlias {
+    /// The virtual model name (e.g., "rook/coding")
+    pub alias: ModelId,
+    /// The combo to execute
+    pub combo_id: ComboId,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ComboAlias {
+    pub fn new(alias: ModelId, combo_id: ComboId) -> Self {
+        Self {
+            alias,
+            combo_id,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Validate alias shape without a regex dependency.
+    pub fn validate_alias_format(alias: &str) -> Result<(), String> {
+        const PREFIX: &str = "rook/";
+        if !alias.starts_with(PREFIX) {
+            return Err("alias must start with 'rook/'".to_string());
+        }
+        let rest = &alias[PREFIX.len()..];
+        if rest.is_empty() {
+            return Err("alias name after 'rook/' must not be empty".to_string());
+        }
+        if rest.len() > 64 {
+            return Err("alias name after 'rook/' must be at most 64 chars".to_string());
+        }
+        let mut chars = rest.chars();
+        let first = chars.next().unwrap();
+        if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+            return Err("alias must match ^rook/[a-z0-9][a-z0-9_-]{0,63}$".to_string());
+        }
+        for c in rest.chars() {
+            if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+                return Err("alias must match ^rook/[a-z0-9][a-z0-9_-]{0,63}$".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        Self::validate_alias_format(self.alias.as_str())
+    }
+}
 
 // ============================================================================
 // ModelAlias — model alias mapping for stable model names
@@ -756,6 +842,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id: None,
             combo_step_index: None,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -778,6 +866,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id,
             combo_step_index,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -798,6 +888,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id: None,
             combo_step_index: None,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 
@@ -820,6 +912,8 @@ impl AuditEntry {
             timestamp: Utc::now(),
             combo_id,
             combo_step_index,
+            connection_id: None,
+            provider_runtime_id: None,
         }
     }
 }

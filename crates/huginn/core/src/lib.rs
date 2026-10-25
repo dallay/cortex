@@ -1,5 +1,7 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
+pub mod connections;
 pub mod kernel;
+pub mod providers;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -20,6 +22,10 @@ pub enum AgentError {
     Session(String),
     #[error("composition: {0}")]
     Composition(String),
+    #[error(transparent)]
+    Provider(#[from] providers::ProviderError),
+    #[error(transparent)]
+    Connection(#[from] connections::ConnectionError),
     #[error("operation cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -98,6 +104,17 @@ pub enum ModelDelta {
 }
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
+    /// Static adapters are configured by default; sentinels and routers report readiness.
+    fn is_configured(&self) -> bool {
+        true
+    }
+    /// Fix the inference identity for one entire turn, including compaction.
+    /// Static providers keep their existing implementation. Routers return a
+    /// revocable snapshot; callers must reuse it rather than pin each request.
+    async fn pin_turn(&self, _cancel: CancellationToken) -> Result<Option<Arc<dyn ModelProvider>>> {
+        Ok(None)
+    }
+
     async fn stream(
         &self,
         request: ModelRequest,
@@ -108,6 +125,9 @@ pub trait ModelProvider: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    ConnectionChanged {
+        snapshot: providers::ConnectionSnapshot,
+    },
     TurnStarted {
         session_id: String,
     },
@@ -143,6 +163,28 @@ pub enum Event {
 }
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: Event);
+
+    fn emit_for(&self, _operation: OperationId, event: Event) {
+        self.emit(event);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct OperationId(pub u64);
+
+pub struct ScopedEventSink<'a> {
+    pub sink: &'a dyn EventSink,
+    pub operation: OperationId,
+}
+
+impl EventSink for ScopedEventSink<'_> {
+    fn emit(&self, event: Event) {
+        self.sink.emit_for(self.operation, event);
+    }
+
+    fn emit_for(&self, _operation: OperationId, event: Event) {
+        self.sink.emit_for(self.operation, event);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +201,8 @@ pub trait ApprovalPolicy: Send + Sync {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    /// Host-selected exact identities, valid only for the current turn.
+    pub selected_skills: Vec<String>,
     pub workspace: PathBuf,
     pub cancellation: CancellationToken,
 }
@@ -179,6 +223,9 @@ pub trait ToolRegistry: Send + Sync {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
+    /// Versioned catalog snapshot metadata, never skill bodies or permission grants.
+    #[serde(default)]
+    pub skill_catalog_fingerprint: Option<String>,
     pub id: String,
     pub workspace: PathBuf,
     pub messages: Vec<Message>,
@@ -191,6 +238,7 @@ pub struct Session {
 impl Session {
     pub fn new(workspace: PathBuf) -> Self {
         Self {
+            skill_catalog_fingerprint: None,
             id: uuid::Uuid::new_v4().to_string(),
             workspace,
             messages: vec![],

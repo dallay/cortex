@@ -15,15 +15,15 @@
 
 import {AlertTriangle, ChevronDown, Key, ShieldAlert} from "@lucide/vue";
 import {computed} from "vue";
-import {Badge} from "@/components/ui/badge";
-import {Button} from "@/components/ui/button";
-import {Checkbox} from "@/components/ui/checkbox";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Checkbox} from "@/components/ui/checkbox";
 import {Input} from "@/components/ui/input";
 import {
   Select,
@@ -32,11 +32,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import {
   PROVIDER_KINDS,
   type ProviderKind,
 } from "@/config/providerCatalog";
-import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import type {ScopeDef, ScopeGroup} from "@/config/scopes";
 import type {ProviderConnectionResponse} from "@/lib/api";
 
@@ -123,7 +123,7 @@ const providersByKind = computed(() => {
     if (!groups.has(kind)) {
       groups.set(kind, []);
     }
-    groups.get(kind)!.push(provider);
+    groups.get(kind)?.push(provider);
   }
   return groups;
 });
@@ -234,13 +234,16 @@ function scopeSlug(value: string): string {
             <label
               v-for="scope in entry.scopes"
               :key="scope.value"
+              :for="`scope-checkbox-${scopeSlug(scope.value)}`"
               :data-testid="`scope-row-${scopeSlug(scope.value)}`"
               :data-scope-value="scope.value"
               class="flex items-start gap-3 rounded-md border p-3 hover:bg-muted/30 cursor-pointer"
               :class="scope.danger ? 'border-destructive/30 bg-destructive/5' : ''"
             >
               <Checkbox
+                :id="`scope-checkbox-${scopeSlug(scope.value)}`"
                 :model-value="isScopeChecked(scope)"
+                :aria-label="scope.label"
                 :data-testid="`scope-checkbox-${scopeSlug(scope.value)}`"
                 @update:model-value="(v) => toggleScope(scope.value, v === true)"
               />
@@ -316,7 +319,7 @@ function scopeSlug(value: string): string {
               />
               <span class="text-sm font-medium">
                 {{ getCatalogEntry(kind)?.displayNameKey
-                    ? $t(getCatalogEntry(kind)!.displayNameKey)
+                    ? $t(getCatalogEntry(kind)?.displayNameKey ?? kind)
                     : kind }}
               </span>
               <Badge variant="secondary" class="text-xs">
@@ -334,10 +337,13 @@ function scopeSlug(value: string): string {
               <label
                 v-for="provider in kindProviders"
                 :key="provider.id"
+                :for="`provider-checkbox-${provider.id}`"
                 class="flex items-center gap-2 cursor-pointer"
                 :data-testid="`provider-row-${provider.id}`"
               >
                 <Checkbox
+                  :id="`provider-checkbox-${provider.id}`"
+                  :aria-label="provider.name"
                   :model-value="isProviderChecked(provider.id)"
                   :data-testid="`provider-checkbox-${provider.id}`"
                   @update:model-value="(v) => toggleProvider(provider.id, v === true)"
@@ -374,10 +380,13 @@ function scopeSlug(value: string): string {
             <label
               v-for="model in entry.models"
               :key="model"
+              :for="`model-checkbox-${entry.provider.id}-${model}`"
               class="flex items-center gap-2"
               :data-testid="`model-row-${entry.provider.id}-${model}`"
             >
               <Checkbox
+                :id="`model-checkbox-${entry.provider.id}-${model}`"
+                :aria-label="model"
                 :model-value="isModelChecked(model)"
                 :data-testid="`model-checkbox-${entry.provider.id}-${model}`"
                 @update:model-value="(v) => toggleModel(model, v === true)"

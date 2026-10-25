@@ -62,6 +62,13 @@
       "groupName": "rust-toolchain",
       "semanticCommitScope": "deps-rust",
       "labels": ["area/dependencies"]
+    },
+    {
+      "matchPackageNames": ["vue"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "groupName": "vue",
+      "semanticCommitScope": "deps-js",
+      "labels": ["area/dependencies"]
     }
   ]
 }

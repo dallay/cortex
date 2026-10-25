@@ -1,6 +1,6 @@
 [package]
 name = "huginn-runtime"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.89"
 publish = false
@@ -10,13 +10,24 @@ name = "session_lock_holder"
 path = "tests/support/session_lock_holder.rs"
 test = false
 
+[features]
+test-hooks = ["huginn-application/test-hooks"]
+
+[package.metadata.cargo-all-features]
+skip_feature_sets = [["test-hooks"]]
+
 [dependencies]
+cap-std = "=4.0.3"
+cap-fs-ext = "=4.0.3"
 huginn-application = { path = "../application" }
 huginn-core = { path = "../core" }
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
+sha2 = "0.11"
+toml.workspace = true
 tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { workspace = true, features = ["stream"] }
@@ -24,14 +35,32 @@ bytes = "1"
 libc = "0.2"
 rusqlite.workspace = true
 uuid.workspace = true
-rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-child-process"] }
 similar = "3"
 fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[[test]]
+name = "tls_transport"
+path = "tests/tls_transport.rs"
+required-features = ["test-hooks"]
+
+[[test]]
+name = "connection_workers"
+path = "tests/connection_workers.rs"
+required-features = ["test-hooks"]
+
 [dev-dependencies]
-tempfile = "3"
+tempfile = "=3.27.0"
 axum.workspace = true
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
+rcgen = "=0.14.10"
 
 [lints]
 workspace = true

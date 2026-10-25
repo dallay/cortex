@@ -184,8 +184,9 @@ const SELECT_PROVIDER_CONNECTIONS: &str = "
            priority, is_active, api_key_ct, oauth_email_ct, access_token_ct,
            refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
            max_concurrent, quota_warning, quota_error, default_model, base_url,
-           test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
-           created_at, updated_at
+           supported_models, api_format, test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
+            oauth_client_id, oauth_client_secret_ct, oauth_tenant_id,
+            created_at, updated_at
     FROM provider_connections";
 
 const ORDER_PROVIDER_CONNECTIONS: &str = " ORDER BY priority ASC, created_at DESC";
@@ -197,11 +198,12 @@ const INSERT_PROVIDER_CONNECTION: &str = "
         api_key_ct, oauth_email_ct, access_token_ct,
         refresh_token_ct, scope_ct, id_token_ct, project_id_ct, expires_at,
         max_concurrent, quota_warning, quota_error, default_model, base_url,
-        test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
-        created_at, updated_at
+        supported_models, api_format, test_status, test_latency_ms, test_error, test_expires_at, last_test_at,
+        oauth_client_id, oauth_client_secret_ct, oauth_tenant_id, created_at, updated_at
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
+        ?26, ?27, ?28, ?29, ?30, ?31, ?32
     )";
 
 const UPDATE_PROVIDER_CONNECTION: &str = "
@@ -225,13 +227,18 @@ const UPDATE_PROVIDER_CONNECTION: &str = "
         quota_error = ?18,
         default_model = ?19,
         base_url = ?20,
-        test_status = ?21,
-        test_latency_ms = ?22,
-        test_error = ?23,
-        test_expires_at = ?24,
-        last_test_at = ?25,
-        updated_at = ?27
-    WHERE id = ?1 AND updated_at = ?28";
+        supported_models = ?21,
+        api_format = ?22,
+        test_status = ?23,
+        test_latency_ms = ?24,
+        test_error = ?25,
+        test_expires_at = ?26,
+        last_test_at = ?27,
+        oauth_client_id = ?28,
+        oauth_client_secret_ct = ?29,
+        oauth_tenant_id = ?30,
+        updated_at = ?32
+    WHERE id = ?1 AND updated_at = ?33";
 
 fn provider_params(
     conn: &ProviderConnection,
@@ -276,6 +283,17 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
         f64::from(conn.config.quota_window_thresholds.error).into(),
         optional_string(conn.config.default_model.as_ref().map(ToString::to_string)),
         optional_string(conn.config.base_url.as_ref().map(ToString::to_string)),
+        serde_json::to_string(&conn.config.supported_models)
+            .expect("serializing a vector of model ids cannot fail")
+            .into(),
+        match conn.config.api_format {
+            Some(rook_core::ApiFormat::Anthropic) => "anthropic",
+            Some(rook_core::ApiFormat::OpenAI) => "openai",
+            None if conn.provider_kind == ProviderKind::Anthropic => "anthropic",
+            None => "openai",
+        }
+        .to_string()
+        .into(),
         serialize_test_status(&conn.test_status).to_string().into(),
         conn.test_status
             .latency_ms()
@@ -286,6 +304,9 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
             .expires_at()
             .map_or(rusqlite::types::Value::Null, Into::into),
         optional_string(conn.test_status.last_test_at().map(|dt| dt.to_rfc3339())),
+        optional_string(oauth_client_id(&conn.credentials)),
+        optional_string(oauth_client_secret_ct(&conn.credentials)),
+        optional_string(oauth_tenant_id(&conn.credentials)),
     ]
 }
 
@@ -307,7 +328,7 @@ fn validate_credential_shape(conn: &ProviderConnection) -> Result<(), Repository
                 scope,
                 id_token,
                 project_id,
-                expires_at: _,
+                ..
             },
         ) if [
             email.as_str(),
@@ -351,6 +372,13 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
             scope: EncryptedBlob(required_string(row, "scope_ct")?),
             id_token: EncryptedBlob(required_string(row, "id_token_ct")?),
             project_id: EncryptedBlob(required_string(row, "project_id_ct")?),
+            oauth_client_id: row
+                .get::<_, Option<String>>("oauth_client_id")?
+                .unwrap_or_default(),
+            oauth_client_secret: row
+                .get::<_, Option<String>>("oauth_client_secret_ct")?
+                .map(EncryptedBlob),
+            oauth_tenant_id: row.get::<_, Option<String>>("oauth_tenant_id")?,
         },
     };
 
@@ -375,6 +403,13 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
                 .get::<_, Option<String>>("default_model")?
                 .map(ModelId::new),
             base_url: row.get("base_url")?,
+            supported_models: serde_json::from_str(&row.get::<_, String>("supported_models")?)
+                .map_err(|_| invalid_data("invalid supported_models"))?,
+            api_format: match row.get::<_, String>("api_format")?.as_str() {
+                "openai" => Some(rook_core::ApiFormat::OpenAI),
+                "anthropic" => Some(rook_core::ApiFormat::Anthropic),
+                _ => return Err(invalid_data("invalid api_format")),
+            },
         },
         test_status: parse_test_status(
             test_status.as_str(),
@@ -518,6 +553,36 @@ fn project_id_ct(creds: &Credentials) -> Option<String> {
     }
 }
 
+fn oauth_client_id(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_client_id, ..
+        } => Some(oauth_client_id.clone()),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
+fn oauth_client_secret_ct(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_client_secret,
+            ..
+        } => oauth_client_secret
+            .as_ref()
+            .map(|secret| secret.as_str().to_string()),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
+fn oauth_tenant_id(creds: &Credentials) -> Option<String> {
+    match creds {
+        Credentials::OAuth {
+            oauth_tenant_id, ..
+        } => oauth_tenant_id.clone(),
+        Credentials::ApiKey { .. } => None,
+    }
+}
+
 trait CredentialsExt {
     fn expires_at(&self) -> Option<i64>;
 }
@@ -592,11 +657,56 @@ mod tests {
                 },
                 default_model: None,
                 base_url: None,
+                api_format: None,
+                supported_models: Vec::new(),
             },
             test_status: TestStatus::NeverTested,
             created_at,
             updated_at: created_at,
         }
+    }
+
+    #[test]
+    fn connections_created_before_the_model_declaration_migration_keep_working() {
+        let temp_file = tempfile::Builder::new()
+            .prefix("rook-provider-legacy-")
+            .suffix(".sqlite")
+            .tempfile()
+            .expect("temporary database");
+        let path = temp_file.path();
+        {
+            let mut conn = Connection::open(path).expect("legacy database");
+            db_migration::run_on_connection(&mut conn).expect("migrations");
+            // A row written before the migration: no supported_models, no api_format.
+            conn.execute(
+                "INSERT INTO provider_connections (
+                    id, provider_kind, provider_runtime_id, name, auth_type,
+                    priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                    quota_error, test_status, created_at, updated_at
+                ) VALUES (?1, 'openai', 'runtime-legacy', 'legacy', 'apiKey',
+                    5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                params![ConnectionId::new().to_string()],
+            )
+            .expect("legacy row");
+        }
+
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(path).expect("repo");
+            let connections = repo.list().await.expect("legacy connection loads");
+            assert_eq!(connections.len(), 1);
+            let legacy = &connections[0];
+            assert_eq!(legacy.provider_kind, ProviderKind::OpenAI);
+            assert!(
+                legacy.config.supported_models.is_empty(),
+                "a legacy connection has no declared models"
+            );
+            assert_eq!(
+                legacy.config.api_format,
+                Some(rook_core::ApiFormat::OpenAI),
+                "a legacy connection keeps the OpenAI api format"
+            );
+        });
     }
 
     #[test]
