@@ -37,6 +37,7 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
 
 #[derive(Clone)]
 pub struct LoopConfig {
+    pub skills: Option<Arc<dyn crate::skills::SkillLoader>>,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -44,6 +45,7 @@ pub struct LoopConfig {
 impl Default for LoopConfig {
     fn default() -> Self {
         Self {
+            skills: None,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -293,10 +295,12 @@ impl StandardLoop {
         approvals: &dyn ApprovalPolicy,
         cancel: CancellationToken,
         sink: &dyn EventSink,
+        selected: &[String],
     ) -> Result<()> {
         self.record(session, Event::ToolStarted { call: call.clone() }, sink)
             .await?;
         let ctx = ToolContext {
+            selected_skills: selected.to_vec(),
             workspace: session.workspace.clone(),
             cancellation: cancel.clone(),
         };
@@ -363,26 +367,50 @@ impl StandardLoop {
         &self,
         model: Result<Arc<dyn ModelProvider>>,
         session: &mut Session,
-        prompt: String,
+        input: (String, &[String]),
         approvals: &dyn ApprovalPolicy,
         sink: &dyn EventSink,
         cancel: CancellationToken,
     ) -> Result<()> {
+        let (prompt, selected) = input;
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
         // Preserve the attempted prompt and normal error events even if pinning failed.
         let model = model?;
+        let metadata = if let Some(loader) = &self.config.skills {
+            let catalog = tokio::select! {
+                biased;
+                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                result = loader.catalog(&session.workspace, cancel.clone()) => result?,
+            };
+            let fingerprint = format!("huginn-skill-catalog-v1:{}", catalog.fingerprint);
+            if let Some(previous) = &session.skill_catalog_fingerprint {
+                if previous != &fingerprint {
+                    let sources: Vec<_> = catalog.skills.iter().take(8).map(|entry| {
+                        serde_json::json!({"scope": entry.source_scope.as_str(), "canonical_path": entry.canonical_path.to_string_lossy()})
+                    }).collect();
+                    let sources = crate::output::bounded_text(serde_json::to_string(&sources)?);
+                    self.record(session, Event::Error { message: format!("Skill catalog changed (global/project sources in workspace {:?}): previous {previous}, current {fingerprint}. Current source sample: {sources}. Removed sources may be absent. Refresh skill identities; no instructions or effects were replayed.", session.workspace) }, sink).await?;
+                }
+            }
+            session.skill_catalog_fingerprint = Some(fingerprint);
+            self.sessions.save(session).await?;
+            catalog.announcement(selected)?
+        } else {
+            String::new()
+        };
         for _ in 0..self.config.max_iterations {
             if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
-            let instructions = tokio::select! {
+            let mut instructions = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 result = self.instructions.load(&session.workspace) => result?,
             };
+            instructions.push_str(&metadata);
             let tools = self.tools.definitions();
             let tool_bytes = serde_json::to_vec(&tools)?.len();
             let context = self
@@ -429,7 +457,7 @@ impl StandardLoop {
                 return Ok(());
             }
             for call in calls {
-                self.execute_tool(call, session, approvals, cancel.clone(), sink)
+                self.execute_tool(call, session, approvals, cancel.clone(), sink, selected)
                     .await?;
             }
         }
@@ -506,6 +534,21 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        self.run_with_skills(session, prompt, &[], approvals, events, cancellation)
+            .await
+    }
+}
+
+impl StandardLoop {
+    pub async fn run_with_skills(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        selected: &[String],
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
         // Pin before instruction/session I/O; every request in this turn reuses it.
         let model = self.pin_model(cancellation.clone()).await;
         session.interrupted = true;
@@ -518,7 +561,14 @@ impl AgentLoop for StandardLoop {
         )
         .await?;
         let result = self
-            .turn(model, session, prompt, approvals, events, cancellation)
+            .turn(
+                model,
+                session,
+                (prompt, selected),
+                approvals,
+                events,
+                cancellation,
+            )
             .await;
         match &result {
             Ok(()) => {

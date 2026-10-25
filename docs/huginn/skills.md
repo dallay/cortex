@@ -104,12 +104,39 @@ Las rutas forman parte de la identidad: mover un archivo cambia la huella.
 El adaptador comprueba metadatos y destinos antes y después de leer. Si detecta
 cambios, rechaza la entrada o la raíz afectada. Estas comprobaciones no son un
 sandbox ni garantizan aislamiento frente a un proceso local que modifique rutas
-de forma concurrente. Una futura activación debe volver a validar el origen.
+de forma concurrente. La activación vuelve a validar el origen.
 
 Toda skill se etiqueta `untrusted`, incluida la global. La salida humana escapa
 controles de terminal y controles bidireccionales; JSON conserva los datos
 mediante serialización. `description`, `allowed-tools` y los demás metadatos nunca
-conceden permisos. Este catálogo no anuncia skills al modelo, no devuelve cuerpos
-de instrucciones ni ejecuta recursos. La carga e invocación pertenecen a historias
-posteriores y requieren controles de confianza independientes. `AGENTS.md` y
-`.agents/rules` mantienen su comportamiento anterior.
+conceden permisos. `huginn skills list` solo inspecciona el catálogo y no carga
+instrucciones. `AGENTS.md` y `.agents/rules` mantienen su comportamiento anterior.
+
+## Carga bajo demanda
+
+La composición nativa anuncia al modelo metadatos globales como datos de tarea
+`untrusted`, con identidad exacta, ámbito y ruta canónica. El anuncio tiene un
+límite de 16 KiB de datos JSON; el anuncio indica cuántas entradas se omiten.
+Las identidades seleccionadas por el host tienen prioridad. Si sus metadatos
+no caben, el turno falla explícitamente. No incluye
+cuerpos ni descripciones de proyecto sin selección explícita del usuario.
+
+La herramienta `load_skill` acepta la identidad exacta anunciada, no una ruta
+arbitraria ni un nombre ambiguo. Reconstruye el catálogo y comprueba otra vez
+ámbito, rutas y huella del archivo antes de entregar `SKILL.md`. Si el origen
+cambia, desaparece o deja de ser válido, la carga falla y solicita actualizar el
+catálogo. El resultado JSON completo tiene un límite de 16 KiB; una skill que
+supere ese límite falla sin truncar instrucciones. El contexto de la sesión puede
+imponer un límite menor y conserva sus errores y reglas de compactación normales.
+
+`StandardLoop::run_with_skills` permite al host seleccionar identidades de
+proyecto para un solo turno. Esta selección no concede confianza persistente.
+El análisis de `/skill:name` en CLI y TUI pertenece a DALLAY-715. La herramienta
+no ejecuta scripts, carga referencias automáticamente ni modifica `HostPolicy`.
+Las llamadas posteriores a herramientas siguen requiriendo sus aprobaciones.
+
+La sesión guarda únicamente la huella versionada del catálogo, sin duplicar
+cuerpos en sus metadatos. Los resultados normales de herramientas permanecen en
+el historial original. Al iniciar otro turno, una huella distinta produce una
+advertencia con las huellas anterior y actual. No se repiten cargas ni efectos
+anteriores y no se reinyectan cuerpos fuera del historial normal.

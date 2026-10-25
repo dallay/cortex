@@ -201,6 +201,8 @@ pub trait ApprovalPolicy: Send + Sync {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    /// Host-selected exact identities, valid only for the current turn.
+    pub selected_skills: Vec<String>,
     pub workspace: PathBuf,
     pub cancellation: CancellationToken,
 }
@@ -221,6 +223,9 @@ pub trait ToolRegistry: Send + Sync {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
+    /// Versioned catalog snapshot metadata, never skill bodies or permission grants.
+    #[serde(default)]
+    pub skill_catalog_fingerprint: Option<String>,
     pub id: String,
     pub workspace: PathBuf,
     pub messages: Vec<Message>,
@@ -233,6 +238,7 @@ pub struct Session {
 impl Session {
     pub fn new(workspace: PathBuf) -> Self {
         Self {
+            skill_catalog_fingerprint: None,
             id: uuid::Uuid::new_v4().to_string(),
             workspace,
             messages: vec![],

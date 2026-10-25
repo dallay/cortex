@@ -22,6 +22,10 @@ pub async fn build(
     .await
 }
 
+fn configured_home(home: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    home.filter(|home| !home.is_empty()).map(Into::into)
+}
+
 /// Production composition: each native tool is a lifecycle-owned capability.
 pub async fn build_native(
     model: Arc<dyn ModelProvider>,
@@ -66,12 +70,19 @@ async fn build_native_plugin(
     providers: Box<dyn huginn_core::kernel::Plugin>,
     registry: crate::tools::Registry,
     sessions: Arc<dyn SessionStore>,
-    config: LoopConfig,
+    mut config: LoopConfig,
     timeout_secs: u64,
 ) -> Result<Supervisor> {
+    let skills = Arc::new(crate::skills::FilesystemSkillLoader::new(configured_home(
+        std::env::var_os("HOME"),
+    )));
+    config.skills = Some(skills.clone());
     let mut supervisor = Supervisor::default();
     supervisor.register(providers)?;
     supervisor.register(Box::new(crate::tools::RegistryPlugin(registry)))?;
+    supervisor.register(Box::new(crate::tools::NativeToolPlugin(Arc::new(
+        huginn_application::skills::SkillTool(skills),
+    ))))?;
     for tool in crate::tools::native_tools(timeout_secs) {
         supervisor.register(Box::new(crate::tools::NativeToolPlugin(tool)))?;
     }
@@ -85,4 +96,23 @@ async fn build_native_plugin(
         return Err(error);
     }
     Ok(supervisor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_home;
+    use std::{ffi::OsString, path::PathBuf};
+
+    #[test]
+    fn empty_home_is_treated_as_unset() {
+        assert_eq!(configured_home(Some(OsString::new())), None);
+    }
+
+    #[test]
+    fn nonempty_home_is_preserved() {
+        assert_eq!(
+            configured_home(Some(OsString::from("/home/test"))),
+            Some(PathBuf::from("/home/test"))
+        );
+    }
 }
