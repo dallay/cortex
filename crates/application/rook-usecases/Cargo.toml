@@ -32,7 +32,7 @@ ring = "0.17"
 dashmap = "6"
 
 # Parking lot RwLock (sync, no async needed for interior mutability)
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

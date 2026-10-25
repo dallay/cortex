@@ -31,7 +31,7 @@ async fn tls_server(
 ) {
     let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert = certified_key.cert.der().to_vec();
-    let key = certified_key.key_pair.serialize_der();
+    let key = certified_key.signing_key.serialize_der();
     // Select ring explicitly because Linux keyring dependencies may enable aws-lc-rs too.
     let config = rustls::ServerConfig::builder_with_provider(
         rustls::crypto::ring::default_provider().into(),
