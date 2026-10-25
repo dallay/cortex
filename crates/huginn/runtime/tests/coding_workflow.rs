@@ -193,6 +193,7 @@ async fn explicit_skill_uses_preflight_catalog_after_user_persistence() {
             && message.content.contains("Skill catalog")
             && message.content.contains("review")
     }));
+    drop(requests);
 }
 
 #[tokio::test]

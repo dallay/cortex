@@ -367,13 +367,12 @@ impl StandardLoop {
         &self,
         model: Result<Arc<dyn ModelProvider>>,
         session: &mut Session,
-        input: (String, &[String]),
+        input: (String, &[String], Option<crate::skills::SkillCatalog>),
         approvals: &dyn ApprovalPolicy,
         sink: &dyn EventSink,
         cancel: CancellationToken,
-        catalog_snapshot: Option<crate::skills::SkillCatalog>,
     ) -> Result<()> {
-        let (prompt, selected) = input;
+        let (prompt, selected, catalog_snapshot) = input;
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
@@ -602,12 +601,10 @@ impl AgentLoop for StandardLoop {
         }
         self.run_with_skills_and_catalog(
             session,
-            prompt,
-            &selected,
+            (prompt, &selected, Some(catalog)),
             approvals,
             events,
             cancellation,
-            Some(catalog),
         )
         .await
     }
@@ -625,12 +622,10 @@ impl StandardLoop {
     ) -> Result<()> {
         self.run_with_skills_and_catalog(
             session,
-            prompt,
-            selected,
+            (prompt, selected, None),
             approvals,
             events,
             cancellation,
-            None,
         )
         .await
     }
@@ -638,13 +633,12 @@ impl StandardLoop {
     async fn run_with_skills_and_catalog(
         &self,
         session: &mut Session,
-        prompt: String,
-        selected: &[String],
+        input: (String, &[String], Option<crate::skills::SkillCatalog>),
         approvals: &dyn ApprovalPolicy,
         events: &dyn EventSink,
         cancellation: CancellationToken,
-        catalog_snapshot: Option<crate::skills::SkillCatalog>,
     ) -> Result<()> {
+        let (prompt, selected, catalog_snapshot) = input;
         // Pin before instruction/session I/O; every request in this turn reuses it.
         let model = self.pin_model(cancellation.clone()).await;
         session.interrupted = true;
@@ -660,11 +654,10 @@ impl StandardLoop {
             .turn(
                 model,
                 session,
-                (prompt, selected),
+                (prompt, selected, catalog_snapshot),
                 approvals,
                 events,
                 cancellation,
-                catalog_snapshot,
             )
             .await;
         match &result {

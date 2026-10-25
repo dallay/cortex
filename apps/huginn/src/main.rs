@@ -611,34 +611,6 @@ fn startup_notification(
     (!messages.is_empty()).then(|| messages.join("\n"))
 }
 
-#[cfg(test)]
-mod skill_completion_tests {
-    use super::skill_completion_result;
-
-    #[test]
-    fn discovery_failure_keeps_tui_completions_optional() {
-        let (commands, notification) =
-            skill_completion_result(Err(anyhow::anyhow!("catalog unavailable")));
-        assert!(commands.is_empty());
-        assert_eq!(
-            notification.as_deref(),
-            Some("Skill completion unavailable: catalog unavailable")
-        );
-    }
-
-    #[test]
-    fn startup_notification_preserves_skill_and_prompt_diagnostics() {
-        let message = super::startup_notification(
-            Some("Skill completion unavailable: catalog unavailable".into()),
-            ["Prompt template unavailable: invalid metadata".into()],
-        );
-        assert_eq!(
-            message.as_deref(),
-            Some("Skill completion unavailable: catalog unavailable\nPrompt template unavailable: invalid metadata")
-        );
-    }
-}
-
 async fn tui_chat(
     config: &Config,
     cli_config: Option<&std::path::Path>,
@@ -781,4 +753,32 @@ async fn tui_chat(
     result?;
     restored?;
     Ok(())
+}
+
+#[cfg(test)]
+mod skill_completion_tests {
+    use super::{skill_completion_result, startup_notification};
+
+    #[test]
+    fn discovery_failure_keeps_tui_completions_optional() {
+        let (commands, notification) =
+            skill_completion_result(Err(anyhow::anyhow!("catalog unavailable")));
+        assert!(commands.is_empty());
+        assert_eq!(
+            notification.as_deref(),
+            Some("Skill completion unavailable: catalog unavailable")
+        );
+    }
+
+    #[test]
+    fn startup_notification_preserves_skill_and_prompt_diagnostics() {
+        let message = startup_notification(
+            Some("Skill completion unavailable: catalog unavailable".into()),
+            ["Prompt template unavailable: invalid metadata".into()],
+        );
+        assert_eq!(
+            message.as_deref(),
+            Some("Skill completion unavailable: catalog unavailable\nPrompt template unavailable: invalid metadata")
+        );
+    }
 }
