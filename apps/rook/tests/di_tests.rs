@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rook::config::{RateLimiterConfig, RookConfig, TierConfig};
 use rook::di::{
     build_api_key_auth, build_cache_port, build_manage_connections, build_provider_from_connection,
-    build_rate_limiter_config,
+    build_rate_limiter_config, generate_setup_token,
 };
 use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
 
@@ -518,4 +518,148 @@ fn build_provider_from_connection_empty_models_list() {
         "expected empty supported_models for empty input, got {} models",
         supported.len()
     );
+}
+
+#[test]
+fn test_generate_setup_token() {
+    let token = generate_setup_token();
+    assert!(token.starts_with("rk-setup-"));
+    assert_eq!(token.len(), 9 + 48); // "rk-setup-" (9) + 48 hex chars
+}
+
+#[test]
+fn test_build_provider_from_connection() {
+    let conn_id = ConnectionId::new();
+    let creds = DecryptedCredentials::ApiKey {
+        api_key: "sk-test-key".to_string(),
+    };
+
+    // OpenAI
+    let openai =
+        build_provider_from_connection(&conn_id, ProviderKind::OpenAI, &creds, None, vec![]);
+    assert!(openai.is_ok());
+
+    // Anthropic
+    let anthropic =
+        build_provider_from_connection(&conn_id, ProviderKind::Anthropic, &creds, None, vec![]);
+    assert!(anthropic.is_ok());
+
+    // Ollama without base_url -> error
+    let ollama_err =
+        build_provider_from_connection(&conn_id, ProviderKind::Ollama, &creds, None, vec![]);
+    assert!(matches!(
+        ollama_err,
+        Err(rook::di::ProviderBuildError::OllamaRequiresBaseUrl)
+    ));
+
+    // Ollama with base_url -> ok
+    let ollama_ok = build_provider_from_connection(
+        &conn_id,
+        ProviderKind::Ollama,
+        &creds,
+        Some("http://localhost:11434".to_string()),
+        vec![],
+    );
+    assert!(ollama_ok.is_ok());
+}
+
+#[tokio::test]
+async fn test_setup_token_through_container() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config: RookConfig = toml::from_str(&minimal_config_toml(
+        "[provider_crud]\nenabled = false\n[auth.api_keys]\nenabled = false\n[telemetry]\nenabled = false",
+    ))
+    .unwrap();
+    config.database.db_path = dir.path().join("rook.db").to_str().unwrap().to_string();
+
+    let container = rook::di::RookContainer::build(&config).await.unwrap();
+    {
+        let token = container.usecases.setup_token.read().await;
+        let token = token
+            .as_ref()
+            .expect("uninitialized container has a setup token");
+        let configured = std::env::var("ROOK_SETUP_TOKEN")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if let Some(configured) = configured {
+            assert!(
+                token == &configured,
+                "configured setup token should be used"
+            );
+        } else {
+            assert!(token.starts_with("rk-setup-"));
+            assert_eq!(token.len(), 9 + 48);
+        }
+    }
+
+    container
+        .usecases
+        .set_admin_password
+        .execute(rook_usecases::SetAdminPasswordInput {
+            new_password: "Test-fixture-password-123!".to_string(),
+        })
+        .await
+        .unwrap();
+    drop(container);
+
+    let initialized = rook::di::RookContainer::build(&config).await.unwrap();
+    assert!(initialized.usecases.setup_token.read().await.is_none());
+}
+
+#[test]
+fn test_sqlite_secret_storage_through_api_key_auth() {
+    // Isolate the environment and any accidental filesystem writes from the other tests.
+    const CHILD_ENV: &str = "ROOK_DI_SECRET_TEST_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "test_sqlite_secret_storage_through_api_key_auth"])
+            .current_dir(dir.path())
+            .env(CHILD_ENV, "1")
+            .env_remove("API_KEY_HASH_SECRET")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "secret storage test failed: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        return;
+    }
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+    for (target, in_memory) in [
+        (":memory:", true),
+        ("file::memory:?cache=shared", true),
+        ("file:test.db?mode=memory", true),
+        ("mem:test", true),
+        ("rook.db", false),
+        ("rook.sqlite", false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config: RookConfig = toml::from_str(&minimal_config_toml("")).unwrap();
+        config.database.db_path = dir.path().join(target).to_str().unwrap().to_string();
+        // Prefix-based SQLite targets must retain their prefix.
+        if target.starts_with("file:") || target.starts_with("mem:") || target == ":memory:" {
+            config.database.db_path = target.to_string();
+        }
+        let (auth, manage_keys) = build_api_key_auth(&config, &repo, &registry).unwrap();
+        assert!(auth.is_some());
+        assert!(manage_keys.is_some());
+        let secret_path = std::path::Path::new(&config.database.db_path)
+            .parent()
+            .unwrap()
+            .join("api_key_secret.key");
+        assert_eq!(secret_path.exists(), !in_memory, "target: {target}");
+    }
+}
+
+#[tokio::test]
+async fn test_noop_cache_port() {
+    let config: RookConfig = toml::from_str(&cache_config_toml(false)).unwrap();
+    let cache = build_cache_port(&config);
+    assert_eq!(cache.delete_by_signature("sig").await.unwrap(), 0);
+    assert!(cache.stats().await.is_ok());
+    assert!(cache.clear().await.is_ok());
 }
