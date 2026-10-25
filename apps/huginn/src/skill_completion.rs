@@ -1,4 +1,4 @@
-pub fn skill_completion_result<E: std::fmt::Display>(
+pub fn completion_result<E: std::fmt::Display>(
     result: Result<Vec<(String, String)>, E>,
 ) -> (Vec<(String, String)>, Option<String>) {
     match result {

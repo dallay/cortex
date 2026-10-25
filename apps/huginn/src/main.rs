@@ -6,9 +6,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use huginn::{
     config::{Config, ModelReadiness},
-    resolve_workspace,
-    skill_completion::{skill_completion_result, startup_notification},
-    ui_settings,
+    resolve_workspace, skill_completion, ui_settings,
 };
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
@@ -643,7 +641,7 @@ async fn tui_chat(
             .skill_commands(&session.workspace, CancellationToken::new())
             .await
     };
-    let (mut host_commands, skill_error) = skill_completion_result(skill_result);
+    let (mut host_commands, skill_error) = skill_completion::completion_result(skill_result);
     host_commands.extend(catalog.entries.iter().map(|entry| {
         (
             format!("/prompts:{}", entry.name),
@@ -658,7 +656,8 @@ async fn tui_chat(
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
     ui.set_prompt_templates(host_commands);
-    if let Some(message) = startup_notification(skill_error, catalog.diagnostics) {
+    if let Some(message) = skill_completion::startup_notification(skill_error, catalog.diagnostics)
+    {
         ui.notification(message);
     }
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));

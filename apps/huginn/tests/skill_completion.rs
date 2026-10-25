@@ -1,9 +1,8 @@
-use huginn::skill_completion::{skill_completion_result, startup_notification};
+use huginn::skill_completion::{completion_result, startup_notification};
 
 #[test]
 fn discovery_failure_keeps_tui_completions_optional() {
-    let (commands, notification) =
-        skill_completion_result(Err(anyhow::anyhow!("catalog unavailable")));
+    let (commands, notification) = completion_result(Err(anyhow::anyhow!("catalog unavailable")));
     assert!(commands.is_empty());
     assert_eq!(
         notification.as_deref(),
