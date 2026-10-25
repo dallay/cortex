@@ -45,6 +45,8 @@ fn test_create_provider_request_conversion() {
             },
             default_model: Some("gpt-4o".to_string()),
             base_url: None,
+            supported_models: vec![],
+            api_format: None,
         },
     };
 
@@ -118,6 +120,8 @@ fn credentials_request() -> TestCredentialsRequest {
             },
             default_model: None,
             base_url: None,
+            supported_models: vec![],
+            api_format: None,
         },
     }
 }
