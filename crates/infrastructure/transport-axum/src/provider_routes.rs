@@ -177,3 +177,94 @@ fn internal_error() -> HttpError {
         message: "internal server error".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rook_core::ValidationError;
+
+    #[test]
+    fn test_parse_connection_id() {
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let parsed = parse_connection_id(&valid_uuid);
+        assert!(parsed.is_ok());
+
+        let invalid = parse_connection_id("invalid-id-xyz");
+        assert!(invalid.is_err());
+        let err = invalid.unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn test_map_error() {
+        let val_err = map_error(ManageConnectionsError::Validation(
+            ValidationError::EmptyName,
+        ));
+        assert_eq!(val_err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(val_err.code, "VALIDATION_ERROR");
+
+        let nf_err = map_error(ManageConnectionsError::Repository(
+            RepositoryError::NotFound(ConnectionId::new()),
+        ));
+        assert_eq!(nf_err.status, StatusCode::NOT_FOUND);
+        assert_eq!(nf_err.code, "NOT_FOUND");
+
+        let conflict_err = map_error(ManageConnectionsError::Repository(
+            RepositoryError::DuplicateConnection("conn".to_string()),
+        ));
+        assert_eq!(conflict_err.status, StatusCode::CONFLICT);
+        assert_eq!(conflict_err.code, "CONFLICT");
+
+        let internal = map_error(ManageConnectionsError::RegistryUpdateFailed(
+            "failed".to_string(),
+        ));
+        assert_eq!(internal.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(internal.code, "INTERNAL_ERROR");
+    }
+
+    #[test]
+    fn test_manage_connections_missing() {
+        let (user_repo, hasher, api_key_repo) = setup_common();
+        let usecases = crate::bootstrap_helpers::make_test_bootstrap_usecases(
+            user_repo.clone(),
+            hasher.clone(),
+            api_key_repo,
+            rook_usecases::auth::BootstrapStatus::new(user_repo.clone()),
+            rook_usecases::auth::SetAdminPassword::new(user_repo, hasher),
+            None,
+        );
+
+        match manage_connections(&usecases) {
+            Err(err) => assert_eq!(err.status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("expected NOT_FOUND error"),
+        }
+    }
+
+    fn setup_common() -> (
+        Arc<dyn rook_core::UserRepositoryPort>,
+        Arc<dyn rook_core::PasswordHasher>,
+        Arc<dyn rook_core::ApiKeyRepositoryPort>,
+    ) {
+        use async_trait::async_trait;
+        use cortex_test_support::FakeApiKeyRepository;
+        use encryption_inmemory::Argon2idHasher;
+
+        #[derive(Default)]
+        struct DummyUserRepo;
+        #[async_trait]
+        impl rook_core::UserRepositoryPort for DummyUserRepo {
+            async fn find_by_username(&self, _: &str) -> Result<Option<rook_core::User>, rook_core::UserRepositoryError> { Ok(None) }
+            async fn find_by_id(&self, _: &rook_core::UserId) -> Result<Option<rook_core::User>, rook_core::UserRepositoryError> { Ok(None) }
+            async fn has_any_user(&self) -> Result<bool, rook_core::UserRepositoryError> { Ok(false) }
+            async fn create(&self, _: &rook_core::NewUser) -> Result<rook_core::User, rook_core::UserRepositoryError> { Err(rook_core::UserRepositoryError::DuplicateUsername) }
+            async fn update_password_hash(&self, _: &rook_core::UserId, _: &rook_core::PasswordHash) -> Result<(), rook_core::UserRepositoryError> { Ok(()) }
+        }
+
+        let user_repo: Arc<dyn rook_core::UserRepositoryPort> = Arc::new(DummyUserRepo);
+        let hasher: Arc<dyn rook_core::PasswordHasher> = Arc::new(Argon2idHasher::new());
+        let api_key_repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+
+        (user_repo, hasher, api_key_repo)
+    }
+}
