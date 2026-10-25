@@ -1,5 +1,6 @@
 mod auth;
 mod prompts;
+mod skill_completion;
 mod terminal;
 
 use anyhow::Context;
@@ -588,29 +589,6 @@ async fn run_compact(
     agent_loop.compact(session, output, cancel).await
 }
 
-fn skill_completion_result<E: std::fmt::Display>(
-    result: Result<Vec<(String, String)>, E>,
-) -> (Vec<(String, String)>, Option<String>) {
-    match result {
-        Ok(commands) => (commands, None),
-        Err(error) => (
-            Vec::new(),
-            Some(format!("Skill completion unavailable: {error}")),
-        ),
-    }
-}
-
-fn startup_notification(
-    skill_error: Option<String>,
-    prompt_diagnostics: impl IntoIterator<Item = String>,
-) -> Option<String> {
-    let messages = skill_error
-        .into_iter()
-        .chain(prompt_diagnostics)
-        .collect::<Vec<_>>();
-    (!messages.is_empty()).then(|| messages.join("\n"))
-}
-
 async fn tui_chat(
     config: &Config,
     cli_config: Option<&std::path::Path>,
@@ -664,7 +642,7 @@ async fn tui_chat(
             .skill_commands(&session.workspace, CancellationToken::new())
             .await
     };
-    let (mut host_commands, skill_error) = skill_completion_result(skill_result);
+    let (mut host_commands, skill_error) = skill_completion::completion_result(skill_result);
     host_commands.extend(catalog.entries.iter().map(|entry| {
         (
             format!("/prompts:{}", entry.name),
@@ -679,7 +657,8 @@ async fn tui_chat(
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
     ui.set_prompt_templates(host_commands);
-    if let Some(message) = startup_notification(skill_error, catalog.diagnostics) {
+    if let Some(message) = skill_completion::startup_notification(skill_error, catalog.diagnostics)
+    {
         ui.notification(message);
     }
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
@@ -753,32 +732,4 @@ async fn tui_chat(
     result?;
     restored?;
     Ok(())
-}
-
-#[cfg(test)]
-mod skill_completion_tests {
-    use super::{skill_completion_result, startup_notification};
-
-    #[test]
-    fn discovery_failure_keeps_tui_completions_optional() {
-        let (commands, notification) =
-            skill_completion_result(Err(anyhow::anyhow!("catalog unavailable")));
-        assert!(commands.is_empty());
-        assert_eq!(
-            notification.as_deref(),
-            Some("Skill completion unavailable: catalog unavailable")
-        );
-    }
-
-    #[test]
-    fn startup_notification_preserves_skill_and_prompt_diagnostics() {
-        let message = startup_notification(
-            Some("Skill completion unavailable: catalog unavailable".into()),
-            ["Prompt template unavailable: invalid metadata".into()],
-        );
-        assert_eq!(
-            message.as_deref(),
-            Some("Skill completion unavailable: catalog unavailable\nPrompt template unavailable: invalid metadata")
-        );
-    }
 }
