@@ -404,10 +404,15 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     pty.wait_for("Esc denies");
     pty.send("\x1b");
     pty.wait_for("action denied");
-    // Ctrl+C cancels the turn while the shell approval is pending.
+    // The denied modal is gone, so the next wait cannot match its stale text.
+    pty.wait_until_screen_not_contains("Esc denies");
+    // Ctrl+C cancels the turn while the shell approval is pending. The preview
+    // carries the command, which identifies this request unambiguously.
     pty.send("\x1b[200~huginn-mock: load_skill shellout\x1b[201~\r");
+    pty.wait_for("touch pwned-shell");
     pty.wait_for("Esc denies");
     pty.send("\x03");
+    // The modal closes; the transcript keeps the tool line, so wait on the hint.
     pty.wait_until_screen_not_contains("Esc denies");
     pty.send("\x1b[200~after cancel\x1b[201~\r");
     pty.wait_for("Offline mock: after cancel");
@@ -433,6 +438,38 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
             .count()
     };
     let before = saved();
+    let events = before["events"].as_array().unwrap();
+    let requested: Vec<_> = events
+        .iter()
+        .filter(|event| event["type"] == "approval_requested")
+        .collect();
+    assert_eq!(requested.len(), 2, "{requested:?}");
+    assert_eq!(requested[0]["request"]["action"], "native.write_file");
+    assert_eq!(requested[1]["request"]["action"], "native.shell");
+    assert!(requested[1]["request"]["preview"]
+        .as_str()
+        .unwrap()
+        .contains("touch pwned-shell"));
+    let shell_id = requested[1]["request"]["id"].as_str().unwrap();
+    let shell_index = events
+        .iter()
+        .position(|event| {
+            event["type"] == "approval_requested" && event["request"]["id"] == shell_id
+        })
+        .unwrap();
+    // Ctrl+C ends the turn by cancellation: the pending shell approval is never
+    // resolved, produces no tool result and no finish; the next event starts a
+    // new turn. A denial instead would resolve the approval and continue.
+    assert_eq!(events[shell_index + 1]["type"], "error");
+    assert!(events[shell_index + 1]["message"]
+        .as_str()
+        .unwrap()
+        .contains("cancelled"));
+    assert_eq!(events[shell_index + 2]["type"], "turn_started");
+    // The cancelled turn is the only one without a matching finish.
+    let of = |kind: &str| events.iter().filter(|event| event["type"] == kind).count();
+    assert_eq!(of("turn_started"), 5, "{events:?}");
+    assert_eq!(of("turn_finished"), 4);
     let id = before["id"].as_str().unwrap().to_string();
     let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
         .env("HOME", home.path())
