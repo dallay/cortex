@@ -121,12 +121,16 @@ vi.mock("@/components/ui/select", () => ({
 		},
 	}),
 	SelectTrigger: defineComponent({
-		props: { id: String, dataTestid: String },
+		props: { id: String, dataTestid: String, ariaLabelledby: String },
 		setup(props, { slots }) {
 			return () =>
 				h(
 					"div",
-					{ id: props.id, "data-testid": props.dataTestid },
+					{
+						id: props.id,
+						"aria-labelledby": props.ariaLabelledby,
+						"data-testid": props.dataTestid,
+					},
 					slots.default?.(),
 				);
 		},
@@ -485,9 +489,11 @@ describe("ApiKeyForm", () => {
 	describe("tier", () => {
 		it("renders the tier with description visible", () => {
 			const wrapper = makeWrapper(makeFormState({ tier: "enterprise" }));
-			// The select trigger must exist with a value
 			const trigger = wrapper.find('[data-testid="api-key-tier"]');
 			expect(trigger.exists()).toBe(true);
+			expect(trigger.attributes("id")).toBe("api-key-tier");
+			expect(trigger.attributes("aria-labelledby")).toBe("api-key-tier-label");
+			expect(wrapper.find("#api-key-tier-label").exists()).toBe(true);
 		});
 
 		it("renders all tier options in the dropdown", () => {
