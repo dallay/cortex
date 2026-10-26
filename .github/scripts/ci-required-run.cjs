@@ -2,6 +2,7 @@ const { evaluateRequiredChecks } = require('./ci-required.cjs');
 
 const resultKeys = {
   changes: 'CHANGES',
+  doctor: 'DOCTOR',
   'build-dashboard': 'BUILD_DASHBOARD',
   fmt: 'FMT',
   markdown: 'MARKDOWN',
@@ -22,6 +23,7 @@ const resultKeys = {
 };
 const outputKeys = {
   backend: 'CHANGES_BACKEND',
+  doctor: 'CHANGES_DOCTOR',
   frontend: 'CHANGES_FRONTEND',
   docker: 'CHANGES_DOCKER',
   github: 'CHANGES_GITHUB',

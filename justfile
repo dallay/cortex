@@ -175,6 +175,13 @@ setup:
     rustup show
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
+# Read-only checks for the local development environment.
+doctor:
+    @bash dev/doctor.sh
+
+doctor-test:
+    @bash dev/doctor.test.sh
+
 # === Quality ===
 
 audit:
@@ -425,6 +432,8 @@ help:
     @echo ""
     @echo "Dev:"
     @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
+    @echo "  just doctor          - Diagnose required and optional development tools"
+    @echo "  just doctor-test     - Test the doctor checks"
     @echo "  just dev             - Watch mode with check+test+clippy"
     @echo "  just run             - Run rook backend"
     @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
