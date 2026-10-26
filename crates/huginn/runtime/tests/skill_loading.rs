@@ -23,7 +23,13 @@ async fn non_utf8_skill_path_loads_without_panicking() {
     let workspace = temporary
         .path()
         .join(std::ffi::OsStr::from_bytes(b"repo-\xff"));
-    std::fs::create_dir_all(&workspace).unwrap();
+    if let Err(error) = std::fs::create_dir_all(&workspace) {
+        if error.raw_os_error() == Some(libc::EILSEQ) {
+            eprintln!("skipping: filesystem rejects non-UTF-8 paths: {error}");
+            return;
+        }
+        panic!("failed to create non-UTF-8 workspace path: {error}");
+    }
     std::fs::write(workspace.join(".git"), "gitdir: /elsewhere").unwrap();
     let directory = workspace.join(".agents/skills/review");
     std::fs::create_dir_all(&directory).unwrap();

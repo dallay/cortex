@@ -15,10 +15,15 @@ pub fn expand(session: &Session, input: String) -> anyhow::Result<String> {
     if !input.starts_with("/prompts:") {
         return Ok(input);
     }
-    Ok(service(session)?
+    let expanded = service(session)?
         .expand(&input)
         .map_err(anyhow::Error::msg)?
-        .unwrap_or(input))
+        .unwrap_or(input);
+    anyhow::ensure!(
+        !expanded.trim_start().starts_with("/skill:"),
+        "prompt templates cannot invoke skills; enter /skill:<name> directly"
+    );
+    Ok(expanded)
 }
 
 #[cfg(test)]

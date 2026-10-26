@@ -1,6 +1,65 @@
 //! Read-only skill catalog contracts. Metadata never grants host authority.
 use std::path::{Path, PathBuf};
 
+/// The host consumes one whitespace delimiter, then preserves every task byte.
+pub const MAX_SKILL_INVOCATION_BYTES: usize = 65_536;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct SkillInvocation<'a> {
+    pub name: &'a str,
+    pub task: &'a str,
+}
+
+pub fn invocation(input: &str) -> huginn_core::Result<Option<SkillInvocation<'_>>> {
+    let Some(rest) = input.trim_start().strip_prefix("/skill:") else {
+        return Ok(None);
+    };
+    let invalid = |message: &str| huginn_core::AgentError::Tool(message.into());
+    if input.len() > MAX_SKILL_INVOCATION_BYTES {
+        return Err(invalid("skill invocation exceeds 65536-byte limit"));
+    }
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let name = &rest[..end];
+    if name.is_empty()
+        || name.len() > 64
+        || name.starts_with('-')
+        || name.ends_with('-')
+        || name.contains("--")
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(invalid(
+            "invalid skill name; use /skill:<catalog-name> [task]",
+        ));
+    }
+    let task = rest[end..]
+        .chars()
+        .next()
+        .map_or("", |delimiter| &rest[end + delimiter.len_utf8()..]);
+    Ok(Some(SkillInvocation { name, task }))
+}
+
+impl SkillCatalog {
+    pub fn resolve(&self, name: &str) -> huginn_core::Result<&SkillEntry> {
+        let mut matches = self
+            .skills
+            .iter()
+            .filter(|entry| entry.selected && entry.name == name);
+        let entry = matches.next().ok_or_else(|| {
+            huginn_core::AgentError::Tool(format!(
+                "unknown or unavailable skill: {name}; refresh the skill catalog"
+            ))
+        })?;
+        if matches.next().is_some() {
+            return Err(huginn_core::AgentError::Tool(format!(
+                "ambiguous skill: {name}"
+            )));
+        }
+        Ok(entry)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SourceScope {
     Project,
@@ -227,6 +286,64 @@ impl huginn_core::Tool for SkillTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_invocation_preserves_task_bytes_without_shell_parsing() {
+        let input = "/skill:code-review  \"quoted task\" \\path  \n";
+        let invocation = invocation(input).unwrap().unwrap();
+        assert_eq!(invocation.name, "code-review");
+        assert_eq!(invocation.task, " \"quoted task\" \\path  \n");
+        assert_eq!(
+            super::invocation("/skill:review").unwrap().unwrap().task,
+            ""
+        );
+        assert!(super::invocation("/prompts:review").unwrap().is_none());
+        assert!(super::invocation("ordinary /skill:review")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn explicit_invocation_rejects_invalid_names_and_oversized_input() {
+        for input in [
+            "/skill:",
+            "/skill:../review",
+            "/skill:Review",
+            "/skill:a--b",
+            "/skill:-a",
+            "/skill:a:",
+            "/skill:a/other",
+        ] {
+            assert!(invocation(input).is_err(), "{input}");
+        }
+        assert!(invocation(&format!("/skill:{}", "a".repeat(65))).is_err());
+        assert!(invocation(&format!(
+            "/skill:a {}",
+            "x".repeat(MAX_SKILL_INVOCATION_BYTES)
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn explicit_resolution_uses_only_selected_entries_and_rejects_ambiguity() {
+        let mut global = entry("review", SourceScope::Global, "global");
+        global.selected = false;
+        let mut catalog = SkillCatalog {
+            skills: vec![global, entry("review", SourceScope::Project, "project")],
+            ..Default::default()
+        };
+        assert_eq!(
+            catalog.resolve("review").unwrap().source_scope,
+            SourceScope::Project
+        );
+        assert!(catalog.resolve("missing").is_err());
+        catalog.skills[0].selected = true;
+        assert!(catalog
+            .resolve("review")
+            .unwrap_err()
+            .to_string()
+            .contains("ambiguous"));
+    }
 
     struct StubLoader;
 

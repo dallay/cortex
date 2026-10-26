@@ -1319,7 +1319,11 @@ Enter save Esc close"
             }
             KeyCode::Char('j') if ctrl => state.editor.insert("\n"),
             KeyCode::Enter => {
-                let line = state.editor.text.trim().to_string();
+                let line = if state.editor.text.trim_start().starts_with("/skill:") {
+                    state.editor.text.clone()
+                } else {
+                    state.editor.text.trim().to_string()
+                };
                 if line.is_empty() {
                     return;
                 }

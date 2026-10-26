@@ -577,7 +577,7 @@ impl Ui {
 
     pub fn dispatch_command(&self, line: &str) -> bool {
         let line = line.trim();
-        if line.starts_with("/prompts:") {
+        if line.starts_with("/prompts:") || line.starts_with("/skill:") {
             return false;
         }
         let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
@@ -801,7 +801,7 @@ impl Ui {
         drop(retired);
         self.dirty.notify_one();
     }
-    /// Host supplies metadata only; presentation never reads template files.
+    /// Host supplies template and skill command metadata only; presentation never reads files.
     pub fn set_prompt_templates(&self, templates: Vec<(String, String)>) {
         *self
             .prompt_templates
@@ -815,7 +815,9 @@ impl Ui {
             .contributions
             .commands()
             .into_iter()
-            .filter(|command| !command.name.starts_with("/prompts:"))
+            .filter(|command| {
+                !command.name.starts_with("/prompts:") && !command.name.starts_with("/skill:")
+            })
             .map(Into::into)
             .collect();
         commands.extend([

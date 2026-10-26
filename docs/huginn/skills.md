@@ -131,8 +131,7 @@ imponer un límite menor y conserva sus errores y reglas de compactación normal
 
 `StandardLoop::run_with_skills` permite al host seleccionar identidades de
 proyecto para un solo turno. Esta selección no concede confianza persistente.
-El análisis de `/skill:name` en CLI y TUI pertenece a DALLAY-715. La herramienta
-no ejecuta scripts, carga referencias automáticamente ni modifica `HostPolicy`.
+La herramienta no ejecuta scripts, carga referencias automáticamente ni modifica `HostPolicy`.
 Las llamadas posteriores a herramientas siguen requiriendo sus aprobaciones.
 
 La sesión guarda únicamente la huella versionada del catálogo, sin duplicar
@@ -140,3 +139,39 @@ cuerpos en sus metadatos. Los resultados normales de herramientas permanecen en
 el historial original. Al iniciar otro turno, una huella distinta produce una
 advertencia con las huellas anterior y actual. No se repiten cargas ni efectos
 anteriores y no se reinyectan cuerpos fuera del historial normal.
+
+## Invocación explícita
+
+Usa `/skill:<nombre> [tarea]` en la TUI, modo línea, `run` o una sesión reanudada:
+
+```sh
+huginn --workspace . run '/skill:code-review Revisa "src/lib.rs" sin editar'
+huginn --workspace . --json run '/skill:code-review'
+huginn resume <uuid> --prompt '/skill:code-review Revisa los cambios nuevos'
+```
+
+La TUI muestra los nombres seleccionados y sus descripciones en el autocompletado
+existente. Tab inserta el comando; Enter lo envía. Es un comando del host, no una
+extensión de la gramática de comandos de plugins. El catálogo de autocompletado
+es una instantánea de inicio; cada invocación consulta de nuevo el catálogo.
+
+El host admite un máximo de 65.536 bytes por invocación. El nombre sigue las reglas
+del catálogo. No admite rutas, scripts ni plugins remotos. Tras el nombre, consume
+un carácter de espacio en blanco como separador y conserva todos los bytes restantes
+de la tarea, incluidas comillas, barras inversas y espacios adicionales o finales.
+No realiza análisis de shell ni expansión de argumentos. La tarea es opcional.
+
+Antes de iniciar el turno o consultar el modelo, el host resuelve exactamente una
+entrada `selected` y carga su identidad mediante `SkillLoader`. La precedencia de
+proyecto sobre global no cambia. Un nombre inválido, desconocido, ambiguo, una
+carga no disponible o una cancelación durante la carga rechaza la solicitud sin
+inferencia, efectos ni turno de asistente artificial. Los errores JSON no añaden
+texto humano a stdout. Las plantillas de prompts no pueden activar skills de forma
+indirecta; introduce el comando de skill directamente.
+
+La tarea y el resultado de carga se guardan en un mensaje de usuario como un objeto
+JSON separado en `task` y `skill`. El cuerpo conserva `untrusted`, identidad, ámbito
+y ruta canónica; nunca se convierte en un mensaje de sistema. Ni el cuerpo ni
+`allowed-tools` conceden permisos: `HostPolicy` mantiene las aprobaciones normales.
+Reanudar conserva el historial, pero una nueva invocación vuelve a validar y cargar
+el origen actual. No reproduce cargas ni efectos anteriores.
