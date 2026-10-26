@@ -192,13 +192,25 @@ impl FallbackRouter {
     }
 
     /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers(&self, req: &CompletionRequest) -> Vec<Arc<dyn ProviderPort>> {
+    fn available_providers(
+        &self,
+        req: &CompletionRequest,
+    ) -> Vec<(Arc<dyn ProviderPort>, Option<f32>)> {
         let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
+        let weights = match &self.strategy {
+            RoutingStrategy::WeightedRandom(weights) if weights.len() == guard.len() => {
+                Some(weights)
+            }
+            _ => None,
+        };
         guard
             .iter()
-            .filter(|p| {
+            .enumerate()
+            // Attach configured weights before any eligibility filtering.
+            .map(|(index, provider)| (provider, weights.map(|weights| weights[index])))
+            .filter(|(p, _)| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
                 !circuit.is_open(now)
@@ -206,8 +218,31 @@ impl FallbackRouter {
                     && p.is_available()
                     && required.check(&p.model_capabilities(&req.model)).is_ok()
             })
-            .cloned()
+            .map(|(provider, weight)| (provider.clone(), weight))
             .collect()
+    }
+
+    fn select_weighted(
+        candidates: &[(Arc<dyn ProviderPort>, Option<f32>)],
+    ) -> Option<Arc<dyn ProviderPort>> {
+        let Some(total) = candidates
+            .iter()
+            .map(|(_, weight)| *weight)
+            .sum::<Option<f32>>()
+        else {
+            // Preserve the first-candidate fallback for mismatched configuration.
+            return candidates.first().map(|(provider, _)| provider.clone());
+        };
+        let mut rng = rand::rng();
+        let r = rng.random::<f32>() * total;
+        let mut sum = 0.0_f32;
+        candidates
+            .iter()
+            .find(|(_, weight)| {
+                sum += weight.unwrap_or_default();
+                sum >= r
+            })
+            .map(|(provider, _)| provider.clone())
     }
 
     /// Returns a snapshot of circuit breaker state for all registered providers.
@@ -313,37 +348,18 @@ impl RouterPort for FallbackRouter {
         let selected = match &self.strategy {
             RoutingStrategy::Priority => {
                 // Return first candidate (assumes sorted by priority)
-                candidates.first().cloned()
+                candidates.first().map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % candidates.len();
                 *index = idx + 1;
-                candidates.get(idx).cloned()
+                candidates.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                if weights.len() != candidates.len() {
-                    // Fall back to first if weights don't match
-                    candidates.first().cloned()
-                } else {
-                    let mut rng = rand::rng();
-                    let total: f32 = weights.iter().sum();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    candidates
-                        .iter()
-                        .zip(weights.iter())
-                        .find(|(_, &w)| {
-                            sum += w;
-                            sum >= r
-                        })
-                        .map(|(p, _)| p)
-                        .cloned()
-                }
-            }
+            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&candidates),
             RoutingStrategy::ModelBased => {
                 // TODO: implement model-based routing (e.g., "anthropic/" → claude providers)
-                candidates.first().cloned()
+                candidates.first().map(|(provider, _)| provider.clone())
             }
         };
 
@@ -361,7 +377,7 @@ impl RouterPort for FallbackRouter {
         // Filter out excluded providers and those with open circuit breaker
         let available: Vec<_> = candidates
             .into_iter()
-            .filter(|p| !excluded_set.contains(p.id()))
+            .filter(|(provider, _)| !excluded_set.contains(provider.id()))
             .collect();
 
         if available.is_empty() {
@@ -372,42 +388,16 @@ impl RouterPort for FallbackRouter {
         let selected = match &self.strategy {
             RoutingStrategy::Priority => {
                 // Return first candidate (assumes sorted by priority)
-                available.first().cloned()
+                available.first().map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % available.len();
                 *index = (idx + 1) % available.len();
-                available.get(idx).cloned()
+                available.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                // Pair providers with weights, filter to available, then weighted selection
-                let providers_guard = self.providers.read();
-                let paired: Vec<_> = providers_guard
-                    .iter()
-                    .filter(|p| available.iter().any(|a| a.id() == p.id()))
-                    .zip(weights.iter())
-                    .map(|(p, &w)| (p.clone(), w))
-                    .collect();
-                drop(providers_guard);
-
-                if paired.is_empty() {
-                    available.first().cloned()
-                } else {
-                    let total: f32 = paired.iter().map(|(_, w)| *w).sum();
-                    let mut rng = rand::rng();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    paired
-                        .iter()
-                        .find(|(_, w)| {
-                            sum += *w;
-                            sum >= r
-                        })
-                        .map(|(p, _)| p.clone())
-                }
-            }
-            RoutingStrategy::ModelBased => available.first().cloned(),
+            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&available),
+            RoutingStrategy::ModelBased => available.first().map(|(provider, _)| provider.clone()),
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }

@@ -193,3 +193,31 @@ async fn unknown_native_streaming_never_executes_upstream() {
     assert!(route(router).execute_stream(req).await.is_err());
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn weighted_selection_preserves_weights_after_capability_filtering_and_exclusion() {
+    let blocked = Provider::new("blocked", CapabilityState::Unsupported);
+    let first = Provider::new("first", CapabilityState::Supported);
+    let excluded = Provider::new("excluded", CapabilityState::Supported);
+    let weighted = Provider::new("weighted", CapabilityState::Supported);
+    let router = FallbackRouter::new(
+        vec![blocked, first, excluded, weighted],
+        RoutingStrategy::WeightedRandom(vec![1.0, 0.0, 0.0, 1.0]),
+    );
+    let excluded = [ProviderId::new("excluded")];
+    let mut selected_weighted = false;
+    let mut selected_weighted_excluding = false;
+    // Multiple draws avoid relying on the random sample being strictly above zero.
+    for _ in 0..32 {
+        selected_weighted |= router.select(&request()).await.unwrap().id().as_str() == "weighted";
+        let selected = router
+            .select_excluding(&request(), &excluded)
+            .await
+            .unwrap();
+        assert_ne!(selected.id(), &excluded[0]);
+        selected_weighted_excluding |= selected.id().as_str() == "weighted";
+    }
+    assert!(selected_weighted);
+    assert!(selected_weighted_excluding);
+    assert!(router.circuit_states().iter().all(|(_, c)| c.failures == 0));
+}
