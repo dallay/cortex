@@ -388,8 +388,68 @@ impl ModelProvider for UnconfiguredModelProvider {
     }
 }
 
-/// An offline provider for exercising the same loop and read-only tool path.
+/// Line prefix that makes the offline mock request a tool, standing in for a
+/// model that follows instructions found in its latest user or tool message.
+pub const MOCK_DIRECTIVE: &str = "huginn-mock:";
+
+/// An offline provider for exercising the same loop and tool paths. Requests
+/// still pass through HostPolicy, so a directive never grants authority.
 pub struct MockProvider;
+
+/// `huginn-mock: <tool> <json-arguments>` requests a tool; `huginn-mock:
+/// load_skill <name>` resolves the name against the advertised skill catalog.
+/// Lines are also searched inside JSON-encoded strings such as skill envelopes.
+fn mock_directive(messages: &[Message], last: &Message) -> Option<ToolCall> {
+    let line = directive_line(&last.content)?;
+    let (name, rest) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+    let arguments = match serde_json::from_str::<Value>(rest.trim()) {
+        Ok(arguments) => arguments,
+        Err(_) if name == "load_skill" => {
+            let identity = advertised_identity(messages, rest.trim())
+                .unwrap_or_else(|| format!("unadvertised:{}", rest.trim()));
+            json!({ "identity": identity })
+        }
+        Err(_) => json!({}),
+    };
+    Some(ToolCall {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.into(),
+        arguments,
+    })
+}
+
+fn directive_line(text: &str) -> Option<String> {
+    fn strings(value: &Value) -> Option<String> {
+        match value {
+            Value::String(text) => directive_line(text),
+            Value::Array(items) => items.iter().find_map(strings),
+            Value::Object(map) => map.values().find_map(strings),
+            _ => None,
+        }
+    }
+    text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(MOCK_DIRECTIVE)
+            .map(|directive| directive.trim().to_string())
+            .or_else(|| {
+                serde_json::from_str::<Value>(trimmed)
+                    .ok()
+                    .and_then(|value| strings(&value))
+            })
+    })
+}
+
+fn advertised_identity(messages: &[Message], name: &str) -> Option<String> {
+    messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .flat_map(|message| message.content.lines())
+        .filter_map(|line| serde_json::from_str::<Vec<Value>>(line).ok())
+        .flatten()
+        .find(|entry| entry["name"] == name)
+        .and_then(|entry| entry["identity"].as_str().map(str::to_string))
+}
 #[async_trait]
 impl ModelProvider for MockProvider {
     async fn stream(
@@ -404,25 +464,24 @@ impl ModelProvider for MockProvider {
             .messages
             .last()
             .ok_or_else(|| AgentError::Model("empty context".into()))?;
-        let output = if last.role == Role::Tool {
-            vec![
+        let output = match mock_directive(&request.messages, last) {
+            Some(call) => vec![ModelDelta::ToolCall(call), ModelDelta::Finished],
+            None if last.role == Role::Tool => vec![
                 ModelDelta::Text(format!("Workspace result:\n{}", last.content)),
                 ModelDelta::Finished,
-            ]
-        } else if last.content.trim() == "list files" {
-            vec![
+            ],
+            None if last.content.trim() == "list files" => vec![
                 ModelDelta::ToolCall(ToolCall {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: "list_files".into(),
                     arguments: json!({"path":"."}),
                 }),
                 ModelDelta::Finished,
-            ]
-        } else {
-            vec![
+            ],
+            None => vec![
                 ModelDelta::Text(format!("Offline mock: {}", last.content)),
                 ModelDelta::Finished,
-            ]
+            ],
         };
         Ok(futures::stream::iter(output.into_iter().map(Ok)).boxed())
     }
