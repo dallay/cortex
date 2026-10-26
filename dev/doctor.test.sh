@@ -46,6 +46,30 @@ restricted_path="$test_root/bin"
 mkdir -p "$fixture_root" "$restricted_path"
 trap 'rm -rf "$test_root"' EXIT
 
+cat > "$restricted_path/required-tool" <<'SH'
+#!/bin/sh
+if [ "$1" = "--broken-version" ]; then
+    printf 'version probe failed\nadditional details\n' >&2
+    exit 42
+fi
+printf 'tool 1.2.3\nadditional version details\n'
+SH
+chmod +x "$restricted_path/required-tool"
+
+DOCTOR_FAILURES=0
+PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" > "$test_root/version.out" 2>&1
+assert_eq "[OK] Required tool: tool 1.2.3" "$(cat "$test_root/version.out")" "a successful version probe reports only the first line"
+assert_eq "0" "$DOCTOR_FAILURES" "a successful version probe does not increment failures"
+
+set +e
+PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" "--broken-version" > "$test_root/version.out" 2>&1
+version_status=$?
+set -e
+assert_eq "1" "$version_status" "a failed version probe returns failure"
+assert_eq "1" "$DOCTOR_FAILURES" "a failed version probe increments failures"
+assert_eq "[FALTA] Required tool: falló 'required-tool --broken-version': version probe failed." \
+    "$(cat "$test_root/version.out")" "a failed version probe reports the tool, command and error without success"
+
 fixture_package="$fixture_root/package.json"
 cat > "$fixture_package" <<'JSON'
 {

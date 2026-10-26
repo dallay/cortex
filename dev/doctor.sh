@@ -109,7 +109,11 @@ check_command() {
         return 1
     fi
 
-    version="$("$binary" "$version_arg" 2>&1)" || version="disponible (versión no identificada)"
+    if ! version="$("$binary" "$version_arg" 2>&1)"; then
+        version="${version%%$'\n'*}"
+        doctor_fail "$label: falló '$binary $version_arg': ${version:-sin detalles}."
+        return 1
+    fi
     version="${version%%$'\n'*}"
     doctor_ok "$label: $version"
 }
