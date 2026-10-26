@@ -781,9 +781,13 @@ fn compute_model_entries(
     providers: &[(String, Vec<String>)],
     aliases: &[String],
     allowed_models: &[String],
+    allowed_providers: &[String],
 ) -> Vec<ModelEntry> {
     let mut entries: Vec<ModelEntry> = Vec::new();
     for (provider, models) in providers {
+        if !allowed_providers.is_empty() && !allowed_providers.contains(provider) {
+            continue;
+        }
         for model in models {
             entries.push(ModelEntry {
                 id: format!("{provider}/{model}"),
@@ -805,14 +809,19 @@ fn compute_model_entries(
         .filter(|entry| {
             allowed_models.iter().any(|allowed| {
                 allowed == &entry.id
-                    || (entry.owned_by != "combo" && entry.id.ends_with(&format!("/{allowed}")))
+                    || (entry.owned_by != "combo"
+                        && entry.id.strip_prefix(&format!("{}/", entry.owned_by))
+                            == Some(allowed.as_str()))
             })
         })
         .collect()
 }
 
-async fn list_models(State(usecases): State<Usecases>, headers: HeaderMap) -> impl IntoResponse {
-    let restrictions = restrictions_from_headers(&headers).unwrap_or_default();
+async fn list_models(
+    State(usecases): State<Usecases>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let restrictions = restrictions_from_headers(&headers)?;
     let provider_ids = usecases.fallback_router.providers();
     let providers: Vec<(String, Vec<String>)> = provider_ids
         .iter()
@@ -825,22 +834,24 @@ async fn list_models(State(usecases): State<Usecases>, headers: HeaderMap) -> im
             (id.to_string(), models)
         })
         .collect();
-    let aliases: Vec<String> = match usecases.route_request.combo_alias_repository() {
-        Some(repo) => repo
-            .list()
-            .await
-            .unwrap_or_default()
-            .iter()
-            .map(|a| a.alias.to_string())
-            .collect(),
-        None => Vec::new(),
-    };
+    let aliases: Vec<String> = usecases
+        .route_request
+        .visible_combo_aliases(&restrictions)
+        .await
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     let allowed: Vec<String> = restrictions
         .allowed_models
         .iter()
         .map(|m| m.to_string())
         .collect();
-    let data: Vec<serde_json::Value> = compute_model_entries(&providers, &aliases, &allowed)
+    let allowed_providers: Vec<String> = restrictions
+        .allowed_providers
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let data: Vec<serde_json::Value> = compute_model_entries(&providers, &aliases, &allowed, &allowed_providers)
         .iter()
         .map(|entry| {
             serde_json::json!({
@@ -848,10 +859,17 @@ async fn list_models(State(usecases): State<Usecases>, headers: HeaderMap) -> im
                 "object": "model",
                 "created": 0,
                 "owned_by": entry.owned_by,
+                "rook": {
+                    "capabilities": usecases.fallback_router.get(&rook_core::ProviderId::new(&entry.owned_by))
+                        .map(|p| p.model_capabilities(&rook_core::ModelId::new(entry.id.strip_prefix(&format!("{}/", entry.owned_by)).unwrap_or(&entry.id))))
+                        .unwrap_or_default(),
+                    "presence_source": if entry.owned_by == "combo" { "combo_alias" } else { "runtime_registry" },
+                    "unknown_policy": "reject_required",
+                },
             })
         })
         .collect();
-    Json(serde_json::json!({ "object": "list", "data": data }))
+    Ok(Json(serde_json::json!({ "object": "list", "data": data })))
 }
 
 /// POST /v1/messages — Anthropic-compatible
@@ -1216,6 +1234,39 @@ mod tests {
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    #[test]
+    fn catalog_provider_allowlist_excludes_other_providers_even_for_allowed_model() {
+        let providers = vec![
+            ("allowed".into(), vec!["custom".into()]),
+            ("denied".into(), vec!["custom".into()]),
+        ];
+        let entries =
+            compute_model_entries(&providers, &[], &["custom".into()], &["allowed".into()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "allowed/custom");
+    }
+
+    #[test]
+    fn catalog_does_not_authorize_a_suffix_of_a_physical_model_id() {
+        let providers = vec![(
+            "connection".into(),
+            vec!["ollamacloud/deepseek-v4-pro".into()],
+        )];
+        assert!(
+            compute_model_entries(&providers, &[], &["deepseek-v4-pro".into()], &[]).is_empty()
+        );
+        assert_eq!(
+            compute_model_entries(
+                &providers,
+                &[],
+                &["ollamacloud/deepseek-v4-pro".into()],
+                &[]
+            )
+            .len(),
+            1
+        );
+    }
+
     struct EnvVarGuard {
         name: &'static str,
         original: Option<std::ffi::OsString>,
@@ -1551,6 +1602,7 @@ mod tests {
             &[("openai-a".to_string(), vec!["gpt-4o".to_string()])],
             &["rook/coding".to_string()],
             &[],
+            &[],
         );
         let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
         assert!(ids.contains(&"openai-a/gpt-4o"));
@@ -1568,6 +1620,7 @@ mod tests {
             providers,
             &["rook/coding".to_string()],
             &["gpt-4o".to_string()],
+            &[],
         );
         assert_eq!(
             entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
@@ -1578,13 +1631,15 @@ mod tests {
             providers,
             &["rook/coding".to_string()],
             &["rook/coding".to_string()],
+            &[],
         );
         assert_eq!(
             entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             vec!["rook/coding"]
         );
         // Composite id match.
-        let entries = compute_model_entries(providers, &[], &["openai-a/gpt-4o-mini".to_string()]);
+        let entries =
+            compute_model_entries(providers, &[], &["openai-a/gpt-4o-mini".to_string()], &[]);
         assert_eq!(
             entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             vec!["openai-a/gpt-4o-mini"]
@@ -1593,8 +1648,12 @@ mod tests {
 
     #[test]
     fn catalog_bare_model_restriction_does_not_match_virtual_alias() {
-        let entries =
-            compute_model_entries(&[], &["rook/coding".to_string()], &["coding".to_string()]);
+        let entries = compute_model_entries(
+            &[],
+            &["rook/coding".to_string()],
+            &["coding".to_string()],
+            &[],
+        );
 
         assert!(
             entries.is_empty(),

@@ -29,13 +29,34 @@ pub struct OpenAIChatRequest {
 pub struct OpenAIMessage {
     pub role: String,
     /// Content is a plain string for text-only messages, an array of content
-    /// parts for multimodal messages, or null on assistant tool-call messages.
-    #[serde(default)]
+    /// Text parts or null; unsupported modalities fail before domain conversion.
+    #[serde(default, deserialize_with = "deserialize_text_content")]
     pub content: serde_json::Value,
     #[serde(default)]
     pub tool_calls: Vec<OpenAIToolCall>,
     #[serde(default)]
     pub tool_call_id: Option<String>,
+}
+
+fn deserialize_text_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<serde_json::Value, D::Error> {
+    let content = serde_json::Value::deserialize(deserializer)?;
+    let valid = match &content {
+        serde_json::Value::String(_) | serde_json::Value::Null => true,
+        serde_json::Value::Array(parts) => parts.iter().all(|part| {
+            part.get("type").and_then(|v| v.as_str()) == Some("text")
+                && part.get("text").is_some_and(|v| v.is_string())
+        }),
+        _ => false,
+    };
+    if valid {
+        Ok(content)
+    } else {
+        Err(serde::de::Error::custom(
+            "unsupported content capability: Rook cannot preserve non-text input",
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +76,7 @@ pub struct OpenAIFunctionCall {
 impl OpenAIMessage {
     /// Extract the text content from either a plain string or an array of
     /// content-part objects (`{"type":"text","text":"…"}`).
-    /// Non-text parts (image_url, etc.) are silently skipped.
+    /// Wire deserialization rejects non-text parts before this conversion.
     pub fn into_text(self) -> String {
         text_from_openai_content(self.content)
     }

@@ -33,6 +33,11 @@ pub trait ProviderPort: Send + Sync + 'static {
     fn id(&self) -> &ProviderId;
     fn supported_models(&self) -> &[ModelId];
 
+    /// Effective model evidence, including the adapter's implementation limits.
+    fn model_capabilities(&self, _model: &ModelId) -> crate::ModelCapabilities {
+        crate::ModelCapabilities::default()
+    }
+
     /// Wire format expected by this provider implementation.
     fn api_format(&self) -> ApiFormat;
 
@@ -126,7 +131,7 @@ impl Drop for RouterTrialPermit {
 #[async_trait]
 pub trait RouterPort: Send + Sync {
     /// Select the best provider for this request.
-    /// Returns the selected provider, never an error if at least one provider is available.
+    /// Returns a provider only when model membership and required capabilities are eligible.
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>>;
 
     /// Select the best available provider, excluding those in `excluded`.
@@ -152,6 +157,12 @@ pub trait RouterPort: Send + Sync {
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
+
+    /// Resolve an exact adapter without applying request-capability pruning.
+    /// Used by ordered combo steps so skips retain their own reason.
+    fn resolve_provider(&self, _provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+        None
+    }
 
     /// Resolve the provider adapter registered for an exact connection.
     /// Returns `None` when the connection is unavailable or unknown.
@@ -531,13 +542,12 @@ pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
 // restricted to?"
 // ---------------------------------------------------------------------------
 //
-// Implementations live in `infrastructure/` crates. Today the catalog is
-// static (hardcoded by provider kind); it may become dynamic in the future
-// (per-provider fetch, real `/v1/models` aggregation, etc.). The wire format
+// Implementations live in `infrastructure/` crates. The catalog resolves
+// declarative model metadata independently from optional runtime discovery.
+// The wire format
 // and the consuming UI must NOT depend on the implementation details.
 
-/// One entry in the model catalog: a model id known to be supported by a
-/// given provider kind.
+/// Model membership for a provider kind; presence is not capability evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
     pub model_id: String,
@@ -548,6 +558,26 @@ pub struct ModelCatalogEntry {
 pub trait ModelCatalogPort: Send + Sync {
     /// Returns the full list of model catalog entries known to the proxy.
     async fn list(&self) -> Vec<ModelCatalogEntry>;
+
+    /// Include declarations scoped to this connection without publishing them globally.
+    async fn list_for_connection(
+        &self,
+        _kind: ProviderKind,
+        _connection: &ConnectionId,
+    ) -> Vec<ModelCatalogEntry> {
+        self.list().await
+    }
+
+    /// Resolve metadata for an ID supplied by configuration or verified discovery.
+    /// Model presence alone provides no capability guarantees.
+    async fn resolve(
+        &self,
+        _kind: ProviderKind,
+        _connection: Option<&ConnectionId>,
+        _model: &str,
+    ) -> crate::ModelCapabilities {
+        crate::ModelCapabilities::default()
+    }
 }
 
 // ---------------------------------------------------------------------------

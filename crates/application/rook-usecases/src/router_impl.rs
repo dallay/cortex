@@ -16,9 +16,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rand::RngExt;
-use rook_core::{
-    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
-};
+use rook_core::{CompletionRequest, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort};
 use shared_kernel::{CortexError, CortexResult, Utc};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -162,6 +160,22 @@ impl CircuitClock for SystemCircuitClock {
 }
 
 impl FallbackRouter {
+    fn weighted_provider_index(weights: &[f32], random: f32) -> Option<usize> {
+        let total: f32 = weights.iter().sum();
+        if weights.is_empty() || total <= 0.0 {
+            return None;
+        }
+        let target = random.clamp(0.0, 1.0) * total;
+        let mut cumulative = 0.0;
+        weights
+            .iter()
+            .position(|weight| {
+                cumulative += weight;
+                cumulative > target
+            })
+            .or_else(|| weights.iter().rposition(|weight| *weight > 0.0))
+    }
+
     /// Creates a router with an empty provider registry.
     pub fn new_empty(strategy: RoutingStrategy) -> Self {
         Self {
@@ -194,18 +208,52 @@ impl FallbackRouter {
     }
 
     /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers(&self, model: &ModelId) -> Vec<Arc<dyn ProviderPort>> {
+    fn available_providers(
+        &self,
+        req: &CompletionRequest,
+    ) -> Vec<(Arc<dyn ProviderPort>, Option<f32>)> {
+        let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
+        let weights = match &self.strategy {
+            RoutingStrategy::WeightedRandom(weights) if weights.len() == guard.len() => {
+                Some(weights)
+            }
+            _ => None,
+        };
         guard
             .iter()
-            .filter(|p| {
+            .enumerate()
+            // Attach configured weights before any eligibility filtering.
+            .map(|(index, provider)| (provider, weights.map(|weights| weights[index])))
+            .filter(|(p, _)| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
-                !circuit.is_open(now) && p.supports_model(model) && p.is_available()
+                !circuit.is_open(now)
+                    && p.supports_model(&req.model)
+                    && p.is_available()
+                    && required.check(&p.model_capabilities(&req.model)).is_ok()
             })
-            .cloned()
+            .map(|(provider, weight)| (provider.clone(), weight))
             .collect()
+    }
+
+    fn select_weighted(
+        candidates: &[(Arc<dyn ProviderPort>, Option<f32>)],
+    ) -> Option<Arc<dyn ProviderPort>> {
+        let Some(weights) = candidates
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Option<Vec<_>>>()
+        else {
+            // Preserve the first-candidate fallback for mismatched configuration.
+            return candidates.first().map(|(provider, _)| provider.clone());
+        };
+        let mut rng = rand::rng();
+        Self::weighted_provider_index(&weights, rng.random())
+            .and_then(|index| candidates.get(index))
+            .or_else(|| candidates.first())
+            .map(|(provider, _)| provider.clone())
     }
 
     /// Returns a snapshot of circuit breaker state for all registered providers.
@@ -302,7 +350,7 @@ impl ProviderRegistryPort for FallbackRouter {
 #[async_trait]
 impl RouterPort for FallbackRouter {
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-        let candidates = self.available_providers(&req.model);
+        let candidates = self.available_providers(req);
 
         if candidates.is_empty() {
             return Err(CortexError::all_providers_exhausted());
@@ -311,37 +359,18 @@ impl RouterPort for FallbackRouter {
         let selected = match &self.strategy {
             RoutingStrategy::Priority => {
                 // Return first candidate (assumes sorted by priority)
-                candidates.first().cloned()
+                candidates.first().map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % candidates.len();
                 *index = idx + 1;
-                candidates.get(idx).cloned()
+                candidates.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                if weights.len() != candidates.len() {
-                    // Fall back to first if weights don't match
-                    candidates.first().cloned()
-                } else {
-                    let mut rng = rand::rng();
-                    let total: f32 = weights.iter().sum();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    candidates
-                        .iter()
-                        .zip(weights.iter())
-                        .find(|(_, &w)| {
-                            sum += w;
-                            sum >= r
-                        })
-                        .map(|(p, _)| p)
-                        .cloned()
-                }
-            }
+            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&candidates),
             RoutingStrategy::ModelBased => {
                 // TODO: implement model-based routing (e.g., "anthropic/" → claude providers)
-                candidates.first().cloned()
+                candidates.first().map(|(provider, _)| provider.clone())
             }
         };
 
@@ -355,11 +384,12 @@ impl RouterPort for FallbackRouter {
     ) -> CortexResult<Arc<dyn ProviderPort>> {
         use std::collections::HashSet;
         let excluded_set: HashSet<_> = excluded.iter().collect();
-        let candidates = self.available_providers(&req.model);
-        // Filter out excluded providers and those with open circuit breaker
+        let candidates = self.available_providers(req);
+        // Filter out excluded providers and those with open circuit breaker.
+        // Keep provider-weight pairs attached while excluding providers.
         let available: Vec<_> = candidates
             .into_iter()
-            .filter(|p| !excluded_set.contains(p.id()))
+            .filter(|(provider, _)| !excluded_set.contains(provider.id()))
             .collect();
 
         if available.is_empty() {
@@ -370,42 +400,16 @@ impl RouterPort for FallbackRouter {
         let selected = match &self.strategy {
             RoutingStrategy::Priority => {
                 // Return first candidate (assumes sorted by priority)
-                available.first().cloned()
+                available.first().map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % available.len();
                 *index = (idx + 1) % available.len();
-                available.get(idx).cloned()
+                available.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                // Pair providers with weights, filter to available, then weighted selection
-                let providers_guard = self.providers.read();
-                let paired: Vec<_> = providers_guard
-                    .iter()
-                    .filter(|p| available.iter().any(|a| a.id() == p.id()))
-                    .zip(weights.iter())
-                    .map(|(p, &w)| (p.clone(), w))
-                    .collect();
-                drop(providers_guard);
-
-                if paired.is_empty() {
-                    available.first().cloned()
-                } else {
-                    let total: f32 = paired.iter().map(|(_, w)| *w).sum();
-                    let mut rng = rand::rng();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    paired
-                        .iter()
-                        .find(|(_, w)| {
-                            sum += *w;
-                            sum >= r
-                        })
-                        .map(|(p, _)| p.clone())
-                }
-            }
-            RoutingStrategy::ModelBased => available.first().cloned(),
+            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&available),
+            RoutingStrategy::ModelBased => available.first().map(|(provider, _)| provider.clone()),
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
@@ -490,15 +494,19 @@ impl RouterPort for FallbackRouter {
         connection_id: &shared_kernel::ConnectionId,
     ) -> Option<Arc<dyn ProviderPort>> {
         let provider_id = ProviderId::new(connection_id.to_string());
+        self.resolve_provider(&provider_id)
+    }
+
+    fn resolve_provider(&self, provider_id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         let circuit = self
             .circuits
-            .get(&provider_id)
+            .get(provider_id)
             .map(|state| state.clone())
             .unwrap_or_default();
         if circuit.is_open(self.clock.now()) {
             return None;
         }
-        self.get(&provider_id)
+        self.get(provider_id)
     }
 }
 
@@ -537,13 +545,19 @@ mod tests {
     struct StubProvider {
         id: ProviderId,
         models: Vec<ModelId>,
+        supports_tools: bool,
     }
 
     impl StubProvider {
         fn new(id: &str, models: &[&str]) -> Arc<Self> {
+            Self::with_tool_support(id, models, false)
+        }
+
+        fn with_tool_support(id: &str, models: &[&str], supports_tools: bool) -> Arc<Self> {
             Arc::new(Self {
                 id: ProviderId::new(id),
                 models: models.iter().map(|model| ModelId::new(*model)).collect(),
+                supports_tools,
             })
         }
     }
@@ -582,6 +596,20 @@ mod tests {
 
         fn supported_models(&self) -> &[ModelId] {
             &self.models
+        }
+
+        fn model_capabilities(&self, _model: &ModelId) -> rook_core::ModelCapabilities {
+            let mut capabilities = rook_core::ModelCapabilities::default();
+            if self.supports_tools {
+                capabilities.apply(
+                    &rook_core::CapabilityOverrides {
+                        tools: Some(rook_core::CapabilityState::Supported),
+                        ..Default::default()
+                    },
+                    "router_test",
+                );
+            }
+            capabilities
         }
 
         fn api_format(&self) -> ApiFormat {
@@ -1193,6 +1221,79 @@ mod tests {
                     .expect("should select");
                 assert_eq!(selected.id(), &ProviderId::new("anthropic"));
             });
+    }
+
+    #[tokio::test]
+    async fn weighted_random_select_keeps_weights_attached_after_capability_filtering() {
+        let rejected = StubProvider::with_tool_support("rejected", &["model"], false);
+        let eligible = StubProvider::with_tool_support("eligible", &["model"], true);
+        let router = FallbackRouter::new(
+            vec![rejected, eligible.clone()],
+            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
+        );
+        let mut req = make_test_request("model");
+        req.tools = Some(serde_json::json!([{"type":"function"}]));
+
+        let selected = router.select(&req).await.expect("eligible provider");
+        assert_eq!(selected.id(), eligible.id());
+    }
+
+    #[tokio::test]
+    async fn weighted_random_select_excluding_keeps_original_provider_weights() {
+        let first = StubProvider::new("first", &["model"]);
+        let second = StubProvider::new("second", &["model"]);
+        let router = FallbackRouter::new(
+            vec![first, second.clone()],
+            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
+        );
+
+        let selected = router
+            .select_excluding(&make_test_request("model"), &[ProviderId::new("first")])
+            .await
+            .expect("remaining provider");
+        assert_eq!(selected.id(), second.id());
+    }
+
+    #[test]
+    fn weighted_provider_index_uses_weights_after_eligibility_filtering() {
+        let original_weights = [0.9, 0.1];
+        let eligible_provider_indices = [1];
+        let eligible_weights: Vec<_> = eligible_provider_indices
+            .iter()
+            .map(|index| original_weights[*index])
+            .collect();
+
+        assert_eq!(
+            eligible_weights,
+            vec![0.1],
+            "the remaining provider must retain its configured weight"
+        );
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&eligible_weights, 0.5),
+            Some(0)
+        );
+
+        let router = FallbackRouter::new(
+            vec![
+                StubProvider::with_tool_support("rejected", &["model"], false),
+                StubProvider::with_tool_support("eligible", &["model"], true),
+            ],
+            RoutingStrategy::WeightedRandom(original_weights.to_vec()),
+        );
+        let mut req = make_test_request("model");
+        req.tools = Some(serde_json::json!([{"type":"function"}]));
+        let candidates = router.available_providers(&req);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.id().as_str(), "eligible");
+        assert_eq!(candidates[0].1, Some(0.1));
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&[0.0, 1.0], 0.0),
+            Some(1)
+        );
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&[0.0, 0.0], 0.5),
+            None
+        );
     }
 
     #[test]

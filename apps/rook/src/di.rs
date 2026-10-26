@@ -13,6 +13,10 @@ use cache_memory::InMemoryCache;
 use combo_sqlite::ComboSqliteRepository;
 use encryption_inmemory::{AesGcmKeyManager, Argon2idHasher};
 use models_catalog::StaticModelCatalog;
+
+#[cfg(test)]
+#[path = "di_catalog_tests.rs"]
+mod catalog_tests;
 use provider_sqlite::SqliteProviderRepository;
 #[allow(unused_imports)]
 use providers_ollama::OllamaProvider;
@@ -165,6 +169,10 @@ impl RookContainer {
     }
 
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
+        let model_catalog: Arc<dyn ModelCatalogPort> = Arc::new(
+            StaticModelCatalog::with_declarations(config.model_catalog.clone())
+                .map_err(anyhow::Error::msg)?,
+        );
         let default_combo = config
             .routing
             .default_combo
@@ -197,7 +205,6 @@ impl RookContainer {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2idHasher::new());
 
         // Model catalog — shared across DynamicProviderBuilder and RookUsecases
-        let model_catalog: Arc<dyn ModelCatalogPort> = Arc::new(StaticModelCatalog::new());
 
         // 5. Build ValidateSession for middleware
         let validate_session = Arc::new(ValidateSession::new(
@@ -538,16 +545,18 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
         .unwrap_or(std::path::Path::new("."))
         .join("api_key_secret.key");
 
-    // Defensive: ensure the secret path is actually a sibling, not a symlink escape.
-    let secret_abs = secret_path
-        .canonicalize()
-        .unwrap_or_else(|_| secret_path.clone());
+    // Defensive: compare canonicalized parents to handle filesystem aliases such as
+    // symlinked temporary directories and Windows 8.3 paths, while still rejecting
+    // an existing secret-file symlink that escapes the database directory.
     let db_parent = abs_db.parent().unwrap_or(std::path::Path::new("."));
     let db_parent_abs = db_parent
         .canonicalize()
         .unwrap_or_else(|_| db_parent.to_path_buf());
-    let secret_parent_abs = secret_abs.parent().unwrap_or(std::path::Path::new("."));
-    if secret_parent_abs != db_parent_abs {
+    let secret_abs = secret_path
+        .canonicalize()
+        .unwrap_or_else(|_| db_parent_abs.join("api_key_secret.key"));
+    let secret_resolved_parent = secret_abs.parent().unwrap_or(std::path::Path::new("."));
+    if secret_resolved_parent != db_parent_abs {
         anyhow::bail!(
             "secret path would escape database directory: {}",
             secret_path.display()
@@ -1318,7 +1327,10 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         input: ProviderBuildInput,
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
         // Query model catalog for models matching this provider kind
-        let catalog_entries = self.catalog.list().await;
+        let catalog_entries = self
+            .catalog
+            .list_for_connection(input.provider_kind, &input.connection_id)
+            .await;
         let catalog_models: Vec<ModelId> = catalog_entries
             .into_iter()
             .filter(|e| e.provider_kind == input.provider_kind)
@@ -1331,7 +1343,21 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         };
 
         let quota_recorder = self.quota_recorder(&input);
-        build_provider_from_connection_with_policy(
+        let mut metadata = std::collections::HashMap::new();
+        for model in &models {
+            metadata.insert(
+                model.clone(),
+                self.catalog
+                    .resolve(
+                        input.provider_kind,
+                        Some(&input.connection_id),
+                        model.as_str(),
+                    )
+                    .await,
+            );
+        }
+        let ceiling = adapter_capability_ceiling(input.provider_kind);
+        let provider = build_provider_from_connection_with_policy(
             &input.connection_id,
             input.provider_kind,
             &input.decrypted_credentials,
@@ -1343,6 +1369,48 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
                 endpoint_policy: input.endpoint_policy,
             },
         )
-        .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))
+        .map_err(|e| ManageConnectionsError::RegistryUpdateFailed(e.to_string()))?;
+        Ok(Arc::new(
+            rook_usecases::catalogued_provider::CataloguedProvider::new(
+                provider, metadata, ceiling,
+            ),
+        ))
     }
+}
+
+/// Verified implementation limits, not claims about any upstream model.
+fn adapter_capability_ceiling(kind: ProviderKind) -> rook_core::ModelCapabilities {
+    use rook_core::{
+        CapabilityOverrides,
+        CapabilityState::{Supported, Unsupported},
+        ModelCapabilities,
+    };
+    let mut out = ModelCapabilities::default();
+    out.apply(
+        &CapabilityOverrides {
+            tools: Some(
+                if matches!(
+                    kind,
+                    ProviderKind::OpenAI
+                        | ProviderKind::OpenAiCompatible
+                        | ProviderKind::AzureOpenAI
+                        | ProviderKind::Anthropic
+                ) {
+                    Supported
+                } else {
+                    Unsupported
+                },
+            ),
+            vision: Some(Unsupported),
+            reasoning: Some(Unsupported),
+            streaming: Some(if kind == ProviderKind::Gemini {
+                Unsupported
+            } else {
+                Supported
+            }),
+            context_tokens: None,
+        },
+        "adapter",
+    );
+    out
 }

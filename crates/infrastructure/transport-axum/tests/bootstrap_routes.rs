@@ -169,6 +169,26 @@ fn make_bootstrap_usecases(
 }
 
 fn make_openai_stream_router(provider: OpenAIProvider, authz: AuthzConfig) -> axum::Router {
+    // This protocol fixture explicitly exercises tool-capable native streaming.
+    let mut capabilities = rook_core::ModelCapabilities::default();
+    capabilities.apply(
+        &rook_core::CapabilityOverrides {
+            tools: Some(rook_core::CapabilityState::Supported),
+            streaming: Some(rook_core::CapabilityState::Supported),
+            ..Default::default()
+        },
+        "test_fixture",
+    );
+    let metadata = provider
+        .supported_models()
+        .iter()
+        .map(|model| (model.clone(), capabilities.clone()))
+        .collect();
+    let provider = rook_usecases::catalogued_provider::CataloguedProvider::new(
+        Arc::new(provider),
+        metadata,
+        capabilities,
+    );
     let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepo::fresh());
     let password_hasher: Arc<dyn PasswordHasher> = Arc::new(FakePasswordHasher);
     let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =

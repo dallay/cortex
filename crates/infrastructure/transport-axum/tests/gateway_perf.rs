@@ -83,6 +83,18 @@ impl InstantProvider {
 
 #[async_trait]
 impl ProviderPort for InstantProvider {
+    // This fixture implements native streaming for cancellation measurements.
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        let mut capabilities = rook_core::ModelCapabilities::default();
+        capabilities.apply(
+            &rook_core::CapabilityOverrides {
+                streaming: Some(rook_core::CapabilityState::Supported),
+                ..Default::default()
+            },
+            "test_fixture",
+        );
+        capabilities
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
