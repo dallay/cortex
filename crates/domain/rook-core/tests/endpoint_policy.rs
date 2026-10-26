@@ -187,6 +187,29 @@ fn metadata_and_link_local_are_rejected_even_when_granted() {
 }
 
 #[test]
+fn reserved_documentation_ranges_are_rejected_even_when_the_origin_is_granted() {
+    let granted = policy("https://service.example");
+    for address in [
+        "192.0.2.1",
+        "198.51.100.1",
+        "203.0.113.1",
+        "2001:db8::1",
+        "::ffff:192.0.2.1",
+        "::ffff:198.51.100.1",
+        "::ffff:203.0.113.1",
+        "2001:2::1",
+        "2001:10::1",
+    ] {
+        let ip = address.parse::<IpAddr>().expect("valid test address");
+        assert_eq!(
+            granted.validate_ip("service.example", ip, 443, "https"),
+            Err(EndpointPolicyError::NonGlobalAddress),
+            "reserved address must be rejected: {address}"
+        );
+    }
+}
+
+#[test]
 fn credentials_in_url_and_non_http_schemes_are_rejected() {
     let granted = policy("https://upstream.example");
     assert_eq!(

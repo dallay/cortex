@@ -105,6 +105,15 @@ impl ProviderPort for FakeProvider {
     fn supported_models(&self) -> &[ModelId] {
         &self.models
     }
+    fn model_capabilities(&self, _model: &ModelId) -> rook_core::ModelCapabilities {
+        rook_core::ModelCapabilities {
+            streaming: rook_core::CapabilityEvidence {
+                state: rook_core::CapabilityState::Supported,
+                source: "test fixture".into(),
+            },
+            ..Default::default()
+        }
+    }
     fn api_format(&self) -> ApiFormat {
         ApiFormat::OpenAI
     }
