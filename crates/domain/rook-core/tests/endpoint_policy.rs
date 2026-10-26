@@ -378,6 +378,8 @@ fn unsafe_dns_answers_are_denied_even_for_granted_hosts() {
         ("::", NonGlobalAddress),
         ("ff02::1", NonGlobalAddress),
         ("::ffff:100.64.0.1", NonGlobalAddress),
+        ("::8.8.8.8", NonGlobalAddress),
+        ("3fff::1", NonGlobalAddress),
     ] {
         assert_eq!(
             granted.validate_ip("upstream.example", address.parse().unwrap(), 443, "https"),

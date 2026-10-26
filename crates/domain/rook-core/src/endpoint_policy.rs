@@ -308,11 +308,11 @@ fn is_non_global_ip(ip: IpAddr) -> bool {
                 || (a == 100 && (64..=127).contains(&b))
                 || (a == 192 && b == 0)
                 || (a == 192 && b == 88 && c == 99)
-                || (a == 198 && ((b == 18 || b == 19) || (b == 51 && c == 100)))
+                || (a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)))
                 || (a == 203 && b == 0 && c == 113)
         }
         IpAddr::V6(ip) => {
-            if let Some(v4) = ip.to_ipv4() {
+            if let Some(v4) = ip.to_ipv4_mapped() {
                 return is_non_global_ip(IpAddr::V4(v4));
             }
             let segments = ip.segments();
@@ -320,6 +320,7 @@ fn is_non_global_ip(ip: IpAddr) -> bool {
                 || ip.is_multicast()
                 || (segments[0] & 0xffc0) == 0xfe80
                 || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xfff0) == 0x3ff0
                 || (segments[0] & 0xe000) != 0x2000
                 || (segments[0] == 0x2001 && ((segments[1] & 0xfe00) == 0 || segments[1] == 0x0db8))
         }
