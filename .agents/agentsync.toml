@@ -163,3 +163,387 @@ description = "Root AGENTS.md for tools that look for it in repo root (e.g., Jul
 source = "AGENTS.md"
 destination = "AGENTS.md"
 type = "symlink"
+
+# Product contexts: explicit scopes keep shared and future crates neutral.
+# AGENTS.md is shared by Codex/OpenCode; native names serve Claude and Gemini.
+
+[agents.root.targets.product_contexts]
+type = "module-map"
+source = "."
+destination = "."
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/domain/rook-core"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/application/rook-usecases"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/transport-axum"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/auth-sqlite"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/cache-memory"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/audit-sqlite"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/observability"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-core"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-openai"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-anthropic"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-ollama"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-gemini"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-groq"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/encryption-inmemory"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/provider-sqlite"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/db-migration"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/models-catalog"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/combo-sqlite"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/alias-sqlite"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "apps/rook"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "apps/huginn"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "crates/huginn"
+filename_override = "AGENTS.md"
+
+[[agents.root.targets.product_contexts.mappings]]
+source = "contexts/dashboard.md"
+destination = "apps/rook/dashboard"
+filename_override = "AGENTS.md"
+
+[agents.claude.targets.product_contexts]
+type = "module-map"
+source = "."
+destination = "."
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/domain/rook-core"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/application/rook-usecases"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/transport-axum"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/auth-sqlite"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/cache-memory"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/audit-sqlite"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/observability"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-core"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-openai"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-anthropic"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-ollama"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-gemini"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-groq"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/encryption-inmemory"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/provider-sqlite"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/db-migration"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/models-catalog"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/combo-sqlite"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/alias-sqlite"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "apps/rook"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "apps/huginn"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "crates/huginn"
+filename_override = "CLAUDE.md"
+
+[[agents.claude.targets.product_contexts.mappings]]
+source = "contexts/dashboard.md"
+destination = "apps/rook/dashboard"
+filename_override = "CLAUDE.md"
+
+[agents.gemini.targets.product_contexts]
+type = "module-map"
+source = "."
+destination = "."
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/domain/rook-core"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/application/rook-usecases"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/transport-axum"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/auth-sqlite"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/cache-memory"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/audit-sqlite"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/observability"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-core"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-openai"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-anthropic"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-ollama"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-gemini"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/providers-groq"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/encryption-inmemory"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/provider-sqlite"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/db-migration"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/models-catalog"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/combo-sqlite"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "crates/infrastructure/alias-sqlite"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = "apps/rook"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "apps/huginn"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = "crates/huginn"
+filename_override = "GEMINI.md"
+
+[[agents.gemini.targets.product_contexts.mappings]]
+source = "contexts/dashboard.md"
+destination = "apps/rook/dashboard"
+filename_override = "GEMINI.md"
+
+# Copilot path-specific contexts reuse the canonical applyTo frontmatter.
+[agents.copilot.targets.product_contexts]
+type = "module-map"
+source = "."
+destination = "."
+
+[[agents.copilot.targets.product_contexts.mappings]]
+source = "contexts/rook.md"
+destination = ".github/instructions"
+filename_override = "rook.instructions.md"
+
+[[agents.copilot.targets.product_contexts.mappings]]
+source = "contexts/huginn.md"
+destination = ".github/instructions"
+filename_override = "huginn.instructions.md"
+
+[[agents.copilot.targets.product_contexts.mappings]]
+source = "contexts/dashboard.md"
+destination = ".github/instructions"
+filename_override = "dashboard.instructions.md"
