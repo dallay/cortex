@@ -4,7 +4,7 @@ Esta guía cubre el setup local, herramientas, testing y flujo de CI.
 
 ## Requisitos
 
-- **Rust** 1.81+ (ver `rust-toolchain.toml`)
+- **Rust** (toolchain, componentes y targets definidos en `rust-toolchain.toml`)
 - **Node.js** + **pnpm** (para el dashboard)
 - **just** — gestor de tareas (ver `justfile`)
 - **Docker** (para E2E tests)
@@ -21,6 +21,11 @@ just doctor
 # Ver recetas disponibles
 just --list
 ```
+
+`just doctor` no instala ni modifica nada. Devuelve código distinto de cero si
+falta una herramienta obligatoria o si Node.js/pnpm no cumplen las versiones
+del repo. Docker, las dependencias del dashboard y las herramientas Cargo de
+recetas especializadas se reportan como avisos opcionales.
 
 ## Desarrollo de Rook (Backend Rust)
 
@@ -233,5 +238,6 @@ Los workflows de GitHub están en `.github/workflows/`:
 Para problemas específicos de E2E y Docker, consulta la sección **Troubleshooting** de [Dev Testing Guide](../dev/README.md).
 
 ### `just doctor` reporta herramientas faltantes
-- Instala lo que falte según la salida del comando
-- Las versiones están en `package.json` (pnpm), `rust-toolchain.toml`, `justfile`
+- Instala manualmente lo que falte según la salida del comando; `just doctor` no instala herramientas.
+- Node.js y pnpm se verifican contra `package.json`; Rust y sus componentes contra `rust-toolchain.toml`.
+- Las herramientas Cargo opcionales corresponden a recetas del `justfile`. Para validar el diagnóstico, ejecuta `just doctor-test`.
