@@ -263,6 +263,15 @@ pub trait SessionStore: Send + Sync {
 }
 #[async_trait]
 pub trait AgentLoop: Send + Sync {
+    /// Host-owned discovery only. Entries are not plugin command contributions.
+    async fn skill_commands(
+        &self,
+        _workspace: &std::path::Path,
+        _cancellation: CancellationToken,
+    ) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+
     async fn run(
         &self,
         session: &mut Session,

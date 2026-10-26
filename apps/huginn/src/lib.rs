@@ -1,5 +1,6 @@
-//! Host configuration and UI preference persistence.
+//! Host configuration, skill completion, and UI preference persistence.
 pub mod config;
+pub mod skill_completion;
 pub mod ui_settings;
 
 use std::path::PathBuf;

@@ -6,7 +6,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use huginn::{
     config::{Config, ModelReadiness},
-    resolve_workspace, ui_settings,
+    resolve_workspace, skill_completion, ui_settings,
 };
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
@@ -494,7 +494,11 @@ async fn run_prompt_loop(
         let Some(line) = line else {
             break;
         };
-        let line = line.trim().to_string();
+        let line = if line.trim_start().starts_with("/skill:") {
+            line
+        } else {
+            line.trim().to_string()
+        };
         if matches!(line.as_str(), "/quit" | "/exit") {
             break;
         }
@@ -629,28 +633,32 @@ async fn tui_chat(
     supervisor.register(Box::new(huginn_reference_extension::ReferenceExtension))?;
     supervisor.start().await?;
     let presentation = supervisor.resolve::<PresentationService>(&presentation_id())?;
+    let catalog = prompts::catalog(session)?;
+    let skill_result = {
+        let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+        implementation
+            .0
+            .skill_commands(&session.workspace, CancellationToken::new())
+            .await
+    };
+    let (mut host_commands, skill_error) = skill_completion::completion_result(skill_result);
+    host_commands.extend(catalog.entries.iter().map(|entry| {
+        (
+            format!("/prompts:{}", entry.name),
+            format!(
+                "{} {} [{}]",
+                entry.description,
+                entry.argument_hint,
+                if entry.project { "proyecto" } else { "usuario" }
+            ),
+        )
+    }));
     let connection = presentation.0.open(session).await?;
     let ui = connection.ui.clone();
-    let catalog = prompts::catalog(session)?;
-    ui.set_prompt_templates(
-        catalog
-            .entries
-            .iter()
-            .map(|entry| {
-                (
-                    format!("/prompts:{}", entry.name),
-                    format!(
-                        "{} {} [{}]",
-                        entry.description,
-                        entry.argument_hint,
-                        if entry.project { "proyecto" } else { "usuario" }
-                    ),
-                )
-            })
-            .collect(),
-    );
-    for diagnostic in catalog.diagnostics {
-        ui.notification(diagnostic);
+    ui.set_prompt_templates(host_commands);
+    if let Some(message) = skill_completion::startup_notification(skill_error, catalog.diagnostics)
+    {
+        ui.notification(message);
     }
     let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
     let result: anyhow::Result<()> = async {
@@ -669,7 +677,11 @@ async fn tui_chat(
             }
             let prompt = match prompts::expand(session, prompt) {
                 Ok(prompt) => prompt,
-                Err(error) => { ui.notification(error.to_string()); continue; }
+                Err(error) => {
+                    ui.notification(error.to_string());
+                    ui.synchronize(session);
+                    continue;
+                }
             };
             let cancel = CancellationToken::new();
             let operation = ui.begin(cancel.clone());

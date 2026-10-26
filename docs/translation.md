@@ -256,15 +256,15 @@ See [issue #63](https://github.com/dallay/cortex/issues/63).
 
 ## Comparison with Direct Wire-to-Wire Translation
 
-For reference, `tmp/OmniRoute/open-sse/translator/` uses a **wire-to-wire** approach:
+For reference, a direct **wire-to-wire** translator implementation looks like this:
 
-| Aspect               | Rook (domain pivot)                              | OmniRoute (wire-to-wire)                         |
+| Aspect               | Rook (domain pivot)                              | Wire-to-wire translator                          |
 |----------------------|--------------------------------------------------|--------------------------------------------------|
 | Translation path     | `wire → domain → wire`                           | `wire → wire`                                    |
 | N formats cost       | `2×N` adapters                                   | `N×(N-1)` translator pairs                       |
 | Format isolation     | Each adapter knows only its own format           | Each translator knows two formats                |
 | Edge case handling   | Phase 1: minimal; Phase 2: in-domain             | All edge cases in per-pair files (~500 LOC/pair) |
-| Type safety          | Rust types enforced at compile time              | TypeScript, runtime validation                   |
+| Type safety          | Rust types enforced at compile time              | Runtime validation in the host language          |
 | Registry key         | `(ApiFormat, ApiFormat)` → `Box<dyn Translator>` | `"from:to"` → `Fn` in a `Map`                    |
 | Tool prefix strategy | N/A yet (Phase 2)                                | `proxy_` prefix for Claude OAuth                 |
 | Streaming state      | `SseBuffer` (Phase 2)                            | `state` object passed per chunk                  |

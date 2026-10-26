@@ -332,7 +332,6 @@ classDiagram
 - **Database internals**: specific SQL schemas for audit-sqlite and provider-sqlite
 - **Encryption details**: AES-256-GCM parameters, Argon2id rounds
 - **Dashboard Vue.js app**: lives in `apps/rook/dashboard/`, separate frontend concern
-- **`tmp/OmniRoute`**: experimental/transient code, not production
 
 ---
 

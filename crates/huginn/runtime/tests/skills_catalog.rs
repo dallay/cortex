@@ -50,7 +50,13 @@ fn non_utf8_skill_parent_path_is_rejected_without_panicking_during_serialization
     let home = tempfile::tempdir().unwrap();
     let non_utf8 = std::ffi::OsStr::from_bytes(b"bad-\xff");
     let repo_path = temporary.path().join(non_utf8).join("repo");
-    fs::create_dir_all(&repo_path).unwrap();
+    if let Err(error) = fs::create_dir_all(&repo_path) {
+        if error.raw_os_error() == Some(libc::EILSEQ) {
+            eprintln!("skipping: filesystem rejects non-UTF-8 paths: {error}");
+            return;
+        }
+        panic!("failed to create non-UTF-8 repository path: {error}");
+    }
     fs::write(repo_path.join(".git"), "gitdir: /elsewhere").unwrap();
     let directory = repo_path.join(".agents/skills/valid");
     fs::create_dir_all(&directory).unwrap();
