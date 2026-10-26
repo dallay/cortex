@@ -243,7 +243,7 @@ fn default_combo_strategy() -> String {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutingConfig {
     pub strategy: StrategyConfig,
-    /// Optional default combo ID to use when no X-Rook-Combo header is present
+    /// Default combo UUID used only without an X-Rook-Combo header or rook/* alias.
     #[serde(default)]
     pub default_combo: Option<String>,
 }
@@ -276,8 +276,7 @@ pub struct CacheConfig {
     /// Layer 1: signature-based request deduplication.
     #[serde(default)]
     pub signature_cache: SignatureCacheConfig,
-    /// Layer 2: provider-side token caching.
-    /// Fields will be used in WU-2 (Phase 4-5: provider integration).
+    /// Unsupported legacy settings, accepted only for configuration compatibility.
     #[serde(default)]
     pub token_cache: TokenCacheConfig,
 }
@@ -292,19 +291,18 @@ pub struct SignatureCacheConfig {
     pub inspection_endpoints: bool,
 }
 
-/// Configuration for Layer 2 token cache (provider-side token caching).
-/// Fields will be used in WU-2 (Phase 4-5: provider integration).
+/// Unsupported provider-side token-cache settings. Explicit keys emit startup warnings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenCacheConfig {
-    /// Cache mode: auto (known providers only), always (all providers), never (disabled).
+    /// Legacy mode, accepted for compatibility but unsupported at runtime.
     #[serde(default = "default_cache_mode")]
     pub mode: CacheMode,
-    /// List of provider IDs that support token caching. Empty defaults to known supporting providers.
+    /// Legacy provider list, accepted for compatibility but unsupported at runtime.
     #[serde(default)]
     pub providers: Vec<String>,
 }
 
-/// Token cache mode — controls when cache-control headers are injected.
+/// Legacy token-cache modes; none currently controls cache-control injection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CacheMode {
@@ -450,7 +448,26 @@ impl RookConfig {
     /// Load config from a TOML file, expanding ~ in paths.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?; // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
-        let mut config: RookConfig = toml::from_str(&content)?;
+        let value: toml::Value = toml::from_str(&content)?;
+        let unsupported_token_cache_keys = ["mode", "providers"].map(|key| {
+            value
+                .get("cache")
+                .and_then(|cache| cache.get("token_cache"))
+                .and_then(|token_cache| token_cache.get(key))
+                .is_some()
+        });
+        let mut config: RookConfig = value.try_into()?;
+        for (key, present) in ["mode", "providers"]
+            .into_iter()
+            .zip(unsupported_token_cache_keys)
+        {
+            if present {
+                tracing::warn!(
+                    key = %format!("cache.token_cache.{key}"),
+                    "unsupported setting; remove this key from configuration; provider token-cache injection is not implemented; response caching is unaffected"
+                );
+            }
+        }
 
         if config.database.db_path.starts_with('~') {
             let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home dir"))?;

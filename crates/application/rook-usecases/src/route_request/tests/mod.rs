@@ -14,6 +14,8 @@ use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+mod default_combo;
+
 struct TestProvider {
     id: ProviderId,
     complete_error: Option<CortexError>,
