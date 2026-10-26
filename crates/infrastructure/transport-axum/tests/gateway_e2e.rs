@@ -191,6 +191,7 @@ impl ComboAliasRepositoryPort for MapComboAliasRepo {
 struct RevocableKeyRepo {
     revoked: Mutex<bool>,
     allowed_models: Vec<ModelId>,
+    allowed_providers: Mutex<Vec<ProviderId>>,
 }
 #[async_trait]
 impl ApiKeyRepositoryPort for RevocableKeyRepo {
@@ -210,7 +211,7 @@ impl ApiKeyRepositoryPort for RevocableKeyRepo {
             ],
             tier: ApiKeyTier::Free,
             allowed_models: self.allowed_models.clone(),
-            allowed_providers: vec![],
+            allowed_providers: self.allowed_providers.lock().unwrap().clone(),
         }))
     }
     async fn record_last_used(
@@ -477,7 +478,10 @@ async fn build_gateway_planned(
         })
         .unwrap();
     let fallback_router = Arc::new(FallbackRouter::new(
-        vec![openai_provider, anthropic_provider],
+        vec![
+            declared_fixture(openai_provider),
+            declared_fixture(anthropic_provider),
+        ],
         RoutingStrategy::Priority,
     ));
 
@@ -502,10 +506,26 @@ async fn build_gateway_planned(
     );
     let combo_id = combo.id;
     combos.insert(combo_id, combo);
+    let single = Combo::new(
+        "openai-only".into(),
+        ComboStrategy::Priority,
+        vec![ComboStep {
+            provider_id: ProviderId::new("openai-e2e"),
+            model: ModelId::new("gpt-4o"),
+            connection_id: None,
+            priority: 1,
+        }],
+    );
+    let single_id = single.id;
+    combos.insert(single_id, single);
     let mut aliases = HashMap::new();
     aliases.insert(
         "rook/e2e".to_string(),
         ComboAlias::new(ModelId::new("rook/e2e"), combo_id),
+    );
+    aliases.insert(
+        "rook/openai".into(),
+        ComboAlias::new(ModelId::new("rook/openai"), single_id),
     );
 
     let mut registry = FormatRegistry::new();
@@ -547,6 +567,7 @@ async fn build_gateway_planned(
     let key_repo = Arc::new(RevocableKeyRepo {
         revoked: Mutex::new(false),
         allowed_models: allowed_models.into_iter().map(ModelId::new).collect(),
+        allowed_providers: Mutex::new(vec![]),
     });
     let auth = AuthenticateClientApi::new(
         key_repo.clone() as Arc<dyn ApiKeyRepositoryPort>,
@@ -590,6 +611,30 @@ async fn build_gateway_planned(
         upstreams,
         combo_id,
     }
+}
+
+// The real adapters below implement these features. Declare evidence explicitly
+// rather than depending on the production unknown-capability default.
+fn declared_fixture(provider: Arc<dyn ProviderPort>) -> Arc<dyn ProviderPort> {
+    let mut capabilities = rook_core::ModelCapabilities::default();
+    capabilities.apply(
+        &rook_core::CapabilityOverrides {
+            tools: Some(rook_core::CapabilityState::Supported),
+            streaming: Some(rook_core::CapabilityState::Supported),
+            ..Default::default()
+        },
+        "test_fixture",
+    );
+    let metadata = provider
+        .supported_models()
+        .iter()
+        .map(|m| (m.clone(), capabilities.clone()))
+        .collect();
+    Arc::new(rook_usecases::catalogued_provider::CataloguedProvider::new(
+        provider,
+        metadata,
+        capabilities,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -918,7 +963,7 @@ async fn models_catalog_dynamic() {
         "no hardcoded ids may remain: {ids:?}"
     );
 
-    // Restricted key sees only its allowance.
+    // Alias permission alone does not authorize the physical steps.
     let gw = build_gateway(vec!["rook/e2e"], false).await;
     let (status, json) = get_json(gw.app.clone(), "/v1/models").await;
     assert_eq!(status, StatusCode::OK);
@@ -928,7 +973,117 @@ async fn models_catalog_dynamic() {
         .iter()
         .map(|e| e["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec!["rook/e2e"], "{ids:?}");
+    assert!(ids.is_empty(), "{ids:?}");
+}
+
+#[tokio::test]
+async fn models_catalog_effective_visibility_and_additive_metadata() {
+    let gw = build_gateway(vec!["gpt-4o", "rook/openai", "rook/e2e"], false).await;
+    *gw.key_repo.allowed_providers.lock().unwrap() = vec![ProviderId::new("openai-e2e")];
+    let (status, json) = get_json(gw.app.clone(), "/v1/models").await;
+    assert_eq!(status, StatusCode::OK);
+    let entries = json["data"].as_array().unwrap();
+    let ids: Vec<_> = entries.iter().map(|e| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec!["openai-e2e/gpt-4o", "rook/openai"]);
+    let physical = &entries[0];
+    assert_eq!(physical["object"], "model");
+    assert_eq!(physical["created"], 0);
+    assert_eq!(physical["owned_by"], "openai-e2e");
+    assert_eq!(
+        physical["rook"]["capabilities"]["tools"]["state"],
+        "supported"
+    );
+    assert_eq!(
+        physical["rook"]["capabilities"]["tools"]["source"],
+        "test_fixture"
+    );
+    assert_eq!(
+        entries[1]["rook"]["capabilities"]["tools"]["state"],
+        "unknown"
+    );
+    *gw.key_repo.revoked.lock().unwrap() = true;
+    assert_eq!(
+        get_json(gw.app, "/v1/models").await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(gw
+        .upstreams
+        .openai
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(gw
+        .upstreams
+        .anthropic
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn vision_http_rejection_happens_before_upstream_io() {
+    let gw = build_gateway(vec![], false).await;
+    let response = gw.app.oneshot(Request::builder().method(Method::POST).uri("/v1/chat/completions")
+        .header("authorization", "Bearer e2e-key-1").header("content-type", "application/json")
+        .body(axum::body::Body::from(serde_json::json!({"model":"gpt-4o","messages":[
+            {"role":"user","content":[{"type":"image_url","image_url":{"url":"https://image.example/test.png"}}]}
+        ]}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(gw
+        .upstreams
+        .openai
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn anthropic_images_and_nested_images_fail_before_upstream_io() {
+    let gw = build_gateway(vec![], false).await;
+    for content in [
+        serde_json::json!([{"type":"image","source":{"type":"url","url":"https://image.example/test.png"}}]),
+        serde_json::json!([{"type":"tool_result","tool_use_id":"call-1","content":[
+            {"type":"image","source":{"type":"url","url":"https://image.example/test.png"}}
+        ]}]),
+    ] {
+        let response = gw
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/messages")
+                    .header("authorization", "Bearer e2e-key-1")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"model":"claude-e2e","messages":[
+                            {"role":"user","content":content}
+                        ]})
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(gw
+        .upstreams
+        .openai
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(gw
+        .upstreams
+        .anthropic
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

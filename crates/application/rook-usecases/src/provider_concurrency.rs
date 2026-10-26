@@ -99,6 +99,9 @@ impl ProviderPort for ConcurrencyLimitedProvider {
     fn supports_model(&self, model: &ModelId) -> bool {
         self.inner.supports_model(model)
     }
+    fn model_capabilities(&self, model: &ModelId) -> rook_core::ModelCapabilities {
+        self.inner.model_capabilities(model)
+    }
     fn is_available(&self) -> bool {
         self.inner.is_available()
     }

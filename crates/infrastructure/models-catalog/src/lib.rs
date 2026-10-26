@@ -1,28 +1,14 @@
-// Static, in-memory implementation of `ModelCatalogPort`.
-//
-// The catalog is the source of truth for "what models an API key can be
-// restricted to" in the dashboard. Today the catalog is hardcoded per
-// `ProviderKind`. When the backend gains the ability to introspect real
-// provider capabilities (e.g. fetch `/v1/models` from each active provider
-// kind and union the results), this is the only file that should need to
-// change. Azure OpenAI deployments are connection-specific and are surfaced
-// from each connection's configured `default_model`, not this static list.
-
 use async_trait::async_trait;
-use rook_core::{ModelCatalogEntry, ModelCatalogPort, ProviderKind};
+use rook_core::{
+    ConnectionId, ModelCapabilities, ModelCatalogEntry, ModelCatalogPort, ModelDeclaration,
+    ProviderKind,
+};
 
-/// A static catalog mapping provider kinds to known model ids.
-///
-/// This is intentionally hardcoded. It is **not** a real-time view of
-/// provider capabilities — it is the set of models that the dashboard
-/// exposes in the API key restriction UI. Add new models here when the
-/// proxy learns to serve them.
-pub struct StaticModelCatalog;
-
-impl StaticModelCatalog {
-    pub fn new() -> Self {
-        Self
-    }
+/// Immutable declarative catalog. Runtime discovery can supply IDs to `resolve`
+/// without making unverified capability assertions.
+pub struct StaticModelCatalog {
+    bundled: Vec<ModelDeclaration>,
+    configured: Vec<ModelDeclaration>,
 }
 
 impl Default for StaticModelCatalog {
@@ -31,74 +17,111 @@ impl Default for StaticModelCatalog {
     }
 }
 
-fn catalog() -> Vec<ModelCatalogEntry> {
-    let openai = ["gpt-4o", "gpt-4-turbo", "gpt-4", "o1-preview", "o1-mini"];
-    let anthropic = [
-        "claude-3-5-sonnet-latest",
-        "claude-3-opus-20240229",
-        "claude-3-haiku-20240307",
-    ];
-    let ollama = ["llama3.2", "mistral", "qwen2.5"];
-    // Ollama Cloud has a distinct, expanded catalog separate from local Ollama.
-    // Both use `ProviderKind` taxonomy so the API key restriction UI remains
-    // consistent: `ollama` (local) vs `ollamacloud/` (cloud) prefixed IDs.
-    let ollama_cloud = [
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-        "kimi-k2.6",
-        "glm-5.1",
-        "minimax-m2.7",
-        "gemma4:31b",
-        "nemotron-3-super",
-        "qwen3.5:397b",
-        "qwen3-coder-next",
-    ];
-    let gemini = ["gemini-1.5-pro", "gemini-1.5-flash"];
-    let groq = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"];
+impl StaticModelCatalog {
+    pub fn new() -> Self {
+        Self::with_declarations(Vec::new()).expect("bundled catalog is valid")
+    }
 
-    let mut out = Vec::new();
-    for m in openai {
-        out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
-            provider_kind: ProviderKind::OpenAI,
-        });
+    pub fn with_declarations(configured: Vec<ModelDeclaration>) -> Result<Self, String> {
+        let bundled = serde_json::from_str(include_str!("models.json"))
+            .map_err(|e| format!("invalid bundled catalog: {e}"))?;
+        for (i, entry) in configured.iter().enumerate() {
+            if entry.model_id.trim().is_empty() || entry.model_id.trim() != entry.model_id {
+                return Err(
+                    "catalog model_id must be nonempty without surrounding whitespace".into(),
+                );
+            }
+            if entry.capabilities.context_tokens == Some(0) {
+                return Err("context_tokens must be positive".into());
+            }
+            if configured[..i].iter().any(|other| {
+                other.provider_kind == entry.provider_kind
+                    && other.connection_id == entry.connection_id
+                    && other.model_id == entry.model_id
+            }) {
+                return Err("duplicate catalog declaration".into());
+            }
+        }
+        Ok(Self {
+            bundled,
+            configured,
+        })
     }
-    for m in anthropic {
-        out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
-            provider_kind: ProviderKind::Anthropic,
-        });
-    }
-    for m in ollama {
-        out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
-            provider_kind: ProviderKind::Ollama,
-        });
-    }
-    for m in ollama_cloud {
-        out.push(ModelCatalogEntry {
-            model_id: format!("ollamacloud/{}", m),
-            provider_kind: ProviderKind::OllamaCloud,
-        });
-    }
-    for m in gemini {
-        out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
-            provider_kind: ProviderKind::Gemini,
-        });
-    }
-    for m in groq {
-        out.push(ModelCatalogEntry {
-            model_id: m.to_string(),
-            provider_kind: ProviderKind::Groq,
-        });
-    }
-    out
 }
 
 #[async_trait]
 impl ModelCatalogPort for StaticModelCatalog {
     async fn list(&self) -> Vec<ModelCatalogEntry> {
-        catalog()
+        let mut out: Vec<ModelCatalogEntry> = Vec::new();
+        for entry in self
+            .bundled
+            .iter()
+            .chain(&self.configured)
+            .filter(|e| e.connection_id.is_none())
+        {
+            if !out
+                .iter()
+                .any(|e| e.provider_kind == entry.provider_kind && e.model_id == entry.model_id)
+            {
+                out.push(ModelCatalogEntry {
+                    model_id: entry.model_id.clone(),
+                    provider_kind: entry.provider_kind,
+                });
+            }
+        }
+        out
+    }
+
+    async fn resolve(
+        &self,
+        kind: ProviderKind,
+        connection: Option<&ConnectionId>,
+        model: &str,
+    ) -> ModelCapabilities {
+        let mut out = ModelCapabilities::default();
+        for (entries, scoped, source) in [
+            (&self.bundled, false, "bundled"),
+            (&self.configured, false, "provider_configuration"),
+            (&self.configured, true, "connection_configuration"),
+        ] {
+            for entry in entries
+                .iter()
+                .filter(|e| e.provider_kind == kind && e.model_id == model)
+            {
+                let applies = if scoped {
+                    connection.is_some() && entry.connection_id.as_ref() == connection
+                } else {
+                    entry.connection_id.is_none()
+                };
+                if applies {
+                    out.apply(&entry.capabilities, source);
+                }
+            }
+        }
+        out
+    }
+
+    async fn list_for_connection(
+        &self,
+        kind: ProviderKind,
+        connection: &ConnectionId,
+    ) -> Vec<ModelCatalogEntry> {
+        let mut out = self.list().await;
+        for entry in self
+            .configured
+            .iter()
+            .filter(|e| e.provider_kind == kind && e.connection_id.as_ref() == Some(connection))
+        {
+            if !out
+                .iter()
+                .any(|e| e.provider_kind == kind && e.model_id == entry.model_id)
+            {
+                out.push(ModelCatalogEntry {
+                    model_id: entry.model_id.clone(),
+                    provider_kind: kind,
+                });
+            }
+        }
+        out
     }
 }

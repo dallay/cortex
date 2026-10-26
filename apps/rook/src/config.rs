@@ -10,6 +10,9 @@ use std::time::Duration;
 /// Root configuration for rook
 #[derive(Debug, Clone, Deserialize)]
 pub struct RookConfig {
+    /// Declarative provider/model metadata; optional connection-scoped overrides.
+    #[serde(default)]
+    pub model_catalog: Vec<rook_core::ModelDeclaration>,
     pub server: ServerConfig,
     pub routing: RoutingConfig,
     pub cache: CacheConfig,
@@ -478,6 +481,8 @@ impl RookConfig {
         }
 
         // Validate combo configurations
+        models_catalog::StaticModelCatalog::with_declarations(config.model_catalog.clone())
+            .map_err(|error| anyhow::anyhow!("invalid model catalog: {error}"))?;
         Self::validate_combos(&config.combos);
         config
             .provider_endpoint_policy
