@@ -6,20 +6,51 @@ PACKAGE_JSON="$ROOT_DIR/package.json"
 RUST_TOOLCHAIN_FILE="$ROOT_DIR/rust-toolchain.toml"
 
 read_node_minimum() {
-    sed -nE '/"engines"[[:space:]]*:/,/^[[:space:]]*}/s/^[[:space:]]*"node"[[:space:]]*:[[:space:]]*">=([0-9]+).*/\1/p' "$PACKAGE_JSON" | head -n 1
+    local manifest="${1:-$PACKAGE_JSON}"
+    sed -nE '/"engines"[[:space:]]*:/,/^[[:space:]]*}/s/^[[:space:]]*"node"[[:space:]]*:[[:space:]]*">=([0-9]+(\.[0-9]+)?(\.[0-9]+)?).*/\1/p' "$manifest" | head -n 1
 }
 
 read_pnpm_version() {
-    sed -nE 's/^[[:space:]]*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@([^"]+)".*/\1/p' "$PACKAGE_JSON" | head -n 1
+    local manifest="${1:-$PACKAGE_JSON}"
+    sed -nE 's/^[[:space:]]*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@([^"]+)".*/\1/p' "$manifest" | head -n 1
+}
+
+read_pnpm_actual() {
+    COREPACK_ENABLE_NETWORK=0 pnpm --version
+}
+
+check_pnpm_version() {
+    local expected="$1"
+    local actual
+
+    if ! command -v pnpm >/dev/null 2>&1; then
+        doctor_fail "pnpm $expected: no se encontró 'pnpm'."
+        return 1
+    fi
+
+    if actual="$(read_pnpm_actual 2>&1)"; then
+        if [[ "$actual" == "$expected" ]]; then
+            doctor_ok "pnpm $actual (versión fijada en package.json)."
+        else
+            doctor_fail "pnpm $actual no coincide con pnpm $expected de package.json."
+            return 1
+        fi
+    else
+        actual="${actual%%$'\n'*}"
+        doctor_fail "No se pudo verificar pnpm $expected sin acceso de red de Corepack: ${actual:-versión no disponible}."
+        return 1
+    fi
 }
 
 read_rust_channel() {
-    sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$RUST_TOOLCHAIN_FILE" | head -n 1
+    local manifest="${1:-$RUST_TOOLCHAIN_FILE}"
+    sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$manifest" | head -n 1
 }
 
 read_rust_components() {
-    sed -nE 's/^[[:space:]]*components[[:space:]]*=[[:space:]]*\[(.*)\].*/\1/p' "$RUST_TOOLCHAIN_FILE" |
-        sed -E 's/"//g; s/,/ /g'
+    local manifest="${1:-$RUST_TOOLCHAIN_FILE}"
+    sed -nE 's/^[[:space:]]*components[[:space:]]*=[[:space:]]*\[(.*)\].*/\1/p' "$manifest" |
+        sed -E 's/"//g; s/,[[:space:]]*/ /g'
 }
 
 version_at_least() {
@@ -95,10 +126,12 @@ check_optional_command() {
 }
 
 main() {
+    RUSTUP_AUTO_INSTALL=0
+    export RUSTUP_AUTO_INSTALL
     DOCTOR_FAILURES=0
     DOCTOR_WARNINGS=0
     local node_minimum pnpm_expected rust_channel rust_components component installed_components
-    local node_actual pnpm_actual
+    local node_actual
 
     printf 'Diagnóstico local de Cortex (no instala ni modifica nada)\n\n'
     printf 'Herramientas base\n'
@@ -125,15 +158,8 @@ main() {
     pnpm_expected="$(read_pnpm_version)"
     if [[ -z "$pnpm_expected" ]]; then
         doctor_fail "No pude leer packageManager desde package.json."
-    elif ! command -v pnpm >/dev/null 2>&1; then
-        doctor_fail "pnpm $pnpm_expected: no se encontró 'pnpm'."
     else
-        pnpm_actual="$(pnpm --version 2>&1)" || pnpm_actual=""
-        if [[ "$pnpm_actual" == "$pnpm_expected" ]]; then
-            doctor_ok "pnpm $pnpm_actual (versión fijada en package.json)."
-        else
-            doctor_fail "pnpm $pnpm_actual no coincide con pnpm $pnpm_expected de package.json."
-        fi
+        check_pnpm_version "$pnpm_expected" || true
     fi
 
     printf '\nToolchain Rust\n'
