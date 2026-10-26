@@ -26,36 +26,3 @@ pub(super) fn classify_attempt_result<T>(result: AttemptResult<T>) -> AttemptOut
         AttemptResult::TimedOut => AttemptOutcome::TimedOut,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::super::CortexError;
-    use super::{classify_attempt_result, AttemptOutcome, AttemptResult};
-
-    #[test]
-    fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
-        assert!(matches!(
-            classify_attempt_result(AttemptResult::Provider(Ok(()))),
-            AttemptOutcome::Success(())
-        ));
-
-        assert!(matches!(
-            classify_attempt_result::<()>(AttemptResult::Provider(Err(
-                CortexError::local_backpressure()
-            ))),
-            AttemptOutcome::LocalBackpressure(error) if error.is_local_backpressure()
-        ));
-
-        assert!(matches!(
-            classify_attempt_result::<()>(AttemptResult::Provider(Err(CortexError::provider(
-                "upstream failed"
-            )))),
-            AttemptOutcome::UpstreamFailure(error) if error.is_retryable()
-        ));
-
-        assert!(matches!(
-            classify_attempt_result::<()>(AttemptResult::TimedOut),
-            AttemptOutcome::TimedOut
-        ));
-    }
-}

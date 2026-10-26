@@ -1,3 +1,4 @@
+use super::outcome::{classify_attempt_result, AttemptOutcome, AttemptResult};
 use super::*;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -13,6 +14,31 @@ use rook_core::{
 use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+#[test]
+fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
+    assert!(matches!(
+        classify_attempt_result(AttemptResult::Provider(Ok(()))),
+        AttemptOutcome::Success(())
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::Provider(Err(CortexError::local_backpressure()))),
+        AttemptOutcome::LocalBackpressure(error) if error.is_local_backpressure()
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::Provider(Err(CortexError::provider(
+            "upstream failed"
+        )))),
+        AttemptOutcome::UpstreamFailure(error) if error.is_retryable()
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::TimedOut),
+        AttemptOutcome::TimedOut
+    ));
+}
 
 struct TestProvider {
     id: ProviderId,
@@ -2411,6 +2437,70 @@ async fn combo_upstream_failure_updates_real_router_circuit() {
     assert_eq!(router.circuit_states()[0].1.failures, 1);
 }
 
+#[tokio::test(start_paused = true)]
+async fn combo_timeout_updates_real_router_circuit_and_records_failed_audit_step() {
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let provider_id = ProviderId::new("openai");
+    let provider: Arc<dyn ProviderPort> = Arc::new(BlockingTestProvider {
+        inner: TestProvider {
+            id: provider_id.clone(),
+            complete_error: None,
+            stream_error: None,
+        },
+        started: Mutex::new(Some(started_tx)),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let combo = Combo::new(
+        "real-router-combo-timeout".to_string(),
+        ComboStrategy::Priority,
+        vec![step("openai", TEST_MODEL.as_str(), 1)],
+    );
+    let combo_id = combo.id;
+    let harness = combo_harness_with_router(
+        combo.clone(),
+        vec![("rook/coding", combo_id)],
+        router.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let audit = harness.audit.clone();
+    let mut req = request();
+    req.model = ModelId::new("rook/coding");
+    req.stream = false;
+    req.metadata.cacheable = false;
+    let task = tokio::spawn(async move {
+        harness
+            .usecase
+            .execute_combo(&combo, req, ApiFormat::OpenAI)
+            .await
+    });
+
+    started_rx.await.expect("combo provider call started");
+    assert!(!task.is_finished());
+    assert_eq!(router.circuit_states()[0].1.failures, 0);
+    assert!(audit.entries.lock().unwrap().is_empty());
+
+    tokio::time::advance(RouteRequest::COMBO_STEP_TIMEOUT + Duration::from_millis(1)).await;
+    let error = task
+        .await
+        .expect("combo task completes")
+        .expect_err("combo step times out");
+    let errors = error.combo_skip_reasons().expect("combo exhausted");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].0, provider_id);
+    assert!(errors[0].1.contains("timed out"));
+    assert_eq!(router.circuit_states()[0].1.failures, 1);
+
+    let entries = audit.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].status, RequestStatus::Failure);
+    assert_eq!(entries[0].provider, provider_id);
+    assert_eq!(entries[0].combo_id, Some(combo_id));
+    assert_eq!(entries[0].combo_step_index, Some(0));
+}
+
 #[tokio::test]
 async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
@@ -2468,8 +2558,9 @@ async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
         tokio::spawn(async move { usecase.execute_combo(&combo, req, ApiFormat::OpenAI).await });
     entered.await;
     assert_eq!(failures.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
     task.abort();
+    assert!(task.await.expect_err("combo task aborted").is_cancelled());
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
