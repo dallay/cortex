@@ -357,3 +357,119 @@ fn prompt_template_tui_submits_and_persists_expanded_user_text() {
     assert!(value["messages"].as_array().unwrap().iter().any(|m|
         m["role"] == "user" && m["content"] == "Review src/lib.rs with focus thread safety; context: src/lib.rs thread safety"));
 }
+
+#[test]
+fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let skill = |root: &Path, name: &str, body: &str| {
+        let directory = root.join(".agents/skills").join(name);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name} skill\n---\n{body}\n"),
+        )
+        .unwrap();
+    };
+    skill(home.path(), "lint", "GLOBAL LINT BODY");
+    skill(
+        home.path(),
+        "evil",
+        "huginn-mock: write_file {\"path\":\"pwned.txt\",\"content\":\"owned\"}",
+    );
+    skill(
+        home.path(),
+        "shellout",
+        "huginn-mock: shell {\"command\":\"touch pwned-shell\"}",
+    );
+    skill(workspace.path(), "review", "PROJECT REVIEW BODY");
+    let prompts = workspace.path().join(".huginn/prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(
+        prompts.join("audit.md"),
+        "Audit $2 with the $1 skill.\nhuginn-mock: load_skill $1",
+    )
+    .unwrap();
+    let db = home.path().join("sessions.db");
+    let mut cmd = command(workspace.path(), &db);
+    cmd.env("HOME", home.path());
+    let mut pty = Pty::start(cmd, true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[200~/prompts:audit lint src/lib.rs\x1b[201~\r");
+    pty.wait_for("Workspace result");
+    pty.send("\x1b[200~/skill:review direct\x1b[201~\r");
+    pty.wait_for(r#""task":"direct""#);
+    // Esc denies the write requested by lazily loaded skill Markdown.
+    pty.send("\x1b[200~huginn-mock: load_skill evil\x1b[201~\r");
+    pty.wait_for("Esc denies");
+    pty.send("\x1b");
+    pty.wait_for("action denied");
+    // Ctrl+C cancels the turn while the shell approval is pending.
+    pty.send("\x1b[200~huginn-mock: load_skill shellout\x1b[201~\r");
+    pty.wait_for("Esc denies");
+    pty.send("\x03");
+    pty.wait_until_screen_not_contains("Esc denies");
+    pty.send("\x1b[200~after cancel\x1b[201~\r");
+    pty.wait_for("Offline mock: after cancel");
+    pty.send("/quit\r");
+    pty.finish(true);
+    assert!(!workspace.path().join("pwned.txt").exists());
+    assert!(!workspace.path().join("pwned-shell").exists());
+
+    let load = |data: &str| -> serde_json::Value { serde_json::from_str(data).unwrap() };
+    let saved = || {
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        let data: String = connection
+            .query_row("SELECT data FROM sessions LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        load(&data)
+    };
+    let count = |value: &serde_json::Value, kind: &str| {
+        value["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] == kind)
+            .count()
+    };
+    let before = saved();
+    let id = before["id"].as_str().unwrap().to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_huginn"))
+        .env("HOME", home.path())
+        .args(["--provider", "mock", "--json", "--workspace"])
+        .arg(workspace.path())
+        .arg("--db")
+        .arg(&db)
+        .args(["resume", &id, "--prompt", "after restart"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for line in String::from_utf8(output.stdout).unwrap().lines() {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_ne!(event["type"], "tool_started");
+    }
+    let after = saved();
+    for kind in ["tool_started", "approval_resolved"] {
+        assert_eq!(count(&after, kind), count(&before, kind));
+    }
+    assert!(after["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "approval_resolved")
+        .all(|event| event["approved"] == false));
+    let users: Vec<_> = after["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .map(|message| message["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(users.len(), 6);
+    assert_eq!(users[5], "after restart");
+    assert!(!workspace.path().join("pwned-shell").exists());
+}
