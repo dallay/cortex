@@ -78,11 +78,15 @@ impl CircuitState {
         self.half_open_trial_in_flight = false;
     }
 
-    fn record_success(&mut self) {
+    fn record_success(&mut self, now: Instant) {
         self.failures = 0;
+        self.half_open_trial_in_flight = false;
+        // A concurrent successful call must not cancel upstream rate-limit backoff.
+        if self.rate_limit_reset.is_some() && self.is_open(now) {
+            return;
+        }
         self.is_open = false;
         self.cooldown_until = None;
-        self.half_open_trial_in_flight = false;
         self.rate_limit_reset = None;
     }
 
@@ -435,7 +439,7 @@ impl RouterPort for FallbackRouter {
     ) -> Option<rook_core::RouterTrialPermit> {
         let now = self.clock.now();
         let mut state = self.circuits.entry(provider.clone()).or_default();
-        if !state.claim_trial(now) {
+        if state.is_open(now) || !state.claim_trial(now) {
             return None;
         }
         if state.half_open_trial_in_flight {
@@ -451,8 +455,9 @@ impl RouterPort for FallbackRouter {
     }
 
     async fn on_success(&self, provider: &ProviderId) {
+        let now = self.clock.now();
         if let Some(mut state) = self.circuits.get_mut(provider) {
-            state.record_success();
+            state.record_success(now);
         }
     }
 
@@ -782,6 +787,87 @@ mod tests {
         let states = router.circuit_states();
         assert_eq!(states[0].1.failures, 2);
         assert!(!states[0].1.is_open);
+    }
+
+    #[tokio::test]
+    async fn success_preserves_active_rate_limit_cooldown_and_clears_it_after_expiry() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+        let reset_at = 1234567890;
+
+        router
+            .on_failure(
+                &provider_id,
+                &CortexError::rate_limited_with_reset(provider_id.clone(), 60, reset_at),
+            )
+            .await;
+        let deadline = router.circuits.get(&provider_id).unwrap().cooldown_until;
+        router.on_success(&provider_id).await;
+
+        let snapshot = &router.circuit_states()[0].1;
+        assert_eq!(snapshot.failures, 0);
+        assert!(snapshot.is_open);
+        assert_eq!(snapshot.rate_limit_reset, Some(reset_at));
+        assert_eq!(
+            router.circuits.get(&provider_id).unwrap().cooldown_until,
+            deadline
+        );
+        assert!(router.select(&request).await.is_err());
+
+        clock.advance(Duration::from_secs(60));
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("cooldown expired");
+        router.on_success(&provider_id).await;
+        permit.complete();
+        let snapshot = &router.circuit_states()[0].1;
+        assert_eq!(snapshot.failures, 0);
+        assert!(!snapshot.is_open);
+        assert!(snapshot.cooldown_until.is_none());
+        assert!(snapshot.rate_limit_reset.is_none());
+        assert!(router.select(&request).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn trial_acquisition_rechecks_cooldown_after_provider_selection() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+
+        // A concurrent failure can open the circuit after selection.
+        router.select(&request).await.expect("initially available");
+        router
+            .on_failure(
+                &provider_id,
+                &CortexError::rate_limited(provider_id.clone(), 60),
+            )
+            .await;
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+
+        clock.advance(Duration::from_secs(60));
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("cooldown expired");
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+        drop(permit);
+        assert!(router.try_acquire_trial(&provider_id).await.is_some());
+
+        router.reset_circuit(&provider_id);
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
     }
 
     #[tokio::test]

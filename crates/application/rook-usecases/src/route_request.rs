@@ -1395,7 +1395,6 @@ impl RouteRequest {
                         local_backpressure = Some(e);
                         continue;
                     }
-                    trial_permit.complete();
                     steps_attempted += 1;
                     provider_attempt_failed = true;
                     // Provider returned an error
@@ -1417,6 +1416,7 @@ impl RouteRequest {
 
                     // Notify router of failure (circuit breaker)
                     notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
+                    trial_permit.complete();
 
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
@@ -1426,7 +1426,6 @@ impl RouteRequest {
                     continue;
                 }
                 Err(_timeout) => {
-                    trial_permit.complete();
                     steps_attempted += 1;
                     provider_attempt_failed = true;
                     // Step timed out
@@ -1447,6 +1446,7 @@ impl RouteRequest {
                         .await;
 
                     notify_provider_failure(self.router.as_ref(), &audit_provider_id, &err).await;
+                    trial_permit.complete();
                     continue;
                 }
             }
