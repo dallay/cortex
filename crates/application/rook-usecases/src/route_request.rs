@@ -156,6 +156,7 @@ pub struct RouteRequest {
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
     combo_alias_repository: Option<Arc<dyn ComboAliasRepositoryPort>>,
+    default_combo: Option<ComboId>,
     /// Reader for upstream quota observations used by the eligibility preflight.
     quota_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
     /// Policy that decides when quota evidence is trustworthy.
@@ -197,6 +198,7 @@ impl RouteRequest {
             alias_config,
             telemetry,
             combo_alias_repository: None,
+            default_combo: None,
             quota_reader: None,
             quota_policy: QuotaEligibilityPolicy::default(),
         }
@@ -226,6 +228,18 @@ impl RouteRequest {
     pub fn with_combo_alias_repository(mut self, repo: Arc<dyn ComboAliasRepositoryPort>) -> Self {
         self.combo_alias_repository = Some(repo);
         self
+    }
+
+    /// Select this combo only when neither a header combo nor a virtual alias is selected.
+    pub fn with_default_combo(mut self, combo_id: Option<ComboId>) -> Self {
+        self.default_combo = combo_id;
+        self
+    }
+
+    fn apply_default_combo(&self, req: &mut CompletionRequest) {
+        if req.metadata.combo_id.is_none() && !is_virtual_model(&req.model) {
+            req.metadata.combo_id = self.default_combo;
+        }
     }
 
     /// Get combo-alias repository reference (for HTTP layer wiring).
@@ -276,6 +290,7 @@ impl RouteRequest {
         mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
+        self.apply_default_combo(&mut req);
         // Resolve aliases before combo dispatch and restrictions checks so combo
         // execution also uses the canonical model. Virtual models are combo aliases.
         if !is_virtual_model(&req.model) {
@@ -726,6 +741,7 @@ impl RouteRequest {
         let start = Instant::now();
 
         // 0. Resolve model alias if enabled (BEFORE restrictions check).
+        self.apply_default_combo(&mut req);
         // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
         // they are combo aliases handled below. Shared helper with the
         // non-streaming path so both enforce the same invariant.

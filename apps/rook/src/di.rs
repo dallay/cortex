@@ -173,6 +173,15 @@ impl RookContainer {
             StaticModelCatalog::with_declarations(config.model_catalog.clone())
                 .map_err(anyhow::Error::msg)?,
         );
+        let default_combo = config
+            .routing
+            .default_combo
+            .as_deref()
+            .map(ComboId::parse_str)
+            .transpose()
+            .map_err(|error| {
+                anyhow::anyhow!("invalid routing.default_combo: expected a combo UUID: {error}")
+            })?;
         // Run startup migrations once before constructing any repositories
         run_startup_migrations(&config.database.db_path)?;
 
@@ -309,7 +318,17 @@ impl RookContainer {
         tracing::info!(admin_id = %admin.id, "admin user ready");
 
         // 8b. Seed combos from config into SQLite
-        seed_combos_from_config(&combo_repo, &config.combos).await;
+        seed_combos_from_config(&combo_repo, &config.combos, default_combo).await?;
+        if let Some(id) = default_combo {
+            let combo = combo_repo
+                .find(&id)
+                .await
+                .map_err(|error| anyhow::anyhow!("cannot validate routing.default_combo {id}: {error}"))?
+                .ok_or_else(|| anyhow::anyhow!("routing.default_combo {id} does not exist; create the combo or remove routing.default_combo"))?;
+            combo
+                .validate()
+                .map_err(|error| anyhow::anyhow!("invalid routing.default_combo {id}: {error}"))?;
+        }
 
         // 9. Format registry and use cases
         let mut format_registry = transport_axum::format_registry::FormatRegistry::new();
@@ -359,6 +378,7 @@ impl RookContainer {
                     telemetry_tracker, // telemetry tracker from config
                 )
                 .with_combo_alias_repository(combo_alias_repo.clone())
+                .with_default_combo(default_combo)
                 .with_quota_observation_reader(quota_observation_recorder.clone()),
                 ManageProviders::new(router.clone()),
                 health_check,
@@ -609,13 +629,14 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
 /// - If exists: update with new config
 /// - If not: create new combo
 ///
-/// Errors are logged but don't block startup.
+/// Errors are logged without blocking startup, except for the configured default.
 async fn seed_combos_from_config(
     combo_repo: &Arc<dyn ComboRepositoryPort>,
     combos: &[crate::config::ComboConfig],
-) {
+    default_combo: Option<ComboId>,
+) -> anyhow::Result<()> {
     if combos.is_empty() {
-        return;
+        return Ok(());
     }
 
     let mut seeded = 0;
@@ -624,13 +645,24 @@ async fn seed_combos_from_config(
     for combo_cfg in combos {
         match process_combo_config(combo_repo, combo_cfg).await {
             Ok(()) => seeded += 1,
-            Err(_) => failed += 1,
+            Err(error) => {
+                if ComboId::parse_str(&combo_cfg.id).ok() == default_combo
+                    && default_combo.is_some()
+                {
+                    return Err(anyhow::anyhow!(
+                        "invalid routing.default_combo {}: cannot load configured combo: {error}",
+                        combo_cfg.id
+                    ));
+                }
+                failed += 1;
+            }
         }
     }
 
     if seeded > 0 || failed > 0 {
         tracing::info!(seeded, failed, "combo seeding from config completed");
     }
+    Ok(())
 }
 
 async fn process_combo_config(

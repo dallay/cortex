@@ -30,6 +30,8 @@ fn fixture_capabilities() -> rook_core::ModelCapabilities {
     capabilities
 }
 
+mod default_combo;
+
 struct TestProvider {
     id: ProviderId,
     complete_error: Option<CortexError>,
