@@ -40,6 +40,8 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
     ));
 }
 
+mod default_combo;
+
 struct TestProvider {
     id: ProviderId,
     complete_error: Option<CortexError>,

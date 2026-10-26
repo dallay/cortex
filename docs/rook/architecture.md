@@ -81,6 +81,19 @@ Combos provide automatic failover across multiple provider/model pairs. They are
 - **Execution** (`RouteRequest::execute_combo`) — priority-ordered step execution with timeouts, circuit breaker integration, and comprehensive audit/usage tracking
 - **Configuration** (`apps/rook/config`) — TOML-based combo definitions seeded at startup
 
+`apps/rook/di` conecta `routing.default_combo` con `RouteRequest` después de
+cargar los combos. El arranque rechaza un UUID mal formado, un default
+inexistente o inválido; la comprobación incluye los combos persistidos en SQLite.
+`RouteRequest` aplica el default únicamente si la solicitud no selecciona un
+combo mediante `X-Rook-Combo` ni un alias `rook/*`. Ambas modalidades de ejecución
+reutilizan las comprobaciones de autorización y el flujo existente de combos.
+Todos los pasos deben estar autorizados antes de cualquier llamada upstream.
+La guía de configuración incluye las instrucciones de migración de DALLAY-710.
+
+Las claves heredadas `cache.token_cache.mode` y `cache.token_cache.providers`
+solo se aceptan por compatibilidad y generan advertencias si aparecen en la
+configuración. No controlan inyección de token cache ni la caché de respuestas.
+
 **Execution Flow:**
 
 ```

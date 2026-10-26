@@ -80,7 +80,7 @@ requests_per_minute = 30
 | Field           | Type   | Default      | Description                                    |
 |-----------------|--------|--------------|------------------------------------------------|
 | `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies       |
-| `default_combo` | string | `null`       | Optional default combo ID (UUID) to use when no `X-Rook-Combo` header is present |
+| `default_combo` | string | `null`       | UUID del combo predeterminado; solo se aplica sin `X-Rook-Combo` ni alias `rook/*` |
 
 Supported values for `strategy`: `priority`, `round-robin`, `model-based`
 
@@ -159,8 +159,28 @@ If all steps fail, return `AllProvidersExhausted` error.
 **Usage:**
 
 1. **Via header**: Set `X-Rook-Combo: <combo-id>` on any chat completion request
-2. **Default combo**: Set `routing.default_combo = "<combo-id>"` to use when no header is present
+2. **Combo predeterminado**: Establecer `routing.default_combo = "<combo-id>"` para solicitudes sin encabezado ni alias `rook/*`, tanto con streaming como sin streaming
 3. **Manage via API**: Use `/api/combos` CRUD endpoints to create/update/delete combos
+
+Un alias `rook/*` selecciona su propio combo. Combinar ese alias con
+`X-Rook-Combo` sigue siendo un error de solicitud; el default no lo corrige.
+Los encabezados inválidos y los alias desconocidos conservan sus errores.
+Antes de llamar a un proveedor, Rook comprueba las restricciones de la API key
+sobre el modelo solicitado y todos los modelos y proveedores del combo.
+Un paso no autorizado rechaza el combo completo con 403, sin ejecutar pasos previos.
+
+#### Migración de `routing.default_combo` — DALLAY-710
+
+Esta clave antes se aceptaba sin efecto. Ahora selecciona realmente el combo.
+Para conservar el enrutamiento normal por modelo, eliminar `routing.default_combo`.
+
+El valor debe ser un UUID de combo válido. Al arrancar, Rook carga los combos
+del TOML y después comprueba el default en SQLite. Se permiten combos persistidos
+que no aparecen en el TOML. Un ID mal formado, un combo inexistente o un combo
+inválido impiden arrancar con un diagnóstico que identifica `routing.default_combo`.
+Si falla la carga de la definición del default, Rook no reutiliza silenciosamente
+una versión anterior persistida. Corregir la definición o retirar la clave antes
+de reiniciar. La disponibilidad temporal de un proveedor no invalida el combo al inicio.
 
 **Streaming Limitation:**
 
@@ -178,6 +198,20 @@ If all steps fail, return `AllProvidersExhausted` error.
 |------------|------|---------|---------------------------------|
 | `enabled`  | bool | `true`  | Enable/disable response caching |
 | `ttl_secs` | u64  | `300`   | Cache TTL in seconds            |
+
+#### Configuración de token cache no soportada — migración DALLAY-710
+
+`cache.token_cache.mode` y `cache.token_cache.providers` no están soportadas:
+Rook no implementa inyección de `cache-control` mediante estas claves.
+Si alguna aparece explícitamente, Rook emite una advertencia al cargar la
+configuración, incluso con `mode = "never"` o `providers = []`. Las claves
+conservan su lectura compatible y no provocan por sí mismas un error de inicio.
+Si están ausentes, no se emite la advertencia.
+
+Eliminar ambas claves y la sección `[cache.token_cache]` si queda vacía.
+No sustituirlas por opciones nuevas. Esta retirada no modifica la caché de
+respuestas de `[cache]`, la deduplicación de solicitudes ni la caché que un
+proveedor aplique por su cuenta.
 
 ### `[database]`
 
