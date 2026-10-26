@@ -27,6 +27,10 @@ use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViola
 use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
+#[path = "route_request/outcome.rs"]
+mod outcome;
+use outcome::{classify_attempt_result, AttemptOutcome, AttemptResult};
+
 fn record_combo_skip(
     errors: &mut Vec<(ProviderId, String)>,
     provider_id: &ProviderId,
@@ -459,10 +463,10 @@ impl RouteRequest {
             let result = provider.complete(&provider_req).await;
             let latency_ms = start.elapsed().as_millis() as u64;
 
-            match result {
-                Ok(provider_resp) => {
-                    _trial_permit.complete();
+            let e = match classify_attempt_result(AttemptResult::Provider(result)) {
+                AttemptOutcome::Success(provider_resp) => {
                     notify_provider_success(self.router.as_ref(), &provider_id).await;
+                    _trial_permit.complete();
                     // If this is a retry (excluded list is not empty), record successful failover
                     if !excluded.is_empty() {
                         tracing::info!(
@@ -485,88 +489,97 @@ impl RouteRequest {
                         })
                         .await;
                 }
-                Err(e) => {
-                    if e.is_local_backpressure() {
-                        drop(_trial_permit);
-                        local_backpressure = Some(CortexError::local_backpressure());
-                    } else {
-                        _trial_permit.complete();
-                        // Record failure for circuit breaker before checking retryability.
-                        notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
-                        provider_attempt_failed = true;
-                    }
-                    let final_latency = start.elapsed().as_millis() as u64;
+                AttemptOutcome::LocalBackpressure(error) => {
+                    // Local admission pressure releases the half-open reservation
+                    // without touching the circuit state.
+                    drop(_trial_permit);
+                    local_backpressure = Some(CortexError::local_backpressure());
+                    error
+                }
+                AttemptOutcome::UpstreamFailure(error) => {
+                    // Record failure for circuit breaker before checking retryability.
+                    notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
+                    _trial_permit.complete();
+                    provider_attempt_failed = true;
+                    error
+                }
+                AttemptOutcome::TimedOut => {
+                    unreachable!("completion attempts have no timeout wrapper")
+                }
+            };
 
-                    // Non-retryable errors: record audit/usage/telemetry and return
-                    if !e.is_retryable() {
-                        self.record_failure_audit_usage(
-                            &req,
-                            &provider_id,
-                            connection_id,
+            let final_latency = start.elapsed().as_millis() as u64;
+
+            {
+                // Non-retryable errors: record audit/usage/telemetry and return
+                if !e.is_retryable() {
+                    self.record_failure_audit_usage(
+                        &req,
+                        &provider_id,
+                        connection_id,
+                        final_latency,
+                        &e,
+                    )
+                    .await;
+                    if let Some(telemetry) = &self.telemetry {
+                        telemetry.record_observation(
+                            provider_id,
                             final_latency,
-                            &e,
-                        )
-                        .await;
-                        if let Some(telemetry) = &self.telemetry {
-                            telemetry.record_observation(
-                                provider_id,
-                                final_latency,
-                                None,
-                                ObservationStatus::Failure,
-                            );
-                        }
-                        return Err(e);
-                    }
-
-                    // Log retry attempt
-                    tracing::warn!(
-                        provider = %provider_id,
-                        attempt = provider_attempts,
-                        max_attempts = max_attempts,
-                        error = %e,
-                        "provider failed, trying next"
-                    );
-
-                    // Record retry attempt metric (via tracing for now)
-                    tracing::debug!(
-                        provider = %provider_id,
-                        attempt = provider_attempts,
-                        "retry attempt"
-                    );
-
-                    // Exclude this provider and retry
-                    excluded.push(provider_id.clone());
-
-                    // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
-                    if excluded.len() >= total_providers {
-                        if !provider_attempt_failed {
-                            if let Some(error) = local_backpressure {
-                                return Err(error);
-                            }
-                        }
-                        tracing::error!(
-                            providers = ?self.router.providers(),
-                            excluded = ?excluded,
-                            "all providers exhausted"
+                            None,
+                            ObservationStatus::Failure,
                         );
-                        self.record_failure_audit_usage(
-                            &req,
-                            &provider_id,
-                            connection_id,
-                            final_latency,
-                            &e,
-                        )
-                        .await;
-                        if let Some(telemetry) = &self.telemetry {
-                            let status = if e.is_rate_limited() {
-                                ObservationStatus::RateLimited
-                            } else {
-                                ObservationStatus::Failure
-                            };
-                            telemetry.record_observation(provider_id, final_latency, None, status);
-                        }
-                        return Err(CortexError::all_providers_exhausted());
                     }
+                    return Err(e);
+                }
+
+                // Log retry attempt
+                tracing::warn!(
+                    provider = %provider_id,
+                    attempt = provider_attempts,
+                    max_attempts = max_attempts,
+                    error = %e,
+                    "provider failed, trying next"
+                );
+
+                // Record retry attempt metric (via tracing for now)
+                tracing::debug!(
+                    provider = %provider_id,
+                    attempt = provider_attempts,
+                    "retry attempt"
+                );
+
+                // Exclude this provider and retry
+                excluded.push(provider_id.clone());
+
+                // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
+                if excluded.len() >= total_providers {
+                    if !provider_attempt_failed {
+                        if let Some(error) = local_backpressure {
+                            return Err(error);
+                        }
+                    }
+                    tracing::error!(
+                        providers = ?self.router.providers(),
+                        excluded = ?excluded,
+                        "all providers exhausted"
+                    );
+                    self.record_failure_audit_usage(
+                        &req,
+                        &provider_id,
+                        connection_id,
+                        final_latency,
+                        &e,
+                    )
+                    .await;
+                    if let Some(telemetry) = &self.telemetry {
+                        let status = if e.is_rate_limited() {
+                            ObservationStatus::RateLimited
+                        } else {
+                            ObservationStatus::Failure
+                        };
+                        telemetry.record_observation(provider_id, final_latency, None, status);
+                    }
+                    return Err(CortexError::all_providers_exhausted());
                 }
             }
         }
@@ -775,7 +788,7 @@ impl RouteRequest {
         let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
-        let (provider_id, connection_id, mut upstream) = 'select: {
+        let (provider_id, connection_id, mut upstream, trial_permit) = 'select: {
             for _ in 0..selection_budget {
                 if provider_attempts >= max_attempts {
                     break;
@@ -842,21 +855,26 @@ impl RouteRequest {
                     continue;
                 };
                 provider_attempts += 1;
-                match provider.stream(&provider_req).await {
-                    Ok(upstream) => {
-                        trial_permit.complete();
-                        notify_provider_success(self.router.as_ref(), &provider_id).await;
-                        break 'select (provider_id, connection_id, upstream);
+                match classify_attempt_result(AttemptResult::Provider(
+                    provider.stream(&provider_req).await,
+                )) {
+                    AttemptOutcome::Success(upstream) => {
+                        // The half-open reservation stays held until the stream
+                        // reaches EOF, fails, or the consumer abandons it.
+                        break 'select (provider_id, connection_id, upstream, trial_permit);
                     }
-                    Err(error) if error.is_local_backpressure() => {
+                    AttemptOutcome::LocalBackpressure(error) => {
                         drop(trial_permit);
                         excluded.push(provider_id);
                         local_backpressure = Some(error);
                     }
-                    Err(error) => {
-                        trial_permit.complete();
+                    AttemptOutcome::UpstreamFailure(error) => {
                         notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
+                        trial_permit.complete();
                         return Err(error);
+                    }
+                    AttemptOutcome::TimedOut => {
+                        unreachable!("provider stream has no timeout wrapper")
                     }
                 }
             }
@@ -872,7 +890,9 @@ impl RouteRequest {
         let api_key_id = req.metadata.api_key_id.clone();
         let requested_tier = req.metadata.requested_tier.clone();
 
+        let router_for_stream = router.clone();
         let stream = async_stream::try_stream! {
+            let mut trial_permit = Some(trial_permit);
             let mut final_usage: Option<TokenUsage> = None;
             let mut ttft_ms: Option<u64> = None;
 
@@ -889,6 +909,9 @@ impl RouteRequest {
                     }
                     Err(error) => {
                         notify_provider_failure(router.as_ref(), &provider_id, &error).await;
+                        if let Some(permit) = trial_permit.take() {
+                            permit.complete();
+                        }
                         let status = if error.is_rate_limited() {
                             RequestStatus::RateLimited
                         } else {
@@ -957,6 +980,11 @@ impl RouteRequest {
                         Err(error)?;
                     }
                 }
+            }
+
+            notify_provider_success(router_for_stream.as_ref(), &provider_id).await;
+            if let Some(permit) = trial_permit.take() {
+                permit.complete();
             }
 
             let latency_ms = start.elapsed().as_millis() as u64;
@@ -1450,11 +1478,14 @@ impl RouteRequest {
                     .await;
 
             let latency_ms = step_start.elapsed().as_millis() as u64;
-            match step_result {
-                Ok(Ok(provider_resp)) => {
-                    // SUCCESS
-                    trial_permit.complete();
+            match classify_attempt_result(match step_result {
+                Ok(result) => AttemptResult::Provider(result),
+                Err(_) => AttemptResult::TimedOut,
+            }) {
+                AttemptOutcome::Success(provider_resp) => {
+                    // Resolve circuit state before any persistence awaits.
                     notify_provider_success(self.router.as_ref(), &audit_provider_id).await;
+                    trial_permit.complete();
                     let resp = self.format_translator.translate_response(
                         provider_format,
                         client_format,
@@ -1473,12 +1504,15 @@ impl RouteRequest {
 
                     return Ok(resp);
                 }
-                Ok(Err(e)) => {
-                    if e.is_local_backpressure() {
-                        drop(trial_permit);
-                        local_backpressure = Some(e);
-                        continue;
-                    }
+                AttemptOutcome::LocalBackpressure(error) => {
+                    drop(trial_permit);
+                    local_backpressure = Some(error);
+                    continue;
+                }
+                AttemptOutcome::UpstreamFailure(e) => {
+                    // Update circuit state and release the reservation before audit and usage persistence await.
+                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
+                    trial_permit.complete();
                     steps_attempted += 1;
                     provider_attempt_failed = true;
                     // Provider returned an error
@@ -1498,10 +1532,6 @@ impl RouteRequest {
                     self.record_combo_failure(&step_context, latency_ms, &step_req, &e)
                         .await;
 
-                    // Notify router of failure (circuit breaker)
-                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
-                    trial_permit.complete();
-
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
                         return Err(e);
@@ -1509,15 +1539,23 @@ impl RouteRequest {
                     // 429 / 5xx / network errors: continue to next step
                     continue;
                 }
-                Err(_timeout) => {
-                    steps_attempted += 1;
-                    provider_attempt_failed = true;
-                    // Step timed out
-                    let err = CortexError::provider(format!(
+                AttemptOutcome::TimedOut => {
+                    let timeout_error = CortexError::provider(format!(
                         "step {} timed out after {:?}",
                         step_index + 1,
                         Self::COMBO_STEP_TIMEOUT
                     ));
+                    notify_provider_failure(
+                        self.router.as_ref(),
+                        &audit_provider_id,
+                        &timeout_error,
+                    )
+                    .await;
+                    trial_permit.complete();
+                    steps_attempted += 1;
+                    provider_attempt_failed = true;
+                    // Step timed out
+                    let err = timeout_error;
                     errors.push((provider_id.clone(), err.to_string()));
 
                     tracing::warn!(
@@ -1529,8 +1567,6 @@ impl RouteRequest {
                     self.record_combo_failure(&step_context, latency_ms, &step_req, &err)
                         .await;
 
-                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &err).await;
-                    trial_permit.complete();
                     continue;
                 }
             }

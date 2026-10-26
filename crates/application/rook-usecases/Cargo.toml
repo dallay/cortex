@@ -55,5 +55,6 @@ hex = "0.4"
 
 [dev-dependencies]
 cortex-test-support = { path = "../../test-support" }
+tokio = { version = "1", features = ["test-util"] }
 wiremock = "=0.6.5"
 serde_json = "1"

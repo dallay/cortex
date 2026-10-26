@@ -42,6 +42,11 @@ struct CircuitState {
     cooldown_until: Option<Instant>,
     /// Whether a half-open recovery trial is currently in flight.
     half_open_trial_in_flight: bool,
+    /// Monotonic counter identifying the current half-open reservation.
+    ///
+    /// A permit only clears the reservation when it still owns the current
+    /// generation, so a late release cannot clear a newer trial.
+    trial_generation: u64,
     /// Rate limit reset time from upstream provider (Unix epoch seconds)
     rate_limit_reset: Option<u64>,
 }
@@ -106,18 +111,29 @@ impl CircuitState {
     }
 
     fn claim_trial(&mut self, now: Instant) -> bool {
-        if !self.is_half_open(now) {
+        if !self.is_open {
             return true;
+        }
+        if !self.is_half_open(now) {
+            return false;
         }
         if self.half_open_trial_in_flight {
             return false;
         }
+        self.trial_generation = self.trial_generation.wrapping_add(1);
         self.half_open_trial_in_flight = true;
         true
     }
 
-    fn release_trial(&mut self) {
-        self.half_open_trial_in_flight = false;
+    fn release_trial(&mut self, generation: u64) {
+        if self.half_open_trial_in_flight && self.trial_generation == generation && self.is_open {
+            self.half_open_trial_in_flight = false;
+        }
+    }
+
+    fn active_trial_generation(&self) -> Option<u64> {
+        self.half_open_trial_in_flight
+            .then_some(self.trial_generation)
     }
 }
 
@@ -444,12 +460,12 @@ impl RouterPort for FallbackRouter {
         if state.is_open(now) || !state.claim_trial(now) {
             return None;
         }
-        if state.half_open_trial_in_flight {
+        if let Some(generation) = state.active_trial_generation() {
             let circuits = self.circuits.clone();
             let provider = provider.clone();
             return Some(rook_core::RouterTrialPermit::with_release(move || {
                 if let Some(mut state) = circuits.get_mut(&provider) {
-                    state.release_trial();
+                    state.release_trial(generation);
                 }
             }));
         }
@@ -874,6 +890,47 @@ mod tests {
                 .await;
         }
         assert!(router.try_acquire_trial(&provider_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn open_circuit_rejects_trial_reservation_until_cooldown_expires() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+        clock.advance(CIRCUIT_COOLDOWN);
+        assert!(router.try_acquire_trial(&provider_id).await.is_some());
+    }
+
+    #[test]
+    fn stale_trial_release_does_not_clear_newer_half_open_reservation() {
+        let now = Instant::now();
+        let mut state = CircuitState {
+            is_open: true,
+            cooldown_until: Some(now),
+            ..CircuitState::default()
+        };
+
+        assert!(state.claim_trial(now));
+        let stale_generation = state.trial_generation;
+        state.half_open_trial_in_flight = false;
+        assert!(state.claim_trial(now));
+        let current_generation = state.trial_generation;
+
+        assert_ne!(stale_generation, current_generation);
+        state.release_trial(stale_generation);
+        assert!(state.half_open_trial_in_flight);
+        state.release_trial(current_generation);
+        assert!(!state.half_open_trial_in_flight);
     }
 
     #[tokio::test]
