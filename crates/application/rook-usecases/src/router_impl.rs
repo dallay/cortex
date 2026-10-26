@@ -160,6 +160,32 @@ impl CircuitClock for SystemCircuitClock {
 }
 
 impl FallbackRouter {
+    fn pair_candidate_weights<'a, T>(
+        candidates: &'a [(usize, T)],
+        weights: &[f32],
+    ) -> Vec<(&'a T, f32)> {
+        candidates
+            .iter()
+            .map(|(index, candidate)| (candidate, weights[*index]))
+            .collect()
+    }
+
+    fn weighted_provider_index(weights: &[f32], random: f32) -> Option<usize> {
+        let total: f32 = weights.iter().sum();
+        if weights.is_empty() || total <= 0.0 {
+            return None;
+        }
+        let target = random.clamp(0.0, 1.0) * total;
+        let mut cumulative = 0.0;
+        weights
+            .iter()
+            .position(|weight| {
+                cumulative += weight;
+                cumulative > target
+            })
+            .or_else(|| weights.iter().rposition(|weight| *weight > 0.0))
+    }
+
     /// Creates a router with an empty provider registry.
     pub fn new_empty(strategy: RoutingStrategy) -> Self {
         Self {
@@ -191,14 +217,15 @@ impl FallbackRouter {
         }
     }
 
-    /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers(&self, req: &CompletionRequest) -> Vec<Arc<dyn ProviderPort>> {
+    /// Returns available providers with their original positions in the provider registry.
+    fn available_providers(&self, req: &CompletionRequest) -> Vec<(usize, Arc<dyn ProviderPort>)> {
         let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
         guard
             .iter()
-            .filter(|p| {
+            .enumerate()
+            .filter(|(_, p)| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
                 !circuit.is_open(now)
@@ -206,7 +233,7 @@ impl FallbackRouter {
                     && p.is_available()
                     && required.check(&p.model_capabilities(&req.model)).is_ok()
             })
-            .cloned()
+            .map(|(index, provider)| (index, provider.clone()))
             .collect()
     }
 
@@ -311,40 +338,32 @@ impl RouterPort for FallbackRouter {
         }
 
         let selected = match &self.strategy {
-            RoutingStrategy::Priority => {
-                // Return first candidate (assumes sorted by priority)
-                candidates.first().cloned()
-            }
+            RoutingStrategy::Priority => candidates.first().map(|(_, provider)| provider.clone()),
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % candidates.len();
                 *index = idx + 1;
-                candidates.get(idx).cloned()
+                candidates.get(idx).map(|(_, provider)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(weights) => {
-                if weights.len() != candidates.len() {
-                    // Fall back to first if weights don't match
-                    candidates.first().cloned()
+                let provider_count = self.providers.read().len();
+                if weights.len() != provider_count {
+                    // Keep the existing fallback when configured weights do not
+                    // match the provider registry.
+                    candidates.first().map(|(_, provider)| provider.clone())
                 } else {
+                    let paired = Self::pair_candidate_weights(&candidates, weights);
+                    let eligible_weights: Vec<_> =
+                        paired.iter().map(|(_, weight)| *weight).collect();
                     let mut rng = rand::rng();
-                    let total: f32 = weights.iter().sum();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    candidates
-                        .iter()
-                        .zip(weights.iter())
-                        .find(|(_, &w)| {
-                            sum += w;
-                            sum >= r
+                    Self::weighted_provider_index(&eligible_weights, rng.random())
+                        .and_then(|index| {
+                            paired.get(index).map(|(provider, _)| (*provider).clone())
                         })
-                        .map(|(p, _)| p)
-                        .cloned()
+                        .or_else(|| paired.first().map(|(provider, _)| (*provider).clone()))
                 }
             }
-            RoutingStrategy::ModelBased => {
-                // TODO: implement model-based routing (e.g., "anthropic/" → claude providers)
-                candidates.first().cloned()
-            }
+            RoutingStrategy::ModelBased => candidates.first().map(|(_, provider)| provider.clone()),
         };
 
         selected.ok_or_else(CortexError::all_providers_exhausted)
@@ -358,10 +377,11 @@ impl RouterPort for FallbackRouter {
         use std::collections::HashSet;
         let excluded_set: HashSet<_> = excluded.iter().collect();
         let candidates = self.available_providers(req);
-        // Filter out excluded providers and those with open circuit breaker
+        // Filter out excluded providers and those with open circuit breaker.
+        // Keep registry indices so configured weights remain attached.
         let available: Vec<_> = candidates
             .into_iter()
-            .filter(|p| !excluded_set.contains(p.id()))
+            .filter(|(_, provider)| !excluded_set.contains(&provider.id()))
             .collect();
 
         if available.is_empty() {
@@ -370,44 +390,33 @@ impl RouterPort for FallbackRouter {
 
         // Apply strategy to remaining candidates
         let selected = match &self.strategy {
-            RoutingStrategy::Priority => {
-                // Return first candidate (assumes sorted by priority)
-                available.first().cloned()
-            }
+            RoutingStrategy::Priority => available.first().map(|(_, provider)| provider.clone()),
             RoutingStrategy::RoundRobin => {
                 let mut index = self.round_robin_index.write().await;
                 let idx = *index % available.len();
                 *index = (idx + 1) % available.len();
-                available.get(idx).cloned()
+                available.get(idx).map(|(_, provider)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(weights) => {
-                // Pair providers with weights, filter to available, then weighted selection
-                let providers_guard = self.providers.read();
-                let paired: Vec<_> = providers_guard
-                    .iter()
-                    .filter(|p| available.iter().any(|a| a.id() == p.id()))
-                    .zip(weights.iter())
-                    .map(|(p, &w)| (p.clone(), w))
-                    .collect();
-                drop(providers_guard);
-
-                if paired.is_empty() {
-                    available.first().cloned()
+                let provider_count = self.providers.read().len();
+                if weights.len() != provider_count {
+                    available.first().map(|(_, provider)| provider.clone())
                 } else {
-                    let total: f32 = paired.iter().map(|(_, w)| *w).sum();
-                    let mut rng = rand::rng();
-                    let r = rng.random::<f32>() * total;
-                    let mut sum = 0.0_f32;
-                    paired
+                    let paired: Vec<_> = available
                         .iter()
-                        .find(|(_, w)| {
-                            sum += *w;
-                            sum >= r
+                        .map(|(index, provider)| (provider, weights[*index]))
+                        .collect();
+                    let eligible_weights: Vec<_> =
+                        paired.iter().map(|(_, weight)| *weight).collect();
+                    let mut rng = rand::rng();
+                    Self::weighted_provider_index(&eligible_weights, rng.random())
+                        .and_then(|index| {
+                            paired.get(index).map(|(provider, _)| (*provider).clone())
                         })
-                        .map(|(p, _)| p.clone())
+                        .or_else(|| paired.first().map(|(provider, _)| (*provider).clone()))
                 }
             }
-            RoutingStrategy::ModelBased => available.first().cloned(),
+            RoutingStrategy::ModelBased => available.first().map(|(_, provider)| provider.clone()),
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
@@ -543,13 +552,19 @@ mod tests {
     struct StubProvider {
         id: ProviderId,
         models: Vec<ModelId>,
+        supports_tools: bool,
     }
 
     impl StubProvider {
         fn new(id: &str, models: &[&str]) -> Arc<Self> {
+            Self::with_tool_support(id, models, false)
+        }
+
+        fn with_tool_support(id: &str, models: &[&str], supports_tools: bool) -> Arc<Self> {
             Arc::new(Self {
                 id: ProviderId::new(id),
                 models: models.iter().map(|model| ModelId::new(*model)).collect(),
+                supports_tools,
             })
         }
     }
@@ -588,6 +603,20 @@ mod tests {
 
         fn supported_models(&self) -> &[ModelId] {
             &self.models
+        }
+
+        fn model_capabilities(&self, _model: &ModelId) -> rook_core::ModelCapabilities {
+            let mut capabilities = rook_core::ModelCapabilities::default();
+            if self.supports_tools {
+                capabilities.apply(
+                    &rook_core::CapabilityOverrides {
+                        tools: Some(rook_core::CapabilityState::Supported),
+                        ..Default::default()
+                    },
+                    "router_test",
+                );
+            }
+            capabilities
         }
 
         fn api_format(&self) -> ApiFormat {
@@ -1199,6 +1228,71 @@ mod tests {
                     .expect("should select");
                 assert_eq!(selected.id(), &ProviderId::new("anthropic"));
             });
+    }
+
+    #[tokio::test]
+    async fn weighted_random_select_keeps_weights_attached_after_capability_filtering() {
+        let rejected = StubProvider::with_tool_support("rejected", &["model"], false);
+        let eligible = StubProvider::with_tool_support("eligible", &["model"], true);
+        let router = FallbackRouter::new(
+            vec![rejected, eligible.clone()],
+            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
+        );
+        let mut req = make_test_request("model");
+        req.tools = Some(serde_json::json!([{"type":"function"}]));
+
+        let selected = router.select(&req).await.expect("eligible provider");
+        assert_eq!(selected.id(), eligible.id());
+    }
+
+    #[tokio::test]
+    async fn weighted_random_select_excluding_keeps_original_provider_weights() {
+        let first = StubProvider::new("first", &["model"]);
+        let second = StubProvider::new("second", &["model"]);
+        let router = FallbackRouter::new(
+            vec![first, second.clone()],
+            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
+        );
+
+        let selected = router
+            .select_excluding(&make_test_request("model"), &[ProviderId::new("first")])
+            .await
+            .expect("remaining provider");
+        assert_eq!(selected.id(), second.id());
+    }
+
+    #[test]
+    fn weighted_provider_index_uses_weights_after_eligibility_filtering() {
+        let original_weights = [0.9, 0.1];
+        let eligible_provider_indices = [1];
+        let eligible_weights: Vec<_> = eligible_provider_indices
+            .iter()
+            .map(|index| original_weights[*index])
+            .collect();
+
+        assert_eq!(
+            eligible_weights,
+            vec![0.1],
+            "the remaining provider must retain its configured weight"
+        );
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&eligible_weights, 0.5),
+            Some(0)
+        );
+
+        let candidates = vec![(1, "eligible")];
+        assert_eq!(
+            FallbackRouter::pair_candidate_weights(&candidates, &original_weights),
+            vec![(&"eligible", 0.1)]
+        );
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&[0.0, 1.0], 0.0),
+            Some(1)
+        );
+        assert_eq!(
+            FallbackRouter::weighted_provider_index(&[0.0, 0.0], 0.5),
+            None
+        );
     }
 
     #[test]
