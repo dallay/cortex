@@ -1,3 +1,4 @@
+use super::outcome::{classify_attempt_result, AttemptOutcome, AttemptResult};
 use super::*;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -14,11 +15,37 @@ use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[test]
+fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
+    assert!(matches!(
+        classify_attempt_result(AttemptResult::Provider(Ok(()))),
+        AttemptOutcome::Success(())
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::Provider(Err(CortexError::local_backpressure()))),
+        AttemptOutcome::LocalBackpressure(error) if error.is_local_backpressure()
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::Provider(Err(CortexError::provider(
+            "upstream failed"
+        )))),
+        AttemptOutcome::UpstreamFailure(error) if error.is_retryable()
+    ));
+
+    assert!(matches!(
+        classify_attempt_result::<()>(AttemptResult::TimedOut),
+        AttemptOutcome::TimedOut
+    ));
+}
+
 mod default_combo;
 
 struct TestProvider {
     id: ProviderId,
     complete_error: Option<CortexError>,
+    stream_error: Option<CortexError>,
 }
 
 #[async_trait]
@@ -78,6 +105,11 @@ impl ProviderPort for TestProvider {
         &self,
         _req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        if let Some(error) = &self.stream_error {
+            return Ok(Box::pin(stream::iter(vec![Err(CortexError::provider(
+                error.to_string(),
+            ))])));
+        }
         Ok(Box::pin(stream::iter(vec![
             Ok(StreamChunk {
                 id: RequestId::new(),
@@ -139,6 +171,7 @@ async fn local_backpressure_skips_circuit_but_upstream_rate_limit_opens_cooldown
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("limited"),
         complete_error: None,
+        stream_error: None,
     });
     let provider_id = provider.id().clone();
     let router = crate::FallbackRouter::new(vec![provider], crate::RoutingStrategy::Priority);
@@ -194,109 +227,13 @@ impl ProviderPort for BlockingTestProvider {
     }
 }
 
-/// Suspends failure notification before the real router updates its circuit.
-struct BlockingFailureRouter {
-    inner: crate::FallbackRouter,
-    failure_started: tokio::sync::Notify,
-}
-
-#[async_trait]
-impl RouterPort for BlockingFailureRouter {
-    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-        self.inner.select(req).await
-    }
-
-    async fn select_excluding(
-        &self,
-        req: &CompletionRequest,
-        excluded: &[ProviderId],
-    ) -> CortexResult<Arc<dyn ProviderPort>> {
-        self.inner.select_excluding(req, excluded).await
-    }
-
-    async fn try_acquire_trial(
-        &self,
-        provider: &ProviderId,
-    ) -> Option<rook_core::RouterTrialPermit> {
-        self.inner.try_acquire_trial(provider).await
-    }
-
-    async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {
-        self.failure_started.notify_one();
-        std::future::pending().await
-    }
-
-    fn providers(&self) -> Vec<ProviderId> {
-        RouterPort::providers(&self.inner)
-    }
-}
-
-async fn assert_combo_cancellation_releases_failed_trial(provider_times_out: bool) {
-    let provider_id = ProviderId::new("test-provider");
-    let inner = TestProvider {
-        id: provider_id.clone(),
-        complete_error: Some(CortexError::provider("failure")),
-    };
-    let provider: Arc<dyn ProviderPort> = if provider_times_out {
-        Arc::new(BlockingTestProvider {
-            inner,
-            started: Mutex::new(None),
-        })
-    } else {
-        Arc::new(inner)
-    };
-    let router = Arc::new(BlockingFailureRouter {
-        inner: crate::FallbackRouter::new(vec![provider.clone()], crate::RoutingStrategy::Priority),
-        failure_started: tokio::sync::Notify::new(),
-    });
-    // A zero-length cooldown puts the real circuit into half-open immediately.
-    router
-        .inner
-        .on_failure(
-            &provider_id,
-            &CortexError::rate_limited(provider_id.clone(), 0),
-        )
-        .await;
-    let mut usecase = make_usecase_with_provider(provider);
-    usecase.router = router.clone();
-    let combo = Combo::new(
-        "cancelled-trial".into(),
-        ComboStrategy::Priority,
-        vec![step(provider_id.as_str(), TEST_MODEL.as_str(), 1)],
-    );
-    let task = tokio::spawn(async move {
-        usecase
-            .execute_combo(&combo, request(), ApiFormat::OpenAI)
-            .await
-    });
-    tokio::time::timeout(Duration::from_secs(15), router.failure_started.notified())
-        .await
-        .expect("failure notification must start after error or timeout");
-    assert!(router.try_acquire_trial(&provider_id).await.is_none());
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    assert!(
-        router.try_acquire_trial(&provider_id).await.is_some(),
-        "cancellation must release the trial"
-    );
-}
-
-#[tokio::test]
-async fn combo_cancellation_during_error_notification_releases_trial() {
-    assert_combo_cancellation_releases_failed_trial(false).await;
-}
-
-#[tokio::test]
-async fn combo_cancellation_during_timeout_notification_releases_trial() {
-    assert_combo_cancellation_releases_failed_trial(true).await;
-}
-
 async fn busy_limited_test_provider() -> (Arc<dyn ProviderPort>, tokio::task::JoinHandle<()>) {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let inner: Arc<dyn ProviderPort> = Arc::new(BlockingTestProvider {
         inner: TestProvider {
             id: ProviderId::new("test-provider"),
             complete_error: None,
+            stream_error: None,
         },
         started: Mutex::new(Some(started_tx)),
     });
@@ -452,15 +389,25 @@ impl RouterPort for PriorityFallbackRouter {
 }
 
 fn usecase_with_router(router: Arc<dyn RouterPort>) -> RouteRequest {
+    usecase_with_router_and_audit(
+        router,
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+    )
+}
+
+fn usecase_with_router_and_audit(
+    router: Arc<dyn RouterPort>,
+    audit: Arc<dyn AuditPort>,
+) -> RouteRequest {
     RouteRequest::new(
         router,
         Arc::new(TestCache {
             get_calls: Mutex::new(0),
             set_calls: Mutex::new(0),
         }),
-        Arc::new(TestAudit {
-            entries: Mutex::new(Vec::new()),
-        }),
+        audit,
         None,
         None,
         None,
@@ -476,6 +423,7 @@ fn ordinary_provider(id: &str) -> Arc<dyn ProviderPort> {
     Arc::new(TestProvider {
         id: ProviderId::new(id),
         complete_error: None,
+        stream_error: None,
     })
 }
 
@@ -818,6 +766,20 @@ impl AuditPort for TestAudit {
     }
 }
 
+struct BlockingAudit {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl AuditPort for BlockingAudit {
+    async fn record(&self, _entry: AuditEntry) -> CortexResult<()> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        Ok(())
+    }
+}
+
 struct TestUsageRecorder {
     entries: Mutex<Vec<UsageEntry>>,
     fail_recording: bool,
@@ -1049,10 +1011,126 @@ fn request() -> CompletionRequest {
 }
 
 #[tokio::test]
+async fn completion_failures_update_real_router_circuit() {
+    use crate::RoutingStrategy;
+
+    let provider_id = ProviderId::new("completion-failing-provider");
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: provider_id.clone(),
+        complete_error: Some(CortexError::provider("upstream failure")),
+        stream_error: None,
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router.clone());
+    let mut req = request();
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    for failures in 1..=3 {
+        assert!(usecase.execute(req.clone()).await.is_err());
+        assert_eq!(router.circuit_states()[0].1.failures, failures);
+    }
+    assert!(router.circuit_states()[0].1.is_open);
+}
+
+#[tokio::test]
+async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit() {
+    use crate::RoutingStrategy;
+
+    let provider_id = ProviderId::new("stream-failing-provider");
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: provider_id.clone(),
+        complete_error: None,
+        stream_error: Some(CortexError::provider("late stream failure")),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router.clone());
+
+    for attempt in 1..=3 {
+        let mut stream = usecase
+            .execute_stream(request())
+            .await
+            .expect("stream opens before upstream emits failure");
+        assert!(matches!(stream.next().await, Some(Err(_))));
+        assert_eq!(router.circuit_states()[0].1.failures, attempt);
+    }
+    assert!(router.circuit_states()[0].1.is_open);
+}
+
+#[tokio::test]
+async fn real_router_holds_stream_trial_until_eof_and_releases_on_cancellation() {
+    use crate::router_impl::CircuitClock;
+    use crate::RoutingStrategy;
+    use std::time::Instant;
+
+    struct TestClock(Mutex<Instant>);
+    impl CircuitClock for TestClock {
+        fn now(&self) -> Instant {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    let provider_id = ProviderId::new("half-open-stream");
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: provider_id.clone(),
+        complete_error: None,
+        stream_error: None,
+    });
+    let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
+    let router = Arc::new(crate::FallbackRouter::with_clock(
+        vec![provider],
+        RoutingStrategy::Priority,
+        clock.clone(),
+    ));
+    for _ in 0..3 {
+        notify_provider_failure(
+            router.as_ref(),
+            &provider_id,
+            &CortexError::provider("prior failure"),
+        )
+        .await;
+    }
+    *clock.0.lock().unwrap() += std::time::Duration::from_secs(3600);
+    let usecase = usecase_with_router(router.clone());
+    let mut stream = usecase
+        .execute_stream(request())
+        .await
+        .expect("trial stream");
+    assert!(router.try_acquire_trial(&provider_id).await.is_none());
+    while stream.next().await.is_some() {}
+    assert!(router.try_acquire_trial(&provider_id).await.is_some());
+
+    for _ in 0..3 {
+        notify_provider_failure(
+            router.as_ref(),
+            &provider_id,
+            &CortexError::provider("prior failure"),
+        )
+        .await;
+    }
+    *clock.0.lock().unwrap() += std::time::Duration::from_secs(3600);
+    let mut stream = usecase
+        .execute_stream(request())
+        .await
+        .expect("second half-open stream");
+    assert!(router.try_acquire_trial(&provider_id).await.is_none());
+    assert!(stream.next().await.is_some());
+    drop(stream);
+    assert!(router.try_acquire_trial(&provider_id).await.is_some());
+}
+
+#[tokio::test]
 async fn execute_stream_bypasses_cache_and_audits_final_usage() {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let cache = Arc::new(TestCache {
         get_calls: Mutex::new(0),
@@ -1107,6 +1185,7 @@ fn make_usecase() -> RouteRequest {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     RouteRequest::new(
         Arc::new(TestRouter { provider }),
@@ -1208,6 +1287,7 @@ async fn execute_with_format_resolves_alias_before_combo_dispatch() {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usecase = RouteRequest::new(
         Arc::new(TestRouter { provider }),
@@ -1252,6 +1332,7 @@ async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_conne
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usecase = RouteRequest::new(
         Arc::new(TestRouter { provider }),
@@ -1285,6 +1366,7 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -1357,6 +1439,7 @@ async fn non_stream_usage_records_failure_with_nullable_tokens_and_ttft() {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: Some(CortexError::provider("provider failed")),
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -1404,6 +1487,7 @@ async fn non_stream_usage_recording_failure_does_not_fail_successful_client_resp
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -1442,6 +1526,7 @@ async fn non_stream_usage_missing_pricing_records_null_cost_not_zero() {
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -1555,6 +1640,7 @@ async fn streaming_usage_records_ttft_from_first_chunk_and_final_usage_on_succes
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -1732,6 +1818,7 @@ async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_with
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: ProviderId::new("test-provider"),
         complete_error: None,
+        stream_error: None,
     });
     let usage_recorder = Arc::new(TestUsageRecorder {
         entries: Mutex::new(Vec::new()),
@@ -2214,6 +2301,268 @@ fn harness_combo() -> Combo {
         ComboStrategy::Priority,
         vec![step("openai", "gpt-4o", 1)],
     )
+}
+
+struct AuditOrderRouter {
+    provider: Arc<dyn ProviderPort>,
+    failures: Arc<std::sync::atomic::AtomicUsize>,
+    releases: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl RouterPort for AuditOrderRouter {
+    async fn select(&self, _req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        Ok(self.provider.clone())
+    }
+
+    async fn select_excluding(
+        &self,
+        _req: &CompletionRequest,
+        _excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        Ok(self.provider.clone())
+    }
+
+    async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {
+        self.failures
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn try_acquire_trial(
+        &self,
+        _provider: &ProviderId,
+    ) -> Option<rook_core::RouterTrialPermit> {
+        let releases = self.releases.clone();
+        Some(rook_core::RouterTrialPermit::with_release(move || {
+            releases.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }))
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        vec![self.provider.id().clone()]
+    }
+}
+
+#[tokio::test]
+async fn combo_success_closes_real_router_circuit() {
+    use crate::router_impl::CircuitClock;
+    use crate::RoutingStrategy;
+    use std::time::Instant;
+
+    struct TestClock(Mutex<Instant>);
+    impl CircuitClock for TestClock {
+        fn now(&self) -> Instant {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    let provider_id = ProviderId::new("openai");
+    let provider: Arc<dyn ProviderPort> = ordinary_provider("openai");
+    let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
+    let router = Arc::new(crate::FallbackRouter::with_clock(
+        vec![provider],
+        RoutingStrategy::Priority,
+        clock.clone(),
+    ));
+    for _ in 0..3 {
+        notify_provider_failure(
+            router.as_ref(),
+            &provider_id,
+            &CortexError::provider("prior failure"),
+        )
+        .await;
+    }
+    *clock.0.lock().unwrap() += std::time::Duration::from_secs(3600);
+    let combo = Combo::new(
+        "real-router-combo-success".to_string(),
+        ComboStrategy::Priority,
+        vec![step("openai", TEST_MODEL.as_str(), 1)],
+    );
+    let combo_id = combo.id;
+    let harness = combo_harness_with_router(
+        combo.clone(),
+        vec![("rook/coding", combo_id)],
+        router.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut req = request();
+    req.model = ModelId::new("rook/coding");
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    harness
+        .usecase
+        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .await
+        .expect("half-open combo succeeds");
+    let circuit = &router.circuit_states()[0].1;
+    assert!(!circuit.is_open);
+    assert_eq!(circuit.failures, 0);
+}
+
+#[tokio::test]
+async fn combo_upstream_failure_updates_real_router_circuit() {
+    use crate::RoutingStrategy;
+
+    let provider_id = ProviderId::new("openai");
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: provider_id.clone(),
+        complete_error: Some(CortexError::provider("upstream failure")),
+        stream_error: None,
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        RoutingStrategy::Priority,
+    ));
+    let combo = Combo::new(
+        "real-router-combo".to_string(),
+        ComboStrategy::Priority,
+        vec![step("openai", TEST_MODEL.as_str(), 1)],
+    );
+    let combo_id = combo.id;
+    let harness = combo_harness_with_router(
+        combo.clone(),
+        vec![("rook/coding", combo_id)],
+        router.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut req = request();
+    req.model = ModelId::new("rook/coding");
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    assert!(harness
+        .usecase
+        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .await
+        .is_err());
+    assert_eq!(router.circuit_states()[0].1.failures, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn combo_timeout_updates_real_router_circuit_and_records_failed_audit_step() {
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let provider_id = ProviderId::new("openai");
+    let provider: Arc<dyn ProviderPort> = Arc::new(BlockingTestProvider {
+        inner: TestProvider {
+            id: provider_id.clone(),
+            complete_error: None,
+            stream_error: None,
+        },
+        started: Mutex::new(Some(started_tx)),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let combo = Combo::new(
+        "real-router-combo-timeout".to_string(),
+        ComboStrategy::Priority,
+        vec![step("openai", TEST_MODEL.as_str(), 1)],
+    );
+    let combo_id = combo.id;
+    let harness = combo_harness_with_router(
+        combo.clone(),
+        vec![("rook/coding", combo_id)],
+        router.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let audit = harness.audit.clone();
+    let mut req = request();
+    req.model = ModelId::new("rook/coding");
+    req.stream = false;
+    req.metadata.cacheable = false;
+    let task = tokio::spawn(async move {
+        harness
+            .usecase
+            .execute_combo(&combo, req, ApiFormat::OpenAI)
+            .await
+    });
+
+    started_rx.await.expect("combo provider call started");
+    assert!(!task.is_finished());
+    assert_eq!(router.circuit_states()[0].1.failures, 0);
+    assert!(audit.entries.lock().unwrap().is_empty());
+
+    tokio::time::advance(RouteRequest::COMBO_STEP_TIMEOUT + Duration::from_millis(1)).await;
+    let error = task
+        .await
+        .expect("combo task completes")
+        .expect_err("combo step times out");
+    let errors = error.combo_skip_reasons().expect("combo exhausted");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].0, provider_id);
+    assert!(errors[0].1.contains("timed out"));
+    assert_eq!(router.circuit_states()[0].1.failures, 1);
+
+    let entries = audit.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].status, RequestStatus::Failure);
+    assert_eq!(entries[0].provider, provider_id);
+    assert_eq!(entries[0].combo_id, Some(combo_id));
+    assert_eq!(entries[0].combo_step_index, Some(0));
+}
+
+#[tokio::test]
+async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: ProviderId::new("openai"),
+        complete_error: Some(CortexError::provider("upstream failure")),
+        stream_error: None,
+    });
+    let failures = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let releases = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = Arc::new(AuditOrderRouter {
+        provider,
+        failures: failures.clone(),
+        releases: releases.clone(),
+    });
+    let combo = Combo::new(
+        "blocked-audit".to_string(),
+        ComboStrategy::Priority,
+        vec![step("openai", TEST_MODEL.as_str(), 1)],
+    );
+    let combo_id = combo.id;
+    let combos = HashMap::from([(combo_id, combo.clone())]);
+    let aliases = HashMap::from([(
+        "rook/coding".to_string(),
+        ComboAlias::new(ModelId::new("rook/coding"), combo_id),
+    )]);
+    let blocking_audit = Arc::new(BlockingAudit {
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    let entered = blocking_audit.entered.notified();
+    tokio::pin!(entered);
+    let mut usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        blocking_audit.clone(),
+        None,
+        None,
+        Some(Arc::new(MapComboRepository { combos })),
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestFormatTranslator),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    );
+    usecase = usecase.with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+
+    let mut req = request();
+    req.model = ModelId::new("rook/coding");
+    req.stream = false;
+    req.metadata.cacheable = false;
+    let task =
+        tokio::spawn(async move { usecase.execute_combo(&combo, req, ApiFormat::OpenAI).await });
+    entered.await;
+    assert_eq!(failures.load(std::sync::atomic::Ordering::SeqCst), 1);
+    task.abort();
+    assert!(task.await.expect_err("combo task aborted").is_cancelled());
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -3647,6 +3996,7 @@ fn failing_provider(id: &str) -> Arc<dyn ProviderPort> {
     Arc::new(TestProvider {
         id: ProviderId::new(id),
         complete_error: Some(CortexError::provider("boom")),
+        stream_error: None,
     })
 }
 
@@ -3654,6 +4004,7 @@ fn ok_provider(id: &str) -> Arc<dyn ProviderPort> {
     Arc::new(TestProvider {
         id: ProviderId::new(id),
         complete_error: None,
+        stream_error: None,
     })
 }
 
