@@ -118,12 +118,16 @@ async fn unknown_capability_does_not_hide_unauthorized_later_step() {
 }
 
 #[tokio::test]
-async fn catalog_alias_visibility_requires_every_physical_model_and_provider() {
-    let (h, _, first, second, _, _) = setup(CapabilityState::Unknown);
+async fn catalog_alias_visibility_does_not_depend_on_active_router_registration() {
+    let (mut h, _, first, second, _, _) = setup(CapabilityState::Unknown);
     let permitted = ApiKeyRestrictions {
         allowed_models: vec![ModelId::new("rook/capabilities"), ModelId::new("gpt-test")],
         allowed_providers: vec![first.clone(), second],
     };
+    h.usecase.router = Arc::new(OrderedRouter {
+        providers: vec![],
+        connection_providers: HashMap::new(),
+    });
     assert_eq!(
         h.usecase.visible_combo_aliases(&permitted).await,
         vec![ModelId::new("rook/capabilities")]

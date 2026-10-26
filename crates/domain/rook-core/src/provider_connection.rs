@@ -86,6 +86,7 @@ pub enum ProviderKind {
     OpenAiCompatible,
     Anthropic,
     Ollama,
+    #[serde(alias = "ollama-cloud")]
     OllamaCloud,
     Gemini,
     Groq,
@@ -326,13 +327,25 @@ mod tests {
     fn provider_kind_as_str_roundtrip() {
         for kind in [
             ProviderKind::OpenAI,
+            ProviderKind::OpenAiCompatible,
             ProviderKind::Anthropic,
             ProviderKind::Ollama,
             ProviderKind::OllamaCloud,
             ProviderKind::Gemini,
             ProviderKind::Groq,
+            ProviderKind::AzureOpenAI,
         ] {
-            assert_eq!(ProviderKind::try_from(kind.as_str()), Ok(kind));
+            let value = kind.as_str();
+            assert_eq!(ProviderKind::try_from(value), Ok(kind));
+            let serialized = serde_json::to_string(&kind).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ProviderKind>(&serialized).unwrap(),
+                kind
+            );
+            assert_eq!(
+                serde_json::from_str::<ProviderKind>(&format!("{value:?}")).unwrap(),
+                kind
+            );
         }
     }
 

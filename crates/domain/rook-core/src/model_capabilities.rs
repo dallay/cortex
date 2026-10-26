@@ -116,18 +116,20 @@ pub struct RequiredCapabilities {
 impl RequiredCapabilities {
     pub fn from_request(req: &CompletionRequest) -> Self {
         Self {
-            tools: req
-                .tools
-                .as_ref()
-                .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|v| !v.is_empty()))
-                || req.tool_choice.as_ref().is_some_and(|v| {
-                    !v.is_null()
-                        && v.as_str() != Some("none")
-                        && v.get("type").and_then(|t| t.as_str()) != Some("none")
-                })
-                || req.messages.iter().any(|m| {
-                    !m.tool_calls.is_empty() || !matches!(m.content, MessageContent::Text(_))
-                }),
+            tools: req.tools.as_ref().is_some_and(|v| {
+                !v.is_null()
+                    && match v.as_array() {
+                        None => true,
+                        Some(values) => !values.is_empty(),
+                    }
+            }) || req.tool_choice.as_ref().is_some_and(|v| {
+                !v.is_null()
+                    && v.as_str() != Some("none")
+                    && v.get("type").and_then(|t| t.as_str()) != Some("none")
+            }) || req
+                .messages
+                .iter()
+                .any(|m| !m.tool_calls.is_empty() || !matches!(m.content, MessageContent::Text(_))),
             streaming: req.stream,
             ..Self::default()
         }
@@ -150,5 +152,52 @@ impl RequiredCapabilities {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared_kernel::RequestId;
+
+    fn request(tools: Option<serde_json::Value>) -> CompletionRequest {
+        CompletionRequest {
+            id: RequestId::new(),
+            model: "test-model".into(),
+            messages: Vec::new(),
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools,
+            tool_choice: None,
+            metadata: crate::RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        }
+    }
+
+    #[test]
+    fn tools_requirement_preserves_missing_non_array_and_empty_array_semantics() {
+        assert!(!RequiredCapabilities::from_request(&request(None)).tools);
+        assert!(!RequiredCapabilities::from_request(&request(Some(serde_json::Value::Null))).tools);
+        assert!(!RequiredCapabilities::from_request(&request(Some(serde_json::json!([])))).tools);
+        assert!(
+            RequiredCapabilities::from_request(&request(Some(
+                serde_json::json!([{"type":"function"}])
+            )))
+            .tools
+        );
+        assert!(
+            RequiredCapabilities::from_request(&request(Some(
+                serde_json::json!({"type":"function"})
+            )))
+            .tools
+        );
     }
 }

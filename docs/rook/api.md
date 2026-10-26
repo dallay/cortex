@@ -32,6 +32,10 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 
 The `/api/models/aliases` prefix stores ordinary aliases from an alias to a canonical model. The `rook/` prefix is reserved for virtual combo aliases and cannot be created as a model alias.
 
+## `GET /v1/models`
+
+The client model catalog preserves the existing response fields and adds `rook` metadata with declared capabilities and provenance. The [model catalog contract](model-catalog.md) documents the schema and evidence rules. Rook capabilities describe the catalog's capability claims for each model, while provenance identifies the source and scope of each claim.
+
 ## `GET /health`
 
 Returns the current health snapshot without session authentication. The response contains `status`, `app_name`, `version`, `providers`, and `cache_stats`. Each provider includes `id`, `healthy`, `latency_ms`, and `last_error`; `circuit_state`, `failure_count`, and `cooldown_until` appear when circuit data exists. `latency_p95_ms` and `latency_avg_ms` appear when telemetry has observations. Cache stats include hits, misses, evictions, entries, capacity, and token-cache metrics.
@@ -48,9 +52,6 @@ Returns the current health snapshot without session authentication. The response
 `status` is `healthy`, `degraded`, or `no_providers_configured`. Provider fields always include `id`, `healthy`, `latency_ms` (nullable), and `last_error` (nullable). When circuit data exists, provider objects also include `circuit_state`, `failure_count`, and `cooldown_until`; latency percentile fields are included when telemetry has observations. The response also includes `cache_stats`.
 
 ## `GET /api/models`
-
-El catálogo de cliente `/v1/models` conserva sus campos básicos y añade `rook`
-con capacidades y procedencia. Consulte el [contrato del catálogo](model-catalog.md).
 
 Requires admin session authentication. Lists models grouped by active provider connection. Inactive connections and provider kinds without catalog entries are omitted. The response uses camelCase fields.
 

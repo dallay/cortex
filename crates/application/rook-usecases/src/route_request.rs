@@ -1105,19 +1105,9 @@ impl RouteRequest {
                         break;
                     };
                     let adapter_id = ProviderId::new(id.to_string());
-                    let Some(provider) = self.router.resolve_connection(id) else {
-                        authorized = false;
-                        break;
-                    };
-                    if !connection.is_active
-                        || connection.provider_runtime_id != step.provider_id
-                        || provider.id() != &adapter_id
-                        || classify_connection_adapter(
-                            provider.as_ref(),
-                            &adapter_id,
-                            &step.model,
-                            &restrictions.allowed_providers,
-                        ) != ConnectionAdapterDecision::Authorized
+                    if connection.provider_runtime_id != step.provider_id
+                        || (!restrictions.allowed_providers.is_empty()
+                            && !restrictions.allowed_providers.contains(&adapter_id))
                     {
                         authorized = false;
                         break;
