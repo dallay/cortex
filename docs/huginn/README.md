@@ -365,6 +365,13 @@ huginn --provider mock --workspace /path/to/repo run "list files"
 
 The mock provider responds with predefined examples and does not perform real LLM calls.
 
+For deterministic acceptance tests, the mock also follows a `huginn-mock:` line in
+its latest user or tool message, the way an instruction-following model would:
+`huginn-mock: <tool> <json-arguments>` requests that tool, and
+`huginn-mock: load_skill <name>` requests an advertised skill by name. Those
+requests pass through HostPolicy and normal approvals like any other model
+request; the directive never grants permissions.
+
 ---
 
 ## 🔌 MCP Integration

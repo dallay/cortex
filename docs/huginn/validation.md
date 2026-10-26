@@ -3,6 +3,64 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## Skills and prompt templates S1 acceptance (DALLAY-717) — 2026-10-26
+
+Automated integration acceptance for the S1 skills/template seam
+([#432](https://github.com/dallay/cortex/issues/432)). Tested base commit:
+`5ce0964` plus this change. Host: macOS 27.2 (arm64), Rust 1.99.1. All runs use
+the offline `--provider mock`, temporary home/project roots and no network or
+credentials. This is **not** human acceptance, terminal certification or
+release readiness.
+
+The fixture drives the real `huginn` binary with a global `lint`, a global
+`unused`, a project `review` that overrides a global `review`, and the
+parameterized project template `audit`. The mock follows `huginn-mock:` lines
+(see the Huginn README) so it can request `load_skill`, `write_file` and `shell`
+like an instruction-following model; every request still crosses HostPolicy.
+
+| Criterion | Entry point | Evidence |
+| -- | -- | -- |
+| AC-001 | `skills_acceptance::template_lazy_load_and_explicit_skill_compose_across_run_line_and_resume` | Template renders; the mock lazily loads only `lint`; `/skill:review` carries the project body in its envelope; unused/shadowed bodies never reach session data |
+| AC-002 | `skills_acceptance::malicious_skills_cannot_escalate_effects_or_escape_the_workspace` | A lazily loaded skill's write is denied (`approval_resolved approved:false`); a line-mode shell request is denied by `n`; `allowed-tools` frontmatter grants nothing; a granted `../` write fails and creates no file |
+| AC-003 | `skills_acceptance::oversized_stale_and_invalid_resources_fail_closed_and_resume_cleanly` | Oversized load fails without storing the body; a stale identity after an edit fails and reports the catalog change; invalid and dangling-symlink skills are skipped with catalog diagnostics; resume replays no tool call |
+| AC-004 | the AC-001 test, plus `tui::skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly` | `run`/resume and `--line-mode` store identical user turns with valid NDJSON; TUI template, explicit skill, Esc denial and Ctrl+C cancellation at a pending approval release the composer; a restarted process replays nothing. The shell approval is identified by its preview, and Ctrl+C must end the turn with `error: operation cancelled` and no `approval_resolved`, `tool_finished` or `turn_finished` for it, while a denial resolves the approval and continues |
+| Regression | `skills_acceptance::clean_workspace_without_resources_keeps_plain_turns_working` | Plain turns are unchanged; unknown skills or templates fail before a session is stored |
+
+In-process cancellation of an explicit skill load before turn start stays covered by
+`coding_workflow::explicit_skill_revalidation_and_inflight_cancellation_fail_before_turn_start`.
+Two mutation checks confirm the tests can fail: making HostPolicy approve everything
+failed the AC-002 test, and making Ctrl+C stop cancelling the turn failed the AC-004
+TUI test, which then observed `approval_resolved` where cancellation is required.
+Both mutations were reverted.
+
+Commands and outcomes:
+
+- `cargo test -p huginn --test skills_acceptance`: 4 passed.
+- `cargo test -p huginn --test tui`: 13 passed (1 new).
+- `just huginn-test`, which includes `just huginn-architecture`: 534 passed,
+  0 failed. 2 tests were ignored: legacy-binary interop (needs
+  `CORTEX_AGENT_LEGACY_BIN`) and the OS secret-store test.
+- `cargo clippy -p huginn -p huginn-runtime -p huginn-application --all-targets --all-features -- -D warnings`
+  and `cargo fmt --all -- --check`: passed.
+
+`just ci-local` ran on this host and failed at stage 5/9, outside this change:
+`rook --test di_tests::test_sqlite_secret_storage_through_api_key_auth` reports
+`secret path would escape database directory`. In `apps/rook/src/di.rs` the
+database path falls back to its non-canonical form when the file does not exist
+yet, then is compared against a canonicalized parent; on macOS `/var` is a
+symlink to `private/var`, so the comparison fails and Linux runners do not see it.
+`cargo test --workspace --no-fail-fast` reported 1750 passed and the same test
+failing twice (parent and child process); nothing else failed. This change
+contains no `apps/rook` file and `apps/rook` depends on no `huginn` crate. The
+GitHub Actions workflow on Linux passed for the PR head.
+
+Not verified: Linux and Windows daily use, native terminal products, SSH/tmux, real
+models and human approval usability. Those remain with
+[DALLAY-665](https://linear.app/dallay/issue/DALLAY-665) (#307),
+[DALLAY-668](https://linear.app/dallay/issue/DALLAY-668) (#332) and
+[DALLAY-634](https://linear.app/dallay/issue/DALLAY-634) (#280), which this
+record does not close.
+
 ## Hexagonal/plugin lifecycle refactor — 2026-10-11
 
 [ADR-0012](adr/0012-hexagonal-application-and-plugin-lifecycle.md) is implemented
