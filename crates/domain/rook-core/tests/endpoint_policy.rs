@@ -199,6 +199,8 @@ fn reserved_documentation_ranges_are_rejected_even_when_the_origin_is_granted() 
         "::ffff:203.0.113.1",
         "2001:2::1",
         "2001:10::1",
+        "::8.8.8.8",
+        "3fff::1",
     ] {
         let ip = address.parse::<IpAddr>().expect("valid test address");
         assert_eq!(
