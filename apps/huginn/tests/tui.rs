@@ -508,5 +508,31 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
         .collect();
     assert_eq!(users.len(), 6);
     assert_eq!(users[5], "after restart");
+    // Persisted tool calls keep their results, so the resumed history is
+    // complete instead of truncated at a call boundary.
+    let messages = after["messages"].as_array().unwrap();
+    let calls: Vec<&str> = messages
+        .iter()
+        .flat_map(|message| message["tool_calls"].as_array().into_iter().flatten())
+        .map(|call| call["id"].as_str().unwrap())
+        .collect();
+    let results: Vec<&str> = messages
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["tool_call_id"].as_str().unwrap())
+        .collect();
+    assert!(!calls.is_empty(), "{messages:?}");
+    for call in &calls {
+        assert!(
+            results.contains(call),
+            "tool call {call} has no matching result: {messages:?}"
+        );
+    }
+    for result in &results {
+        assert!(
+            calls.contains(result),
+            "tool result {result} has no matching call: {messages:?}"
+        );
+    }
     assert!(!workspace.path().join("pwned-shell").exists());
 }
