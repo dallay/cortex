@@ -29,6 +29,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       github: ${{ steps.filter.outputs.github }}
       labeler: ${{ steps.filter.outputs.labeler }}
+      doctor: ${{ steps.filter.outputs.doctor }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,6 +67,12 @@ jobs:
               - '.github/ISSUE_TEMPLATE/**'
               - '.github/workflows/issue-labeler.yml'
               - '.github/workflows/labels-audit.yml'
+            doctor:
+              - 'dev/doctor.sh'
+              - 'dev/doctor.test.sh'
+              - 'justfile'
+              - 'package.json'
+              - 'rust-toolchain.toml'
 
   # === Reusable dashboard build (cached artifact) ===
   build-dashboard:
@@ -129,6 +136,24 @@ jobs:
         run: pnpm install
       - name: Lint markdown
         run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+
+  doctor:
+    name: Test (Doctor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.doctor == 'true' || needs.changes.outputs.github == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - name: Run doctor tests
+        run: just doctor-test
 
   test-labeler:
     name: Test (Issue Labeler)
@@ -589,6 +614,7 @@ jobs:
     if: always()
     needs:
       - changes
+      - doctor
       - coverage
       - coverage-frontend
       - build-dashboard
@@ -622,7 +648,9 @@ jobs:
           CHANGES_GITHUB: ${{ needs.changes.outputs.github }}
           CHANGES_DOCS: ${{ needs.changes.outputs.docs }}
           CHANGES_LABELER: ${{ needs.changes.outputs.labeler }}
+          CHANGES_DOCTOR: ${{ needs.changes.outputs.doctor }}
           RESULT_CHANGES: ${{ needs.changes.result }}
+          RESULT_DOCTOR: ${{ needs.doctor.result }}
           RESULT_BUILD_DASHBOARD: ${{ needs.build-dashboard.result }}
           RESULT_FMT: ${{ needs.fmt.result }}
           RESULT_MARKDOWN: ${{ needs.markdown.result }}

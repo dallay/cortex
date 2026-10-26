@@ -23,6 +23,7 @@ const successResults = {
   sonar: 'success',
   coverage: 'success',
   'coverage-frontend': 'success',
+  doctor: 'success',
 };
 
 function input(changes, results = successResults) {
@@ -66,6 +67,24 @@ describe('required coverage checks', () => {
 
   it('requires both reports for workflow changes that can affect either coverage job', () => {
     const result = evaluateRequiredChecks(input({ github: 'true' }));
+    assert.equal(result.ok, true);
+  });
+});
+
+describe('doctor test check', () => {
+  it('requires the doctor test when doctor inputs change', () => {
+    const result = evaluateRequiredChecks(input({ doctor: 'true' }, { ...successResults, doctor: 'success' }));
+    assert.equal(result.ok, true);
+  });
+
+  it('fails the gate when the doctor test is skipped for doctor changes', () => {
+    const result = evaluateRequiredChecks(input({ doctor: 'true' }, { ...successResults, doctor: 'skipped' }));
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes('doctor: expected success, got skipped'));
+  });
+
+  it('allows the doctor test to skip for documentation-only changes', () => {
+    const result = evaluateRequiredChecks(input({ docs: 'true' }, { ...successResults, doctor: 'skipped' }));
     assert.equal(result.ok, true);
   });
 });
