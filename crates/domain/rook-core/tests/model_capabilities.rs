@@ -1,4 +1,4 @@
-use rook_core::{CompletionRequest, RequestMetadata, RequiredCapabilities};
+use rook_core::{CompletionRequest, RequiredCapabilities};
 use shared_kernel::RequestId;
 
 fn request(tools: Option<serde_json::Value>) -> CompletionRequest {
@@ -11,7 +11,7 @@ fn request(tools: Option<serde_json::Value>) -> CompletionRequest {
         temperature: None,
         tools,
         tool_choice: None,
-        metadata: RequestMetadata {
+        metadata: rook_core::RequestMetadata {
             origin: "test".into(),
             cacheable: false,
             priority: 0,
@@ -29,13 +29,15 @@ fn tools_requirement_preserves_missing_non_array_and_empty_array_semantics() {
     assert!(!RequiredCapabilities::from_request(&request(Some(serde_json::Value::Null))).tools);
     assert!(!RequiredCapabilities::from_request(&request(Some(serde_json::json!([])))).tools);
     assert!(
-        RequiredCapabilities::from_request(&request(Some(
-            serde_json::json!([{"type":"function"}])
-        )))
+        RequiredCapabilities::from_request(&request(Some(serde_json::json!([{
+            "type": "function"
+        }]))))
         .tools
     );
     assert!(
-        RequiredCapabilities::from_request(&request(Some(serde_json::json!({"type":"function"}))))
-            .tools
+        RequiredCapabilities::from_request(&request(Some(serde_json::json!({
+            "type": "function"
+        }))))
+        .tools
     );
 }
