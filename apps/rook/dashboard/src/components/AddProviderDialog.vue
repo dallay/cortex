@@ -564,12 +564,18 @@ onUnmounted(stopOAuthPolling);
       <div class="space-y-4 py-2">
         <!-- Kind selector (hidden when providerKind is pre-scoped) -->
         <div v-if="showKindSelector" class="space-y-2">
-          <Label for="kind">{{ t('providers.form.selectProvider') }}</Label>
+          <Label id="kind-label" for="kind">
+            {{ t('providers.form.selectProvider') }}
+          </Label>
           <Select
             :model-value="kind"
             @update:model-value="(v) => v && (kind = v as ProviderKind)"
           >
-            <SelectTrigger id="kind" data-testid="kind-select-trigger">
+            <SelectTrigger
+              id="kind"
+              aria-labelledby="kind-label"
+              data-testid="kind-select-trigger"
+            >
               <SelectValue :placeholder="t('providers.form.selectProvider')" />
             </SelectTrigger>
             <SelectContent>
