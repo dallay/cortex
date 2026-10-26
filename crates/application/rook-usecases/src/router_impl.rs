@@ -16,9 +16,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rand::RngExt;
-use rook_core::{
-    CompletionRequest, ModelId, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
-};
+use rook_core::{CompletionRequest, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort};
 use shared_kernel::{CortexError, CortexResult, Utc};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -178,7 +176,8 @@ impl FallbackRouter {
     }
 
     /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers(&self, model: &ModelId) -> Vec<Arc<dyn ProviderPort>> {
+    fn available_providers(&self, req: &CompletionRequest) -> Vec<Arc<dyn ProviderPort>> {
+        let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
         guard
@@ -186,7 +185,10 @@ impl FallbackRouter {
             .filter(|p| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
-                !circuit.is_open(now) && p.supports_model(model) && p.is_available()
+                !circuit.is_open(now)
+                    && p.supports_model(&req.model)
+                    && p.is_available()
+                    && required.check(&p.model_capabilities(&req.model)).is_ok()
             })
             .cloned()
             .collect()
@@ -286,7 +288,7 @@ impl ProviderRegistryPort for FallbackRouter {
 #[async_trait]
 impl RouterPort for FallbackRouter {
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-        let candidates = self.available_providers(&req.model);
+        let candidates = self.available_providers(req);
 
         if candidates.is_empty() {
             return Err(CortexError::all_providers_exhausted());
@@ -339,7 +341,7 @@ impl RouterPort for FallbackRouter {
     ) -> CortexResult<Arc<dyn ProviderPort>> {
         use std::collections::HashSet;
         let excluded_set: HashSet<_> = excluded.iter().collect();
-        let candidates = self.available_providers(&req.model);
+        let candidates = self.available_providers(req);
         // Filter out excluded providers and those with open circuit breaker
         let available: Vec<_> = candidates
             .into_iter()
@@ -474,15 +476,19 @@ impl RouterPort for FallbackRouter {
         connection_id: &shared_kernel::ConnectionId,
     ) -> Option<Arc<dyn ProviderPort>> {
         let provider_id = ProviderId::new(connection_id.to_string());
+        self.resolve_provider(&provider_id)
+    }
+
+    fn resolve_provider(&self, provider_id: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         let circuit = self
             .circuits
-            .get(&provider_id)
+            .get(provider_id)
             .map(|state| state.clone())
             .unwrap_or_default();
         if circuit.is_open(self.clock.now()) {
             return None;
         }
-        self.get(&provider_id)
+        self.get(provider_id)
     }
 }
 

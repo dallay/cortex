@@ -49,6 +49,9 @@ Returns the current health snapshot without session authentication. The response
 
 ## `GET /api/models`
 
+El catálogo de cliente `/v1/models` conserva sus campos básicos y añade `rook`
+con capacidades y procedencia. Consulte el [contrato del catálogo](model-catalog.md).
+
 Requires admin session authentication. Lists models grouped by active provider connection. Inactive connections and provider kinds without catalog entries are omitted. The response uses camelCase fields.
 
 ```json

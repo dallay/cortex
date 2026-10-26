@@ -89,6 +89,7 @@ pub enum ProviderKind {
     OllamaCloud,
     Gemini,
     Groq,
+    #[serde(alias = "azure-openai")]
     AzureOpenAI,
 }
 

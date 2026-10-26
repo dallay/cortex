@@ -1,4 +1,5 @@
 use super::*;
+mod capabilities;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::{stream, StreamExt};
@@ -14,6 +15,21 @@ use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+// These routing fixtures deliberately accept tools and streaming. Production
+// adapters default to unknown; capability-denial tests use separate fixtures.
+fn fixture_capabilities() -> rook_core::ModelCapabilities {
+    let mut capabilities = rook_core::ModelCapabilities::default();
+    capabilities.apply(
+        &rook_core::CapabilityOverrides {
+            tools: Some(rook_core::CapabilityState::Supported),
+            streaming: Some(rook_core::CapabilityState::Supported),
+            ..Default::default()
+        },
+        "test_fixture",
+    );
+    capabilities
+}
+
 struct TestProvider {
     id: ProviderId,
     complete_error: Option<CortexError>,
@@ -21,6 +37,9 @@ struct TestProvider {
 
 #[async_trait]
 impl ProviderPort for TestProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -163,6 +182,9 @@ struct BlockingTestProvider {
 
 #[async_trait]
 impl ProviderPort for BlockingTestProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.inner.id
     }
@@ -493,6 +515,9 @@ struct CountingStreamProvider {
 
 #[async_trait]
 impl ProviderPort for CountingStreamProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -1631,6 +1656,9 @@ async fn streaming_usage_records_failure_with_nullable_tokens_and_rate_limited_s
 
     #[async_trait]
     impl ProviderPort for FailingStreamProvider {
+        fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+            fixture_capabilities()
+        }
         fn id(&self) -> &ProviderId {
             &self.id
         }
@@ -1787,6 +1815,9 @@ struct SpyProvider {
 
 #[async_trait]
 impl ProviderPort for SpyProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -1864,6 +1895,9 @@ struct RateLimitedProvider {
 
 #[async_trait]
 impl ProviderPort for RateLimitedProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -3698,6 +3732,9 @@ struct ToolProvider {
 
 #[async_trait]
 impl ProviderPort for ToolProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -3903,6 +3940,9 @@ struct PhysicalSpyProvider {
 
 #[async_trait]
 impl ProviderPort for PhysicalSpyProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -4073,6 +4113,9 @@ struct EchoStreamProvider {
 
 #[async_trait]
 impl ProviderPort for EchoStreamProvider {
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
     fn id(&self) -> &ProviderId {
         &self.id
     }

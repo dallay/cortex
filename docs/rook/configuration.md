@@ -10,6 +10,9 @@ Rook looks for config in this order:
 
 ## Full Schema
 
+Para declarar capacidades de modelos y revisar la migración de herramientas y
+streaming, consulte [Catálogo de modelos y elegibilidad](model-catalog.md).
+
 ```toml
 [server]
 host = "127.0.0.1"   # default: "127.0.0.1"

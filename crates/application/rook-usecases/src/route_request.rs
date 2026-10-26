@@ -398,6 +398,13 @@ impl RouteRequest {
 
             // Skip connections with fresh, authoritative exhaustion evidence.
             // The check runs after authorization and before any upstream I/O.
+            if rook_core::RequiredCapabilities::from_request(&req)
+                .check(&provider.model_capabilities(&req.model))
+                .is_err()
+            {
+                excluded.push(provider_id);
+                continue;
+            }
             if self.quota_reader.is_some() {
                 if let Some((connection_id, runtime_id)) = connection.as_ref() {
                     let state = self
@@ -624,7 +631,7 @@ impl RouteRequest {
         req: &CompletionRequest,
         cache_key: &rook_core::CacheKey,
     ) -> Result<Option<CompletionResponse>, CortexError> {
-        if !req.metadata.cacheable {
+        if !req.metadata.cacheable || rook_core::RequiredCapabilities::from_request(req).tools {
             return Ok(None);
         }
 
@@ -644,7 +651,9 @@ impl RouteRequest {
         )?;
 
         // Cache if eligible
-        if ctx.req.metadata.cacheable {
+        if ctx.req.metadata.cacheable
+            && !rook_core::RequiredCapabilities::from_request(&ctx.req).tools
+        {
             if let Err(e) = self
                 .cache
                 .set(&ctx.cache_key, &resp, DEFAULT_CACHE_TTL)
@@ -772,6 +781,13 @@ impl RouteRequest {
                     return Err(
                         RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into(),
                     );
+                }
+                if rook_core::RequiredCapabilities::from_request(&req)
+                    .check(&provider.model_capabilities(&req.model))
+                    .is_err()
+                {
+                    excluded.push(provider_id);
+                    continue;
                 }
                 let provider_format = provider.api_format();
                 // Skip connections with fresh, authoritative exhaustion
@@ -1011,7 +1027,7 @@ impl RouteRequest {
         let requested = req.model.clone();
         let combo_id = self.resolve_virtual_alias(&requested).await?;
         let combo = self.load_combo(&combo_id).await?;
-        self.check_combo_authorization(&req, &combo, Some(&requested))?;
+        self.check_combo_authorization(&req.restrictions, &combo, Some(&requested))?;
         let mut resp = self.execute_combo(&combo, req, client_format).await?;
         // External contract uses the requested virtual model; audit keeps
         // provider/step details via record_combo_success.
@@ -1030,11 +1046,73 @@ impl RouteRequest {
     ) -> Result<CompletionResponse, CortexError> {
         self.check_model_restriction(&req)?;
         let combo = self.load_combo(combo_id).await?;
-        self.check_combo_authorization(&req, &combo, None)?;
+        self.check_combo_authorization(&req.restrictions, &combo, None)?;
         let requested = req.model.clone();
         let mut resp = self.execute_combo(&combo, req, client_format).await?;
         resp.model = requested;
         Ok(resp)
+    }
+
+    /// Catalog visibility uses the same physical model/provider authorization as execution.
+    /// Missing repositories, dangling aliases and unresolved connections remain hidden.
+    pub async fn visible_combo_aliases(
+        &self,
+        restrictions: &rook_core::ApiKeyRestrictions,
+    ) -> Vec<ModelId> {
+        let Some(repository) = self.combo_alias_repository.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(aliases) = repository.list().await else {
+            return Vec::new();
+        };
+        let mut visible = Vec::new();
+        for alias in aliases {
+            let Ok(combo) = self.load_combo(&alias.combo_id).await else {
+                continue;
+            };
+            if combo.steps.is_empty()
+                || self
+                    .check_combo_authorization(restrictions, &combo, Some(&alias.alias))
+                    .is_err()
+            {
+                continue;
+            }
+            let mut authorized = true;
+            for step in &combo.steps {
+                if let Some(id) = step.connection_id.as_ref() {
+                    let Some(repository) = self.provider_repository.as_ref() else {
+                        authorized = false;
+                        break;
+                    };
+                    let Ok(Some(connection)) = repository.find(id).await else {
+                        authorized = false;
+                        break;
+                    };
+                    let adapter_id = ProviderId::new(id.to_string());
+                    let Some(provider) = self.router.resolve_connection(id) else {
+                        authorized = false;
+                        break;
+                    };
+                    if !connection.is_active
+                        || connection.provider_runtime_id != step.provider_id
+                        || provider.id() != &adapter_id
+                        || classify_connection_adapter(
+                            provider.as_ref(),
+                            &adapter_id,
+                            &step.model,
+                            &restrictions.allowed_providers,
+                        ) != ConnectionAdapterDecision::Authorized
+                    {
+                        authorized = false;
+                        break;
+                    }
+                }
+            }
+            if authorized {
+                visible.push(alias.alias);
+            }
+        }
+        visible
     }
 
     /// Shared alias lookup used by every transport path (and only here).
@@ -1084,20 +1162,20 @@ impl RouteRequest {
     ///   unrestricted (existing semantics).
     fn check_combo_authorization(
         &self,
-        req: &CompletionRequest,
+        restrictions: &rook_core::ApiKeyRestrictions,
         combo: &rook_core::Combo,
         virtual_alias: Option<&ModelId>,
     ) -> Result<(), CortexError> {
         if let Some(alias) = virtual_alias {
-            if !req.restrictions.allowed_models.is_empty()
-                && !req.restrictions.allowed_models.contains(alias)
+            if !restrictions.allowed_models.is_empty()
+                && !restrictions.allowed_models.contains(alias)
             {
                 return Err(RestrictionViolation::ModelNotAllowed(alias.clone()).into());
             }
         }
         for step in &combo.steps {
-            if !req.restrictions.allowed_models.is_empty()
-                && !req.restrictions.allowed_models.contains(&step.model)
+            if !restrictions.allowed_models.is_empty()
+                && !restrictions.allowed_models.contains(&step.model)
             {
                 return Err(RestrictionViolation::ModelNotAllowed(step.model.clone()).into());
             }
@@ -1105,11 +1183,8 @@ impl RouteRequest {
             // existing preflight check. Connection-bound steps authorize only
             // after repository resolution yields the effective adapter identity.
             if step.connection_id.is_none()
-                && !req.restrictions.allowed_providers.is_empty()
-                && !req
-                    .restrictions
-                    .allowed_providers
-                    .contains(&step.provider_id)
+                && !restrictions.allowed_providers.is_empty()
+                && !restrictions.allowed_providers.contains(&step.provider_id)
             {
                 return Err(
                     RestrictionViolation::ProviderNotAllowed(step.provider_id.clone()).into(),
@@ -1144,7 +1219,7 @@ impl RouteRequest {
         if virtual_alias.is_none() {
             self.check_model_restriction(&req)?;
         }
-        self.check_combo_authorization(&req, &combo, virtual_alias.as_ref())?;
+        self.check_combo_authorization(&req.restrictions, &combo, virtual_alias.as_ref())?;
         let mut resp = self.execute_combo(&combo, req, client_format).await?;
         resp.model = requested.clone();
         // Two chunks: content (text + tool-call fragments, no finish) then a
@@ -1291,6 +1366,8 @@ impl RouteRequest {
 
             let mut step_req = req.clone();
             step_req.model = model.clone();
+            // Combos call complete and synthesize SSE; native streaming is not required.
+            step_req.stream = false;
 
             // Skip connections with fresh, authoritative exhaustion evidence.
             // The check runs before any upstream I/O and never replaces the
@@ -1317,19 +1394,20 @@ impl RouteRequest {
                 )
                 .await?
             } else {
-                self.resolve_legacy_combo_step(
-                    provider_id,
-                    &step_req,
-                    step_index,
-                    &mut errors,
-                    &mut steps_attempted,
-                )
-                .await
+                self.resolve_legacy_combo_step(provider_id, &step_req, step_index, &mut errors)
+                    .await
             };
             let Some((provider, audit_provider_id, runtime_id, exact_connection_id)) = resolved
             else {
                 continue;
             };
+
+            if let Err(reason) = rook_core::RequiredCapabilities::from_request(&step_req)
+                .check(&provider.model_capabilities(model))
+            {
+                record_combo_skip(&mut errors, &audit_provider_id, step_index, reason);
+                continue;
+            }
 
             let step_context = ComboStepContext {
                 combo_id: *combo_id,
@@ -1611,7 +1689,6 @@ impl RouteRequest {
         step_req: &CompletionRequest,
         step_index: usize,
         errors: &mut Vec<(ProviderId, String)>,
-        steps_attempted: &mut usize,
     ) -> Option<(
         Arc<dyn rook_core::ProviderPort>,
         ProviderId,
@@ -1625,6 +1702,18 @@ impl RouteRequest {
                 "skipping step: provider not in registry"
             );
             return None;
+        }
+        if let Some(provider) = self.router.resolve_provider(provider_id) {
+            if !provider.is_available() || !provider.supports_model(&step_req.model) {
+                record_combo_skip(
+                    errors,
+                    provider_id,
+                    step_index,
+                    "provider_or_model_unavailable",
+                );
+                return None;
+            }
+            return Some((provider, provider_id.clone(), None, None));
         }
         match self.router.select(step_req).await {
             Ok(provider) if provider.id() == provider_id => {
@@ -1646,7 +1735,6 @@ impl RouteRequest {
                     "failed to select provider for step"
                 );
                 errors.push((provider_id.clone(), error.to_string()));
-                *steps_attempted += 1;
                 None
             }
         }

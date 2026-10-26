@@ -21,6 +21,19 @@ ttl_secs = 60
 }
 
 #[test]
+fn catalog_rejects_invalid_states_and_duplicate_model_declarations() {
+    use std::io::Write;
+    for declaration in [
+        "[[model_catalog]]\nprovider_kind = 'openai'\nmodel_id = 'custom'\n[model_catalog.capabilities]\ntools = 'probably'",
+        "[[model_catalog]]\nprovider_kind = 'openai'\nmodel_id = 'custom'\n[[model_catalog]]\nprovider_kind = 'openai'\nmodel_id = 'custom'",
+    ] {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(minimal_config_toml(declaration).as_bytes()).unwrap();
+        assert!(RookConfig::load(file.path()).is_err());
+    }
+}
+
+#[test]
 fn provider_endpoint_grants_reject_duplicate_or_malformed_entries_on_load() {
     use std::io::Write;
     let id = "c56a4180-65aa-42ec-a945-5fd21dec0538";
