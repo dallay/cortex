@@ -42,21 +42,24 @@ struct CircuitState {
     is_open: bool,
     last_failure: Option<chrono::DateTime<Utc>>,
     cooldown_until: Option<Instant>,
+    /// Whether a half-open recovery trial is currently in flight.
+    half_open_trial_in_flight: bool,
     /// Rate limit reset time from upstream provider (Unix epoch seconds)
     rate_limit_reset: Option<u64>,
 }
 
 impl CircuitState {
-    fn record_failure(&mut self) {
-        self.failures += 1;
+    fn record_failure(&mut self, now: Instant) {
+        self.failures = self.failures.saturating_add(1);
         self.last_failure = Some(Utc::now());
-        if self.failures >= FAILURE_THRESHOLD {
+        if self.failures >= FAILURE_THRESHOLD || self.is_half_open(now) {
             self.is_open = true;
-            self.cooldown_until = Some(Instant::now() + CIRCUIT_COOLDOWN);
+            self.cooldown_until = Some(now + CIRCUIT_COOLDOWN);
+            self.half_open_trial_in_flight = false;
         }
     }
 
-    fn record_rate_limit(&mut self, retry_after_secs: u64, reset_at: Option<u64>) {
+    fn record_rate_limit(&mut self, retry_after_secs: u64, reset_at: Option<u64>, now: Instant) {
         self.failures += 1;
         self.last_failure = Some(Utc::now());
         self.is_open = true;
@@ -71,16 +74,24 @@ impl CircuitState {
             self.rate_limit_reset = Some(now + retry_after_secs);
         }
         // Set cooldown based on retry_after
-        self.cooldown_until = Some(Instant::now() + Duration::from_secs(retry_after_secs));
+        self.cooldown_until = Some(now + Duration::from_secs(retry_after_secs));
+        self.half_open_trial_in_flight = false;
     }
 
-    // RouterPort has no success hook yet, so failures accumulate instead of
-    // counting consecutively; wire this in once `on_success` exists.
-    #[expect(dead_code)]
-    fn record_success(&mut self) {
+    fn record_success(&mut self, now: Instant) {
         self.failures = 0;
+        self.half_open_trial_in_flight = false;
+        // A concurrent successful call must not cancel upstream rate-limit backoff.
+        if self.rate_limit_reset.is_some() && self.is_open(now) {
+            return;
+        }
         self.is_open = false;
         self.cooldown_until = None;
+        self.rate_limit_reset = None;
+    }
+
+    fn is_half_open(&self, now: Instant) -> bool {
+        self.is_open && self.cooldown_until.is_some_and(|until| now >= until)
     }
 
     fn reset(&mut self) {
@@ -88,20 +99,27 @@ impl CircuitState {
         self.is_open = false;
         self.last_failure = None;
         self.cooldown_until = None;
+        self.half_open_trial_in_flight = false;
         self.rate_limit_reset = None;
     }
 
-    fn is_open(&self) -> bool {
-        if !self.is_open {
+    fn is_open(&self, now: Instant) -> bool {
+        self.is_open && !self.is_half_open(now)
+    }
+
+    fn claim_trial(&mut self, now: Instant) -> bool {
+        if !self.is_half_open(now) {
+            return true;
+        }
+        if self.half_open_trial_in_flight {
             return false;
         }
-        // Check if cool-down has elapsed
-        if let Some(until) = self.cooldown_until {
-            if Instant::now() >= until {
-                return false;
-            }
-        }
+        self.half_open_trial_in_flight = true;
         true
+    }
+
+    fn release_trial(&mut self) {
+        self.half_open_trial_in_flight = false;
     }
 }
 
@@ -109,8 +127,22 @@ impl CircuitState {
 pub struct FallbackRouter {
     providers: Arc<RwLock<Vec<Arc<dyn ProviderPort>>>>,
     strategy: RoutingStrategy,
-    circuits: DashMap<ProviderId, CircuitState>,
+    circuits: Arc<DashMap<ProviderId, CircuitState>>,
     round_robin_index: AsyncRwLock<usize>,
+    clock: Arc<dyn CircuitClock>,
+}
+
+/// Time source for deterministic circuit-breaker transitions.
+pub trait CircuitClock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+struct SystemCircuitClock;
+
+impl CircuitClock for SystemCircuitClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 impl FallbackRouter {
@@ -119,30 +151,42 @@ impl FallbackRouter {
         Self {
             providers: Arc::new(RwLock::new(Vec::new())),
             strategy,
-            circuits: DashMap::new(),
+            circuits: Arc::new(DashMap::new()),
             round_robin_index: AsyncRwLock::new(0),
+            clock: Arc::new(SystemCircuitClock),
         }
     }
 
     /// Constructs a router with the given providers.
     pub fn new(providers: Vec<Arc<dyn ProviderPort>>, strategy: RoutingStrategy) -> Self {
+        Self::with_clock(providers, strategy, Arc::new(SystemCircuitClock))
+    }
+
+    /// Constructs a router with an injectable clock for deterministic circuit tests.
+    pub fn with_clock(
+        providers: Vec<Arc<dyn ProviderPort>>,
+        strategy: RoutingStrategy,
+        clock: Arc<dyn CircuitClock>,
+    ) -> Self {
         Self {
             providers: Arc::new(RwLock::new(providers)),
             strategy,
-            circuits: DashMap::new(),
+            circuits: Arc::new(DashMap::new()),
             round_robin_index: AsyncRwLock::new(0),
+            clock,
         }
     }
 
     /// Returns providers that are available (circuit closed) and support the model
     fn available_providers(&self, model: &ModelId) -> Vec<Arc<dyn ProviderPort>> {
+        let now = self.clock.now();
         let guard = self.providers.read();
         guard
             .iter()
             .filter(|p| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
-                !circuit.is_open() && p.supports_model(model) && p.is_available()
+                !circuit.is_open(now) && p.supports_model(model) && p.is_available()
             })
             .cloned()
             .collect()
@@ -160,10 +204,10 @@ impl FallbackRouter {
                 // Lookup circuit entry (if any) from DashMap
                 let state = self.circuits.get(&provider_id).map(|s| s.clone());
 
-                // Convert Instant to DateTime<Utc> for cooldown_until
+                // Convert the monotonic cooldown deadline to UTC for observability.
+                let now = self.clock.now();
                 let cooldown_until = state.as_ref().and_then(|s| {
                     s.cooldown_until.and_then(|instant| {
-                        let now = std::time::Instant::now();
                         if instant > now {
                             let remaining = instant.duration_since(now);
                             Some(
@@ -178,7 +222,7 @@ impl FallbackRouter {
 
                 let snapshot = rook_core::CircuitStateSnapshot {
                     failures: state.as_ref().map(|s| s.failures).unwrap_or(0),
-                    is_open: state.as_ref().map(|s| s.is_open()).unwrap_or(false),
+                    is_open: state.as_ref().map(|s| s.is_open(now)).unwrap_or(false),
                     last_failure: state.as_ref().and_then(|s| s.last_failure),
                     cooldown_until,
                     rate_limit_reset: state.as_ref().and_then(|s| s.rate_limit_reset),
@@ -351,14 +395,16 @@ impl RouterPort for FallbackRouter {
     }
 
     async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
+        let now = self.clock.now();
         let mut state = self.circuits.entry(provider.clone()).or_default();
+        let half_open_trial = state.half_open_trial_in_flight;
 
         // Check if this is a rate limit error and extract retry info
         if error.is_rate_limited() {
             if let Some(retry_after_secs) = error.retry_after_secs() {
                 // Extract reset timestamp if available from error
                 let reset_at = error.rate_limit_reset();
-                state.record_rate_limit(retry_after_secs, reset_at);
+                state.record_rate_limit(retry_after_secs, reset_at, now);
                 tracing::warn!(
                     provider = %provider,
                     retry_after_secs = retry_after_secs,
@@ -369,14 +415,50 @@ impl RouterPort for FallbackRouter {
             }
         }
 
-        // Regular failure (not rate limit)
-        state.record_failure();
+        // A failed half-open trial must reopen the circuit immediately.
+        if half_open_trial {
+            state.is_open = true;
+            state.cooldown_until = Some(now + CIRCUIT_COOLDOWN);
+            state.half_open_trial_in_flight = false;
+            state.failures = state.failures.saturating_add(1);
+            state.last_failure = Some(Utc::now());
+        } else {
+            state.record_failure(now);
+        }
         tracing::warn!(
             provider = %provider,
             failures = state.failures,
             is_open = state.is_open,
             "provider circuit breaker updated"
         );
+    }
+
+    async fn try_acquire_trial(
+        &self,
+        provider: &ProviderId,
+    ) -> Option<rook_core::RouterTrialPermit> {
+        let now = self.clock.now();
+        let mut state = self.circuits.entry(provider.clone()).or_default();
+        if state.is_open(now) || !state.claim_trial(now) {
+            return None;
+        }
+        if state.half_open_trial_in_flight {
+            let circuits = self.circuits.clone();
+            let provider = provider.clone();
+            return Some(rook_core::RouterTrialPermit::with_release(move || {
+                if let Some(mut state) = circuits.get_mut(&provider) {
+                    state.release_trial();
+                }
+            }));
+        }
+        Some(rook_core::RouterTrialPermit::no_op())
+    }
+
+    async fn on_success(&self, provider: &ProviderId) {
+        let now = self.clock.now();
+        if let Some(mut state) = self.circuits.get_mut(provider) {
+            state.record_success(now);
+        }
     }
 
     fn providers(&self) -> Vec<ProviderId> {
@@ -397,7 +479,7 @@ impl RouterPort for FallbackRouter {
             .get(&provider_id)
             .map(|state| state.clone())
             .unwrap_or_default();
-        if circuit.is_open() {
+        if circuit.is_open(self.clock.now()) {
             return None;
         }
         self.get(&provider_id)
@@ -413,6 +495,28 @@ mod tests {
         Message, ModelId, ProviderId, ProviderPort, RequestId, RequestMetadata, Role, StreamChunk,
         TokenUsage,
     };
+
+    struct TestCircuitClock {
+        now: parking_lot::Mutex<Instant>,
+    }
+
+    impl TestCircuitClock {
+        fn new() -> Self {
+            Self {
+                now: parking_lot::Mutex::new(Instant::now()),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            *self.now.lock() += duration;
+        }
+    }
+
+    impl CircuitClock for TestCircuitClock {
+        fn now(&self) -> Instant {
+            *self.now.lock()
+        }
+    }
 
     struct StubProvider {
         id: ProviderId,
@@ -658,6 +762,178 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&ProviderId::new("a")));
         assert!(ids.contains(&ProviderId::new("b")));
+    }
+
+    #[tokio::test]
+    async fn successful_call_resets_consecutive_failure_count() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let router = FallbackRouter::new(vec![provider], RoutingStrategy::Priority);
+        let provider_id = ProviderId::new("provider");
+
+        router
+            .on_failure(&provider_id, &CortexError::provider("failure 1"))
+            .await;
+        router
+            .on_failure(&provider_id, &CortexError::provider("failure 2"))
+            .await;
+        router.on_success(&provider_id).await;
+        router
+            .on_failure(&provider_id, &CortexError::provider("failure 3"))
+            .await;
+        router
+            .on_failure(&provider_id, &CortexError::provider("failure 4"))
+            .await;
+
+        let states = router.circuit_states();
+        assert_eq!(states[0].1.failures, 2);
+        assert!(!states[0].1.is_open);
+    }
+
+    #[tokio::test]
+    async fn success_preserves_active_rate_limit_cooldown_and_clears_it_after_expiry() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+        let reset_at = 1234567890;
+
+        router
+            .on_failure(
+                &provider_id,
+                &CortexError::rate_limited_with_reset(provider_id.clone(), 60, reset_at),
+            )
+            .await;
+        let deadline = router.circuits.get(&provider_id).unwrap().cooldown_until;
+        router.on_success(&provider_id).await;
+
+        let snapshot = &router.circuit_states()[0].1;
+        assert_eq!(snapshot.failures, 0);
+        assert!(snapshot.is_open);
+        assert_eq!(snapshot.rate_limit_reset, Some(reset_at));
+        assert_eq!(
+            router.circuits.get(&provider_id).unwrap().cooldown_until,
+            deadline
+        );
+        assert!(router.select(&request).await.is_err());
+
+        clock.advance(Duration::from_secs(60));
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("cooldown expired");
+        router.on_success(&provider_id).await;
+        permit.complete();
+        let snapshot = &router.circuit_states()[0].1;
+        assert_eq!(snapshot.failures, 0);
+        assert!(!snapshot.is_open);
+        assert!(snapshot.cooldown_until.is_none());
+        assert!(snapshot.rate_limit_reset.is_none());
+        assert!(router.select(&request).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn trial_acquisition_rechecks_cooldown_after_provider_selection() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+
+        // A concurrent failure can open the circuit after selection.
+        router.select(&request).await.expect("initially available");
+        router
+            .on_failure(
+                &provider_id,
+                &CortexError::rate_limited(provider_id.clone(), 60),
+            )
+            .await;
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+
+        clock.advance(Duration::from_secs(60));
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("cooldown expired");
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+        drop(permit);
+        assert!(router.try_acquire_trial(&provider_id).await.is_some());
+
+        router.reset_circuit(&provider_id);
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn half_open_trial_success_closes_and_resets_circuit() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        assert!(router.select(&request).await.is_err());
+
+        clock.advance(CIRCUIT_COOLDOWN);
+        let trial = router
+            .select(&request)
+            .await
+            .expect("half-open trial allowed");
+        assert_eq!(trial.id(), &provider_id);
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("single trial permit");
+        assert!(router.try_acquire_trial(&provider_id).await.is_none());
+        drop(permit);
+
+        router.on_success(&provider_id).await;
+        let state = &router.circuit_states()[0].1;
+        assert_eq!(state.failures, 0);
+        assert!(!state.is_open);
+    }
+
+    #[tokio::test]
+    async fn half_open_trial_failure_reopens_circuit() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        let provider_id = ProviderId::new("provider");
+        let request = make_test_request("model");
+
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        clock.advance(CIRCUIT_COOLDOWN);
+        router
+            .select(&request)
+            .await
+            .expect("half-open trial allowed");
+        let permit = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("single trial permit");
+        permit.complete();
+        router
+            .on_failure(&provider_id, &CortexError::provider("trial failed"))
+            .await;
+
+        assert!(router.select(&request).await.is_err());
     }
 
     #[test]

@@ -92,6 +92,35 @@ pub trait FormatTranslatorPort: Send + Sync {
 // RouterPort — provider selection and fallback
 // ---------------------------------------------------------------------------
 
+/// Holds a half-open trial reservation until the upstream attempt ends.
+/// Dropping the permit releases a reservation if the request is cancelled.
+pub struct RouterTrialPermit(Option<Box<dyn FnOnce() + Send + 'static>>);
+
+impl RouterTrialPermit {
+    /// Creates a permit with no reservation to release.
+    pub fn no_op() -> Self {
+        Self(None)
+    }
+
+    /// Creates a permit that runs `release` when dropped.
+    pub fn with_release(release: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(release)))
+    }
+
+    /// Marks the upstream attempt as complete; its outcome updates router state.
+    pub fn complete(mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for RouterTrialPermit {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
+
 /// RouterPort decides which provider to use for a given request.
 /// Implementations carry the fallback/routing strategy.
 #[async_trait]
@@ -110,6 +139,16 @@ pub trait RouterPort: Send + Sync {
     /// Called when a provider call fails — allows the router to update
     /// internal state (circuit breaker, weights, etc.)
     async fn on_failure(&self, provider: &ProviderId, error: &shared_kernel::CortexError);
+
+    /// Reserve the single recovery trial after a circuit cooldown.
+    /// The default permits attempts to keep existing test doubles compatible.
+    async fn try_acquire_trial(&self, _provider: &ProviderId) -> Option<RouterTrialPermit> {
+        Some(RouterTrialPermit::no_op())
+    }
+
+    /// Called when a provider call succeeds so the router can reset
+    /// consecutive failure state. The default keeps existing test doubles compatible.
+    async fn on_success(&self, _provider: &ProviderId) {}
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;

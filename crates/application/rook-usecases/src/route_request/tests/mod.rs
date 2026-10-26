@@ -192,6 +192,103 @@ impl ProviderPort for BlockingTestProvider {
     }
 }
 
+/// Suspends failure notification before the real router updates its circuit.
+struct BlockingFailureRouter {
+    inner: crate::FallbackRouter,
+    failure_started: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl RouterPort for BlockingFailureRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select(req).await
+    }
+
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select_excluding(req, excluded).await
+    }
+
+    async fn try_acquire_trial(
+        &self,
+        provider: &ProviderId,
+    ) -> Option<rook_core::RouterTrialPermit> {
+        self.inner.try_acquire_trial(provider).await
+    }
+
+    async fn on_failure(&self, _provider: &ProviderId, _error: &CortexError) {
+        self.failure_started.notify_one();
+        std::future::pending().await
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        RouterPort::providers(&self.inner)
+    }
+}
+
+async fn assert_combo_cancellation_releases_failed_trial(provider_times_out: bool) {
+    let provider_id = ProviderId::new("test-provider");
+    let inner = TestProvider {
+        id: provider_id.clone(),
+        complete_error: Some(CortexError::provider("failure")),
+    };
+    let provider: Arc<dyn ProviderPort> = if provider_times_out {
+        Arc::new(BlockingTestProvider {
+            inner,
+            started: Mutex::new(None),
+        })
+    } else {
+        Arc::new(inner)
+    };
+    let router = Arc::new(BlockingFailureRouter {
+        inner: crate::FallbackRouter::new(vec![provider.clone()], crate::RoutingStrategy::Priority),
+        failure_started: tokio::sync::Notify::new(),
+    });
+    // A zero-length cooldown puts the real circuit into half-open immediately.
+    router
+        .inner
+        .on_failure(
+            &provider_id,
+            &CortexError::rate_limited(provider_id.clone(), 0),
+        )
+        .await;
+    let mut usecase = make_usecase_with_provider(provider);
+    usecase.router = router.clone();
+    let combo = Combo::new(
+        "cancelled-trial".into(),
+        ComboStrategy::Priority,
+        vec![step(provider_id.as_str(), TEST_MODEL.as_str(), 1)],
+    );
+    let task = tokio::spawn(async move {
+        usecase
+            .execute_combo(&combo, request(), ApiFormat::OpenAI)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(15), router.failure_started.notified())
+        .await
+        .expect("failure notification must start after error or timeout");
+    assert!(router.try_acquire_trial(&provider_id).await.is_none());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(
+        router.try_acquire_trial(&provider_id).await.is_some(),
+        "cancellation must release the trial"
+    );
+}
+
+#[tokio::test]
+async fn combo_cancellation_during_error_notification_releases_trial() {
+    assert_combo_cancellation_releases_failed_trial(false).await;
+}
+
+#[tokio::test]
+async fn combo_cancellation_during_timeout_notification_releases_trial() {
+    assert_combo_cancellation_releases_failed_trial(true).await;
+}
+
 async fn busy_limited_test_provider() -> (Arc<dyn ProviderPort>, tokio::task::JoinHandle<()>) {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let inner: Arc<dyn ProviderPort> = Arc::new(BlockingTestProvider {

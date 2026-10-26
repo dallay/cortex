@@ -100,6 +100,10 @@ async fn notify_provider_failure(
     }
 }
 
+async fn notify_provider_success(router: &dyn RouterPort, provider: &ProviderId) {
+    router.on_success(provider).await;
+}
+
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
 const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
@@ -423,13 +427,20 @@ impl RouteRequest {
                 Err(e) => return Err(e),
             };
 
-            // Execute
+            // Acquire the half-open trial only after preflight checks and just before upstream I/O.
+            // Keep the half-open permit until the outcome updates circuit state.
+            let Some(_trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
+                excluded.push(provider_id);
+                continue;
+            };
             provider_attempts += 1;
             let result = provider.complete(&provider_req).await;
             let latency_ms = start.elapsed().as_millis() as u64;
 
             match result {
                 Ok(provider_resp) => {
+                    _trial_permit.complete();
+                    notify_provider_success(self.router.as_ref(), &provider_id).await;
                     // If this is a retry (excluded list is not empty), record successful failover
                     if !excluded.is_empty() {
                         tracing::info!(
@@ -453,11 +464,13 @@ impl RouteRequest {
                         .await;
                 }
                 Err(e) => {
-                    // Record failure for circuit breaker (before checking retryability)
-                    notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
                     if e.is_local_backpressure() {
+                        drop(_trial_permit);
                         local_backpressure = Some(CortexError::local_backpressure());
                     } else {
+                        _trial_permit.complete();
+                        // Record failure for circuit breaker before checking retryability.
+                        notify_provider_failure(self.router.as_ref(), &provider_id, &e).await;
                         provider_attempt_failed = true;
                     }
                     let final_latency = start.elapsed().as_millis() as u64;
@@ -792,16 +805,27 @@ impl RouteRequest {
                     provider_format,
                     req.clone(),
                 )?;
+                let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
+                    excluded.push(provider_id);
+                    continue;
+                };
                 provider_attempts += 1;
                 match provider.stream(&provider_req).await {
                     Ok(upstream) => {
+                        trial_permit.complete();
+                        notify_provider_success(self.router.as_ref(), &provider_id).await;
                         break 'select (provider_id, connection_id, upstream);
                     }
                     Err(error) if error.is_local_backpressure() => {
+                        drop(trial_permit);
                         excluded.push(provider_id);
                         local_backpressure = Some(error);
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        trial_permit.complete();
+                        notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
+                        return Err(error);
+                    }
                 }
             }
             return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
@@ -1327,6 +1351,15 @@ impl RouteRequest {
             // virtual `rook/*` alias or another step's model.
             provider_req.model = model.clone();
 
+            let Some(trial_permit) = self.router.try_acquire_trial(&audit_provider_id).await else {
+                record_combo_skip(
+                    &mut errors,
+                    &audit_provider_id,
+                    step_index,
+                    "half_open_trial_in_progress",
+                );
+                continue;
+            };
             let step_start = Instant::now();
             let step_result =
                 tokio::time::timeout(Self::COMBO_STEP_TIMEOUT, provider.complete(&provider_req))
@@ -1336,6 +1369,8 @@ impl RouteRequest {
             match step_result {
                 Ok(Ok(provider_resp)) => {
                     // SUCCESS
+                    trial_permit.complete();
+                    notify_provider_success(self.router.as_ref(), &audit_provider_id).await;
                     let resp = self.format_translator.translate_response(
                         provider_format,
                         client_format,
@@ -1356,6 +1391,7 @@ impl RouteRequest {
                 }
                 Ok(Err(e)) => {
                     if e.is_local_backpressure() {
+                        drop(trial_permit);
                         local_backpressure = Some(e);
                         continue;
                     }
@@ -1380,6 +1416,7 @@ impl RouteRequest {
 
                     // Notify router of failure (circuit breaker)
                     notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
+                    trial_permit.complete();
 
                     if should_stop {
                         // 4xx (except 429) stops the chain immediately
@@ -1409,6 +1446,7 @@ impl RouteRequest {
                         .await;
 
                     notify_provider_failure(self.router.as_ref(), &audit_provider_id, &err).await;
+                    trial_permit.complete();
                     continue;
                 }
             }
