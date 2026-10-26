@@ -4,7 +4,7 @@ Esta guía cubre el setup local, herramientas, testing y flujo de CI.
 
 ## Requisitos
 
-- **Rust** 1.81+ (ver `rust-toolchain.toml`)
+- **Rust** (toolchain, componentes y targets definidos en `rust-toolchain.toml`)
 - **Node.js** + **pnpm** (para el dashboard)
 - **just** — gestor de tareas (ver `justfile`)
 - **Docker** (para E2E tests)

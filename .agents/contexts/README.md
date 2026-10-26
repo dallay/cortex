@@ -14,9 +14,11 @@ except dashboard-local paths explicitly identified in `dashboard.md`.
 | `huginn.md` | `apps/huginn` and `crates/huginn` |
 | `dashboard.md` | `apps/rook/dashboard`, in addition to the global and Rook contracts |
 
-`shared-kernel`, `test-support` and the generic `sse-stream` utility receive only
-root instructions. Infrastructure mappings name individual crates; new crates
-must be classified deliberately rather than inheriting Rook rules automatically.
+`shared-kernel` and the generic `sse-stream` utility receive only root
+instructions. `test-support` depends on `rook-core`, so it is Rook-specific test
+infrastructure; it currently receives only root instructions because it has no
+module mapping. Infrastructure mappings name individual crates; new crates must
+be classified deliberately rather than inheriting Rook rules automatically.
 When adding a scope, update all native-agent mappings and its Copilot `applyTo`
 patterns together. Keep product-neutral abstractions outside product contexts.
 
