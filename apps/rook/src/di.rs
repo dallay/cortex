@@ -538,16 +538,18 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
         .unwrap_or(std::path::Path::new("."))
         .join("api_key_secret.key");
 
-    // Defensive: ensure the secret path is actually a sibling, not a symlink escape.
-    let secret_abs = secret_path
-        .canonicalize()
-        .unwrap_or_else(|_| secret_path.clone());
+    // Defensive: compare canonicalized parents to handle filesystem aliases such as
+    // symlinked temporary directories and Windows 8.3 paths, while still rejecting
+    // an existing secret-file symlink that escapes the database directory.
     let db_parent = abs_db.parent().unwrap_or(std::path::Path::new("."));
     let db_parent_abs = db_parent
         .canonicalize()
         .unwrap_or_else(|_| db_parent.to_path_buf());
-    let secret_parent_abs = secret_abs.parent().unwrap_or(std::path::Path::new("."));
-    if secret_parent_abs != db_parent_abs {
+    let secret_abs = secret_path
+        .canonicalize()
+        .unwrap_or_else(|_| db_parent_abs.join("api_key_secret.key"));
+    let secret_resolved_parent = secret_abs.parent().unwrap_or(std::path::Path::new("."));
+    if secret_resolved_parent != db_parent_abs {
         anyhow::bail!(
             "secret path would escape database directory: {}",
             secret_path.display()

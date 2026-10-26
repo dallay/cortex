@@ -339,6 +339,58 @@ enabled = false
 
 #[cfg(unix)]
 #[test]
+fn api_key_secret_storage_accepts_symlinked_database_directory() {
+    use std::os::unix::fs::symlink;
+
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+    let dir = tempfile::tempdir().unwrap();
+    let database_dir = dir.path().join("database");
+    let database_alias = dir.path().join("database-alias");
+    std::fs::create_dir(&database_dir).unwrap();
+    symlink(&database_dir, &database_alias).unwrap();
+    let db_path = database_alias.join("rook.db");
+    let config = api_key_auth_config(db_path.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    build_api_key_auth(&config, &repo, &registry).unwrap();
+
+    assert!(database_dir.join("api_key_secret.key").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_secret_storage_rejects_symlink_outside_database_directory() {
+    use std::os::unix::fs::symlink;
+
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+    let dir = tempfile::tempdir().unwrap();
+    let database_dir = dir.path().join("database");
+    let outside_dir = dir.path().join("outside");
+    std::fs::create_dir(&database_dir).unwrap();
+    std::fs::create_dir(&outside_dir).unwrap();
+    let outside_secret = outside_dir.join("secret.key");
+    std::fs::write(&outside_secret, "secret\n").unwrap();
+    symlink(&outside_secret, database_dir.join("api_key_secret.key")).unwrap();
+    let db_path = database_dir.join("rook.db");
+    let config = api_key_auth_config(db_path.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let error = match build_api_key_auth(&config, &repo, &registry) {
+        Ok(_) => panic!("secret symlink outside database directory must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("secret path would escape database directory"));
+}
+
+#[cfg(unix)]
+#[test]
 fn generated_api_key_secret_file_is_owner_only() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1144,8 +1196,9 @@ fn test_sqlite_secret_storage_through_api_key_auth() {
             .unwrap();
         assert!(
             result.status.success(),
-            "secret storage test failed: {}",
-            String::from_utf8_lossy(&result.stdout)
+            "secret storage test failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
         );
         return;
     }
