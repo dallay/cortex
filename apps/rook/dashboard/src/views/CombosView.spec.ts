@@ -196,6 +196,17 @@ describe("CombosView", () => {
 		expect(wrapper.find('[data-testid="combos-create"]').exists()).toBe(true);
 	});
 
+	it("associates the combo alias input with its label", async () => {
+		const wrapper = mountView();
+		await flushPromises();
+
+		const input = wrapper.get('[data-testid="combo-alias-input-combo-1"]');
+		expect(input.attributes("id")).toBe("combo-alias-input-combo-1");
+		expect(
+			wrapper.find('label[for="combo-alias-input-combo-1"]').exists(),
+		).toBe(true);
+	});
+
 	it("adds an alias and validates its rook prefix and format locally", async () => {
 		const wrapper = mountView();
 		await flushPromises();

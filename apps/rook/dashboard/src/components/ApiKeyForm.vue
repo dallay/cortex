@@ -270,12 +270,16 @@ function scopeSlug(value: string): string {
 
     <!-- Tier -->
     <div class="space-y-2">
-      <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
+      <label id="api-key-tier-label" for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
       <Select
         :model-value="modelValue.tier"
         @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >
-        <SelectTrigger id="api-key-tier" data-testid="api-key-tier">
+        <SelectTrigger
+          id="api-key-tier"
+          aria-labelledby="api-key-tier-label"
+          data-testid="api-key-tier"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
