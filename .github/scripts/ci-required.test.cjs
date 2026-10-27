@@ -133,13 +133,31 @@ describe('contrato de categorías', () => {
   }
 
   it('no convierte salidas ausentes del entorno a false', () => {
-    const env = { ...process.env, EVENT_NAME: 'push', SONAR_TOKEN_PRESENT: 'true' };
-    for (const key of Object.keys(env)) {
-      if (key.startsWith('CHANGES_') || key.startsWith('RESULT_')) delete env[key];
-    }
-    for (const job of Object.keys(successResults)) {
-      env[`RESULT_${job.replaceAll('-', '_').toUpperCase()}`] = 'success';
-    }
+    const env = {
+      PATH: process.env.PATH,
+      EVENT_NAME: 'push',
+      SONAR_TOKEN_PRESENT: 'true',
+      RESULT_CHANGES: 'success',
+      RESULT_CI_CONTRACT: 'success',
+      RESULT_DOCTOR: 'success',
+      RESULT_BUILD_DASHBOARD: 'success',
+      RESULT_FMT: 'success',
+      RESULT_MARKDOWN: 'success',
+      RESULT_TEST_LABELER: 'success',
+      RESULT_CLIPPY: 'success',
+      RESULT_CHECK: 'success',
+      RESULT_TEST: 'success',
+      RESULT_TEST_FRONTEND: 'success',
+      RESULT_COVERAGE: 'success',
+      RESULT_COVERAGE_FRONTEND: 'success',
+      RESULT_TEST_E2E: 'success',
+      RESULT_DOC: 'success',
+      RESULT_AUDIT: 'success',
+      RESULT_TRIVY_FS: 'success',
+      RESULT_GITLEAKS_PR: 'success',
+      RESULT_SEMGREP_PR: 'success',
+      RESULT_SONAR: 'success',
+    };
     const child = spawnSync(process.execPath, [require.resolve('./ci-required-run.cjs')], { env, encoding: 'utf8' });
     assert.equal(child.status, 1);
     for (const category of categories) assert.match(child.stderr, new RegExp(`changes\\.${category}:`));

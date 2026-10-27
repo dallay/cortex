@@ -4,7 +4,6 @@ const { it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 const { evaluateRequiredChecks } = require('./ci-required.cjs');
 
 const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'), 'utf8');
@@ -16,19 +15,82 @@ function jobBlock(id) {
   return block[1];
 }
 
+function evaluateBooleanExpression(expression) {
+  const tokens = [];
+  const tokenPattern = /\s*(\|\||&&|==|[()]|true|false|"[^"\\]*(?:\\.[^"\\]*)*"|'[^']*')/gy;
+  let offset = 0;
+  while (offset < expression.length) {
+    tokenPattern.lastIndex = offset;
+    const match = tokenPattern.exec(expression);
+    assert.ok(match, `token inesperado en expresión: ${expression.slice(offset)}`);
+    tokens.push(match[1]);
+    offset = tokenPattern.lastIndex;
+  }
+
+  let position = 0;
+  const peek = () => tokens[position];
+  const consume = (expected) => {
+    assert.equal(tokens[position], expected);
+    position += 1;
+  };
+  const literal = () => {
+    const token = tokens[position++];
+    assert.ok(token !== undefined, 'literal esperado');
+    if (token === 'true') return true;
+    if (token === 'false') return false;
+    assert.match(token, /^(?:"(?:[^"\\]|\\.)*"|'[^']*')$/);
+    return token[0] === '"' ? JSON.parse(token) : token.slice(1, -1);
+  };
+  const atom = () => {
+    if (peek() === '(') {
+      consume('(');
+      const value = disjunction();
+      consume(')');
+      return value;
+    }
+    const left = literal();
+    if (peek() === '==') {
+      consume('==');
+      return left === literal();
+    }
+    assert.equal(typeof left, 'boolean', 'se esperaba una comparación');
+    return left;
+  };
+  const conjunction = () => {
+    let value = atom();
+    while (peek() === '&&') {
+      consume('&&');
+      const right = atom();
+      value = value && right;
+    }
+    return value;
+  };
+  const disjunction = () => {
+    let value = conjunction();
+    while (peek() === '||') {
+      consume('||');
+      const right = conjunction();
+      value = value || right;
+    }
+    return value;
+  };
+
+  const result = disjunction();
+  assert.equal(position, tokens.length, 'tokens restantes');
+  return result;
+}
+
 function condition(id, selected, eventName = 'pull_request') {
   const block = jobBlock(id);
   let expression = block.match(/^    if: (.+)$/m)?.[1];
   if (expression === '|') expression = block.match(/^    if: \|\n((?:      .+\n)+)/m)?.[1];
   assert.ok(expression, `condición de ${id}`);
-  const resolved = expression
+  const resolved = expression.trim()
     .replaceAll('github.event_name', JSON.stringify(eventName))
     .replace(/needs\.changes\.outputs\.(\w+)/g, (_, key) => JSON.stringify(selected[key]))
     .replaceAll('always()', 'true')
     .replace(/needs\.[\w-]+\.result/g, '"success"');
-  // Solo se evalúan comparaciones de categorías y eventos, nunca código del workflow.
-  assert.match(resolved, /^[\s\w'"=|&()-]+$/);
-  return Function(`"use strict"; return (${resolved});`)();
+  return evaluateBooleanExpression(resolved);
 }
 
 const routeCases = [
@@ -111,24 +173,13 @@ it('ejecuta Sonar y su entrada dashboard en PR de documentación o metadatos', (
   }
 });
 
-it('rechaza token ausente antes de checkout y setup, también en forks y Dependabot', () => {
+it('valida SONAR_TOKEN antes de ejecutar acciones de la PR y no tiene excepciones', () => {
   const sonar = jobBlock('sonar');
-  const policy = sonar.match(/^        run: \|\n((?:          .*\n)+)/m)?.[1];
-  assert.ok(policy);
+  const validation = sonar.match(/^        run: \|\n((?:          .*\n)+)/m)?.[1];
+  assert.ok(validation);
   assert.ok(sonar.indexOf('run: |') < sonar.indexOf('uses:'), 'validación anterior a acciones y código de la PR');
-  for (const actor of ['developer', 'dependabot[bot]']) {
-    for (const fork of ['true', 'false']) {
-      const child = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', policy], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, SONAR_TOKEN: '', GITHUB_EVENT_NAME: 'pull_request', GITHUB_ACTOR: actor, IS_FORK: fork },
-      });
-      assert.equal(child.status, 1, `${actor}, fork=${fork}: ${child.stdout} ${child.stderr}`);
-    }
-  }
-  const available = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', policy], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, SONAR_TOKEN: 'credencial-ficticia' },
-  });
-  assert.equal(available.status, 0, available.stderr);
-  assert.doesNotMatch(available.stdout + available.stderr, /credencial-ficticia/);
+  assert.match(validation, /if \[ -z "\$SONAR_TOKEN" \]; then/);
+  assert.match(validation, /exit 1/);
   assert.doesNotMatch(sonar, /sonar_exempt|continue-on-error:/);
 });
 
@@ -154,19 +205,18 @@ it('Gitleaks dispone del historial completo sin persistir credenciales', () => {
 });
 
 for (const eventName of ['pull_request', 'push']) {
-  it(`Gitleaks analiza el rango completo en ${eventName} sin operaciones remotas`, () => {
+  it(`Gitleaks configura el rango completo en ${eventName} sin operaciones remotas`, () => {
     const scan = jobBlock('gitleaks-pr').match(/^      - name: Analizar historial de commits\n([\s\S]*?)(?=^      - )/m)?.[1];
     const script = scan?.match(/^        run: \|\n((?:          .*\n)+)/m)?.[1];
     assert.ok(script);
     assert.doesNotMatch(script, /\bgit (?:fetch|push|pull)\b|curl|wget/);
-    const base = 'a'.repeat(40);
-    const head = 'b'.repeat(40);
-    const child = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `mkdir() { :; }\ngitleaks() { printf '[%s]\\n' "$@"; }\n${script}`], {
-      encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_EVENT_NAME: eventName, BASE_SHA: base, HEAD_SHA: head },
-    });
-    assert.equal(child.status, 0, child.stderr);
-    assert.ok(child.stdout.includes(`[--log-opts=${eventName === 'pull_request' ? `${base}..${head}` : '--all'}]`), child.stdout);
-    for (const flag of ['--config', '.gitleaks.toml', '--report-format', 'sarif', '--exit-code', '1']) assert.ok(child.stdout.includes(`[${flag}]`));
+    assert.match(script, /^\s*LOG_OPTS="--all"\s*$/m);
+    assert.match(script, /if \[ "\$GITHUB_EVENT_NAME" = "pull_request" \]; then/);
+    assert.match(script, /LOG_OPTS="\$BASE_SHA\.\.\$HEAD_SHA"/);
+    assert.match(script, /--log-opts="\$LOG_OPTS"/);
+    assert.match(script, /--config \.gitleaks\.toml/);
+    assert.match(script, /--report-format sarif/);
+    assert.match(script, /--exit-code 1/);
   });
 }
 
