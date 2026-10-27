@@ -194,6 +194,9 @@ impl Config {
         }
         // The path comes from the explicit CLI option or fixed platform paths;
         // keep it as a PathBuf so it cannot be confused with shell input.
+        // Operator --config or fixed host config; intentionally outside workspace.
+        // Evidence: docs/security/semgrep-path-exceptions.md#huginn-config
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         match std::fs::read_to_string(&resolved) {
             Ok(text) => Self::parse(&text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_none() => {

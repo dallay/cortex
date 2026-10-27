@@ -399,6 +399,9 @@ impl Tool for NativeTool {
                             "edit target must be a regular file under 1 MiB".into(),
                         ));
                     }
+                    // resolve_path confines preview read to workspace; stable-tree guarantee only.
+                    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-prepare
+                    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
                     Some(tokio::fs::read_to_string(&resolved).await?)
                 }
                 Err(e)
@@ -486,6 +489,9 @@ async fn execute_mutation(args: &Value, path: &Path) -> Result<String> {
             ));
         }
     }
+    // Private caller revalidates workspace path before stale check; stable-tree only.
+    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-mutation
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let current = match tokio::fs::read_to_string(path).await {
         Ok(value) => Some(value),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -537,6 +543,9 @@ async fn execute_read(args: &Value, path: &Path) -> Result<String> {
             "read target must be a regular file under 1 MiB".into(),
         ));
     }
+    // Private caller revalidates workspace path before read; stable-tree only.
+    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-read
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let text = tokio::fs::read_to_string(path).await?;
     let start = args["start_line"].as_u64().unwrap_or(1);
     let end = args["end_line"]
@@ -596,6 +605,9 @@ async fn execute_search(args: &Value, path: &Path, ctx: &ToolContext) -> Result<
         if tokio::fs::metadata(&file).await?.len() > MAX_FILE_BYTES {
             continue;
         }
+        // Validated workspace root and regular non-link entries; stable-tree only.
+        // Evidence: docs/security/semgrep-path-exceptions.md#runtime-search
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let Ok(text) = tokio::fs::read_to_string(&file).await else {
             continue;
         };

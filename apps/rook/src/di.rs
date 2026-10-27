@@ -239,6 +239,9 @@ impl RookContainer {
 
         // 7a. Usage repository — concrete SqliteUsageRepository stored on container for retention
         let sqlite_usage: Arc<SqliteUsageRepository> = Arc::new(
+            // Operator SQLite path; Path::new only converts; constructor opens authorized DB.
+            // Evidence: docs/security/semgrep-path-exceptions.md#rook-usage-db
+            // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             SqliteUsageRepository::new(Path::new(&config.database.db_path))
                 .map_err(|e| anyhow::anyhow!("failed to create usage repository: {e}"))?,
         );

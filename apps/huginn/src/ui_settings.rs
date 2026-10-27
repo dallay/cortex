@@ -32,6 +32,9 @@ pub fn persist_seeded(ui: &UiConfig, target: &Path, seed: Option<&Path>) -> Resu
 fn load_or_init(path: &Path) -> Result<DocumentMut> {
     if path.exists() {
         let text =
+            // Host config/save path or migration seed; no model/UI filepath.
+            // Evidence: docs/security/semgrep-path-exceptions.md#huginn-ui-settings
+            // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         text.parse::<DocumentMut>()
             .with_context(|| format!("invalid TOML in {}", path.display()))

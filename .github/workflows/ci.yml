@@ -424,6 +424,10 @@ jobs:
           persist-credentials: false
       - name: Install Semgrep CLI
         run: pip install semgrep==1.126.0
+      - name: Check exact path exceptions and scanner controls
+        run: |
+          python3 .github/scripts/test-semgrep-path-exceptions.py
+          python3 .github/scripts/check-semgrep-path-exceptions.py
       - name: Run Semgrep SAST scan
         run: |
           mkdir -p reports/semgrep
