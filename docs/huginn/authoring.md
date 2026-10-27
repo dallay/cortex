@@ -110,6 +110,36 @@ timeouts block the call. Reasons and notes are sanitized and limited to 4 KiB.
 Registrations follow the plugin generation like other contributions. See
 [ADR-0016](adr/0016-restrict-only-tool-hooks.md).
 
+## Registro de herramientas desde plugin-api
+
+Un autor nativo puede implementar `Tool` y registrar herramientas mediante
+`huginn_plugin_api::v1::tools`, sin depender de `huginn-runtime`:
+
+```rust
+use huginn_plugin_api::v1::tools::{tool_registration_id, ToolRegistrationService};
+
+// En manifest(): requires: vec![tool_registration_id()].
+// En activate(), con una herramienta que implementa Tool:
+let service = ctx.resolve::<ToolRegistrationService>(&tool_registration_id())?;
+service.register(ctx, tool)?;
+```
+
+El módulo también expone `Tool`, `ToolDefinition`, `ToolCall`, `ToolContext`,
+`PreparedAction` y `ApprovalRequest`. El autor puede construir
+`PreparedAction { approval: Some(ApprovalRequest { id, action, preview }), payload }`
+para solicitar aprobación de un efecto; la solicitud no equivale a autorización.
+El servicio exige la dependencia declarada y la misma instancia
+publicada por el host; retener otra instancia no sustituye esa declaración.
+`ToolRegistration` es el puerto que implementan los adaptadores del host, no una
+concesión de permisos al autor.
+
+El host construye el servicio con `ToolRegistrationService::new(port)`, donde
+`port` es un `Arc<dyn ToolRegistration>`, y lo publica con
+`ctx.provide(tool_registration_id(), service)`. El campo del puerto es privado:
+la API del autor solo permite registrar mediante `service.register(ctx, tool)`.
+Esta capa prueba el contrato con un puerto de prueba; todavía no publica el
+servicio desde el registro real de runtime. No añade aislamiento ni carga dinámica.
+
 ## Conflicts and dependencies
 
 Contribution IDs and capability keys must be unique. Commands reserve their

@@ -27,6 +27,14 @@ pub mod hooks {
     };
 }
 
+/// Registro de herramientas de autores nativos confiables; no concede permisos.
+pub mod tools {
+    pub use huginn_core::{
+        tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},
+        ApprovalRequest, PreparedAction, Tool, ToolCall, ToolContext, ToolDefinition,
+    };
+}
+
 pub fn contributions_id() -> ServiceId {
     ServiceId::new("agent:ui-contributions", 1)
 }

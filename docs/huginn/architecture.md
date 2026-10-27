@@ -175,6 +175,15 @@ pub trait ToolRegistry: Send + Sync {
 }
 ```
 
+### Puerto de registro de herramientas
+
+`huginn-core::tools` define el puerto `ToolRegistration` y el servicio
+`ToolRegistrationService`, reexportados por `huginn-plugin-api::v1::tools`.
+Core y plugin-api no dependen de runtime ni contienen el I/O de herramientas.
+El puerto no modifica `HostPolicy`, las aprobaciones ni los hooks restrict-only.
+Esta capa aporta el contrato y un host de prueba; el adaptador real de runtime
+se incorpora por separado.
+
 ### Tool hooks
 
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
