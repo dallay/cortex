@@ -1,9 +1,11 @@
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordVerifier},
-    Argon2, PasswordHasher as _,
+    password_hash::phc::PasswordHash,
+    password_hash::{PasswordHasher, PasswordVerifier},
+    Argon2,
 };
+use rand::RngExt;
 use rook_core::model::PasswordHash as CorePasswordHash;
-use rook_core::ports::{PasswordHashError, PasswordHasher};
+use rook_core::ports::{PasswordHashError, PasswordHasher as CorePasswordHasher};
 
 /// Argon2id password hasher using the argon2 crate's password_hash API.
 ///
@@ -30,16 +32,16 @@ impl Default for Argon2idHasher {
     }
 }
 
-impl PasswordHasher for Argon2idHasher {
+impl CorePasswordHasher for Argon2idHasher {
     fn hash_password(&self, password: &str) -> Result<CorePasswordHash, PasswordHashError> {
         // Generate a random salt using OS RNG (16 bytes is the default)
-        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
+        let salt_bytes: [u8; 16] = rand::rng().random();
 
         // Hash the password with Argon2id using default (OWASP) params
         // Argon2::default() uses: m=65536 (64MB), t=3, p=1
         let hash = self
             .argon2
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password_with_salt(password.as_bytes(), &salt_bytes)
             .map_err(|_| PasswordHashError::HashGeneration)?;
 
         Ok(CorePasswordHash::from(hash.to_string()))
