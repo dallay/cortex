@@ -440,7 +440,7 @@ jobs:
             --output reports/semgrep/semgrep-pr.sarif
       - name: Fail on findings
         run: |
-          FINDINGS_COUNT=$(jq '[.runs[].results[]] | length' reports/semgrep/semgrep-pr.sarif)
+          FINDINGS_COUNT=$(jq '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length' reports/semgrep/semgrep-pr.sarif)
           if [ "$FINDINGS_COUNT" -eq 0 ]; then
             echo "No high-severity findings"
           else
