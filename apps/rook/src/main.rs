@@ -29,7 +29,7 @@ enum Commands {
     },
     /// Seed the admin user with a password (for initial setup or E2E testing)
     SeedAdmin {
-        /// Path to the config file (defaults to $ROOK_CONFIG or ~/.config/cortex/rook.toml)
+        /// Path to the config file (defaults to $ROOK_CONFIG or ~/.cortex/rook/config.toml)
         #[arg(short, long)]
         config: Option<PathBuf>,
 
@@ -316,14 +316,8 @@ fn build_bootstrap_banner(sanitized_token: &str) -> String {
 }
 
 fn load_config() -> anyhow::Result<config::RookConfig> {
-    let config_path = std::env::var("ROOK_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("cortex")
-                .join("rook.toml")
-        });
+    let config_path =
+        std::env::var("ROOK_CONFIG").map_or_else(|_| config::default_config_path(), PathBuf::from);
 
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
@@ -333,12 +327,7 @@ fn load_config() -> anyhow::Result<config::RookConfig> {
 fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config::RookConfig> {
     let config_path = config_path
         .or_else(|| std::env::var("ROOK_CONFIG").map(PathBuf::from).ok())
-        .unwrap_or_else(|| {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("cortex")
-                .join("rook.toml")
-        });
+        .unwrap_or_else(config::default_config_path);
 
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
