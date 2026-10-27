@@ -321,14 +321,14 @@ no admitidos requieren revisión, no un bypass. Lee los contenidos remotos como
 datos; nunca ejecuta código remoto o de una PR. Ejecuta `gh` con argumentos
 separados, sin shell.
 
-Antes del PUT, guarda el snapshot original con permisos restringidos en
-`opencode/ci-quality-ruleset-*` dentro del directorio temporal del sistema y
-muestra su ruta. Antes de escribir vuelve a comprobar los archivos del mismo SHA
-y relee el ruleset; bloquea cambios de política concurrentes detectados. No es un
-método transaccional: la API no ofrece aquí comparación y escritura atómicas, y
-`main` puede avanzar después de resolver su SHA. Evita publicaciones y ediciones
-administrativas concurrentes durante la activación. Después relee el ruleset y
-compara todos los campos preservados y ambas identidades nuevas.
+Before the PUT, the helper saves the original snapshot with restricted permissions
+under `opencode/ci-quality-ruleset-*` in the system temporary directory and prints
+its path. Before writing, it resolves `main` again and aborts if its SHA changed,
+then rereads the ruleset and blocks detected policy changes. This is not
+transactional: the API does not provide an atomic compare-and-write operation, and
+`main` can still advance between the final ref check and the PUT. Avoid concurrent
+publications and administrative edits during activation. After the PUT, the helper
+reads the ruleset again and compares all preserved fields and both new identities.
 Un error de escritura o verificación exige inspección manual con el snapshot;
 no hace rollback automático que pueda borrar cambios de otro administrador.
 

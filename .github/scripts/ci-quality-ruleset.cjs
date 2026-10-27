@@ -161,8 +161,11 @@ function run(argv, dependencies = {}) {
   if (added.length === 0) return { mode: 'unchanged', publishedSha, added, payload };
   const backup = (dependencies.saveBackup || saveBackup)(snapshot);
   log(`Ruleset snapshot saved: ${backup}`);
-  // Reduce the stale-write window; the API does not provide an atomic compare-and-swap here.
-  verifyPublished();
+  // Re-resolve main to reduce the stale-write window; the API has no atomic compare-and-swap.
+  const currentRef = request('GET', `repos/${REPO}/git/ref/heads/main`);
+  if (currentRef.object?.type !== 'commit' || currentRef.object.sha !== publishedSha) {
+    throw new Error('Remote main advanced during activation; no update sent. Review and retry');
+  }
   const latest = request('GET', endpoint);
   buildPayload(latest);
   if (!isDeepStrictEqual(updateFields(latest), updateFields(snapshot))) {

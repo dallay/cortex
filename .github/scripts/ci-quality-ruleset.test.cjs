@@ -170,7 +170,8 @@ function harness(options = {}) {
         return { full_name: 'dallay/cortex', default_branch: options.branch || 'main' };
       }
       if (endpoint === 'repos/dallay/cortex/git/ref/heads/main') {
-        return { object: { type: 'commit', sha: options.sha ?? mainSha } };
+        const changed = options.advanceMainAfterContentReads && calls.filter((call) => call.endpoint?.includes('/contents/')).length >= publishedFiles.length;
+        return { object: { type: 'commit', sha: changed ? 'b'.repeat(40) : options.sha ?? mainSha } };
       }
       if (endpoint.includes('/contents/')) {
         const file = endpoint.match(/\/contents\/([^?]+)/)[1];
@@ -233,6 +234,13 @@ test('invalid immutable main SHA blocks apply before contents reads or PUT', () 
   }
 });
 
+test('apply aborts before PUT if main advances after publication verification', () => {
+  const h = harness({ advanceMainAfterContentReads: true });
+  assert.throws(() => run(['--apply'], h.deps), /main advanced during activation/);
+  assert.equal(h.calls.filter((call) => call.endpoint === 'repos/dallay/cortex/git/ref/heads/main').length, 2);
+  assert.ok(!h.calls.some((call) => call.method === 'PUT'));
+});
+
 for (const [name, options] of Object.entries({
   'missing path filters': { missingFile: '.github/ci-path-filters.json' },
   'old required evaluator': { staleFile: '.github/scripts/ci-required.cjs' },
@@ -247,12 +255,19 @@ for (const [name, options] of Object.entries({
   });
 }
 
-test('resolves main once and compares every executable CI artifact at the same immutable SHA', () => {
+test('resolves main twice and compares every executable CI artifact at the initial immutable SHA', () => {
   const h = harness();
   run(['--apply'], h.deps);
-  assert.equal(h.calls.filter((call) => call.endpoint === 'repos/dallay/cortex/git/ref/heads/main').length, 1);
+  const refReads = h.calls.filter((call) => call.endpoint === 'repos/dallay/cortex/git/ref/heads/main');
+  assert.equal(refReads.length, 2);
+  const firstRefRead = h.calls.indexOf(refReads[0]);
+  const secondRefRead = h.calls.indexOf(refReads[1]);
   const contentReads = h.calls.filter((call) => call.endpoint?.includes('/contents/'));
   assert.ok(contentReads.every((call) => call.endpoint.endsWith(`?ref=${mainSha}`)));
+  assert.ok(firstRefRead < h.calls.indexOf(contentReads[0]));
+  assert.ok(contentReads.every((call) => h.calls.indexOf(call) < secondRefRead));
+  const rulesetRead = h.calls.findIndex((call, index) => index > secondRefRead && call.method === 'GET' && call.endpoint === 'repos/dallay/cortex/rulesets/17001295');
+  assert.ok(secondRefRead < rulesetRead);
   for (const file of publishedFiles) {
     const firstRead = h.calls.findIndex((call) => call.endpoint === `repos/dallay/cortex/contents/${file}?ref=${mainSha}`);
     assert.ok(firstRead >= 0 && firstRead < h.calls.findIndex((call) => call.method === 'PUT'), file);
