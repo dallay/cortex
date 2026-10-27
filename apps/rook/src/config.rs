@@ -4,8 +4,31 @@ use rook_core::ApiKeyTier;
 use rook_usecases::{PricingConfig, RoutingStrategy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Name of the per-user directory that holds Cortex configuration and state.
+pub const CORTEX_HOME_DIR: &str = ".cortex";
+
+/// Product directory for Rook inside the Cortex home.
+pub const ROOK_HOME_DIR: &str = "rook";
+
+/// Resolve `~/.cortex`, the shared base for every Cortex product.
+///
+/// Uses the operating system home directory instead of the platform
+/// configuration directory, so macOS, Linux and Windows agree on one layout.
+pub fn cortex_home_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(CORTEX_HOME_DIR)
+}
+
+/// Default configuration file: `~/.cortex/rook/config.toml`.
+///
+/// `ROOK_CONFIG` still takes precedence; this is only the fallback.
+pub fn default_config_path() -> PathBuf {
+    cortex_home_dir().join(ROOK_HOME_DIR).join("config.toml")
+}
 
 /// Root configuration for rook
 #[derive(Debug, Clone, Deserialize)]
@@ -51,7 +74,7 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_path: "~/.local/share/cortex/rook/rook.db".to_string(),
+            db_path: "~/.cortex/rook/rook.db".to_string(),
         }
     }
 }
@@ -583,6 +606,28 @@ impl RookConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_config_path_lives_under_the_cortex_home() {
+        let home = dirs::home_dir().expect("home directory");
+        assert_eq!(
+            default_config_path(),
+            home.join(".cortex").join("rook").join("config.toml")
+        );
+    }
+
+    #[test]
+    fn cortex_home_dir_is_shared_across_products() {
+        assert_eq!(
+            cortex_home_dir(),
+            dirs::home_dir().expect("home directory").join(".cortex")
+        );
+    }
+
+    #[test]
+    fn default_database_path_lives_under_the_cortex_home() {
+        assert_eq!(DatabaseConfig::default().db_path, "~/.cortex/rook/rook.db");
+    }
 
     #[test]
     fn test_health_check_interval_defaults_to_30() {
