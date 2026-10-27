@@ -89,6 +89,19 @@ Requires CSRF. Returns `204 No Content`; a missing alias returns `404 ALIAS_NOT_
 
 ## Combos and virtual combo aliases
 
+With `stream: true`, combo routes forward native upstream deltas progressively.
+The gateway can fall back only before selecting the first successful domain
+chunk. After selection, failures terminate the stream with the existing
+OpenAI-shaped or Anthropic-shaped SSE error payload; no other provider is spliced
+into the response. The existing SSE end marker remains unchanged.
+
+OpenAI chunks retain the requested alias in `model`, ordered tool arguments, and
+reasoning deltas. Tool-argument continuations do not receive a new tool ID. Usage
+may follow the finish chunk. Anthropic output closes tracked tool blocks and
+includes trailing usage in its terminal `message_delta`. Only terminal metadata,
+not response content, waits for upstream EOF. Native streaming support is required
+for a combo step to serve a streaming request.
+
 These routes require an admin session and are mounted only when the combo repository exists. Alias-management routes also require the combo-alias repository.
 
 ### Combo CRUD

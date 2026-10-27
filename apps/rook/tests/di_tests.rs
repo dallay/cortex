@@ -253,15 +253,19 @@ mod api_key_auth_mocks {
 
 use api_key_auth_mocks::{FakeProviderRegistry, FakeProviderRepository};
 use cortex_test_support::FakeApiKeyRepository;
+#[cfg(unix)]
 use std::sync::Mutex;
 
+#[cfg(unix)]
 static API_KEY_SECRET_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(unix)]
 struct EnvVarGuard {
     name: &'static str,
     original: Option<std::ffi::OsString>,
 }
 
+#[cfg(unix)]
 impl EnvVarGuard {
     fn remove(name: &'static str) -> Self {
         let original = std::env::var_os(name);
@@ -270,6 +274,7 @@ impl EnvVarGuard {
     }
 }
 
+#[cfg(unix)]
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match self.original.take() {

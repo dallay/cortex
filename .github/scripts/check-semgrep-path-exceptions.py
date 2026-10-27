@@ -102,6 +102,23 @@ def check_inventory(root=ROOT):
     print("Inventory: 7 new exact exceptions; 7 historical annotations unchanged", flush=True)
 
 
+def initialize_fixture_repository(fixtures, target):
+    """Make the external fixture visible to Semgrep's default git-aware scan."""
+    if not (fixtures / ".git").exists():
+        subprocess.run(["git", "init", "-q", str(fixtures)], check=True)
+    subprocess.run(
+        ["git", "-C", str(fixtures), "add", "--", target.name],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["git", "-C", str(fixtures), "-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+         "commit", "--quiet", "-m", "Add Semgrep control fixture"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
 def scanner_controls(command, output):
     """Use real remote rules, not a substitute rule that could mask drift."""
     with tempfile.TemporaryDirectory(prefix="semgrep-path-fixtures-") as directory:
@@ -127,8 +144,10 @@ def scanner_controls(command, output):
         ):
             target = fixtures / f"{name}.rs"
             target.write_text(source)
+            initialize_fixture_repository(fixtures, target)
             argv = command + [
-                "scan", "--config", "p/rust", "--severity", "ERROR",
+                "scan", "--project-root", str(fixtures),
+                "--config", "p/rust", "--severity", "ERROR",
                 "--json", "--error", "--metrics", "off", "--disable-version-check",
             ]
             if disabled:
