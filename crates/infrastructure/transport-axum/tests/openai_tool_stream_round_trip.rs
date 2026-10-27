@@ -99,6 +99,12 @@ async fn upstream_tool_call_fragments_survive_provider_domain_and_openai_wire() 
         wire_chunks[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
         "\"value\"}"
     );
+    assert!(
+        wire_chunks[1]["choices"][0]["delta"]["tool_calls"][0]
+            .get("id")
+            .is_none(),
+        "argument continuations must not invent a different tool ID"
+    );
     assert_eq!(wire_chunks[2]["choices"][0]["finish_reason"], "tool_calls");
 
     let requests = server.received_requests().await.expect("request captured");

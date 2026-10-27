@@ -9,6 +9,35 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
+async fn stream_merges_initial_input_and_cache_usage_with_terminal_output() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(concat!(
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        ))).mount(&server).await;
+    let provider = test_provider(&server);
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.stream = true;
+    let chunks: Vec<_> = provider.stream(&req).await.unwrap().collect().await;
+    let usage = chunks
+        .last()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .usage
+        .as_ref()
+        .unwrap();
+    assert_eq!(usage.prompt_tokens, 12);
+    assert_eq!(usage.completion_tokens, 7);
+    assert_eq!(usage.total_tokens, 19);
+    assert_eq!(usage.cache_read_tokens, Some(8));
+    assert_eq!(usage.cache_creation_tokens, Some(2));
+}
+
+#[tokio::test]
 async fn health_check_returns_unknown_when_not_supported() {
     // Anthropic provider returns HealthStatus::Unknown because
     // health_check is not supported via the Anthropic API.

@@ -735,6 +735,189 @@ fn anthropic_body(model: &str, stream: bool) -> serde_json::Value {
     })
 }
 
+fn sse_json(body: &str) -> Vec<serde_json::Value> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect()
+}
+
+fn fragmented_combo_sse() -> String {
+    concat!(
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"value\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: {\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":7,\"total_tokens\":10}}\n\n",
+        "data: [DONE]\n\n"
+    ).into()
+}
+
+#[tokio::test]
+async fn combo_stream_reasoning_and_text_reach_anthropic_as_distinct_blocks() {
+    let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\"first thought\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\" then\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n").into()), UpstreamMock::Fail500).await;
+    let (_, _, body) = post_sse(gw.app, "/v1/messages", anthropic_body("rook/openai", true)).await;
+    let frames = sse_json(&body);
+    let thinking: Vec<_> = frames
+        .iter()
+        .filter(|f| f["delta"]["type"] == "thinking_delta")
+        .collect();
+    assert_eq!(thinking.len(), 2, "{body}");
+    assert_eq!(thinking[0]["delta"]["thinking"], "first thought");
+    assert_eq!(thinking[1]["delta"]["thinking"], " then");
+    let starts: Vec<_> = frames
+        .iter()
+        .filter(|f| f["type"] == "content_block_start")
+        .collect();
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts[0]["content_block"]["type"], "thinking");
+    assert_eq!(starts[1]["content_block"]["type"], "text");
+    assert_ne!(starts[0]["index"], starts[1]["index"]);
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|f| f["type"] == "content_block_stop")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn combo_stream_native_tool_fragments_alias_and_trailing_usage_reach_openai() {
+    let gw = build_gateway_planned(
+        vec![],
+        UpstreamMock::Sse(fragmented_combo_sse()),
+        UpstreamMock::Fail500,
+    )
+    .await;
+    let (status, _, body) = post_sse(
+        gw.app,
+        "/v1/chat/completions",
+        openai_body("rook/openai", true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let frames = sse_json(&body);
+    assert_eq!(frames.len(), 4, "{body}");
+    assert!(frames.iter().all(|f| f["model"] == "rook/openai"));
+    assert!(frames.iter().all(|f| f["id"] == frames[0]["id"]));
+    assert_eq!(
+        frames[0]["choices"][0]["delta"]["tool_calls"][0]["id"],
+        "call_real"
+    );
+    assert!(frames[1]["choices"][0]["delta"]["tool_calls"][0]
+        .get("id")
+        .is_none());
+    assert_eq!(frames[2]["choices"][0]["finish_reason"], "tool_calls");
+    assert_eq!(frames[3]["usage"]["total_tokens"], 10);
+    let requests = gw.upstreams.openai.received_requests().await.unwrap();
+    let sent: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(sent["stream"], true);
+    assert_eq!(sent["model"], "gpt-4o");
+}
+
+#[tokio::test]
+async fn combo_stream_native_tools_close_and_trailing_usage_reach_anthropic() {
+    let gw = build_gateway_planned(
+        vec![],
+        UpstreamMock::Sse(fragmented_combo_sse()),
+        UpstreamMock::Fail500,
+    )
+    .await;
+    let (status, _, body) =
+        post_sse(gw.app, "/v1/messages", anthropic_body("rook/openai", true)).await;
+    assert_eq!(status, StatusCode::OK);
+    let frames = sse_json(&body);
+    let types: Vec<_> = frames.iter().map(|f| f["type"].as_str().unwrap()).collect();
+    assert_eq!(
+        types,
+        [
+            "content_block_start",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta"
+        ],
+        "{body}"
+    );
+    assert_eq!(frames[0]["content_block"]["id"], "call_real");
+    assert_eq!(frames[1]["delta"]["partial_json"], "{\"key\":");
+    assert_eq!(frames[2]["delta"]["partial_json"], "\"value\"}");
+    assert_eq!(frames[4]["delta"]["stop_reason"], "tool_use");
+    assert_eq!(frames[4]["usage"]["output_tokens"], 7);
+    assert_eq!(frames[4]["usage"]["input_tokens"], 3);
+}
+
+#[tokio::test]
+async fn combo_stream_late_error_is_terminal_in_both_protocols_without_fallback() {
+    for anthropic in [false, true] {
+        let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
+            "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+            "data: {invalid json}\n\n").into()), UpstreamMock::Fail500).await;
+        let (uri, request) = if anthropic {
+            ("/v1/messages", anthropic_body("rook/e2e", true))
+        } else {
+            ("/v1/chat/completions", openai_body("rook/e2e", true))
+        };
+        let (status, _, body) = post_sse(gw.app, uri, request).await;
+        assert_eq!(status, StatusCode::OK);
+        let frames = sse_json(&body);
+        assert_eq!(frames.len(), if anthropic { 3 } else { 2 }, "{body}");
+        assert!(frames[frames.len() - 2].to_string().contains("partial"));
+        assert!(frames.last().unwrap().get("error").is_some());
+        assert!(body.ends_with("data: [DONE]\n\n"));
+        assert_eq!(
+            gw.upstreams.openai.received_requests().await.unwrap().len(),
+            1
+        );
+        assert!(gw
+            .upstreams
+            .anthropic
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[tokio::test]
+async fn combo_stream_first_item_error_falls_back_before_headers() {
+    let gw = build_gateway_planned(vec![], UpstreamMock::Sse("data: {invalid json}\n\n".into()),
+        UpstreamMock::Sse(concat!(
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":1}}}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n").into())).await;
+    let (status, _, body) = post_sse(
+        gw.app,
+        "/v1/chat/completions",
+        openai_body("rook/e2e", true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let frames = sse_json(&body);
+    assert_eq!(frames[0]["choices"][0]["delta"]["content"], "fallback");
+    assert!(frames.iter().all(|f| f.get("error").is_none()));
+    assert_eq!(frames.last().unwrap()["usage"]["prompt_tokens"], 3);
+    assert_eq!(frames.last().unwrap()["usage"]["total_tokens"], 5);
+    assert_eq!(
+        gw.upstreams.openai.received_requests().await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        gw.upstreams
+            .anthropic
+            .received_requests()
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 // ---------------------------------------------------------------------------
 // R4 tests
 // ---------------------------------------------------------------------------
