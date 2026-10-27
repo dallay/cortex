@@ -5,8 +5,11 @@
 Rook looks for config in this order:
 
 1. `ROOK_CONFIG` environment variable (path to TOML file)
-2. `$XDG_CONFIG_HOME/cortex/rook.toml`
-3. `~/.config/cortex/rook.toml`
+2. `~/.cortex/rook/config.toml`
+
+`~/.cortex` is the shared Cortex home: every product keeps its own directory
+inside it (`rook/`, `huginn/`). The path resolves from the operating system
+home directory, so it is the same on macOS, Linux and Windows.
 
 ## Full Schema
 
@@ -26,7 +29,7 @@ enabled = true
 ttl_secs = 300         # 5 minutes
 
 [database]
-db_path = "~/.local/share/cortex/rook/rook.db"
+db_path = "~/.cortex/rook/rook.db"
 
 [audit]
 
@@ -220,7 +223,7 @@ proveedor aplique por su cuenta.
 
 | Field     | Type   | Default                              | Description                                         |
 |-----------|--------|--------------------------------------|-----------------------------------------------------|
-| `db_path` | string | `~/.local/share/cortex/rook/rook.db` | Single SQLite database path. `~` expands to `$HOME` |
+| `db_path` | string | `~/.cortex/rook/rook.db` | Single SQLite database path. `~` expands to `$HOME` |
 
 Rook stores all local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a different adapter later requires a new adapter rather than changes to use cases or domain types.
 
@@ -259,7 +262,8 @@ The `seed-admin` subcommand sets the initial admin password (stored as Argon2id 
 rook seed-admin <password>
 ```
 
-Requires `ROOK_CONFIG` and `API_KEY_HASH_SECRET` environment variables to be set. Use this for:
+Reads the configuration from `~/.cortex/rook/config.toml` unless `ROOK_CONFIG` points
+elsewhere. Set `API_KEY_HASH_SECRET` to pin the API key hash secret. Use this for:
 
 - Initial setup when no admin password exists
 - E2E testing to bootstrap a known admin user
@@ -516,7 +520,7 @@ ttl_secs = 600
 [audit]
 
 [database]
-db_path = "~/.local/share/cortex/rook/rook.db"
+db_path = "~/.cortex/rook/rook.db"
 
 [provider_crud]
 enabled = true
