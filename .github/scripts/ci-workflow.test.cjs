@@ -110,6 +110,8 @@ const routeCases = [
   ['.github/scripts/ci-quality-ruleset.cjs', ['github']],
   ['.github/scripts/ci-quality-ruleset.test.cjs', ['github']],
   ['.github/scripts/ci-workflow.test.cjs', ['github']],
+  ['.github/scripts/check-semgrep-path-exceptions.py', ['github']],
+  ['.github/scripts/test-semgrep-path-exceptions.py', ['github']],
   ['.github/ci-path-filters.json', ['github']],
   ['.github/ci-quality-policy.json', ['github']],
   // El paquete completo incluye el dashboard: se aceptan controles backend adicionales.
