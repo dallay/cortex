@@ -19,6 +19,36 @@ fn command(workspace: &Path, db: &Path) -> CommandBuilder {
 }
 
 #[test]
+fn guard_block_is_visible_without_approval_and_releases_the_composer() {
+    let root = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let db = home.path().join("sessions.db");
+    let mut cmd = command(root.path(), &db);
+    cmd.env("HOME", home.path());
+    cmd.args(["--allow", "native.shell"]);
+    let mut pty = Pty::start(cmd, true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[200~huginn-mock: shell {\"command\":\"echo .env\"}\x1b[201~\r");
+    pty.wait_for("blocked by hook guards.native");
+    pty.send("\x1b[200~after guard block\x1b[201~\r");
+    pty.wait_for("Offline mock: after guard block");
+    pty.send("/quit\r");
+    pty.finish(true);
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let data: String = connection
+        .query_row("SELECT data FROM sessions LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&data).unwrap();
+    let events = saved["events"].as_array().unwrap();
+    assert!(!events
+        .iter()
+        .any(|event| event["type"] == "approval_requested"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "tool_finished" && event["is_error"] == true));
+}
+
+#[test]
 fn rejected_template_expansion_releases_composer_without_starting_a_turn() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
