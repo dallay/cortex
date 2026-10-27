@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use huginn_core::{
+    tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},
     AgentError, ApprovalRequest, PreparedAction, Result, Tool, ToolCall, ToolContext,
     ToolDefinition, ToolRegistry,
 };
@@ -118,6 +119,12 @@ impl Registry {
         ctx: &mut huginn_core::kernel::PluginContext,
         tool: Arc<dyn Tool>,
     ) -> Result<()> {
+        let registry = ctx.resolve::<Self>(&registry_id())?;
+        if !Arc::ptr_eq(&self.tools, &registry.tools) {
+            return Err(AgentError::Composition(
+                "tool registry does not match declared dependency".into(),
+            ));
+        }
         self.register_batch(ctx, vec![tool])
     }
     pub(crate) fn register_batch(
@@ -205,6 +212,15 @@ impl ToolRegistry for Registry {
             .map(|entry| entry.clone() as Arc<dyn Tool>)
     }
 }
+impl ToolRegistration for Registry {
+    fn register(
+        &self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+        tool: Arc<dyn Tool>,
+    ) -> Result<()> {
+        self.register_batch(ctx, vec![tool])
+    }
+}
 pub fn native_tools(timeout_secs: u64) -> Vec<Arc<dyn Tool>> {
     [
         Kind::List,
@@ -244,11 +260,19 @@ impl huginn_core::kernel::Plugin for RegistryPlugin {
     fn manifest(&self) -> huginn_core::kernel::Manifest {
         huginn_core::kernel::Manifest {
             id: "tools.registry".into(),
-            provides: vec![registry_id(), huginn_application::composition::tools_id()],
+            provides: vec![
+                registry_id(),
+                huginn_application::composition::tools_id(),
+                tool_registration_id(),
+            ],
             requires: vec![],
         }
     }
     async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        ctx.provide(
+            tool_registration_id(),
+            ToolRegistrationService::new(Arc::new(self.0.clone())),
+        )?;
         ctx.provide(
             huginn_application::composition::tools_id(),
             huginn_core::ToolsService(Arc::new(self.0.clone())),

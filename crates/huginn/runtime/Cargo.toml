@@ -57,6 +57,7 @@ path = "tests/connection_workers.rs"
 required-features = ["test-hooks"]
 
 [dev-dependencies]
+huginn-plugin-api = { path = "../plugin-api" }
 tempfile = "=3.27.0"
 axum.workspace = true
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }

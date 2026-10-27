@@ -2058,6 +2058,7 @@ dependencies = [
  "futures",
  "huginn-application",
  "huginn-core",
+ "huginn-plugin-api",
  "keyring",
  "libc",
  "process-wrap",

@@ -137,8 +137,22 @@ El host construye el servicio con `ToolRegistrationService::new(port)`, donde
 `port` es un `Arc<dyn ToolRegistration>`, y lo publica con
 `ctx.provide(tool_registration_id(), service)`. El campo del puerto es privado:
 la API del autor solo permite registrar mediante `service.register(ctx, tool)`.
-Esta capa prueba el contrato con un puerto de prueba; todavía no publica el
-servicio desde el registro real de runtime. No añade aislamiento ni carga dinámica.
+La implementación pública de `ToolRegistration` para `Registry` sigue siendo una
+API de adaptador del host; esta encapsulación no convierte el código nativo en un
+sandbox.
+
+`agent:tool-registration@1` comparte almacenamiento con los servicios anteriores
+`agent:tool-registrations@1` y `agent:tools@1`. Los nombres se reservan al registrar;
+las herramientas solo son visibles tras la activación y validación del manifest.
+Las colisiones producen un error. Si la activación falla, el contexto revoca las
+reservas. Al retirar el plugin, cerrar el supervisor o descartarlo, sus leases
+revocan las herramientas y los handles retenidos rechazan preparación y ejecución.
+
+El registro no autoriza efectos: el host conserva la decisión de aprobación y los
+hooks solo pueden restringir. El código nativo sigue siendo confiable y comparte
+el proceso; esta API no añade aislamiento ni carga dinámica. La ruta antigua
+`Registry::register` exige declarar su servicio `registry_id()` y usar el registro
+publicado por el host; `Registry::native` e `insert` conservan su API existente.
 
 ## Conflicts and dependencies
 
