@@ -37,6 +37,161 @@ async fn stream_merges_initial_input_and_cache_usage_with_terminal_output() {
     assert_eq!(usage.cache_creation_tokens, Some(2));
 }
 
+async fn mount_usage_stream(
+    server: &MockServer,
+    initial_message: Option<serde_json::Value>,
+    terminal_usage: serde_json::Value,
+) {
+    let mut events = Vec::new();
+    if let Some(message) = initial_message {
+        events.push(serde_json::json!({"type": "message_start", "message": message}));
+    }
+    events.push(serde_json::json!({
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn"},
+        "usage": terminal_usage,
+    }));
+    events.push(serde_json::json!({"type": "message_stop"}));
+    let body: String = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+async fn collect_stream_usage(provider: &AnthropicProvider) -> rook_core::TokenUsage {
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.stream = true;
+    let chunks = provider
+        .stream(&req)
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        chunks.len(),
+        1,
+        "message_start is metadata, not a domain chunk"
+    );
+    assert_eq!(chunks[0].finish_reason, Some(FinishReason::Stop));
+    chunks
+        .into_iter()
+        .next()
+        .unwrap()
+        .usage
+        .expect("terminal usage")
+}
+
+#[tokio::test]
+async fn stream_usage_explicit_zero_terminal_values_override_initial_counters() {
+    let server = MockServer::start().await;
+    mount_usage_stream(
+        &server,
+        Some(serde_json::json!({"usage": {
+            "input_tokens": 12, "output_tokens": 2,
+            "cache_read_input_tokens": 8, "cache_creation_input_tokens": 4,
+        }})),
+        serde_json::json!({
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        }),
+    )
+    .await;
+    let usage = collect_stream_usage(&test_provider(&server)).await;
+    assert_eq!(usage.prompt_tokens, 0);
+    assert_eq!(usage.completion_tokens, 0);
+    assert_eq!(usage.total_tokens, 0);
+    assert_eq!(usage.cache_read_tokens, Some(0));
+    assert_eq!(usage.cache_creation_tokens, Some(0));
+}
+
+#[tokio::test]
+async fn stream_usage_merges_each_missing_field_independently() {
+    let server = MockServer::start().await;
+    mount_usage_stream(
+        &server,
+        Some(serde_json::json!({"usage": {
+            "input_tokens": 12, "cache_read_input_tokens": 8, "cache_creation_input_tokens": 4,
+        }})),
+        serde_json::json!({
+            "input_tokens": 20, "output_tokens": 7,
+            "cache_read_input_tokens": null, "cache_creation_input_tokens": 1,
+        }),
+    )
+    .await;
+    let usage = collect_stream_usage(&test_provider(&server)).await;
+    assert_eq!(usage.prompt_tokens, 20);
+    assert_eq!(usage.completion_tokens, 7);
+    assert_eq!(usage.total_tokens, 27);
+    assert_eq!(usage.cache_read_tokens, Some(8));
+    assert_eq!(usage.cache_creation_tokens, Some(1));
+}
+
+#[tokio::test]
+async fn stream_usage_initial_output_tokens_are_not_added_to_terminal_output() {
+    let server = MockServer::start().await;
+    mount_usage_stream(
+        &server,
+        Some(serde_json::json!({"usage": {"input_tokens": 12, "output_tokens": 2}})),
+        serde_json::json!({"output_tokens": 7}),
+    )
+    .await;
+    let usage = collect_stream_usage(&test_provider(&server)).await;
+    assert_eq!(usage.prompt_tokens, 12);
+    assert_eq!(usage.completion_tokens, 7);
+    assert_eq!(usage.total_tokens, 19);
+    assert_eq!(usage.cache_read_tokens, None);
+    assert_eq!(usage.cache_creation_tokens, None);
+}
+
+#[tokio::test]
+async fn stream_usage_missing_terminal_output_defaults_to_zero() {
+    let server = MockServer::start().await;
+    mount_usage_stream(
+        &server,
+        Some(serde_json::json!({"usage": {"input_tokens": 12}})),
+        serde_json::json!({}),
+    )
+    .await;
+    let usage = collect_stream_usage(&test_provider(&server)).await;
+    assert_eq!(usage.prompt_tokens, 12);
+    assert_eq!(usage.completion_tokens, 0);
+    assert_eq!(usage.total_tokens, 12);
+}
+
+#[tokio::test]
+async fn stream_usage_does_not_leak_between_requests_on_the_same_provider() {
+    let server = MockServer::start().await;
+    let provider = test_provider(&server);
+    mount_usage_stream(
+        &server,
+        Some(serde_json::json!({"usage": {
+            "input_tokens": 12, "cache_read_input_tokens": 8, "cache_creation_input_tokens": 4,
+        }})),
+        serde_json::json!({"output_tokens": 7}),
+    )
+    .await;
+    assert_eq!(collect_stream_usage(&provider).await.prompt_tokens, 12);
+    server.verify().await;
+    server.reset().await;
+
+    mount_usage_stream(&server, None, serde_json::json!({"output_tokens": 3})).await;
+    let usage = collect_stream_usage(&provider).await;
+    assert_eq!(usage.prompt_tokens, 0);
+    assert_eq!(usage.completion_tokens, 3);
+    assert_eq!(usage.total_tokens, 3);
+    assert_eq!(usage.cache_read_tokens, None);
+    assert_eq!(usage.cache_creation_tokens, None);
+}
+
 #[tokio::test]
 async fn health_check_returns_unknown_when_not_supported() {
     // Anthropic provider returns HealthStatus::Unknown because

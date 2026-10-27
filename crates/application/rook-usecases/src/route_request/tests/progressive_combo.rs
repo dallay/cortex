@@ -522,3 +522,281 @@ async fn combo_stream_error_after_empty_frame_never_switches_and_preserves_ttft(
     assert_eq!(usage[0].status, RequestStatus::Failure);
     assert!(usage[0].ttft_ms.is_some());
 }
+
+#[tokio::test]
+async fn combo_stream_local_backpressure_falls_back_without_accounting_an_upstream_failure() {
+    let primary = scripted("openai", vec![]);
+    *primary.setup_error.lock().unwrap() = Some(CortexError::local_backpressure());
+    let fallback = scripted("fallback", vec![Ok(finished_chunk())]);
+    let h = harness(vec![primary.clone(), fallback]);
+    let chunks: Vec<_> = h
+        .usecase
+        .execute_stream(stream_req("rook/progressive"))
+        .await
+        .unwrap()
+        .collect()
+        .await;
+
+    assert_eq!(chunks.len(), 1);
+    assert!(chunks[0].is_ok());
+    assert_eq!(primary.polls.load(Ordering::SeqCst), 0);
+    let audit = h.audit.entries.lock().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].provider, ProviderId::new("fallback"));
+    assert_eq!(audit[0].combo_step_index, Some(1));
+    assert_eq!(audit[0].status, RequestStatus::Success);
+    let usage = h.usage.entries.lock().unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].provider, ProviderId::new("fallback"));
+}
+
+#[tokio::test]
+async fn combo_stream_all_locally_busy_steps_preserve_backpressure_and_circuit_health() {
+    let primary = scripted("openai", vec![]);
+    let fallback = scripted("fallback", vec![]);
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![primary.clone(), fallback.clone()],
+        crate::RoutingStrategy::Priority,
+    ));
+    let mut h = harness(vec![primary.clone(), fallback.clone()]);
+    h.usecase.router = router.clone();
+
+    // Repeated local rejections must never open an upstream circuit.
+    for _ in 0..4 {
+        for provider in [&primary, &fallback] {
+            *provider.setup_error.lock().unwrap() = Some(CortexError::local_backpressure());
+        }
+        let error = h
+            .usecase
+            .execute_stream(stream_req("rook/progressive"))
+            .await
+            .err()
+            .expect("all steps are busy");
+        assert!(error.is_local_backpressure());
+        assert!(router
+            .circuit_states()
+            .iter()
+            .all(|(_, state)| state.failures == 0 && !state.is_open));
+    }
+    assert!(h.audit.entries.lock().unwrap().is_empty());
+    assert!(h.usage.entries.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn combo_stream_real_upstream_failure_takes_precedence_over_local_backpressure() {
+    let primary = scripted("openai", vec![]);
+    *primary.setup_error.lock().unwrap() = Some(CortexError::local_backpressure());
+    let fallback = scripted(
+        "fallback",
+        vec![Err(CortexError::provider("upstream failed"))],
+    );
+    let h = harness(vec![primary, fallback]);
+    let error = h
+        .usecase
+        .execute_stream(stream_req("rook/progressive"))
+        .await
+        .err()
+        .expect("no successful step");
+
+    assert!(!error.is_local_backpressure());
+    let reasons = error.combo_skip_reasons().expect("combo exhaustion");
+    assert_eq!(reasons.len(), 1);
+    assert_eq!(reasons[0].0, ProviderId::new("fallback"));
+    let audit = h.audit.entries.lock().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].provider, ProviderId::new("fallback"));
+    assert_eq!(audit[0].status, RequestStatus::Failure);
+}
+
+#[tokio::test(start_paused = true)]
+async fn combo_stream_first_chunk_wait_and_selected_tail_share_one_step_deadline() {
+    let primary = scripted("openai", vec![Ok(chunk("first")), Ok(finished_chunk())]);
+    let (release_first, first_gate) = tokio::sync::oneshot::channel();
+    let (_hold_tail, tail_gate) = tokio::sync::oneshot::channel();
+    *primary.first_gate.lock().unwrap() = Some(first_gate);
+    *primary.tail_gate.lock().unwrap() = Some(tail_gate);
+    let fallback = scripted("fallback", vec![Ok(finished_chunk())]);
+    let h = harness(vec![primary.clone(), fallback.clone()]);
+    let start = tokio::time::Instant::now();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(9)).await;
+        release_first.send(()).unwrap();
+    });
+    let mut stream = h
+        .usecase
+        .execute_stream(stream_req("rook/progressive"))
+        .await
+        .unwrap();
+    release.await.unwrap();
+    assert_eq!(stream.next().await.unwrap().unwrap().delta, "first");
+    assert_eq!(start.elapsed(), Duration::from_secs(9));
+    assert!(stream.next().await.unwrap().is_err());
+    assert_eq!(start.elapsed(), RouteRequest::COMBO_STEP_TIMEOUT);
+    assert!(stream.next().await.is_none());
+    assert!(primary.dropped.load(Ordering::SeqCst));
+    assert_eq!(fallback.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        h.audit.entries.lock().unwrap()[0].status,
+        RequestStatus::Failure
+    );
+}
+
+#[tokio::test]
+async fn combo_stream_error_after_finish_retains_latest_usage_and_does_not_succeed_or_fallback() {
+    let mut first = chunk("answer");
+    first.usage = Some(TokenUsage {
+        prompt_tokens: 4,
+        completion_tokens: 1,
+        total_tokens: 5,
+        cache_read_tokens: None,
+        cache_creation_tokens: None,
+        reasoning_tokens: None,
+        estimated_cost_usd: None,
+    });
+    let mut terminal = finished_chunk();
+    let mut latest = first.usage.clone().unwrap();
+    latest.completion_tokens = 6;
+    latest.total_tokens = 10;
+    terminal.usage = Some(latest);
+    let primary = scripted(
+        "openai",
+        vec![
+            Ok(first),
+            Ok(terminal),
+            Err(CortexError::rate_limited(ProviderId::new("openai"), 30)),
+        ],
+    );
+    let fallback = scripted("fallback", vec![Ok(finished_chunk())]);
+    let h = harness(vec![primary, fallback.clone()]);
+    let chunks: Vec<_> = h
+        .usecase
+        .execute_stream(stream_req("rook/progressive"))
+        .await
+        .unwrap()
+        .collect()
+        .await;
+
+    assert_eq!(chunks.len(), 3);
+    assert_eq!(
+        chunks[1].as_ref().unwrap().finish_reason,
+        Some(rook_core::FinishReason::Stop)
+    );
+    assert!(chunks[2].as_ref().unwrap_err().is_rate_limited());
+    assert_eq!(fallback.polls.load(Ordering::SeqCst), 0);
+    let audit = h.audit.entries.lock().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].status, RequestStatus::RateLimited);
+    let usage = h.usage.entries.lock().unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].status, RequestStatus::RateLimited);
+    assert_eq!(usage[0].tokens_prompt, Some(4));
+    assert_eq!(usage[0].tokens_completion, Some(6));
+}
+
+#[tokio::test]
+async fn combo_stream_cancel_before_first_consumer_poll_keeps_usage_and_circuit_state() {
+    let mut first = chunk("prefetched");
+    first.usage = Some(TokenUsage {
+        prompt_tokens: 8,
+        completion_tokens: 2,
+        total_tokens: 10,
+        cache_read_tokens: Some(3),
+        cache_creation_tokens: None,
+        reasoning_tokens: None,
+        estimated_cost_usd: None,
+    });
+    let primary = scripted("openai", vec![Ok(first), Ok(finished_chunk())]);
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![primary.clone()],
+        crate::RoutingStrategy::Priority,
+    ));
+    for _ in 0..2 {
+        router
+            .on_failure(primary.id(), &CortexError::provider("prior failure"))
+            .await;
+    }
+    let mut h = harness(vec![primary.clone()]);
+    h.usecase.router = router.clone();
+    let stream = h
+        .usecase
+        .execute_stream(stream_req("rook/progressive"))
+        .await
+        .unwrap();
+    drop(stream);
+    tokio::task::yield_now().await;
+
+    assert!(primary.dropped.load(Ordering::SeqCst));
+    let state = &router.circuit_states()[0].1;
+    assert_eq!(
+        state.failures, 2,
+        "cancellation neither increments nor resets failures"
+    );
+    assert!(!state.is_open);
+    let usage = h.usage.entries.lock().unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].status, RequestStatus::Failure);
+    assert_eq!(usage[0].tokens_prompt, Some(8));
+    assert_eq!(usage[0].tokens_completion, Some(2));
+    assert_eq!(usage[0].tokens_cache_read, Some(3));
+    assert_eq!(h.audit.entries.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_stream_cancellation_releases_half_open_trial_before_and_after_selection() {
+    use crate::router_impl::CircuitClock;
+    use futures::FutureExt;
+
+    struct TestClock(Mutex<std::time::Instant>);
+    impl CircuitClock for TestClock {
+        fn now(&self) -> std::time::Instant {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    for cancel_selection in [true, false] {
+        let primary = scripted("openai", vec![Ok(chunk("first")), Ok(finished_chunk())]);
+        let (_hold, gate) = tokio::sync::oneshot::channel();
+        if cancel_selection {
+            *primary.first_gate.lock().unwrap() = Some(gate);
+        }
+        let clock = Arc::new(TestClock(Mutex::new(std::time::Instant::now())));
+        let router = Arc::new(crate::FallbackRouter::with_clock(
+            vec![primary.clone()],
+            crate::RoutingStrategy::Priority,
+            clock.clone(),
+        ));
+        for _ in 0..3 {
+            router
+                .on_failure(primary.id(), &CortexError::provider("prior failure"))
+                .await;
+        }
+        *clock.0.lock().unwrap() += Duration::from_secs(31);
+        let mut h = harness(vec![primary.clone()]);
+        h.usecase.router = router.clone();
+
+        if cancel_selection {
+            let mut selection = Box::pin(h.usecase.execute_stream(stream_req("rook/progressive")));
+            assert!(selection.as_mut().now_or_never().is_none());
+            assert!(router.try_acquire_trial(primary.id()).await.is_none());
+            drop(selection);
+        } else {
+            let stream = h
+                .usecase
+                .execute_stream(stream_req("rook/progressive"))
+                .await
+                .unwrap();
+            assert!(router.try_acquire_trial(primary.id()).await.is_none());
+            drop(stream);
+            tokio::task::yield_now().await;
+        }
+
+        assert!(primary.dropped.load(Ordering::SeqCst));
+        assert!(router.try_acquire_trial(primary.id()).await.is_some());
+        assert_eq!(router.circuit_states()[0].1.failures, 3);
+        let audit = h.audit.entries.lock().unwrap();
+        assert_eq!(audit.len(), usize::from(!cancel_selection));
+        if !cancel_selection {
+            assert_eq!(audit[0].status, RequestStatus::Failure);
+        }
+    }
+}
