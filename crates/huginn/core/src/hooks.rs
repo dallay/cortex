@@ -194,7 +194,7 @@ impl ToolHooks {
             let reason = match self.guarded(implementation.before(call, ctx)).await {
                 Ok(ToolVerdict::Continue) => continue,
                 Ok(ToolVerdict::Block(reason)) => sanitize(&reason),
-                Err(error) => format!("hook failed: {}", sanitize(&error.to_string())),
+                Err(error) => sanitize(&format!("hook failed: {error}")),
             };
             return Some(Blocked { hook, reason });
         }
@@ -213,7 +213,7 @@ impl ToolHooks {
             let text = match self.guarded(implementation.after(call, outcome, ctx)).await {
                 Ok(Some(text)) => sanitize(&text),
                 Ok(None) => continue,
-                Err(error) => format!("hook failed: {}", sanitize(&error.to_string())),
+                Err(error) => sanitize(&format!("hook failed: {error}")),
             };
             if !text.is_empty() {
                 notes.push(Note { hook, text });

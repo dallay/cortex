@@ -371,8 +371,20 @@ impl StandardLoop {
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 notes = hooks.after(&call, outcome, &ctx) => notes,
             };
+            const NOTE_BUDGET: usize = crate::output::MAX_OUTPUT_BYTES / 4;
+            let mut annotations = String::new();
             for note in notes {
-                output.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                annotations.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                if annotations.len() > NOTE_BUDGET {
+                    annotations = crate::output::bounded_text_with_limit(annotations, NOTE_BUDGET);
+                    break;
+                }
+            }
+            if !annotations.is_empty() {
+                // Keep notes visible even when the original bounded body fills its budget.
+                let body_budget = crate::output::MAX_OUTPUT_BYTES.saturating_sub(annotations.len());
+                output = crate::output::bounded_text_with_limit(output, body_budget);
+                output.push_str(&annotations);
             }
         }
         session
