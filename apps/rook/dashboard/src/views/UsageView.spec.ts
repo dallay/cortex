@@ -33,6 +33,22 @@ describe("UsageView", () => {
 		});
 	});
 
+	it("associates labels with each usage filter input", async () => {
+		const wrapper = mount(UsageView, { global: { plugins: [i18n] } });
+		await flushPromises();
+
+		for (const id of [
+			"usage-provider",
+			"usage-model",
+			"usage-api-key",
+			"usage-start",
+			"usage-end",
+		]) {
+			expect(wrapper.get(`#${id}`).attributes("id")).toBe(id);
+			expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
+		}
+	});
+
 	it("renders usage and cost without inventing a cost when there is no data", async () => {
 		getUsageCost.mockResolvedValueOnce({
 			total_cost_usd: 0,
@@ -68,8 +84,15 @@ describe("UsageView", () => {
 	it("applies provider, model, API key, and date filters", async () => {
 		const wrapper = mount(UsageView, { global: { plugins: [i18n] } });
 		await flushPromises();
-		for (const label of wrapper.findAll("label")) {
-			expect(label.find("input").exists()).toBe(true);
+		for (const id of [
+			"usage-provider",
+			"usage-model",
+			"usage-api-key",
+			"usage-start",
+			"usage-end",
+		]) {
+			expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
+			expect(wrapper.find(`#${id}`).exists()).toBe(true);
 		}
 		await wrapper.findAll("input")[0]?.setValue("openai");
 		await wrapper.findAll("input")[1]?.setValue("gpt-4o");

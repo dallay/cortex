@@ -377,7 +377,11 @@ onMounted(loadAll);
             @submit.prevent="addComboAlias(combo)"
           >
             <div class="flex-1">
+              <label class="sr-only" :for="`combo-alias-input-${combo.id}`">
+                {{ t("combos.aliasPlaceholder") }}
+              </label>
               <Input
+                :id="`combo-alias-input-${combo.id}`"
                 :data-testid="`combo-alias-input-${combo.id}`"
                 :model-value="aliasDrafts[combo.id] ?? ''"
                 :placeholder="t('combos.aliasPlaceholder')"
