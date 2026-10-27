@@ -57,6 +57,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 }
 
 mod default_combo;
+mod progressive_combo;
 
 struct TestProvider {
     id: ProviderId,
@@ -2018,7 +2019,7 @@ impl ProviderPort for RateLimitedProvider {
         &self,
         _req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        unreachable!("combo tests use complete()")
+        Err(CortexError::rate_limited(self.id.clone(), 30))
     }
 }
 
@@ -4030,7 +4031,7 @@ fn failing_provider(id: &str) -> Arc<dyn ProviderPort> {
     Arc::new(TestProvider {
         id: ProviderId::new(id),
         complete_error: Some(CortexError::provider("boom")),
-        stream_error: None,
+        stream_error: Some(CortexError::provider("boom")),
     })
 }
 
@@ -4069,12 +4070,12 @@ async fn combo_stream_emits_content_then_final_chunk() {
     let mut chunks = chunks.into_iter().map(|c| c.expect("chunk ok"));
     let content = chunks.next().unwrap();
     assert_eq!(content.model.as_str(), "rook/coding");
-    assert_eq!(content.delta, "cached path");
+    assert_eq!(content.delta, "hel");
     assert!(content.finish_reason.is_none());
     assert!(content.usage.is_none());
     let final_chunk = chunks.next().unwrap();
     assert_eq!(final_chunk.model.as_str(), "rook/coding");
-    assert!(final_chunk.delta.is_empty());
+    assert_eq!(final_chunk.delta, "lo");
     assert!(final_chunk.usage.is_some(), "usage rides the final chunk");
 }
 
@@ -4135,9 +4136,46 @@ impl ProviderPort for ToolProvider {
     }
     async fn stream(
         &self,
-        _req: &CompletionRequest,
+        req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        unreachable!("tool combo stream test uses complete()")
+        use rook_core::{ToolCallDelta, ToolCallFunctionDelta};
+        let start = ToolCallDelta {
+            index: 0,
+            id: Some("call_1".into()),
+            function: ToolCallFunctionDelta {
+                name: Some("lookup".into()),
+                arguments: None,
+            },
+        };
+        let args = ToolCallDelta {
+            index: 0,
+            id: None,
+            function: ToolCallFunctionDelta {
+                name: None,
+                arguments: Some(r#"{"key":"value"}"#.into()),
+            },
+        };
+        let resp = self.complete(req).await?;
+        Ok(Box::pin(stream::iter(vec![
+            Ok(StreamChunk {
+                id: req.id.clone(),
+                model: req.model.clone(),
+                delta: String::new(),
+                thinking: None,
+                tool_calls: vec![start.clone(), args],
+                finish_reason: None,
+                usage: None,
+            }),
+            Ok(StreamChunk {
+                id: req.id.clone(),
+                model: req.model.clone(),
+                delta: String::new(),
+                thinking: None,
+                tool_calls: vec![start],
+                finish_reason: resp.finish_reason,
+                usage: Some(resp.usage),
+            }),
+        ])))
     }
 }
 
@@ -4528,7 +4566,7 @@ impl ProviderPort for EchoStreamProvider {
             delta: "hi".to_string(),
             thinking: None,
             tool_calls: vec![],
-            finish_reason: None,
+            finish_reason: Some(rook_core::FinishReason::Stop),
             usage: None,
         })])))
     }
@@ -4583,16 +4621,15 @@ async fn streaming_virtual_model_never_enters_model_alias_resolution() {
         .await
         .expect("virtual combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
-    assert_eq!(chunks.len(), 2, "combo stream emits content + final chunk");
+    assert_eq!(chunks.len(), 1, "preserve native upstream chunk boundaries");
     let mut chunks = chunks.into_iter().map(|c| c.expect("chunk ok"));
     let content = chunks.next().unwrap();
-    let final_chunk = chunks.next().unwrap();
     assert_eq!(
         content.model.as_str(),
         "rook/coding",
         "streaming must preserve rook/coding (combo), never rewrite to physical gpt-4o"
     );
-    assert_eq!(final_chunk.model.as_str(), "rook/coding");
+    assert!(content.finish_reason.is_some());
     assert!(
         !rook_consulted.load(std::sync::atomic::Ordering::SeqCst),
         "ModelAlias repo must never be consulted for rook/*"

@@ -135,8 +135,41 @@ Request with X-Rook-Combo header or default_combo
 - Per-step timeout: 10 seconds
 - Overall combo timeout: 60 seconds
 
-**Streaming Limitation:**
-Combos only apply before streaming starts. Once the first chunk is sent, no fallback occurs.
+**Progressive combo streaming:**
+
+- Streaming requests use each eligible step's native `ProviderPort::stream`.
+  Native streaming capability must be supported; completion-only steps are skipped.
+  Non-streaming combo execution is unchanged.
+- Selection waits for exactly one domain chunk. Setup failures, an empty upstream,
+  early 429/5xx/network errors, and first-chunk timeouts can advance to the next
+  step. Non-retryable 4xx errors stop the chain.
+- Any successful chunk commits the selected step, including an empty or
+  reasoning-only chunk. No later error can switch providers, even if a downstream
+  serializer emits no event for that chunk. Later failures become terminal SSE
+  errors; EOF without a finish reason is also a failure.
+- Chunks retain their order, tool fragments, reasoning where supported by the
+  output protocol, and usage. The response model remains the requested alias;
+  audit and usage records identify the physical model and effective connection.
+- The 10-second step deadline covers stream setup, first output, and the selected
+  stream lifetime. The 60-second combo deadline bounds fallback attempts and the
+  selected stream. A late timeout ends the stream without fallback.
+- The route retains one prefetched chunk and polls upstream only on downstream
+  demand. It does not accumulate response text or arguments, create a producer
+  task, or introduce a queue. Dropping selection or the returned stream releases
+  upstream work, connection admission, and any circuit trial reservation.
+- Stream accounting completes at EOF, not at the finish chunk, because usage can
+  arrive afterward. After selection, cancellation records failure with any observed
+  usage, without marking the provider unhealthy. Cancellation-safe persistence uses
+  at most 64 asynchronous accounting jobs with a 10-second persistence deadline.
+  Saturation, a missing runtime, or a persistence timeout is reported through
+  `combo_stream_accounting_rejected_total` or `combo_stream_accounting_timeout_total`
+  and warnings; persistence remains best-effort, as for other audit writes.
+  `combo_stream_cancelled_total` counts cancellations after selection.
+- Anthropic output retains at most 64 tool indices, one text index, one thinking
+  index, and terminal metadata. Tool, text, and thinking blocks have distinct
+  output indices. Terminal stops include usage received after the finish chunk.
+  The Anthropic provider merges input/cache usage from `message_start` with output
+  usage from `message_delta`.
 
 ### Upstream Quota Eligibility
 
