@@ -233,6 +233,105 @@ Los workflows de GitHub están en `.github/workflows/`:
 - `release.yml` — Publicación de releases
 - `labeler.yml` — Auto-labeling de PRs
 
+### Requisitos externos de calidad: preparación y activación
+
+La implementación local y la activación en GitHub son operaciones distintas.
+Este procedimiento no demuestra que el workflow actualizado esté publicado en
+`main` ni que los requisitos externos estén activos. La activación queda pendiente
+hasta que un administrador ejecute y verifique el cambio autorizado.
+
+El helper `.github/scripts/ci-quality-ruleset.cjs` está limitado a
+`dallay/cortex`, rama predeterminada `main`, ruleset `17001295`, de origen
+`Repository`, activo y de tipo `branch`. Antes de preparar el payload, compara
+la política editable completa con `.github/ci-quality-policy.json`: las cinco
+reglas, los doce checks originales con sus Apps y parámetros, las condiciones,
+los actores de bypass, el nombre y la política estricta. Rechaza cualquier
+protección ausente, alterada, duplicada o inesperada. La comparación de arrays
+conserva orden y multiplicidad; tampoco acepta reordenaciones del baseline.
+No fija metadata de respuesta como `updated_at` o `node_id`.
+Conserva toda esa política y permite añadir únicamente estas identidades:
+
+- `CodeQL`: `integration_id=57789`, App `github-advanced-security`.
+- `SonarCloud Code Analysis`: `integration_id=12526`, App `sonarqubecloud`.
+
+No añade una regla `code_scanning` ni modifica umbrales de severidad. No se ha
+verificado aquí el umbral actual de CodeQL. Un nombre ya vinculado a otra App,
+sin App definida o duplicado bloquea la operación; no se sustituye silenciosamente.
+Repetir la preparación no duplica checks.
+
+Desde una copia local revisada y confiable, valida primero sin credenciales:
+
+```bash
+node --test .github/scripts/ci-quality-ruleset.test.cjs
+node --test .github/scripts/ci-*.test.cjs
+actionlint .github/workflows/ci.yml
+```
+
+Para consultar el ruleset, autentica `gh` contra `github.com` con permisos de
+lectura. El comando predeterminado solo hace GET y muestra el payload permitido
+por la API y la lista de requisitos añadidos. No activa cambios:
+
+```bash
+node .github/scripts/ci-quality-ruleset.cjs
+# Equivalente explícito:
+node .github/scripts/ci-quality-ruleset.cjs --dry-run
+```
+
+Antes de activar, publica y revisa el workflow y todos sus archivos CI asociados
+en `main`, confirma la configuración de SonarCloud y observa ambos checks
+externos en una PR real.
+El scan debe ejecutarse en toda PR, también de documentación, sin `sonar_exempt`,
+con `-Dsonar.qualitygate.wait=true` y `-Dsonar.qualitygate.timeout=300`.
+Analizar PRs de documentación añade consumo de runner, cobertura y análisis;
+la espera del quality gate también puede prolongar el job hasta su timeout.
+Los forks y Dependabot sin credenciales quedan bloqueados: no uses
+`pull_request_target` ni transfieras automáticamente código de forks a ramas
+internas para obtener secretos.
+
+**Advertencia:** el siguiente comando modifica GitHub. Úsalo solo con autorización
+de activación, permisos de administración y sin otro administrador editando el
+ruleset. No forma parte de la validación local:
+
+```bash
+node .github/scripts/ci-quality-ruleset.cjs --apply
+```
+
+El preflight resuelve `main` una sola vez a un SHA de commit inmutable. Compara
+SHA-256 del contenido de estos nueve archivos en ese mismo commit con la copia
+local revisada; un archivo ausente o distinto bloquea el PUT:
+
+- `.github/workflows/ci.yml`
+- `.github/ci-path-filters.json`
+- `.github/scripts/ci-required.cjs`
+- `.github/scripts/ci-required-run.cjs`
+- `.github/scripts/ci-required.test.cjs`
+- `.github/scripts/ci-workflow.test.cjs`
+- `.github/scripts/ci-quality-ruleset.cjs`
+- `.github/scripts/ci-quality-ruleset.test.cjs`
+- `.github/ci-quality-policy.json`
+
+Publicar solo `ci.yml` no basta. Los archivos de documentación no son requisitos
+de ejecución. El dry-run sigue disponible aunque `main` conserve la CI anterior;
+no implica que `--apply` pueda superar la comprobación de publicación.
+
+Además comprueba marcadores de ejecución en toda PR y espera del quality gate.
+Es una comprobación conservadora del formato YAML en bloques usado aquí, no un
+intérprete YAML ni una prueba de ejecución del workflow; formatos o condiciones
+no admitidos requieren revisión, no un bypass. Lee los contenidos remotos como
+datos; nunca ejecuta código remoto o de una PR. Ejecuta `gh` con argumentos
+separados, sin shell.
+
+Before the PUT, the helper saves the original snapshot with restricted permissions
+under `opencode/ci-quality-ruleset-*` in the system temporary directory and prints
+its path. Before writing, it resolves `main` again and aborts if its SHA changed,
+then rereads the ruleset and blocks detected policy changes. This is not
+transactional: the API does not provide an atomic compare-and-write operation, and
+`main` can still advance between the final ref check and the PUT. Avoid concurrent
+publications and administrative edits during activation. After the PUT, the helper
+reads the ruleset again and compares all preserved fields and both new identities.
+Un error de escritura o verificación exige inspección manual con el snapshot;
+no hace rollback automático que pueda borrar cambios de otro administrador.
+
 ### Troubleshooting de Docker
 
 Para problemas específicos de E2E y Docker, consulta la sección **Troubleshooting** de [Dev Testing Guide](../dev/README.md).

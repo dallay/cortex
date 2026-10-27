@@ -1,0 +1,57 @@
+{
+  "docs": [
+    "docs/**",
+    "docs/*.md",
+    "*.md",
+    "README.md"
+  ],
+  "backend": [
+    "apps/rook/**",
+    "apps/huginn/**",
+    "crates/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "**/Cargo.toml",
+    "rust-toolchain.toml",
+    ".github/scripts/check-huginn-architecture.py",
+    "package.json",
+    "justfile"
+  ],
+  "frontend": [
+    "apps/rook/dashboard/**",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package.json",
+    "justfile"
+  ],
+  "docker": [
+    "**/Dockerfile*",
+    ".dockerignore",
+    "dev/e2e/**",
+    "dev/test-configs/**",
+    "apps/rook/dashboard/e2e/**",
+    "package.json",
+    "justfile"
+  ],
+  "github": [
+    ".github/workflows/**",
+    "sonar-project.properties",
+    ".semgrepignore",
+    ".github/scripts/ci-*.cjs",
+    ".github/ci-*.json"
+  ],
+  "labeler": [
+    ".github/scripts/issue-labeler.*",
+    ".github/issue-labeler-rules.json",
+    ".github/ISSUE_TEMPLATE/**",
+    ".github/workflows/issue-labeler.yml",
+    ".github/workflows/labels-audit.yml"
+  ],
+  "doctor": [
+    "dev/doctor.sh",
+    "dev/doctor.test.sh",
+    "justfile",
+    "package.json",
+    "rust-toolchain.toml"
+  ]
+}

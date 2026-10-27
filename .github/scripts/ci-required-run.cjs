@@ -2,6 +2,7 @@ const { evaluateRequiredChecks } = require('./ci-required.cjs');
 
 const resultKeys = {
   changes: 'CHANGES',
+  'ci-contract': 'CI_CONTRACT',
   doctor: 'DOCTOR',
   'build-dashboard': 'BUILD_DASHBOARD',
   fmt: 'FMT',
@@ -32,11 +33,9 @@ const outputKeys = {
 };
 
 const results = Object.fromEntries(Object.entries(resultKeys).map(([job, envKey]) => [job, process.env[`RESULT_${envKey}`] || 'missing']));
-const changes = Object.fromEntries(Object.entries(outputKeys).map(([key, envKey]) => [key, process.env[envKey] || 'false']));
+const changes = Object.fromEntries(Object.entries(outputKeys).map(([key, envKey]) => [key, process.env[envKey]]));
 const outcome = evaluateRequiredChecks({
   eventName: process.env.EVENT_NAME,
-  actor: process.env.ACTOR,
-  fork: process.env.IS_FORK === 'true',
   sonarTokenPresent: process.env.SONAR_TOKEN_PRESENT === 'true',
   changes,
   results,
