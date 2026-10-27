@@ -92,6 +92,24 @@ and manifest validation succeed. On activation failure, removal, shutdown, or
 supervisor drop, every registration and owned task is revoked and cleaned up.
 Retained handles therefore fail closed after teardown.
 
+## Tool hooks
+
+An extension that requires `agent:tool-hooks@1` can register a `ToolHook` from
+`huginn_plugin_api::v1::hooks`. A hook inspects each tool call before preparation
+and approval. It can let the call continue or block it with a reason; it cannot
+approve anything. An `after` method may append a short note to the result the
+model sees.
+
+```rust
+let hooks = ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone();
+hooks.register(ctx, "example.deny-shell".into(), Arc::new(DenyShell))?;
+```
+
+Hooks run in hook-id order and the first block wins. Errors, panics and
+timeouts block the call. Reasons and notes are sanitized and limited to 4 KiB.
+Registrations follow the plugin generation like other contributions. See
+[ADR-0016](adr/0016-restrict-only-tool-hooks.md).
+
 ## Conflicts and dependencies
 
 Contribution IDs and capability keys must be unique. Commands reserve their

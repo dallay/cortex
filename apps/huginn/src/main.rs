@@ -307,6 +307,7 @@ async fn main() -> anyhow::Result<()> {
     let startup = CancellationToken::new();
     let loop_config = LoopConfig {
         skills: None,
+        hooks: None,
         max_iterations: config.max_iterations,
         context_tokens: config.context_tokens,
         max_output_tokens: config.max_output_tokens,

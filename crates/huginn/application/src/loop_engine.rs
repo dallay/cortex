@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use huginn_core::{
+    hooks::{ToolHooks, ToolOutcome},
     AgentError, AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, InstructionSource,
     Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
     ToolContext, ToolRegistry,
@@ -38,6 +39,8 @@ fn complete_turn_ends(messages: &[Message], from: usize) -> Vec<usize> {
 #[derive(Clone)]
 pub struct LoopConfig {
     pub skills: Option<Arc<dyn crate::skills::SkillLoader>>,
+    /// Live, generation-owned registry; plugins may add hooks after the loop starts.
+    pub hooks: Option<Arc<ToolHooks>>,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -46,6 +49,7 @@ impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             skills: None,
+            hooks: None,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -309,6 +313,16 @@ impl StandardLoop {
                 .tools
                 .get(&call.name)
                 .ok_or_else(|| AgentError::Tool(format!("unknown tool {}", call.name)))?;
+            // Hooks see the raw call before any preview, approval prompt or effect.
+            if let Some(blocked) = match &self.config.hooks {
+                Some(hooks) => hooks.before(&call, &ctx).await,
+                None => None,
+            } {
+                return Err(AgentError::Tool(format!(
+                    "blocked by hook {}: {}",
+                    blocked.hook, blocked.reason
+                )));
+            }
             let action = tool.prepare(&call, &ctx).await?;
             if let Some(request) = &action.approval {
                 self.record(
@@ -342,11 +356,25 @@ impl StandardLoop {
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
             output = execution => output,
         };
-        let (output, is_error) = match output {
+        let (mut output, is_error) = match output {
             Ok(output) => (crate::output::bounded_text(output), false),
             Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
             Err(error) => (error.to_string(), true),
         };
+        if let Some(hooks) = &self.config.hooks {
+            let outcome = ToolOutcome {
+                output: &output,
+                is_error,
+            };
+            let notes = tokio::select! {
+                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                notes = hooks.after(&call, outcome, &ctx) => notes,
+            };
+            for note in notes {
+                output.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+            }
+        }
         session
             .messages
             .push(Message::tool(call.id.clone(), output.clone()));

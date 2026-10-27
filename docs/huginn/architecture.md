@@ -175,6 +175,14 @@ pub trait ToolRegistry: Send + Sync {
 }
 ```
 
+### Tool hooks
+
+`huginn-core::hooks::ToolHooks` is a generation-owned registry published as
+`agent:tool-hooks@1`. The loop asks it about every tool call before
+`prepare`. A `Block` verdict, or a failing hook, ends the call with an error and
+no approval prompt. Hooks have no verdict that grants authorization
+([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
+
 ### SessionStore
 
 Persistent session management:
