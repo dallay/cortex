@@ -28,18 +28,25 @@ pub struct Config {
     pub provider_explicit: bool,
 }
 
-/// Shared resolution order: readers and writers must agree on one file.
-pub fn resolve_with(explicit: Option<&Path>, primary: &Path, legacy: &Path) -> PathBuf {
-    if let Some(path) = explicit {
-        return path.to_path_buf();
-    }
-    if primary.exists() {
-        return primary.to_path_buf();
-    }
-    if legacy.exists() {
-        return legacy.to_path_buf();
-    }
-    primary.to_path_buf()
+/// Name of the per-user directory that holds Cortex configuration and state.
+pub const CORTEX_HOME_DIR: &str = ".cortex";
+
+/// Product directory for Huginn inside the Cortex home.
+pub const HUGINN_HOME_DIR: &str = "huginn";
+
+/// Resolve `~/.cortex`, the shared base for every Cortex product.
+///
+/// Uses the operating system home directory instead of the platform
+/// configuration directory, so macOS, Linux and Windows agree on one layout.
+pub fn cortex_home_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(CORTEX_HOME_DIR)
+}
+
+/// Map an optional explicit path to the file that readers and writers use.
+pub fn resolve_with(explicit: Option<&Path>, primary: &Path) -> PathBuf {
+    explicit.map_or_else(|| primary.to_path_buf(), Path::to_path_buf)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,19 +57,7 @@ pub enum ModelReadiness {
 }
 impl Default for Config {
     fn default() -> Self {
-        let data_root = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
-        let canonical_data = data_root.join("cortex/huginn");
-        let legacy_data = data_root.join("cortex/agent");
-        // Keep using an existing legacy SQLite database in place. Never copy
-        // a live database: WAL/SHM files and SQLite's own locks must remain
-        // beside the original database.
-        let root = if !canonical_data.join("sessions.db").exists()
-            && legacy_data.join("sessions.db").exists()
-        {
-            legacy_data
-        } else {
-            canonical_data
-        };
+        let root = cortex_home_dir().join(HUGINN_HOME_DIR);
         Self {
             provider: "openai".into(),
             base_url: None,
@@ -153,46 +148,24 @@ impl Config {
     }
 
     pub fn primary_config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/huginn/config.toml")
-    }
-
-    pub fn legacy_config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("cortex/agent/config.toml")
+        cortex_home_dir().join(HUGINN_HOME_DIR).join("config.toml")
     }
 
     /// Resolve the configuration file that `load` reads.
     ///
-    /// Persistence must derive its target from this: patching a path `load`
-    /// would not read creates a shadow file that hides an entire legacy
-    /// configuration. When this resolves to the legacy path, seed the primary
-    /// file from it instead of writing in place.
+    /// An explicit `--config` wins; otherwise the file is
+    /// `~/.cortex/huginn/config.toml`. Persistence must derive its target from
+    /// this so a save never creates a file that `load` would not read.
     pub fn resolve_path(explicit: Option<&Path>) -> PathBuf {
-        resolve_with(
-            explicit,
-            &Self::primary_config_path(),
-            &Self::legacy_config_path(),
-        )
+        resolve_with(explicit, &Self::primary_config_path())
     }
 
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
         // Resolution order, all read-only:
         // 1. Explicit --config (highest priority, never falls back).
-        // 2. Platform config dir / cortex/huginn/config.toml.
-        // 3. Legacy platform config dir / cortex/agent/config.toml — only when
-        //    the new path is absent; never overwritten or deleted.
+        // 2. ~/.cortex/huginn/config.toml.
         let resolved = Self::resolve_path(path);
-        if path.is_none() && resolved != Self::primary_config_path() {
-            eprintln!(
-                "warning: using legacy configuration {} — move the file to {} to silence this notice",
-                resolved.display(),
-                Self::primary_config_path().display()
-            );
-        }
-        // The path comes from the explicit CLI option or fixed platform paths;
+        // The path comes from the explicit CLI option or a fixed home path;
         // keep it as a PathBuf so it cannot be confused with shell input.
         match std::fs::read_to_string(&resolved) {
             Ok(text) => Self::parse(&text),
