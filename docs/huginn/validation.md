@@ -308,3 +308,38 @@ aditiva acotada, rechazo de configuración inválida/no regular y, en Unix, enla
 y FIFO sin bloqueo. El FIFO se crea únicamente en una fixture temporal propia.
 La carga es una API explícita del host; esta unidad no activa la CLI ni sustituye
 las comprobaciones del extremo integrado, cobertura Rust o quality gates remotos.
+
+## Activación CLI y verificación local (B11)
+
+Las secciones B9/B10 anteriores describen snapshots históricos, no el estado
+actual del binario. B11 carga la política desde la sesión preparada y selecciona
+el builder protegido antes de run/chat/resume, línea o TUI. No cambia credenciales,
+MCP, providers, instrucciones ni persistencia; conserva la autoridad de `HostPolicy`.
+
+TDD local: antes de activar la entrada protegida, cinco tests CLI fallaron y uno
+pasó: hubo efectos solo dentro de fixtures, búsqueda sensible y política ignorada.
+Tras el wiring original, los seis aprobaron, incluido rechazo de alias/trap con
+payloads inocuos, bloqueo pese a grants, política inválida, búsqueda y resume.
+
+Comandos reproducibles ejecutados con caché Cargo externa:
+
+```sh
+cargo test -p huginn --test guardrails --test cli --test skills_acceptance \
+  --test skill_invocation --test skills_cli --test prompt_templates \
+  --test providers_recovery --test session_ownership --locked -- --test-threads=1
+cargo test -p huginn --test tui --locked -- --test-threads=1
+```
+
+Aprobaron 36 tests del primer comando y 14 del TUI completo: diez escenarios y
+cuatro tests del lector PTY. Se usó ejecución secuencial local, sin cambiar producto
+ni CI; no hubo fallo transitorio de `openpty` ni fue necesario repetir casos.
+También aprobaron guards (24), runtime `coding_workflow` (34) y `guardrails` (4),
+core `tool_hook_evaluation`/`tool_hooks` (6/4), application `tool_hooks` (3) y los
+dos tests focales de `output`. Estos no son totales de suites no ejecutadas.
+Clippy de huginn/runtime/guards con todos los targets/features y `-D warnings`,
+formato, arquitectura, Markdown e inventario Python se verifican en esta capa.
+
+Los logs primarios están en el temporal aprobado `huginn-cli-chain-evidence/`.
+El respaldo `ee44ab8` y el plan RPI conservan la evidencia anterior; no se atribuye
+a esta ejecución. No se ejecutan aquí CI global, cobertura Rust del 87 %, Sonar ni
+gates remotos: su validación integrada corresponde al orquestador antes del PR.

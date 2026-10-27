@@ -3,8 +3,8 @@
 ## Estado
 
 El host puede registrar `GuardsPlugin` y componer adaptadores nativos protegidos.
-La CLI todavía no selecciona esa composición: run/chat/resume no la activan por defecto.
-Runtime ofrece carga explícita de configuración; la CLI todavía no la invoca.
+La CLI protege run/chat/resume con esa composición, sin flags de desprotección.
+Carga una instantánea desde `session.workspace` tras crear o recuperar la sesión.
 
 ## Uso explícito
 
@@ -100,7 +100,7 @@ el filtro antes de metadata/lectura. Así no depende solo del hook de la raíz.
 seleccionada por el host y compone juntos hook y herramientas protegidas. No
 carga configuración del proyecto. Los builders legacy y `native_tools` conservan
 sus firmas y comportamiento sin política para compatibilidad; no son la entrada
-protegida. La CLI sigue usando el builder anterior hasta su capa de activación.
+protegida. La CLI selecciona el builder protegido; otros hosts deben elegirlo explícitamente.
 
 ## Carga explícita del host
 
@@ -114,8 +114,8 @@ El cargador usa capacidades de directorio y abre `.huginn` y el archivo sin segu
 enlaces. Exige archivo regular, UTF-8 y hasta 64 KiB; combina metadata con lectura
 acotada de 65537 bytes para detectar crecimiento. En Unix, `O_NONBLOCK` evita
 bloquear al abrir un FIFO, que se rechaza como no regular. Los fallos no se ignoran.
-Esta API no decide cuándo cargar ni cambia la composición automáticamente: la CLI
-todavía no llama al cargador ni al builder protegido desde run/chat/resume.
+La CLI llama al cargador una vez después de `prepare_session`, con `session.workspace`,
+también en resume. Comparte la misma `Arc` entre hook y adaptadores; no hay hot reload.
 
 ## Límites de seguridad
 
