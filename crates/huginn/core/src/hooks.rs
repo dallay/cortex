@@ -5,10 +5,17 @@ use crate::{
     AgentError, Result, ToolCall, ToolContext,
 };
 use async_trait::async_trait;
+use futures::FutureExt;
 use std::{
     collections::BTreeMap,
+    future::Future,
+    panic::AssertUnwindSafe,
     sync::{Arc, Mutex, MutexGuard, Weak},
+    time::Duration,
 };
+
+pub const MAX_NOTE_BYTES: usize = 4096;
+pub const DEFAULT_HOOK_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn tool_hooks_id() -> ServiceId {
     ServiceId::new("agent:tool-hooks", 1)
@@ -43,15 +50,31 @@ pub trait ToolHook: Send + Sync {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blocked {
+    pub hook: String,
+    pub reason: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note {
+    pub hook: String,
+    pub text: String,
+}
+
 pub struct ToolHooksService(pub Arc<ToolHooks>);
 
 struct Entry {
     owner: Activation,
     hook: Arc<dyn ToolHook>,
 }
-#[derive(Default)]
 pub struct ToolHooks {
     entries: Mutex<BTreeMap<String, Entry>>,
+    timeout: Duration,
+}
+impl Default for ToolHooks {
+    fn default() -> Self {
+        Self::with_timeout(DEFAULT_HOOK_TIMEOUT)
+    }
 }
 struct Cleanup {
     registry: Weak<ToolHooks>,
@@ -79,8 +102,28 @@ fn identifier(value: &str) -> bool {
             ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '-' | '_')
         })
 }
+/// Hook text reaches the model and the terminal: strip control and bidi characters.
+fn sanitize(value: &str) -> String {
+    let mut text = String::new();
+    for ch in value.chars().filter(|ch| {
+        (!ch.is_control() || matches!(ch, '\n' | '\t'))
+            && !matches!(ch, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    }) {
+        if text.len() + ch.len_utf8() > MAX_NOTE_BYTES {
+            break;
+        }
+        text.push(ch);
+    }
+    text
+}
 
 impl ToolHooks {
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            entries: Mutex::default(),
+            timeout,
+        }
+    }
     fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Entry>> {
         self.entries
             .lock()
@@ -133,5 +176,49 @@ impl ToolHooks {
             .filter(|(_, entry)| entry.owner.is_active())
             .map(|(id, entry)| (id.clone(), entry.hook.clone()))
             .collect()
+    }
+    /// Errors, timeouts and panics are reported as failures, never as a pass.
+    async fn guarded<T>(&self, future: impl Future<Output = Result<T>>) -> Result<T> {
+        match tokio::time::timeout(self.timeout, AssertUnwindSafe(future).catch_unwind()).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(AgentError::Tool("panicked".into())),
+            Err(_) => Err(AgentError::Tool(format!(
+                "timed out after {:?}",
+                self.timeout
+            ))),
+        }
+    }
+    /// Returns the first block in id order; a failing hook blocks (fail closed).
+    pub async fn before(&self, call: &ToolCall, ctx: &ToolContext) -> Option<Blocked> {
+        for (hook, implementation) in self.active() {
+            let reason = match self.guarded(implementation.before(call, ctx)).await {
+                Ok(ToolVerdict::Continue) => continue,
+                Ok(ToolVerdict::Block(reason)) => sanitize(&reason),
+                Err(error) => format!("hook failed: {}", sanitize(&error.to_string())),
+            };
+            return Some(Blocked { hook, reason });
+        }
+        None
+    }
+    /// Collects bounded notes in id order. A failure cannot undo the finished effect,
+    /// so it is reported as a note instead of being hidden.
+    pub async fn after(
+        &self,
+        call: &ToolCall,
+        outcome: ToolOutcome<'_>,
+        ctx: &ToolContext,
+    ) -> Vec<Note> {
+        let mut notes = vec![];
+        for (hook, implementation) in self.active() {
+            let text = match self.guarded(implementation.after(call, outcome, ctx)).await {
+                Ok(Some(text)) => sanitize(&text),
+                Ok(None) => continue,
+                Err(error) => format!("hook failed: {}", sanitize(&error.to_string())),
+            };
+            if !text.is_empty() {
+                notes.push(Note { hook, text });
+            }
+        }
+        notes
     }
 }

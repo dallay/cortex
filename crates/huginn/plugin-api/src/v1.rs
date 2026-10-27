@@ -16,6 +16,17 @@ use std::{
 mod workflow;
 pub use workflow::{Field, FieldKind, FormInput, Workflow, WorkflowFuture, WorkflowHandler};
 
+/// Restrict-only tool hooks: authors can block or annotate, never authorize.
+pub mod hooks {
+    pub use huginn_core::{
+        hooks::{
+            tool_hooks_id, Blocked, Note, ToolHook, ToolHooks, ToolHooksService, ToolOutcome,
+            ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
+        },
+        ToolCall, ToolContext,
+    };
+}
+
 pub fn contributions_id() -> ServiceId {
     ServiceId::new("agent:ui-contributions", 1)
 }
