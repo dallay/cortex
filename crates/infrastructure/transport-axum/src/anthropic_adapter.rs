@@ -276,19 +276,9 @@ pub struct AnthropicUsage {
 #[serde(tag = "type")]
 pub enum AnthropicSseEvent {
     #[serde(rename = "content_block_start")]
-    ThinkingBlockStart {
-        index: u32,
-        content_block: AnthropicThinkingBlock,
-    },
-    #[serde(rename = "content_block_start")]
-    TextBlockStart {
-        index: u32,
-        content_block: AnthropicTextBlock,
-    },
-    #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: u32,
-        content_block: AnthropicStartBlock,
+        content_block: AnthropicContentBlockStart,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: u32, delta: AnthropicDelta },
@@ -301,6 +291,14 @@ pub enum AnthropicSseEvent {
     },
     #[serde(rename = "error")]
     Error(AnthropicErrorEvent),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum AnthropicContentBlockStart {
+    Thinking(AnthropicThinkingBlock),
+    Text(AnthropicTextBlock),
+    ToolUse(AnthropicStartBlock),
 }
 
 #[derive(Debug, Serialize)]
@@ -402,12 +400,12 @@ impl AnthropicSseEvent {
                 if tc.id.is_some() || tc.function.name.is_some() {
                     events.push(AnthropicSseEvent::ContentBlockStart {
                         index: tc.index,
-                        content_block: AnthropicStartBlock {
+                        content_block: AnthropicContentBlockStart::ToolUse(AnthropicStartBlock {
                             block_type: "tool_use".to_string(),
                             id: tc.id.clone().unwrap_or_default(),
                             name: tc.function.name.clone().unwrap_or_default(),
                             input: serde_json::Value::Object(Default::default()),
-                        },
+                        }),
                     });
                 }
                 if let Some(args) = &tc.function.arguments {
@@ -516,12 +514,12 @@ impl AnthropicStreamEncoder {
                 let index = self.next_index;
                 self.next_index += 1;
                 self.thinking_index = Some(index);
-                events.push(AnthropicSseEvent::ThinkingBlockStart {
+                events.push(AnthropicSseEvent::ContentBlockStart {
                     index,
-                    content_block: AnthropicThinkingBlock {
+                    content_block: AnthropicContentBlockStart::Thinking(AnthropicThinkingBlock {
                         block_type: "thinking",
                         thinking: String::new(),
-                    },
+                    }),
                 });
                 index
             };
@@ -537,12 +535,12 @@ impl AnthropicStreamEncoder {
                 let index = self.next_index;
                 self.next_index += 1;
                 self.text_index = Some(index);
-                events.push(AnthropicSseEvent::TextBlockStart {
+                events.push(AnthropicSseEvent::ContentBlockStart {
                     index,
-                    content_block: AnthropicTextBlock {
+                    content_block: AnthropicContentBlockStart::Text(AnthropicTextBlock {
                         block_type: "text",
                         text: String::new(),
-                    },
+                    }),
                 });
                 index
             };
@@ -640,6 +638,46 @@ mod tests {
             reasoning_tokens: None,
             estimated_cost_usd: None,
         }
+    }
+
+    #[test]
+    fn content_block_start_serialization_preserves_block_types() {
+        let events = [
+            AnthropicSseEvent::ContentBlockStart {
+                index: 0,
+                content_block: AnthropicContentBlockStart::Thinking(AnthropicThinkingBlock {
+                    block_type: "thinking",
+                    thinking: String::new(),
+                }),
+            },
+            AnthropicSseEvent::ContentBlockStart {
+                index: 1,
+                content_block: AnthropicContentBlockStart::Text(AnthropicTextBlock {
+                    block_type: "text",
+                    text: String::new(),
+                }),
+            },
+            AnthropicSseEvent::ContentBlockStart {
+                index: 2,
+                content_block: AnthropicContentBlockStart::ToolUse(AnthropicStartBlock {
+                    block_type: "tool_use".to_string(),
+                    id: "call-1".to_string(),
+                    name: "lookup".to_string(),
+                    input: serde_json::Value::Object(Default::default()),
+                }),
+            },
+        ];
+        let serialized: Vec<_> = events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect();
+
+        assert_eq!(serialized[0]["type"], "content_block_start");
+        assert_eq!(serialized[0]["content_block"]["type"], "thinking");
+        assert_eq!(serialized[1]["type"], "content_block_start");
+        assert_eq!(serialized[1]["content_block"]["type"], "text");
+        assert_eq!(serialized[2]["type"], "content_block_start");
+        assert_eq!(serialized[2]["content_block"]["type"], "tool_use");
     }
 
     #[test]
