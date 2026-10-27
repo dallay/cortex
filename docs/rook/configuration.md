@@ -423,8 +423,8 @@ Behavior:
 - The scheme, hostname, and effective port must all match. Paths are not part of a grant.
 - A missing, malformed, duplicated, or unloaded grant denies access.
 - Public HTTP is rejected. HTTP may be used only for an explicitly granted loopback or private endpoint.
-- Link-local and cloud metadata destinations are always rejected, even when an origin is granted.
-- The resolver checks DNS answers at connection time and rejects unsafe addresses.
+- Link-local, cloud metadata, and other non-global/reserved destinations are always rejected, even when an origin is granted. This includes IPv4 documentation ranges and IPv6 site-local addresses.
+- The resolver checks all DNS answers at connection time, rejects a mixed safe/unsafe answer set, and pins the vetted addresses for the actual connection.
 - Redirects are not followed, and environment proxy variables are ignored for compatible connections.
 
 ### Dynamic Provider Registry

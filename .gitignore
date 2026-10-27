@@ -51,12 +51,14 @@ Thumbs.db
 .agent/rules/
 .agent/skills
 .agent/skills.bak
+.agent/skills/
 .agents/skills/*.bak
 .claude/commands
 .claude/commands.bak
 .claude/commands/
 .claude/skills
 .claude/skills.bak
+.claude/skills/
 .codex/AGENTS.md
 .codex/AGENTS.md.bak
 .codex/commands
@@ -70,6 +72,7 @@ Thumbs.db
 .gemini/settings.json
 .gemini/skills
 .gemini/skills.bak
+.gemini/skills/
 .github/agents
 .github/agents.bak
 .github/copilot-instructions.md
@@ -85,6 +88,7 @@ Thumbs.db
 .opencode/command/
 .opencode/skills
 .opencode/skills.bak
+.opencode/skills/
 .vscode/mcp.json
 /.mcp.json
 /AGENTS.md
