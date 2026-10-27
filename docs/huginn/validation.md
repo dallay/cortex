@@ -3,6 +3,41 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## Cadena de hooks, registro y guards — 2026-10-27
+
+**Estado: Ready para abrir la cadena de PRs; no es aprobación de merge.**
+Código integrado verificado: `6236d57`, sobre main `cb92f8a`. Doce ramas locales
+en `feature-branch-chain`, con referencia `integration/huginn-guards`.
+Cada capa cumple su presupuesto: 400 líneas, salvo las excepciones autorizadas
+del scanner, 455/470, y shell, 786/800. Los PRs dependientes apuntan a su rama padre.
+
+- `just ci-local`: nueve etapas aprobadas en 524 segundos; incluye tests Rust,
+  frontend, documentación y 90 E2E con imagen reconstruida desde el candidato.
+- `RUST_TEST_THREADS=1 cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov`:
+  aprobado; 37068 de 41326 líneas, **89,70 %**, por encima del umbral de 87 %.
+- Semgrep 1.126.0 con los tres rulesets de CI: cero findings activos, 233 targets.
+  Se mantienen visibles cuatro avisos de parsing parcial preexistentes en
+  PowerShell de `release.yml`; no se afirma cobertura completa del scanner.
+- Siete excepciones nuevas exactas y siete históricas separadas, con controles
+  positivos, negativos y supresiones desactivadas. Diez tests Python aprobados.
+  Los cambios aislados de los scripts activan CI: 290 tests Node de metadatos
+  aprobados, incluidos los dos casos de clasificación añadidos tras actualizar main.
+- `cargo audit`: cero vulnerabilidades, con avisos de mantenimiento. Gitleaks:
+  rango completo de la cadena desde `cb92f8a`, catorce commits sin secretos.
+- Trivy 0.76.1, con filtros de CI `HIGH,CRITICAL` e `ignore-unfixed`: cero findings
+  en ambos lockfiles y ambos Dockerfiles. El snapshot se analizó sin usuario root
+  ni escritura en el proyecto; no se extiende el resultado fuera de esos filtros.
+- Revisiones independientes aprobaron las unidades y sus correcciones. Los límites
+  heredados de notas/resultados y las dos fronteras del lexer tienen regresiones
+  que fallaron antes de corregirlos y pasaron después. No se eliminaron pruebas.
+
+Se conservan los límites de código nativo confiable, ausencia de sandbox y riesgo
+residual de sustitución concurrente de archivos. ADR-0016 sigue `Proposed`.
+Los quality gates remotos, incluidos Sonar/CodeQL y la revisión humana, deberán
+ejecutarse al publicar: esta evidencia local no los sustituye.
+No se ha realizado push ni se han abierto PRs. El cierre posterior a `6236d57`
+solo incorpora esta evidencia documental, sin modificar código ejecutable.
+
 ## Skills and prompt templates S1 acceptance (DALLAY-717) — 2026-10-26
 
 Automated integration acceptance for the S1 skills/template seam
