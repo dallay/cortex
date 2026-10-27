@@ -166,7 +166,10 @@ impl ErrorDeduplicator {
         let nonce = [self.nonce_prefix.as_slice(), counter.as_slice()].concat();
         let ciphertext = self
             .cipher
-            .encrypt(&Nonce::try_from(nonce.as_slice()).expect("12-byte nonce"), message.as_bytes())
+            .encrypt(
+                &Nonce::try_from(nonce.as_slice()).expect("12-byte nonce"),
+                message.as_bytes(),
+            )
             .expect("AES-GCM encryption");
         let mut fingerprint = nonce;
         fingerprint.extend(ciphertext);

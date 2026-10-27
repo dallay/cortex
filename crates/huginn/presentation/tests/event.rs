@@ -1,8 +1,8 @@
 #[cfg(feature = "test-driver")]
-use rand::RngExt;
-#[cfg(feature = "test-driver")]
 use huginn_presentation::event::test_support;
 use huginn_presentation::event::*;
+#[cfg(feature = "test-driver")]
+use rand::RngExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
