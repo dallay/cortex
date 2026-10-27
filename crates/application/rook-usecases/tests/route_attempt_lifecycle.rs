@@ -13,10 +13,10 @@ use futures::{
     StreamExt,
 };
 use rook_core::{
-    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CircuitStateSnapshot, Combo, ComboStep,
-    ComboStrategy, CompletionRequest, CompletionResponse, CortexError, CortexResult, FinishReason,
-    HealthStatus, Message, ModelId, ProviderId, ProviderPort, RequestMetadata, RequestStatus, Role,
-    RouterPort, StreamChunk, TokenUsage,
+    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CapabilityEvidence, CapabilityState,
+    CircuitStateSnapshot, Combo, ComboStep, ComboStrategy, CompletionRequest, CompletionResponse,
+    CortexError, CortexResult, FinishReason, HealthStatus, Message, ModelId, ProviderId,
+    ProviderPort, RequestMetadata, RequestStatus, Role, RouterPort, StreamChunk, TokenUsage,
 };
 use rook_usecases::{
     route_request::ModelAliasesConfig, router_impl::CircuitClock, FallbackRouter, PricingConfig,
@@ -107,13 +107,14 @@ impl ProviderPort for FakeProvider {
     }
     fn model_capabilities(&self, _model: &ModelId) -> rook_core::ModelCapabilities {
         rook_core::ModelCapabilities {
-            streaming: rook_core::CapabilityEvidence {
-                state: rook_core::CapabilityState::Supported,
-                source: "test fixture".into(),
+            streaming: CapabilityEvidence {
+                state: CapabilityState::Supported,
+                source: "test-fixture".into(),
             },
             ..Default::default()
         }
     }
+
     fn api_format(&self) -> ApiFormat {
         ApiFormat::OpenAI
     }
