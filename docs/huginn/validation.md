@@ -300,3 +300,11 @@ Checks focales: guards, runtime `guardrails`, `tool_authoring`, `tool_lifecycle`
 `just huginn-test` incluye guards, plugin-api y reference-extension.
 Esto no certifica carga de archivos, activación run/chat/resume ni CI/cobertura
 global. Esas validaciones corresponden a las capas y al extremo integrado siguientes.
+
+## Cargador explícito de políticas (B10)
+
+Runtime `guardrails` conserva las dos regresiones nativas de B9 y añade carga
+aditiva acotada, rechazo de configuración inválida/no regular y, en Unix, enlaces
+y FIFO sin bloqueo. El FIFO se crea únicamente en una fixture temporal propia.
+La carga es una API explícita del host; esta unidad no activa la CLI ni sustituye
+las comprobaciones del extremo integrado, cobertura Rust o quality gates remotos.
