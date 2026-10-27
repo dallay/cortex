@@ -12,6 +12,7 @@ The AI Infrastructure Stack for Production
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&labelColor=4A4A4A)](https://www.docker.com)
 [![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex/main?label=last%20commit)](https://github.com/dallay/cortex/commits/main)
 [![Stars](https://img.shields.io/github/stars/dallay/cortex?style=flat&color=yellow)](https://github.com/dallay/cortex/stargazers)
+
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dallay/cortex)
 
 **Rook** — AI Proxy & Router · **Huginn** — Local Coding Agent
