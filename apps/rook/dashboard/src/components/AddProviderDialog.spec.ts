@@ -239,6 +239,39 @@ vi.mock("@/components/ui/toggle-group", () => ({
 	}),
 }));
 
+vi.mock("@/components/ui/native-select", () => ({
+	NativeSelect: defineComponent({
+		name: "NativeSelect",
+		inheritAttrs: false,
+		props: { id: String, modelValue: String, dataTestid: String },
+		emits: ["update:modelValue"],
+		setup(props, { attrs, slots, emit }) {
+			return () =>
+				h(
+					"select",
+					{
+						...attrs,
+						id: props.id,
+						value: props.modelValue,
+						"data-testid": props.dataTestid,
+						onChange: (event: Event) =>
+							emit(
+								"update:modelValue",
+								(event.target as HTMLSelectElement).value,
+							),
+					},
+					slots.default?.(),
+				);
+		},
+	}),
+	NativeSelectOption: defineComponent({
+		props: { value: String },
+		setup(props, { slots }) {
+			return () => h("option", { value: props.value }, slots.default?.());
+		},
+	}),
+}));
+
 vi.mock("@/components/ui/select", () => ({
 	Select: defineComponent({
 		name: "Select",
@@ -267,14 +300,16 @@ vi.mock("@/components/ui/select", () => ({
 	}),
 	SelectTrigger: defineComponent({
 		name: "SelectTrigger",
-		props: { id: String, dataTestid: String, ariaLabelledby: String },
+		inheritAttrs: false,
+		props: { id: String, dataTestid: String },
 		setup(props, { slots, attrs }) {
 			return () =>
 				h(
-					"div",
+					"button",
 					{
+						type: "button",
+						...attrs,
 						id: props.id,
-						"aria-labelledby": props.ariaLabelledby,
 						"data-testid":
 							props.dataTestid ??
 							(attrs["data-testid"] as string) ??
@@ -637,12 +672,15 @@ describe("AddProviderDialog — create mode", () => {
 		expect(wrapper.find('[data-testid="dialog-root"]').exists()).toBe(true);
 	});
 
-	it("renders with a kind selector when providerKind is undefined", async () => {
+	it("renders an accessible kind selector when providerKind is undefined", async () => {
 		const wrapper = mountDialog({ providerKind: undefined });
 		await flushPromises();
-		expect(wrapper.find('[data-testid="kind-select-trigger"]').exists()).toBe(
-			true,
-		);
+		const trigger = wrapper.find('[data-testid="kind-select-trigger"]');
+
+		expect(trigger.element.tagName).toBe("SELECT");
+		expect(wrapper.find('label[for="kind"]').exists()).toBe(true);
+		expect(trigger.attributes("id")).toBe("kind");
+		expect(trigger.attributes("aria-label")).toBe("Select a provider");
 	});
 
 	it("does NOT show the delete button in create mode", async () => {
@@ -688,12 +726,10 @@ describe("AddProviderDialog — create mode", () => {
 		await wrapper.find('[data-testid="oauth-connect-button"]').trigger("click");
 		await flushPromises();
 
-		expect(wrapper.find("label#oauthFlowTypeLabel").exists()).toBe(true);
-		expect(
-			wrapper
-				.find('[id="oauthFlowType"][aria-labelledby="oauthFlowTypeLabel"]')
-				.exists(),
-		).toBe(true);
+		expect(wrapper.find('label[for="oauthFlowType"]').exists()).toBe(true);
+		const flowTypeSelect = wrapper.find<HTMLSelectElement>("#oauthFlowType");
+		expect(flowTypeSelect.element.tagName).toBe("SELECT");
+		expect(flowTypeSelect.attributes("aria-label")).toBe("Authorization flow");
 		expect(wrapper.find("output[aria-live='polite']").exists()).toBe(true);
 		expect(open).toHaveBeenCalled();
 		wrapper.unmount();

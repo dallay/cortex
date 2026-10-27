@@ -367,9 +367,16 @@ impl From<&StreamChunk> for OpenAIChatCompletionChunk {
                             .iter()
                             .map(|tool_call| OpenAIChunkToolCall {
                                 index: tool_call.index,
-                                id: Some(tool_call.id.clone().unwrap_or_else(|| {
-                                    format!("call_{}_{}", chunk.id, tool_call.index)
-                                })),
+                                // Only starts without an upstream ID (e.g.
+                                // Ollama) need a generated identity. Argument
+                                // continuations must not change an existing ID.
+                                id: tool_call.id.clone().or_else(|| {
+                                    tool_call
+                                        .function
+                                        .name
+                                        .as_ref()
+                                        .map(|_| format!("call_{}_{}", chunk.id, tool_call.index))
+                                }),
                                 call_type: "function".to_string(),
                                 function: OpenAIChunkToolFunction {
                                     name: tool_call.function.name.clone(),
