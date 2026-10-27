@@ -49,8 +49,13 @@ describe("RateLimitsView", () => {
 		expect(wrapper.text()).toContain("key-1");
 		expect(wrapper.text()).toContain("60");
 		expect(wrapper.text()).toContain("58");
+		expect(wrapper.find('label[for="rate-limit-status-target"]').exists()).toBe(
+			true,
+		);
 		for (const label of wrapper.findAll("label")) {
-			expect(label.find("input, select").exists()).toBe(true);
+			const controlId = label.attributes("for");
+			expect(controlId).toBeTruthy();
+			expect(wrapper.find(`#${controlId}`).exists()).toBe(true);
 		}
 	});
 	it("allows clearing the optional daily limit and reports invalid limits", async () => {
