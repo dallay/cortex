@@ -416,6 +416,7 @@
 		"unavailable": "La administración de límites no está disponible",
 		"deleteConfirm": "¿Eliminar esta regla de límite?",
 		"statusTitle": "Consultar uso actual",
+		"statusTarget": "Destino que se consultará",
 		"checkStatus": "Consultar estado",
 		"current": "Solicitudes en este minuto",
 		"remaining": "Restantes en este minuto",

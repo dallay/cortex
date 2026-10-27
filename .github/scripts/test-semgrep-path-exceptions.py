@@ -35,6 +35,21 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             gate.check_inventory(self.root)
 
+    def test_semgrep_fixture_git_visibility_is_initialized(self):
+        target = self.root / "positive.rs"
+        target.write_text("fn read(path: &str) -> std::io::Result<String> {\n    std::fs::read_to_string(path)\n}\n")
+        gate.initialize_fixture_repository(self.root, target)
+        status = subprocess.run(
+            ["git", "-C", str(self.root), "status", "--short", "--", target.name],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(status, "")
+        tracked = subprocess.run(
+            ["git", "-C", str(self.root), "ls-files", "--error-unmatch", "--", target.name],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(tracked.returncode, 0, tracked.stderr)
+
     def test_exact_inventory_passes(self):
         gate.check_inventory(self.root)
 

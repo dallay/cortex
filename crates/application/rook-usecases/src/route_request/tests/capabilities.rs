@@ -153,13 +153,16 @@ async fn catalog_alias_visibility_does_not_depend_on_active_router_registration(
 }
 
 #[tokio::test]
-async fn synthesized_combo_sse_does_not_require_native_streaming_support() {
-    let (h, _, _, _, first, _) = setup(CapabilityState::Supported);
+async fn progressive_combo_skips_steps_without_native_streaming_support() {
+    let (h, _, _, second_id, first, second) = setup(CapabilityState::Supported);
     let mut req = combo_req("rook/capabilities", ApiKeyRestrictions::default());
     req.stream = true;
     let chunks: Vec<_> = h.usecase.execute_stream(req).await.unwrap().collect().await;
     assert!(chunks.iter().all(Result::is_ok));
-    assert_eq!(first.lock().unwrap().len(), 1);
+    assert!(!chunks.is_empty());
+    assert!(first.lock().unwrap().is_empty());
+    assert_eq!(second.lock().unwrap().len(), 1);
+    assert_eq!(h.audit.entries.lock().unwrap()[0].provider, second_id);
 }
 
 #[tokio::test]

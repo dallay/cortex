@@ -520,6 +520,7 @@
 		"unavailable": "Rate limit management is not available",
 		"deleteConfirm": "Delete this rate-limit rule?",
 		"statusTitle": "Check current usage",
+		"statusTarget": "Target to check",
 		"checkStatus": "Check status",
 		"current": "Requests this minute",
 		"remaining": "Remaining this minute",

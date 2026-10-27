@@ -20,13 +20,15 @@ use rook_core::{
     CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
     ProviderRepositoryPort, QuotaEligibilityPolicy, QuotaObservationQuery,
     QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort, StreamChunk, TokenUsage,
-    ToolCallDelta, ToolCallFunctionDelta, UsageEntry, UsageRecorderPort,
+    UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
 use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
+#[path = "route_request/combo_stream.rs"]
+mod combo_stream;
 #[path = "route_request/outcome.rs"]
 mod outcome;
 use outcome::{classify_attempt_result, AttemptOutcome, AttemptResult};
@@ -147,6 +149,7 @@ struct ComboStepContext {
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 
+#[derive(Clone)]
 pub struct RouteRequest {
     router: Arc<dyn RouterPort>,
     cache: Arc<dyn CachePort>,
@@ -762,11 +765,8 @@ impl RouteRequest {
             self.resolve_model_alias(&mut req).await;
         }
 
-        // 0a. Combo + streaming: combos resolve BEFORE the first byte.
-        // There is no transparent provider switch mid-stream (R2 point of no
-        // return): run the combo to completion, then stream the single result
-        // as one chunk. Fallback inside the combo loop still applies for
-        // 429/5xx/timeouts because no SSE event has been emitted yet.
+        // 0a. Select a combo step before the first event, then forward its
+        // native deltas. No transparent provider switch is allowed afterward.
         // Unknown alias -> 404, unauthorized step -> 403, same as non-stream.
         if is_virtual_model(&req.model) || req.metadata.combo_id.is_some() {
             return self.execute_combo_stream(req, client_format).await;
@@ -1226,99 +1226,6 @@ impl RouteRequest {
             }
         }
         Ok(())
-    }
-
-    /// Combo execution for streaming requests: resolve + authorize exactly like
-    /// non-streaming, run the combo loop BEFORE any SSE event is emitted, then
-    /// emit the single result as one chunk with the REQUESTED model.
-    /// A failure after this point surfaces as a stream error event — never a
-    /// silent switch to another provider mid-stream.
-    async fn execute_combo_stream(
-        &self,
-        req: CompletionRequest,
-        client_format: ApiFormat,
-    ) -> Result<
-        futures::stream::BoxStream<'static, shared_kernel::CortexResult<StreamChunk>>,
-        CortexError,
-    > {
-        let requested = req.model.clone();
-        let (combo_id, virtual_alias) = match req.metadata.combo_id {
-            Some(id) => (id, None),
-            None => {
-                let id = self.resolve_virtual_alias(&requested).await?;
-                (id, Some(requested.clone()))
-            }
-        };
-        let combo = self.load_combo(&combo_id).await?;
-        if virtual_alias.is_none() {
-            self.check_model_restriction(&req)?;
-        }
-        self.check_combo_authorization(&req.restrictions, &combo, virtual_alias.as_ref())?;
-        let mut resp = self.execute_combo(&combo, req, client_format).await?;
-        resp.model = requested.clone();
-        // Two chunks: content (text + tool-call fragments, no finish) then a
-        // terminal chunk (stop summaries + finish + usage). A single chunk
-        // would drop tool calls for streaming clients.
-        let content_chunk = StreamChunk {
-            id: resp.id.clone(),
-            model: requested.clone(),
-            delta: resp.content.clone(),
-            thinking: resp.thinking.clone(),
-            tool_calls: resp
-                .tool_calls
-                .iter()
-                .enumerate()
-                .flat_map(|(index, call)| {
-                    let index = index as u32;
-                    let args = call.arguments.to_string();
-                    vec![
-                        ToolCallDelta {
-                            index,
-                            id: call.id.clone(),
-                            function: ToolCallFunctionDelta {
-                                name: Some(call.name.clone()),
-                                arguments: None,
-                            },
-                        },
-                        ToolCallDelta {
-                            index,
-                            id: None,
-                            function: ToolCallFunctionDelta {
-                                name: None,
-                                arguments: Some(args),
-                            },
-                        },
-                    ]
-                })
-                .collect(),
-            finish_reason: None,
-            usage: None,
-        };
-        let final_chunk = StreamChunk {
-            id: resp.id,
-            model: requested,
-            delta: String::new(),
-            thinking: None,
-            tool_calls: resp
-                .tool_calls
-                .iter()
-                .enumerate()
-                .map(|(index, call)| ToolCallDelta {
-                    index: index as u32,
-                    id: call.id.clone(),
-                    function: ToolCallFunctionDelta {
-                        name: Some(call.name.clone()),
-                        arguments: None,
-                    },
-                })
-                .collect(),
-            finish_reason: resp.finish_reason,
-            usage: Some(resp.usage),
-        };
-        Ok(Box::pin(futures::stream::iter(vec![
-            Ok(content_chunk),
-            Ok(final_chunk),
-        ])))
     }
 
     /// Execute a request using an already-loaded, already-authorized combo.
