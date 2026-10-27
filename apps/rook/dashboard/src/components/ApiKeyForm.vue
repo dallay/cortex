@@ -25,13 +25,7 @@ import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Checkbox} from "@/components/ui/checkbox";
 import {Input} from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import type {ModelsByProvider} from "@/composables/useAvailableModels";
 import {
   PROVIDER_KINDS,
@@ -270,28 +264,22 @@ function scopeSlug(value: string): string {
 
     <!-- Tier -->
     <div class="space-y-2">
-      <label id="api-key-tier-label" for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
-      <Select
+      <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
+      <NativeSelect
+        id="api-key-tier"
         :model-value="modelValue.tier"
+        data-testid="api-key-tier"
+        aria-label="Rate limit tier"
         @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >
-        <SelectTrigger
-          id="api-key-tier"
-          aria-labelledby="api-key-tier-label"
-          data-testid="api-key-tier"
+        <NativeSelectOption
+          v-for="opt in tierOptions"
+          :key="opt.value"
+          :value="opt.value"
         >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem
-            v-for="opt in tierOptions"
-            :key="opt.value"
-            :value="opt.value"
-          >
-            {{ opt.label }} — {{ opt.description }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
+          {{ opt.label }} — {{ opt.description }}
+        </NativeSelectOption>
+      </NativeSelect>
       <p class="text-xs text-muted-foreground">
         Controls the request-rate bucket for this key. Default: highest tier.
       </p>
