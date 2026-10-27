@@ -161,7 +161,7 @@ publicado por el host; `Registry::native` e `insert` conservan su API existente.
 
 ## Conflicts and dependencies
 
-`huginn-guards` está disponible como [biblioteca de rutas](guardrails.md), sin
+`huginn-guards` está disponible como [biblioteca de rutas y shell](guardrails.md), sin
 activación en el host. No concede permisos ni altera los hooks registrados por
 autores; las herramientas nativas todavía no consumen esta política.
 
