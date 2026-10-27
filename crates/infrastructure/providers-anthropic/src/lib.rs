@@ -255,7 +255,10 @@ enum AnthropicStreamEvent {
     #[serde(rename = "error")]
     Error { error: AnthropicErrorDetail },
     #[serde(rename = "message_start")]
-    MessageStart,
+    MessageStart {
+        #[serde(default)]
+        message: Option<AnthropicStreamMessage>,
+    },
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: u32,
@@ -285,6 +288,7 @@ struct AnthropicMessageDeltaDetails {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicMessageDeltaUsage {
+    #[serde(default)]
     output_tokens: u32,
     #[serde(default)]
     input_tokens: Option<u32>,
@@ -292,6 +296,11 @@ struct AnthropicMessageDeltaUsage {
     cache_creation_input_tokens: Option<u64>,
     #[serde(default)]
     cache_read_input_tokens: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicStreamMessage {
+    usage: AnthropicMessageDeltaUsage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,6 +328,7 @@ struct AnthropicContentBlockStart {
 #[derive(Debug, Default)]
 struct ToolUseTracker {
     tools: Vec<(u32, Option<String>, Option<String>)>,
+    initial_usage: Option<AnthropicMessageDeltaUsage>,
 }
 
 #[derive(Debug, Clone)]
@@ -535,6 +545,10 @@ impl AnthropicProvider {
             usage: None,
         };
         match event {
+            AnthropicStreamEvent::MessageStart { message } => {
+                tracker.initial_usage = message.map(|message| message.usage);
+                None
+            }
             AnthropicStreamEvent::ContentBlockStart {
                 index,
                 content_block,
@@ -574,9 +588,20 @@ impl AnthropicProvider {
                     }],
                 ))),
             },
-            AnthropicStreamEvent::MessageDelta { delta, usage } => Some(Ok(
-                Self::tool_summary_chunk(request_id, model, tracker, &delta, &usage),
-            )),
+            AnthropicStreamEvent::MessageDelta { delta, mut usage } => {
+                if let Some(initial) = tracker.initial_usage.as_ref() {
+                    usage.input_tokens = usage.input_tokens.or(initial.input_tokens);
+                    usage.cache_read_input_tokens = usage
+                        .cache_read_input_tokens
+                        .or(initial.cache_read_input_tokens);
+                    usage.cache_creation_input_tokens = usage
+                        .cache_creation_input_tokens
+                        .or(initial.cache_creation_input_tokens);
+                }
+                Some(Ok(Self::tool_summary_chunk(
+                    request_id, model, tracker, &delta, &usage,
+                )))
+            }
             AnthropicStreamEvent::Error { error } => Some(Err(CortexError::provider(format!(
                 "Anthropic error: {} - {}",
                 error.error_type, error.message
