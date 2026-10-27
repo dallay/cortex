@@ -2001,6 +2001,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "huginn-guards"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
 name = "huginn-plugin-api"
 version = "0.0.1"
 dependencies = [

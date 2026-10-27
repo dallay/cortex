@@ -187,6 +187,9 @@ El puerto no modifica `HostPolicy`, las aprobaciones ni los hooks restrict-only.
 
 ### Tool hooks
 
+La [biblioteca de rutas `huginn-guards`](guardrails.md) ofrece comprobaciones
+explícitas; todavía no se compone como plugin ni se conecta al runtime o la CLI.
+
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
 `agent:tool-hooks@1`. The loop asks it about every tool call before
 `prepare`. A `Block` verdict, or a failing hook, ends the call with an error and

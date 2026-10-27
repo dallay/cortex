@@ -161,6 +161,10 @@ publicado por el host; `Registry::native` e `insert` conservan su API existente.
 
 ## Conflicts and dependencies
 
+`huginn-guards` está disponible como [biblioteca de rutas](guardrails.md), sin
+activación en el host. No concede permisos ni altera los hooks registrados por
+autores; las herramientas nativas todavía no consumen esta política.
+
 Contribution IDs and capability keys must be unique. Commands reserve their
 command name; renderers reserve their tool selector; widgets reserve their
 slot; dialogs reserve their contribution ID. Reserved host commands such as
