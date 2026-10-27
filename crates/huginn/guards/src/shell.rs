@@ -7,6 +7,7 @@ type Result<T> = std::result::Result<T, &'static str>;
 enum Token {
     Word(String),
     Separator(bool),
+    Semicolon,
     Redirect,
 }
 
@@ -78,7 +79,8 @@ fn lex(input: &str) -> Result<Vec<Token>> {
                     started = false;
                 }
                 match ch {
-                    '\n' | ';' => tokens.push(Token::Separator(false)),
+                    '\n' => tokens.push(Token::Separator(false)),
+                    ';' => tokens.push(Token::Semicolon),
                     '&' if chars.next_if_eq(&'&').is_some() => {
                         tokens.push(Token::Separator(true));
                         if chars.peek().is_none() {
@@ -123,6 +125,9 @@ fn lex(input: &str) -> Result<Vec<Token>> {
     if started {
         tokens.push(Token::Word(word));
     }
+    if tokens.len() > MAX_TOKENS {
+        return Err("guardrails: shell token limit exceeded");
+    }
     Ok(tokens)
 }
 
@@ -157,6 +162,12 @@ pub fn words(input: &str) -> Result<Vec<Command>> {
                     return Err("guardrails: unsupported shell redirection position");
                 }
                 redirect = true;
+            }
+            Token::Semicolon => {
+                if redirect || needs_command || command.args.is_empty() {
+                    return Err("guardrails: invalid shell operator sequence");
+                }
+                commands.push(std::mem::take(&mut command));
             }
             Token::Separator(required) => {
                 if redirect || (needs_command && required) || (required && command.args.is_empty())

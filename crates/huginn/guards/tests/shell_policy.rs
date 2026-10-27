@@ -258,3 +258,45 @@ fn redirects_cannot_supply_git_options_and_operators_need_commands() {
         assert!(policy.check_shell(command).is_ok(), "{command}");
     }
 }
+
+#[test]
+fn token_budget_includes_the_final_word_and_preserves_utf8_byte_limit() {
+    let policy = Guardrails::default();
+    for count in [1024, 1025] {
+        for suffix in ["", " "] {
+            let command = format!("echo {}x{suffix}", "x ".repeat(count - 2));
+            assert_eq!(
+                policy.check_shell(&command).is_ok(),
+                count == 1024,
+                "tokens={count}, suffix={suffix:?}"
+            );
+        }
+    }
+    let utf8 = format!("echo '{}x'", "é".repeat((16_384 - 8) / 2));
+    assert_eq!(utf8.len(), 16_384);
+    assert!(policy.check_shell(&utf8).is_ok());
+    assert!(policy.check_shell(&format!("{utf8} ")).is_err());
+}
+
+#[test]
+fn semicolons_require_commands_without_rejecting_newline_continuations() {
+    let policy = Guardrails::default();
+    for command in [
+        "echo ok && ; echo done",
+        "echo ok || ; echo done",
+        "echo ok | ; cat",
+        "; echo ok",
+        "echo ok;; echo done",
+    ] {
+        assert!(policy.check_shell(command).is_err(), "{command}");
+    }
+    for command in [
+        "echo ok &&\necho done",
+        "echo ok ||\n# comment\necho done",
+        "echo ok |\ncat",
+        "echo ok;\necho done",
+        "echo ok;",
+    ] {
+        assert!(policy.check_shell(command).is_ok(), "{command}");
+    }
+}
