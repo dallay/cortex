@@ -288,3 +288,15 @@ Focal checks: `cargo fmt --check`; runtime `stream_persistence` (4 passed),
 and CLI integration tests (4 passed); `cargo clippy -p huginn
 -p huginn-runtime --all-targets -- -D warnings`; focused Markdown lint (0 issues);
 `git diff --check`.
+
+## Integración nativa de políticas, sin activación CLI (B9)
+
+La unidad añade plugin restrictivo, checks de adaptadores y builder protegido
+explícito. Conserva el registro existente y las firmas de composición legacy.
+Las pruebas de `huginn-guards` incluyen lifecycle del plugin; runtime `guardrails`
+cubre bloqueo antes de previews y búsqueda recursiva con `.env` y `.ENV`.
+Checks focales: guards, runtime `guardrails`, `tool_authoring`, `tool_lifecycle`,
+`mcp_lifecycle`, `coding_workflow`, clippy de guards/runtime, formato y arquitectura.
+`just huginn-test` incluye guards, plugin-api y reference-extension.
+Esto no certifica carga de archivos, activación run/chat/resume ni CI/cobertura
+global. Esas validaciones corresponden a las capas y al extremo integrado siguientes.
