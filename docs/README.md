@@ -16,6 +16,7 @@ docs/
 │   ├── configuration.md   ← Guía de configuración
 │   ├── providers.md       ← Configuración de proveedores
 │   ├── deployment.md      ← Guía de despliegue
+│   ├── product-requirements.md ← Product requirements
 │   └── adr/               ← ADRs específicos de Rook
 │       └── README.md
 │

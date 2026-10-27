@@ -25,11 +25,15 @@ rook/
 ├── configuration.md       ← Guía de configuración
 ├── providers.md           ← Configuración de proveedores
 ├── deployment.md          ← Guía de despliegue
+├── product-requirements.md ← Product requirements
 └── adr/                   ← Architecture Decision Records
     └── README.md
 ```
 
 ## Documentación
+
+### Product
+- [Product Requirements](product-requirements.md) — Product scope, requirements, and open questions
 
 ### Primeros pasos
 1. [Configuración](configuration.md) — Cómo configurar Rook
