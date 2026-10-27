@@ -320,3 +320,4 @@ pub trait ApprovalPrompt: Send + Sync {
     ) -> Result<bool>;
     fn granted(&self, _request: &ApprovalRequest) {}
 }
+pub mod hooks;
