@@ -12,6 +12,7 @@ RESET := `printf '\033[0m'`
 
 # === Dev ===
 
+# Run rook in watch mode (check + test + clippy)
 dev:
     @cd apps/rook && cargo watch -x check -x test -x clippy
 
@@ -19,101 +20,129 @@ dev:
 # Run rook in an isolated container to smoke-test without touching the host OS.
 # Wraps dev/run.sh + dev/docker-compose.dev.yml.
 
+# Build the rook:dev container image
 dev-build:
     @./dev/run.sh build
 
+# Build image and run the rook container (waits for /health)
 dev-run: dev-build
     @./dev/run.sh up
 
+# Start the dev container (builds image if missing)
 dev-up:
     @./dev/run.sh up
 
+# Stop and remove the dev container
 dev-down:
     @./dev/run.sh down
 
+# Tail logs from the dev container
 dev-logs:
     @./dev/run.sh logs
 
+# Open an interactive shell inside the dev container
 dev-shell:
     @./dev/run.sh shell
 
+# Restart the dev container
 dev-restart:
     @./dev/run.sh restart
 
+# Check the dev container and /health status
 dev-status:
     @./dev/run.sh status
 
+# Remove the dev container image and container
 dev-clean:
     @./dev/run.sh clean
 
 # === Lint ===
 
+# Fast compile check across the entire Cargo workspace
 check:
     cargo check --workspace
 
+# Run Clippy with warnings treated as errors (-D warnings)
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
+# Run Clippy without stopping on failures (exploratory)
 clippy-fail-fast:
     cargo clippy --workspace --all-targets -- -D warnings || true
     @echo "{{GREEN}}Clippy complete{{RESET}}"
 
+# Format all Rust code in the workspace
 fmt:
     cargo fmt --all
 
+# Check Rust code formatting without writing changes
 fmt-check:
     cargo fmt --all -- --check
 
 # === Test ===
 
+# Run all tests across the workspace with all features enabled
 test:
     cargo test --workspace --all-features
 
+# Run library unit tests across the workspace
 test-unit:
     cargo test --workspace --lib
 
+# Run integration tests across the workspace
 test-integration:
     cargo test --workspace --test '*'
 
+# Run documentation tests across the workspace
 test-doc:
     cargo test --workspace --doc
 
 # === E2E Tests ===
 
+# Build the Docker image required for E2E tests (rook:e2e-api-keys)
 test-e2e-build:
     @echo "{{YELLOW}}Building Docker image for e2e tests...{{RESET}}"
     docker build -f Dockerfile.dev -t rook:e2e-api-keys .
 
+# Run E2E tests against an isolated Docker container
 test-e2e:
     @echo "{{YELLOW}}Running E2E tests (Playwright)...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh --test
 
+# Start the E2E dev environment for manual testing
 test-e2e-dev:
     @echo "{{YELLOW}}Starting E2E dev environment (manual testing)...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh
 
+# Clean up E2E containers and networks
 test-e2e-cleanup:
     @echo "{{YELLOW}}Cleaning up E2E containers...{{RESET}}"
     ./dev/e2e/run-api-keys-e2e.sh --cleanup
 
+# Install dashboard npm dependencies required for E2E
 test-e2e-install-deps:
     @echo "{{YELLOW}}Installing dashboard dependencies...{{RESET}}"
     cd apps/rook/dashboard && pnpm install
 
+# Generate HTML code coverage report with llvm-cov
 coverage:
     cargo llvm-cov --workspace --html
 
+# Print text code coverage summary to stdout
 coverage-text:
     cargo llvm-cov --workspace
 
 # === Build ===
 
+# Build release binaries across the entire workspace
 build:
     cargo build --workspace --release
 
+# Build the rook backend binary in release mode
 build-app:
     cargo build -p rook --release
 
+# Cross-compile the rook binary for all supported release targets
 build-targets:
     # Cross-compile for all targets
     @echo "{{YELLOW}}Building for macOS Intel...{{RESET}}"
@@ -136,9 +165,11 @@ build-targets:
 huginn-run *args:
     cargo run -p huginn -- "$@"
 
+# Validate Huginn layered architecture boundaries and import rules
 huginn-architecture:
     python3 .github/scripts/check-huginn-architecture.py
 
+# Run all Huginn unit, integration, and guard tests across components
 huginn-test: huginn-architecture
     cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn-plugin-api -p huginn-reference-extension -p huginn-guards -p huginn --all-features
 
@@ -166,9 +197,9 @@ dashboard-install:
 
 # === DB ===
 
-# Reset the SQLite database — removes rook.db, rook.db-wal, rook.db-shm
 # Always delete all three files together; a leftover -wal against a fresh DB
 # causes SQLite error 522 ("file truncated") on the next startup.
+# Delete the SQLite database and WAL/SHM files for a clean reset.
 db-reset:
     @rm -f ~/.cortex/rook/rook.db{,-wal,-shm}
     @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
@@ -186,59 +217,72 @@ setup:
     @just init-config
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
-# Read-only checks for the local development environment.
+# Read-only checks for the local development environment
 doctor:
     @bash dev/doctor.sh
 
+# Run self-tests for the doctor script
 doctor-test:
     @bash dev/doctor.test.sh
 
 # === Quality ===
 
+# Scan Rust dependencies for security vulnerabilities with cargo audit
 audit:
     cargo audit --no-fetch
 
+# Check for outdated Rust dependencies
 outdated:
     cargo outdated -r
 
+# Find unused Rust dependencies with cargo-udeps
 unused:
     cargo udeps --workspace
 
+# Validate Cargo features combinations with cargo-hack
 hack:
     cargo hack --workspace --optional-deps-metadata
 
+# Check documentation comments for spelling errors
 spellcheck:
     cargo-spellcheck check --all
 
 # === Providers ===
 
+# Fast check of provider integration crates (OpenAI, Anthropic, Ollama, Gemini, Groq)
 check-providers:
     cargo check -p providers-openai -p providers-anthropic -p providers-ollama -p providers-gemini -p providers-groq
 
 # === Infra ===
 
+# Fast check of infrastructure crates (Axum transport, cache, audit SQLite, observability)
 check-infra:
     cargo check -p transport-axum -p cache-memory -p audit-sqlite -p observability
 
 # === Domain ===
 
+# Fast check of core domain crates (shared-kernel, rook-core)
 check-domain:
     cargo check -p shared-kernel -p rook-core
 
 # === Doc ===
 
+# Generate Rust documentation for the workspace including private items
 doc:
     cargo doc --workspace --no-deps --document-private-items
 
+# Generate and open Rust documentation in the browser
 doc-open:
     cargo doc --workspace --no-deps --open
 
 # === Clean ===
 
+# Clean Cargo build artifacts and coverage data
 clean:
     cargo clean
     cargo llvm-cov clean --workspace
 
+# Git push with arguments and clean target artifacts on success
 push *args:
     git push "$@" && just clean
 
@@ -258,46 +302,142 @@ target-size:
     du -sk "${paths[@]}" | sort -n | tail -20 | awk '{ printf "%7.2f GiB  %s\n", $1 / 1048576, $2 }'
 
 # === Full CI (local) ===
-# Each ci-* recipe is independent and can be run standalone.
-# ci-local chains them sequentially — stops on first failure with a clear banner.
-# Run individual steps with: just ci-lint, just ci-test-rust, etc.
+# Each ci-* recipe is independent. `just ci` is the local PR-gate entry point.
+# `ci-local` remains as a backward-compatible alias. CI report files are temporary or ignored and are not retained after each security scan.
 
 _ci-header phase:
     @echo "{{YELLOW}}🔍  {{ phase }}{{RESET}}"
 
-ci-lint: (_ci-header "1/9 markdown-lint...")
+# Install root and dashboard pnpm dependencies from frozen lockfile
+ci-install:
+    @pnpm install --frozen-lockfile
+
+# Validate local CI contract and PR branch protection rules
+ci-contract:
+    @node --test .github/scripts/ci-*.test.cjs
+
+# Run doctor diagnostic test suite
+ci-doctor-test:
+    @just doctor-test
+
+# Run issue labeler workflow tests
+ci-labeler-test:
+    @node --test .github/scripts/issue-labeler.test.cjs
+
+# Validate isolated workspace rules and build dashboard production assets
+ci-dashboard-build:
+    @test ! -f apps/rook/dashboard/pnpm-workspace.yaml && test ! -f apps/rook/dashboard/pnpm-lock.yaml
+    @pnpm --filter @dallay/rook-dashboard run build
+
+# Run Rust tests with llvm-cov enforcing the 87% line coverage gate
+ci-coverage-rust:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    coverage_parent="${CORTEX_CI_TMPDIR:-${HOME}/.cache/cortex-ci}"
+    mkdir -p "$coverage_parent"
+    report="$(mktemp "$coverage_parent/cortex-rust-coverage.XXXXXX")"
+    trap 'rm -f "$report"' EXIT
+    cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path "$report"
+
+# Run dashboard frontend tests enforcing line/branch/func coverage thresholds
+ci-coverage-frontend:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    coverage_parent="${CORTEX_CI_TMPDIR:-${HOME}/.cache/cortex-ci}"
+    mkdir -p "$coverage_parent"
+    coverage_dir="$(mktemp -d "$coverage_parent/cortex-frontend-coverage.XXXXXX")"
+    trap 'rm -rf "$coverage_dir"' EXIT
+    cd apps/rook/dashboard
+    pnpm exec vitest run --coverage --coverage.provider=v8 --coverage.thresholds.statements=83 --coverage.thresholds.branches=72 --coverage.thresholds.functions=80 --coverage.thresholds.lines=84 --coverage.reporter=lcov --coverage.reporter=json --coverage.reportsDirectory="$coverage_dir"
+
+# Run non-fetching cargo audit for Rust vulnerabilities
+ci-audit:
+    @cargo audit --no-fetch
+
+# Scan filesystem for HIGH/CRITICAL vulnerabilities and misconfigurations with Trivy
+ci-trivy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v trivy >/dev/null 2>&1; then
+      echo "Trivy is required for the local CI security gate. Install Trivy and retry." >&2
+      exit 127
+    fi
+    mkdir -p reports/trivy
+    report="reports/trivy/trivy-local.sarif"
+    trap 'rm -f "$report"' EXIT
+    trivy fs --scanners vuln,misconfig --severity HIGH,CRITICAL --ignore-unfixed --format sarif --output "$report" --exit-code 1 .
+
+# Scan commits in the PR range against .gitleaks.toml rules
+ci-gitleaks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base_ref="${CI_BASE_REF:-origin/main}"
+    if git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null; then
+      base_sha="$(git merge-base "$base_ref" HEAD)"
+      log_opts="$base_sha..HEAD"
+    else
+      echo "Required base ref '$base_ref' is unavailable. Set CI_BASE_REF to the PR target ref; refusing an incomplete Gitleaks range scan." >&2
+      exit 2
+    fi
+    mkdir -p reports/gitleaks
+    report="reports/gitleaks/gitleaks-local.sarif"
+    trap 'rm -f "$report"' EXIT
+    gitleaks git --config .gitleaks.toml --log-opts="$log_opts" --report-format sarif --report-path "$report" --exit-code 1 .
+
+# Scan Rust, Dockerfiles, and GitHub Actions with Semgrep
+ci-semgrep:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p reports/semgrep
+    report="reports/semgrep/semgrep-local.sarif"
+    export TMPDIR="${CORTEX_CI_TMPDIR:-${HOME}/.cache/cortex-ci}"
+    mkdir -p "$TMPDIR"
+    evidence_dir="$(mktemp -d "${TMPDIR}/semgrep-gate.XXXXXX")"
+    trap 'rm -rf "$evidence_dir"; rm -f "$report"' EXIT
+    TMPDIR="$TMPDIR" python3 .github/scripts/test-semgrep-path-exceptions.py
+    uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep --version
+    uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- python3 .github/scripts/check-semgrep-path-exceptions.py --output-dir "$evidence_dir"
+    uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep scan --config p/rust --config p/dockerfile --config p/github-actions --severity ERROR --sarif --output "$report" .
+    jq -e '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length == 0' "$report"
+
+# Lint markdown files with markdownlint-cli2
+ci-lint: (_ci-header "markdown-lint...")
     @pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
 
-ci-fmt: (_ci-header "2/9 fmt-check...")
+# Verify Rust code formatting matches rustfmt rules
+ci-fmt: (_ci-header "fmt-check...")
     @cargo fmt --all -- --check
 
-ci-clippy: (_ci-header "3/9 clippy...")
+# Run Clippy checks across all targets with -D warnings
+ci-clippy: (_ci-header "clippy...")
     @cargo clippy --workspace --all-targets -- -D warnings
 
-ci-check: (_ci-header "4/9 cargo check...")
+# Verify Huginn architecture rules and cargo check
+ci-check: (_ci-header "cargo check...")
     @python3 .github/scripts/check-huginn-architecture.py
     @cargo check --workspace
 
-ci-test-rust: (_ci-header "5/9 cargo test (Rust)...")
+# Run all Rust workspace tests
+ci-test-rust: (_ci-header "cargo test (Rust)...")
     @cargo test --workspace --all-features
 
-ci-test-vitest: (_ci-header "6/9 typecheck + biome + vitest (Frontend)...")
+# Run dashboard frontend typecheck, Biome lint, and Vitest suite
+ci-test-vitest: (_ci-header "typecheck + biome + vitest (Frontend)...")
     @cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run
 
-ci-doc: (_ci-header "7/9 cargo doc...")
+# Build Rust documentation enforcing -D warnings
+ci-doc: (_ci-header "cargo doc...")
     @RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps
 
-ci-audit: (_ci-header "8/9 cargo audit...")
-    @cargo audit --no-fetch || true
-
-ci-e2e: (_ci-header "9/9 e2e (Playwright)...")
+# Run full end-to-end integration tests in Docker container
+ci-e2e: (_ci-header "e2e (Playwright)...")
     @./dev/e2e/run-api-keys-e2e.sh --test
 
-# ---------------------------------------------------------------------------
-# ci-local: sequential fail-fast with clear error banner
-# ---------------------------------------------------------------------------
-# Runs every ci-* step in order. On first failure, prints a red banner with
-# the step name and elapsed time, then exits immediately.
+# Run full local PR validation pipeline with sequential fail-fast gates
+ci:
+    @just ci-local
+
+# Backward-compatible alias for 'just ci'
 ci-local:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -308,38 +448,38 @@ ci-local:
       echo "${Y}🔍  ${label}${N}"
       local step_start=$SECONDS
       if "$@"; then
-        local elapsed=$(( SECONDS - step_start ))
-        echo "${G}   ✓ ${label} (${elapsed}s)${N}"
+        echo "${G}   ✓ ${label} ($(( SECONDS - step_start ))s)${N}"
       else
         local elapsed=$(( SECONDS - step_start ))
-        echo ""
         echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
         echo "${R}  ✗ FAILED at: ${label} (${elapsed}s)${N}"
         echo "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-        echo ""
         exit 1
       fi
     }
-    echo ""
-    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-    echo "${Y}  CI LOCAL — fail-fast on first error${N}"
-    echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-    echo ""
-    run_step "1/9 markdown-lint"   pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
-    run_step "2/9 fmt-check"       cargo fmt --all -- --check
-    run_step "3/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
-    run_step "4/9 architecture + cargo check" bash -c 'python3 .github/scripts/check-huginn-architecture.py && cargo check --workspace'
-    run_step "5/9 cargo test"      cargo test --workspace --all-features
-    run_step "6/9 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
-    run_step "7/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
-    run_step "8/9 cargo audit"     bash -c 'cargo audit --no-fetch || true'
-    run_step "9/9 e2e"             ./dev/e2e/run-api-keys-e2e.sh --test
-    TOTAL=$(( SECONDS - TOTAL_START ))
-    echo ""
-    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-    echo "${G}  CI LOCAL — ALL PASSED ✓  (${TOTAL}s total)${N}"
-    echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-    echo ""
+    echo "${Y}CI LOCAL — PR gates, fail-fast${N}"
+    run_step "Install workspace dependencies" just ci-install
+    run_step "CI contract" just ci-contract
+    run_step "Doctor tests" just ci-doctor-test
+    run_step "Issue labeler tests" just ci-labeler-test
+    run_step "Dashboard build" just ci-dashboard-build
+    run_step "Markdown lint" just ci-lint
+    run_step "Rust format" just ci-fmt
+    run_step "Clippy" just ci-clippy
+    run_step "Huginn architecture + cargo check" just ci-check
+    run_step "Rust tests" just ci-test-rust
+    run_step "Frontend typecheck, Biome and tests" just ci-test-vitest
+    run_step "Rust documentation" just ci-doc
+    run_step "Cargo audit" just ci-audit
+    run_step "Trivy filesystem and dependency scan" just ci-trivy
+    run_step "Gitleaks PR commit-range scan" just ci-gitleaks
+    run_step "Semgrep security scan" just ci-semgrep
+    run_step "Rust coverage (87% lines)" just ci-coverage-rust
+    run_step "Frontend coverage" just ci-coverage-frontend
+    run_step "E2E" just ci-e2e
+    echo "${Y}SonarCloud omitted: requires SONAR_TOKEN and the remote SonarCloud service.${N}"
+    echo "${Y}Push-only cross-platform build matrix is not part of this PR suite.${N}"
+    echo "${G}CI LOCAL — all applicable local gates passed ($(( SECONDS - TOTAL_START ))s).${N}"
 
 # Run only linting + formatting stages
 ci-lint-only:
@@ -394,7 +534,7 @@ ci-ci:
     run_step "5/8 cargo test"      cargo test --workspace --all-features
     run_step "6/8 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
     run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
-    run_step "8/8 cargo audit"     bash -c 'cargo audit --no-fetch || true'
+    run_step "8/8 cargo audit"     just ci-audit
     TOTAL=$(( SECONDS - TOTAL_START ))
     echo ""
     echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
@@ -404,12 +544,14 @@ ci-ci:
 
 # === Release ===
 
+# Run release-please in dry-run mode without creating a release PR
 release-dry-run:
     @echo "{{YELLOW}}Running release-please dry-run...{{RESET}}"
     npx release-please release-pr --token=$$GITHUB_TOKEN --dry-run
 
 # === Help ===
 
+# Show the legacy command overview (use `just --list` for recipe descriptions)
 help:
     @echo "cortex/rook - available commands:"
     @echo ""
@@ -422,7 +564,8 @@ help:
     @echo "  just test-integration - Run integration tests"
     @echo "  just coverage     - Generate HTML coverage report"
     @echo "  just audit        - Check for vulnerabilities"
-    @echo "  just ci-local     - Run full CI locally (fail-fast: stops on first error)"
+    @echo "  just ci           - Run local PR gates (fail-fast: stops on first error)"
+    @echo "  just ci-local     - Backward-compatible alias for just ci"
     @echo "  just ci-ci        - Full CI without E2E (no Docker needed)"
     @echo "  just ci-lint-only - Lint + fmt only"
     @echo "  just ci-check-only - Clippy + cargo check only"

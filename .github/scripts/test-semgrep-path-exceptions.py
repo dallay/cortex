@@ -46,10 +46,10 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     def test_cli_rejects_evidence_inside_the_source_tree_before_scanning(self):
-        for output in [self.root, self.root / "nested/evidence"]:
+        for output in [self.root.resolve(), (self.root / "nested/evidence").resolve()]:
             with (
                 self.subTest(output=output),
-                patch.object(gate, "ROOT", self.root),
+                patch.object(gate, "ROOT", self.root.resolve()),
                 patch.object(gate, "scanner_controls") as scanner,
                 patch.object(gate, "check_inventory") as inventory,
                 patch("sys.argv", ["check-semgrep-path-exceptions.py", "--output-dir", str(output)]),
