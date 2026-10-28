@@ -21,6 +21,7 @@ cap-std = "=4.0.3"
 cap-fs-ext = "=4.0.3"
 huginn-application = { path = "../application" }
 huginn-core = { path = "../core" }
+huginn-guards = { path = "../guards" }
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true

@@ -107,6 +107,11 @@ hooks.register(ctx, "example.deny-shell".into(), Arc::new(DenyShell))?;
 
 Hooks run in hook-id order and the first block wins. Errors, panics and
 timeouts block the call. Reasons and notes are sanitized and limited to 4 KiB.
+The loop limits the combined annotation block to 16 KiB of content plus a visible
+truncation marker. It trims the body when needed to keep notes visible and the
+combined result within 64 KiB plus the marker's 19 bytes. Each `after` hook still
+receives the original bounded tool result and error status. Plain tool output
+keeps its existing 64 KiB content budget plus a marker when truncated.
 Registrations follow the plugin generation like other contributions. See
 [ADR-0016](adr/0016-restrict-only-tool-hooks.md).
 
@@ -155,6 +160,10 @@ el proceso; esta API no añade aislamiento ni carga dinámica. La ruta antigua
 publicado por el host; `Registry::native` e `insert` conservan su API existente.
 
 ## Conflicts and dependencies
+
+`huginn-guards` ofrece [protecciones de rutas y shell](guardrails.md) activas en
+run/chat/resume. No concede permisos ni altera los hooks registrados por autores;
+otros hosts deben seleccionar explícitamente el plugin y el builder protegido.
 
 Contribution IDs and capability keys must be unique. Commands reserve their
 command name; renderers reserve their tool selector; widgets reserve their

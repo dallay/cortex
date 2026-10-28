@@ -66,7 +66,7 @@ struct Counts {
     executed: AtomicUsize,
     prompts: AtomicUsize,
 }
-struct Shell(Arc<Counts>);
+struct Shell(Arc<Counts>, String);
 #[async_trait]
 impl Tool for Shell {
     fn definition(&self) -> ToolDefinition {
@@ -89,7 +89,7 @@ impl Tool for Shell {
     }
     async fn execute(&self, _: PreparedAction, _: &ToolContext) -> Result<String> {
         self.0.executed.fetch_add(1, Ordering::SeqCst);
-        Ok("executed".into())
+        Ok(self.1.clone())
     }
 }
 struct Tools(Arc<Shell>);
@@ -145,7 +145,7 @@ struct HookPlugin(&'static str, Arc<dyn ToolHook>);
 impl Plugin for HookPlugin {
     fn manifest(&self) -> Manifest {
         Manifest {
-            id: "test.hooks".into(),
+            id: self.0.into(),
             provides: vec![],
             requires: vec![tool_hooks_id()],
         }
@@ -157,18 +157,32 @@ impl Plugin for HookPlugin {
 }
 
 async fn run(hook: HookPlugin) -> (Arc<Counts>, Session, Vec<Event>) {
+    run_with_output(vec![hook], "executed".into()).await
+}
+
+async fn run_with_output(
+    hooks: Vec<HookPlugin>,
+    output: String,
+) -> (Arc<Counts>, Session, Vec<Event>) {
     let counts = Arc::new(Counts::default());
+    let memory = Arc::new(Memory::default());
     let mut supervisor = composition::build(
         Arc::new(ShellModel),
-        Arc::new(Tools(Arc::new(Shell(counts.clone())))),
-        Arc::new(Memory::default()),
-        LoopConfig::default(),
+        Arc::new(Tools(Arc::new(Shell(counts.clone(), output)))),
+        memory.clone(),
+        LoopConfig {
+            // Exercise output limits without the independent context-window limit.
+            context_tokens: 1_000_000,
+            ..Default::default()
+        },
         Arc::new(Instructions),
     )
     .await
     .unwrap();
     // Extensions start after the loop is active, as in the interactive host.
-    supervisor.register(Box::new(hook)).unwrap();
+    for hook in hooks {
+        supervisor.register(Box::new(hook)).unwrap();
+    }
     supervisor.start().await.unwrap();
     let implementation = supervisor
         .resolve::<LoopService>(&composition::loop_id())
@@ -188,8 +202,10 @@ async fn run(hook: HookPlugin) -> (Arc<Counts>, Session, Vec<Event>) {
         .await
         .unwrap();
     supervisor.shutdown().await;
+    let persisted = memory.load(&session.id).await.unwrap();
+    assert_eq!(tool_result(&persisted), tool_result(&session));
     let events = events.0.into_inner().unwrap();
-    (counts, session, events)
+    (counts, persisted, events)
 }
 fn tool_result(session: &Session) -> &str {
     &session
@@ -228,4 +244,86 @@ async fn after_hook_annotates_the_result_without_changing_authorization() {
         tool_result(&session),
         "executed\n\n[hook note.size] saw 8 bytes"
     );
+}
+
+struct BudgetNote(Arc<Mutex<Vec<(String, bool)>>>);
+#[async_trait]
+impl ToolHook for BudgetNote {
+    async fn after(
+        &self,
+        _: &ToolCall,
+        outcome: ToolOutcome<'_>,
+        _: &ToolContext,
+    ) -> Result<Option<String>> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((outcome.output.to_string(), outcome.is_error));
+        Ok(Some("é".repeat(huginn_core::hooks::MAX_NOTE_BYTES / 2)))
+    }
+}
+
+#[tokio::test]
+async fn annotated_results_reserve_visible_notes_within_the_output_budget() {
+    use huginn_application::output::{bounded_text, MAX_OUTPUT_BYTES};
+    let marker = "\n[output truncated]";
+    for bytes in [MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES + 8] {
+        for count in [1, 2, 8] {
+            let observed = Arc::new(Mutex::new(vec![]));
+            let ids = [
+                "note.0", "note.1", "note.2", "note.3", "note.4", "note.5", "note.6", "note.7",
+            ];
+            let hooks = ids[..count]
+                .iter()
+                .map(|id| HookPlugin(id, Arc::new(BudgetNote(observed.clone()))))
+                .collect();
+            let raw = "é".repeat(bytes / 2);
+            let expected_input = bounded_text(raw.clone());
+            let (counts, session, events) = run_with_output(hooks, raw).await;
+            let output = tool_result(&session);
+            assert!(
+                output.len() <= MAX_OUTPUT_BYTES + marker.len(),
+                "{} bytes",
+                output.len()
+            );
+            assert!(output.contains("[hook note.0] é"));
+            if count == 2 {
+                assert!(output.contains("[hook note.1] é"));
+            }
+            assert_eq!(
+                output.matches(marker).count(),
+                if count == 8 { 2 } else { 1 }
+            );
+            if count == 8 {
+                assert!(output.ends_with(marker));
+            }
+            assert_eq!(counts.prepared.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.prompts.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.executed.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                session
+                    .messages
+                    .iter()
+                    .filter(|m| m.tool_call_id.as_deref() == Some("attempt"))
+                    .count(),
+                1
+            );
+            let finished: Vec<_> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::ToolFinished {
+                        output, is_error, ..
+                    } => Some((output.as_str(), *is_error)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(finished, vec![(output, false)]);
+            let inputs = observed.lock().unwrap();
+            assert_eq!(inputs.len(), count);
+            assert!(inputs
+                .iter()
+                .all(|input| input == &(expected_input.clone(), false)));
+            drop(inputs);
+        }
+    }
 }

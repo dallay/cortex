@@ -187,6 +187,10 @@ El puerto no modifica `HostPolicy`, las aprobaciones ni los hooks restrict-only.
 
 ### Tool hooks
 
+La [biblioteca de rutas y shell `huginn-guards`](guardrails.md) ofrece comprobaciones
+explícitas. La raíz CLI carga desde `session.workspace` una instantánea y selecciona
+el builder protegido para run/chat/resume, antes de bifurcar hacia línea o TUI.
+
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
 `agent:tool-hooks@1`. The loop asks it about every tool call before
 `prepare`. A `Block` verdict, or a failing hook, ends the call with an error and
