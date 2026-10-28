@@ -279,7 +279,11 @@ async fn responses_empty_arguments_with_separate_incomplete_finish() {
                 assert!(!body.contains("response.failed"));
                 assert!(!body.contains("response.completed"));
                 fixture(
-                    &format!("empty-{finish}-{}.sse", if done { "done" } else { "eof" }),
+                    &format!(
+                        "empty-{finish}-{}-{}.sse",
+                        if combo { "combo" } else { "standard" },
+                        if done { "done" } else { "eof" }
+                    ),
                     &body,
                 );
             }
@@ -664,10 +668,13 @@ async fn responses_partial_tool_other_finishes_still_fail() {
 
 #[tokio::test]
 async fn responses_stream_errors_and_missing_finish_never_complete_or_fallback() {
-    for suffix in [
-        "data: {\"error\":{\"message\":\"private upstream error\"}}\n\n",
-        "data: [DONE]\n\n",
-        "",
+    for (label, suffix) in [
+        (
+            "error",
+            "data: {\"error\":{\"message\":\"private upstream error\"}}\n\n",
+        ),
+        ("done", "data: [DONE]\n\n"),
+        ("eof", ""),
     ] {
         let upstream = openai_stream_frame(
             json!({"tool_calls":[{"index":0,"id":"call_partial", "function":{"name":"lookup","arguments":"{\"key\":"}}]}),
@@ -711,7 +718,7 @@ async fn responses_stream_errors_and_missing_finish_never_complete_or_fallback()
             .await
             .unwrap()
             .is_empty());
-        fixture("failed.sse", &body);
+        fixture(&format!("failed-{label}.sse"), &body);
     }
 }
 

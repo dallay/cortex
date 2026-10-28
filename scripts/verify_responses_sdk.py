@@ -44,11 +44,16 @@ def main() -> None:
         fixtures = Path(directory)
         required = {"text.json", "openai-tool.json", "anthropic-tool.json",
                     "openai-tool.sse", "anthropic-tool.sse", "text-stop.sse",
-                    "text-length.sse", "text-content_filter.sse", "failed.sse", "incomplete.json",
+                    "text-length.sse", "text-content_filter.sse", "failed-error.sse",
+                    "failed-done.sse", "failed-eof.sse", "incomplete.json",
                     "partial-tool-length-done.sse", "partial-tool-length-eof.sse",
                      "partial-tool-content_filter-done.sse", "partial-tool-content_filter-eof.sse",
-                     "empty-length-done.sse", "empty-length-eof.sse",
-                     "empty-content_filter-done.sse", "empty-content_filter-eof.sse",
+                     "empty-length-standard-done.sse", "empty-length-standard-eof.sse",
+                     "empty-length-combo-done.sse", "empty-length-combo-eof.sse",
+                     "empty-content_filter-standard-done.sse", "empty-content_filter-standard-eof.sse",
+                     "empty-content_filter-combo-done.sse", "empty-content_filter-combo-eof.sse",
+                     "validation-http-error-standard.json",
+                     "validation-http-error-combo.json",
                      "validation-first-standard.sse", "validation-first-combo-fallback.sse",
                      "validation-late-false-false.sse", "validation-late-false-true.sse",
                      "validation-late-true-false.sse", "validation-late-true-true.sse",
@@ -65,7 +70,8 @@ def main() -> None:
                      "empty-name.sse", "interleaved-replay.sse",
                      "terminal-nonobject-false-false.sse", "terminal-nonobject-false-true.sse",
                      "terminal-nonobject-true-false.sse", "terminal-nonobject-true-true.sse",
-                     "validation-http-error.json"}
+                     "validation-http-error-standard.json",
+                     "validation-http-error-combo.json"}
         fixture_paths = sorted(fixtures.iterdir())
         fixture_names = {path.name for path in fixture_paths}
         assert required <= fixture_names
@@ -114,7 +120,7 @@ def main() -> None:
         count = 0
         for path in fixture_paths:
             body = path.read_text()
-            if path.name.endswith("-http-error.json"):
+            if path.name.endswith("-http-error.json") or path.stem.startswith("validation-http-error-"):
                 transport = httpx.MockTransport(lambda _: httpx.Response(502, json=json.loads(body)))
                 with OpenAI(api_key="test", base_url="http://rook.invalid/v1",
                             max_retries=0, http_client=httpx.Client(transport=transport)) as client:
