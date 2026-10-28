@@ -187,3 +187,46 @@ fn failure(status: StatusCode, code: &str, message: &str) -> Response {
     )
         .into_response()
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared_kernel::{CortexError, ProviderId, RestrictionViolation};
+
+    #[test]
+    fn test_route_failure_forbidden() {
+        let err = RestrictionViolation::ProviderNotAllowed(ProviderId::new("p")).into();
+        let resp = route_failure(&err);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_route_failure_not_found() {
+        let err = CortexError::not_found("model_x");
+        let resp = route_failure(&err);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_route_failure_rate_limited() {
+        let err = CortexError::rate_limited(ProviderId::new("p"), 30);
+        let resp = route_failure(&err);
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get("retry-after").unwrap(), "30");
+    }
+
+    #[test]
+    fn test_route_failure_invalid_request() {
+        let err = CortexError::invalid_request("bad req");
+        let resp = route_failure(&err);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_route_failure_upstream_error() {
+        let err = CortexError::provider("upstream crash");
+        let resp = route_failure(&err);
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+}
