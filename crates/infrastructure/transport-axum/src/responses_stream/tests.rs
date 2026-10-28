@@ -294,7 +294,6 @@ fn incomplete_tool_arguments_are_preserved_without_claiming_valid_json() {
     );
 }
 
-
 #[test]
 fn test_observe_usage_and_fail_and_invalid_tool_name_emission() {
     let mut encoder = encoder();
@@ -315,9 +314,11 @@ fn test_observe_usage_and_fail_and_invalid_tool_name_emission() {
     assert_eq!(failed[1]["response"]["usage"]["total_tokens"], 15);
 
     let mut invalid_name_enc = self::encoder();
-    assert!(invalid_name_enc.push(chunk(
-        "",
-        vec![tool(0, Some("call_a"), Some("invalid name!"), Some("{}"))],
-        None,
-    )).is_err());
+    assert!(invalid_name_enc
+        .push(chunk(
+            "",
+            vec![tool(0, Some("call_a"), Some("invalid name!"), Some("{}"))],
+            None,
+        ))
+        .is_err());
 }

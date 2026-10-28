@@ -98,7 +98,6 @@ impl<'de> Deserialize<'de> for ToolId {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

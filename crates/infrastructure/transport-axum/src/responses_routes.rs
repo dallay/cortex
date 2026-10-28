@@ -188,7 +188,6 @@ fn failure(status: StatusCode, code: &str, message: &str) -> Response {
         .into_response()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

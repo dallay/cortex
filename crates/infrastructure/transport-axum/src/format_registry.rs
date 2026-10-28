@@ -317,29 +317,44 @@ mod tests {
             restrictions: rook_core::ApiKeyRestrictions::default(),
         };
 
-        let req_req = registry.translate_request(
-            ApiFormat::OpenAI,
-            ApiFormat::Anthropic,
-            make_req(serde_json::json!("required")),
-        ).unwrap();
-        assert_eq!(req_req.tool_choice, Some(serde_json::json!({"type": "any"})));
+        let req_req = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!("required")),
+            )
+            .unwrap();
+        assert_eq!(
+            req_req.tool_choice,
+            Some(serde_json::json!({"type": "any"}))
+        );
 
-        let req_none = registry.translate_request(
-            ApiFormat::OpenAI,
-            ApiFormat::Anthropic,
-            make_req(serde_json::json!("none")),
-        ).unwrap();
-        assert_eq!(req_none.tool_choice, Some(serde_json::json!({"type": "none"})));
+        let req_none = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!("none")),
+            )
+            .unwrap();
+        assert_eq!(
+            req_none.tool_choice,
+            Some(serde_json::json!({"type": "none"}))
+        );
 
-        let req_func = registry.translate_request(
-            ApiFormat::OpenAI,
-            ApiFormat::Anthropic,
-            make_req(serde_json::json!({
-                "type": "function",
-                "function": {"name": "get_weather"}
-            })),
-        ).unwrap();
-        assert_eq!(req_func.tool_choice, Some(serde_json::json!({"type": "tool", "name": "get_weather"})));
+        let req_func = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!({
+                    "type": "function",
+                    "function": {"name": "get_weather"}
+                })),
+            )
+            .unwrap();
+        assert_eq!(
+            req_func.tool_choice,
+            Some(serde_json::json!({"type": "tool", "name": "get_weather"}))
+        );
 
         let tool = &req_func.tools.as_ref().unwrap()[0];
         assert_eq!(tool["name"], "get_weather");
@@ -378,7 +393,9 @@ mod tests {
             cache_hit: None,
         };
 
-        let translated = registry.translate_response(ApiFormat::OpenAI, ApiFormat::Anthropic, resp).unwrap();
+        let translated = registry
+            .translate_response(ApiFormat::OpenAI, ApiFormat::Anthropic, resp)
+            .unwrap();
         assert_eq!(translated.content, "hello");
     }
 }

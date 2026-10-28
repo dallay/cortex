@@ -69,7 +69,6 @@ fn nonstream_partial_tool_arguments_preserve_incomplete_state() {
     assert_eq!(body["output"][0]["arguments"], "{\"a\":");
 }
 
-
 #[test]
 fn test_valid_name_and_valid_id() {
     assert!(valid_name("tool_name-123"));
@@ -95,27 +94,32 @@ fn test_validate_replay_cases() {
 fn test_responses_request_validation_errors() {
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": "hi", "max_output_tokens": 0
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": "hi", "temperature": -1.0
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": "hi", "store": true
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": []
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": [{"role": "unknown", "content": "hi"}]
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
@@ -133,12 +137,14 @@ fn test_responses_request_validation_errors() {
 fn test_responses_request_tool_choice_validation() {
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": "hi", "tool_choice": "required"
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 
     let req: ResponsesRequest = serde_json::from_value(json!({
         "model": "m", "input": "hi", "tool_choice": {"type": "function", "name": "undeclared"}
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(req.into_domain().is_err());
 }
 
