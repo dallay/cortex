@@ -57,6 +57,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 }
 
 mod default_combo;
+mod output_validation;
 mod progressive_combo;
 
 struct TestProvider {

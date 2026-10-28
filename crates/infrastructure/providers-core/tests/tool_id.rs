@@ -57,3 +57,46 @@ fn test_tool_id_deserialization() {
         assert!(matches!(w.id, ToolId::Invalid), "failed for {json}");
     }
 }
+
+#[test]
+fn nested_invalid_ids_are_consumed_without_corrupting_the_next_field_or_call() {
+    #[derive(Deserialize)]
+    struct Call {
+        id: ToolId,
+        name: String,
+    }
+    for invalid in [
+        r#"[]"#,
+        r#"{}"#,
+        r#"[{"nested":[null,true,{"id":"not-an-identity"}]}]"#,
+        r#"{"nested":[{"deep":[1,2,3]}],"other":false}"#,
+    ] {
+        let body =
+            format!(r#"[{{"id":{invalid},"name":"first"}},{{"id":"call_valid","name":"second"}}]"#);
+        let calls: Vec<Call> = serde_json::from_str(&body).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].id.is_invalid_type(), "{invalid}");
+        assert_eq!(calls[0].id.canonical().as_deref(), Some(""));
+        assert_eq!(calls[0].name, "first");
+        assert_eq!(calls[1].id.as_str(), Some("call_valid"));
+        assert_eq!(calls[1].name, "second");
+    }
+}
+
+#[test]
+fn explicit_empty_and_control_character_ids_remain_explicit_for_later_validation() {
+    for value in ["", "call\ninvalid", "\u{0}", "call_é"] {
+        let parsed: Wrapper = serde_json::from_value(serde_json::json!({"id":value})).unwrap();
+        assert!(!parsed.id.is_invalid_type());
+        assert_eq!(parsed.id.as_str(), Some(value));
+        assert_eq!(parsed.id.canonical().as_deref(), Some(value));
+        assert_eq!(parsed.id.delta().as_deref(), Some(value));
+    }
+}
+
+#[test]
+fn malformed_nested_ids_remain_deserialization_errors() {
+    for body in [r#"{"id":[1,]}"#, r#"{"id":{"nested":}}"#] {
+        assert!(serde_json::from_str::<Wrapper>(body).is_err(), "{body}");
+    }
+}
