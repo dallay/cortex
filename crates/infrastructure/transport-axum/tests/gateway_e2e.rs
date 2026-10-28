@@ -38,6 +38,11 @@ use tower::ServiceExt;
 use transport_axum::authz::AuthzConfig;
 use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
+#[path = "gateway_e2e/responses.rs"]
+mod responses;
+#[path = "gateway_e2e/responses_accounting.rs"]
+mod responses_accounting;
+
 // ---------------------------------------------------------------------------
 // Fakes (deterministic, in-process)
 // ---------------------------------------------------------------------------
@@ -85,14 +90,6 @@ impl CachePort for NoopCache {
         Ok(())
     }
     async fn increment_token_cache_miss(&self) -> CortexResult<()> {
-        Ok(())
-    }
-}
-
-struct NoopAudit;
-#[async_trait]
-impl AuditPort for NoopAudit {
-    async fn record(&self, _: AuditEntry) -> CortexResult<()> {
         Ok(())
     }
 }
@@ -190,6 +187,7 @@ impl ComboAliasRepositoryPort for MapComboAliasRepo {
 /// called, exercising the REAL middleware + AuthenticateClientApi path.
 struct RevocableKeyRepo {
     revoked: Mutex<bool>,
+    read_only: Mutex<bool>,
     allowed_models: Vec<ModelId>,
     allowed_providers: Mutex<Vec<ProviderId>>,
 }
@@ -205,10 +203,14 @@ impl ApiKeyRepositoryPort for RevocableKeyRepo {
         Ok(Some(ApiKeySubject {
             id: ApiKeyId::new("e2e-key-1"),
             label: "e2e".to_string(),
-            scopes: vec![
-                ApiKeyScope::parse("chat:read").unwrap(),
-                ApiKeyScope::parse("chat:write").unwrap(),
-            ],
+            scopes: if *self.read_only.lock().unwrap() {
+                vec![ApiKeyScope::parse("chat:read").unwrap()]
+            } else {
+                vec![
+                    ApiKeyScope::parse("chat:read").unwrap(),
+                    ApiKeyScope::parse("chat:write").unwrap(),
+                ]
+            },
             tier: ApiKeyTier::Free,
             allowed_models: self.allowed_models.clone(),
             allowed_providers: self.allowed_providers.lock().unwrap().clone(),
@@ -421,6 +423,8 @@ struct Gateway {
     key_repo: Arc<RevocableKeyRepo>,
     upstreams: WiremockUpstreams,
     combo_id: ComboId,
+    accounting: Arc<responses_accounting::Records>,
+    fallback: Arc<FallbackRouter>,
 }
 
 async fn build_gateway(allowed_models: Vec<&str>, openai_fail: bool) -> Gateway {
@@ -527,6 +531,29 @@ async fn build_gateway_planned(
         "rook/openai".into(),
         ComboAlias::new(ModelId::new("rook/openai"), single_id),
     );
+    let anthropic_first = Combo::new(
+        "anthropic-first".into(),
+        ComboStrategy::Priority,
+        vec![
+            ComboStep {
+                provider_id: ProviderId::new("anthropic-e2e"),
+                model: ModelId::new("claude-e2e"),
+                connection_id: None,
+                priority: 1,
+            },
+            ComboStep {
+                provider_id: ProviderId::new("openai-e2e"),
+                model: ModelId::new("gpt-4o"),
+                connection_id: None,
+                priority: 2,
+            },
+        ],
+    );
+    aliases.insert(
+        "rook/anthropic-first".into(),
+        ComboAlias::new(ModelId::new("rook/anthropic-first"), anthropic_first.id),
+    );
+    combos.insert(anthropic_first.id, anthropic_first);
 
     let mut registry = FormatRegistry::new();
     registry.register(
@@ -539,16 +566,17 @@ async fn build_gateway_planned(
         ApiFormat::OpenAI,
         DomainPivotTranslator,
     );
+    let accounting = Arc::new(responses_accounting::Records::default());
     let route_request = RouteRequest::new(
         fallback_router.clone() as Arc<dyn RouterPort>,
         Arc::new(NoopCache),
-        Arc::new(NoopAudit),
-        None,
+        accounting.clone(),
+        Some(accounting.clone()),
         None,
         Some(Arc::new(MapComboRepo {
             combos: Mutex::new(combos),
         })),
-        Arc::new(rook_usecases::PricingConfig::default()),
+        Arc::new(serde_json::from_value(serde_json::json!({"openai-e2e":{"gpt-4o":{"prompt_per_million":1.0,"completion_per_million":2.0}},"anthropic-e2e":{"claude-e2e":{"prompt_per_million":1.0,"completion_per_million":2.0,"cache_read_per_million":0.5,"cache_creation_per_million":1.5}}})).unwrap()),
         Arc::new(registry),
         Arc::new(NoopAliasRepo),
         rook_usecases::route_request::ModelAliasesConfig {
@@ -566,6 +594,7 @@ async fn build_gateway_planned(
     let sessions: Arc<dyn SessionRepositoryPort> = Arc::new(FakeSessions);
     let key_repo = Arc::new(RevocableKeyRepo {
         revoked: Mutex::new(false),
+        read_only: Mutex::new(false),
         allowed_models: allowed_models.into_iter().map(ModelId::new).collect(),
         allowed_providers: Mutex::new(vec![]),
     });
@@ -594,7 +623,7 @@ async fn build_gateway_planned(
         Arc::new(RwLock::new(None)),
         sessions,
         Arc::new(FakeCatalog),
-        fallback_router,
+        fallback_router.clone(),
     ));
     let app = transport_axum::router(
         usecases,
@@ -610,6 +639,8 @@ async fn build_gateway_planned(
         key_repo,
         upstreams,
         combo_id,
+        accounting,
+        fallback: fallback_router,
     }
 }
 

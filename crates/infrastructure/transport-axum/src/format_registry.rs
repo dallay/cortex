@@ -118,6 +118,33 @@ impl FormatRegistry {
         to: ApiFormat,
         req: CompletionRequest,
     ) -> CortexResult<CompletionRequest> {
+        let mut req = req;
+        // Responses normaliza funciones al contrato OpenAI. La traducción al
+        // formato Anthropic ocurre en el límite de formato existente, no en routing.
+        // Los contratos de los endpoints anteriores permanecen sin cambios.
+        if req.metadata.origin == "responses"
+            && from == ApiFormat::OpenAI
+            && to == ApiFormat::Anthropic
+        {
+            if let Some(serde_json::Value::Array(tools)) = req.tools.as_mut() {
+                for tool in tools {
+                    let function = &tool["function"];
+                    let mut native = serde_json::json!({"name":function["name"], "input_schema":function["parameters"]});
+                    if let Some(description) = function.get("description") {
+                        native["description"] = description.clone();
+                    }
+                    *tool = native;
+                }
+            }
+            if let Some(choice) = req.tool_choice.as_mut() {
+                *choice = match choice.as_str() {
+                    Some("auto") => serde_json::json!({"type":"auto"}),
+                    Some("none") => serde_json::json!({"type":"none"}),
+                    Some("required") => serde_json::json!({"type":"any"}),
+                    _ => serde_json::json!({"type":"tool","name":choice["function"]["name"]}),
+                };
+            }
+        }
         self.get_request_translator(from, to)
             .ok_or_else(|| missing_translator("request", from, to))?
             .translate_request(req)

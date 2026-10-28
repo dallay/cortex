@@ -149,6 +149,20 @@ struct ComboStepContext {
 /// Default TTL for cached responses (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
 
+/// Optional local output contract. Rejections do not describe provider health.
+pub trait OutputValidation: Send + Sync {
+    fn response(&self, response: &CompletionResponse) -> Result<(), CortexError>;
+    /// Each invocation must create independent state for one stream.
+    fn stream(&self) -> Box<dyn StreamOutputValidation>;
+}
+
+/// Per-stream local validation, after usage observation and before delivery.
+pub trait StreamOutputValidation: Send {
+    fn chunk(&mut self, chunk: &StreamChunk) -> Result<(), CortexError>;
+    /// Called at upstream EOF, before a successful outcome is persisted.
+    fn finish(&mut self) -> Result<(), CortexError>;
+}
+
 #[derive(Clone)]
 pub struct RouteRequest {
     router: Arc<dyn RouterPort>,
@@ -168,6 +182,7 @@ pub struct RouteRequest {
     quota_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
     /// Policy that decides when quota evidence is trustworthy.
     quota_policy: QuotaEligibilityPolicy,
+    output_validation: Option<Arc<dyn OutputValidation>>,
 }
 
 /// Configuration for model alias resolution
@@ -208,7 +223,14 @@ impl RouteRequest {
             default_combo: None,
             quota_reader: None,
             quota_policy: QuotaEligibilityPolicy::default(),
+            output_validation: None,
         }
+    }
+
+    /// Opt in to local output validation; the default execution paths are unchanged.
+    pub fn with_output_validation(mut self, validation: Arc<dyn OutputValidation>) -> Self {
+        self.output_validation = Some(validation);
+        self
     }
 
     /// Wire the reader for upstream quota observations.
@@ -333,6 +355,9 @@ impl RouteRequest {
 
         // 1. Cache hit?
         if let Some(cached) = self.try_get_cached(&req, &cache_key).await? {
+            if let Some(validation) = &self.output_validation {
+                validation.response(&cached)?;
+            }
             return Ok(cached);
         }
 
@@ -681,6 +706,24 @@ impl RouteRequest {
             ctx.provider_resp,
         )?;
 
+        if let Some(validation) = &self.output_validation {
+            if let Err(error) = validation.response(&resp) {
+                self.record_standard_outcome(
+                    &ctx.req,
+                    &ctx.provider_id,
+                    ctx.connection_id,
+                    UsageMetrics {
+                        status: RequestStatus::Failure,
+                        usage: Some(&resp.usage),
+                        ttft_ms: Some(ctx.latency_ms),
+                        latency_ms: ctx.latency_ms,
+                    },
+                )
+                .await;
+                return Err(error);
+            }
+        }
+
         // Cache if eligible
         if ctx.req.metadata.cacheable
             && !rook_core::RequiredCapabilities::from_request(&ctx.req).tools
@@ -695,13 +738,14 @@ impl RouteRequest {
         }
 
         // Audit success
-        let entry = AuditEntry::success(
+        let mut entry = AuditEntry::success(
             &ctx.req.id,
             &ctx.provider_id,
             &ctx.req.model,
             Some(resp.usage.clone()),
             ctx.latency_ms,
         );
+        entry.connection_id = ctx.connection_id;
         if let Err(e) = self.audit.record(entry).await {
             tracing::warn!(error = %e, "failed to record audit entry");
         }
@@ -880,6 +924,17 @@ impl RouteRequest {
             }
             return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
         };
+        if let Some(policy) = &self.output_validation {
+            return Ok(self.forward_validated_stream(
+                upstream,
+                req,
+                provider_id,
+                connection_id,
+                trial_permit,
+                start,
+                policy.stream(),
+            ));
+        }
         let audit = self.audit.clone();
         let router = self.router.clone();
         let usage_recorder = self.usage_recorder.clone();
@@ -1398,6 +1453,23 @@ impl RouteRequest {
                         client_format,
                         provider_resp,
                     )?;
+
+                    if let Some(validation) = &self.output_validation {
+                        if let Err(error) = validation.response(&resp) {
+                            self.record_combo_stream_outcome(
+                                &step_context,
+                                &step_req,
+                                UsageMetrics {
+                                    status: RequestStatus::Failure,
+                                    usage: Some(&resp.usage),
+                                    ttft_ms: Some(latency_ms),
+                                    latency_ms,
+                                },
+                            )
+                            .await;
+                            return Err(error);
+                        }
+                    }
 
                     tracing::info!(
                         step_index = step_index + 1,

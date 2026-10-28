@@ -10,6 +10,7 @@ pub mod request;
 pub mod role;
 pub mod sanitize;
 pub mod sse;
+pub mod tool_id;
 pub mod validation;
 
 pub use rate_limit::parse_reset_milliseconds;
