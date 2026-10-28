@@ -1,5 +1,41 @@
 //! Rebuild the independent guest, never silently skip real-component tests.
-use std::{path::PathBuf, process::Command, sync::OnceLock};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    },
+};
+
+const COMPONENT_NAME: &str = "rust-file-outline.component.wasm";
+
+/// Publishes the component so a concurrent reader never observes partial bytes.
+///
+/// The runtime and application integration tests share one artifact path, and
+/// `OnceLock` is per process. A direct write truncates the final path before
+/// the bytes land, so an overlapping test process can load an incomplete
+/// component. Staging in the same directory and renaming keeps the visible
+/// path complete at all times.
+fn publish_component(target: &Path, bytes: &[u8]) -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let path = target.join(COMPONENT_NAME);
+    let staging = target.join(format!(
+        "{COMPONENT_NAME}.{}.{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&staging, bytes).unwrap();
+    match std::fs::rename(&staging, &path) {
+        Ok(()) => {}
+        Err(_) => {
+            // Windows cannot rename over an existing file.
+            let _ = std::fs::remove_file(&path);
+            std::fs::rename(&staging, &path).unwrap();
+        }
+    }
+    path
+}
 
 fn isolate_guest_build(command: &mut Command) {
     // This child builds a WASM fixture, not another host coverage target.
@@ -66,11 +102,80 @@ pub fn component() -> PathBuf {
                 .validate(true)
                 .encode()
                 .unwrap();
-            let path = target.join("rust-file-outline.component.wasm");
-            std::fs::write(&path, bytes).unwrap();
-            path
+            publish_component(&target, &bytes)
         })
         .clone()
+}
+
+#[cfg(unix)]
+#[test]
+fn component_artifact_is_never_observed_partially_published() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Arc,
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let first = Arc::new(vec![0xAAu8; 1 << 20]);
+    let second = Arc::new(vec![0xBBu8; 1 << 20]);
+    let done = Arc::new(AtomicBool::new(false));
+    let observed = Arc::new(AtomicU64::new(0));
+
+    let writer = std::thread::spawn({
+        let directory = directory.path().to_path_buf();
+        let done = Arc::clone(&done);
+        let first = Arc::clone(&first);
+        let second = Arc::clone(&second);
+        move || {
+            for index in 0..200 {
+                let bytes = if index % 2 == 0 {
+                    first.as_slice()
+                } else {
+                    second.as_slice()
+                };
+                publish_component(&directory, bytes);
+            }
+            done.store(true, AtomicOrdering::Release);
+        }
+    });
+
+    let reader = std::thread::spawn({
+        let directory = directory.path().to_path_buf();
+        let done = Arc::clone(&done);
+        let observed = Arc::clone(&observed);
+        let first = Arc::clone(&first);
+        let second = Arc::clone(&second);
+        move || {
+            let path = directory.join(COMPONENT_NAME);
+            while !done.load(AtomicOrdering::Acquire) {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    assert!(
+                        bytes == first.as_slice() || bytes == second.as_slice(),
+                        "observed a partially published artifact of {} bytes",
+                        bytes.len()
+                    );
+                }
+            }
+        }
+    });
+
+    writer.join().unwrap();
+    reader.join().unwrap();
+    assert!(
+        observed.load(Ordering::Relaxed) > 0,
+        "the reader never observed the published artifact"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "staging files left behind: {leftovers:?}"
+    );
 }
 
 #[cfg(unix)]
