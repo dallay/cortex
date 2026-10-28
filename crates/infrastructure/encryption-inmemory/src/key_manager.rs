@@ -1,9 +1,10 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+use argon2::{password_hash::PasswordHasher, Argon2};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::RngExt;
 use rook_core::ports::{CredentialEncryptionError, KeyManager};
 
 use super::{EncryptionError, Result};
@@ -32,10 +33,8 @@ impl AesGcmKeyManager {
             argon2::Params::new(65_536, 3, 4, Some(32))
                 .map_err(|_| EncryptionError::KeyDerivation)?,
         );
-        let salt =
-            SaltString::encode_b64(&salt_bytes).map_err(|_| EncryptionError::KeyDerivation)?;
         let hash = argon2
-            .hash_password(passphrase.as_bytes(), &salt)
+            .hash_password_with_salt(passphrase.as_bytes(), &salt_bytes)
             .map_err(|_| EncryptionError::KeyDerivation)?;
         let hash_output = hash.hash.ok_or(EncryptionError::KeyDerivation)?;
 
@@ -53,7 +52,8 @@ impl AesGcmKeyManager {
 
         let cipher =
             Aes256Gcm::new_from_slice(&self.key).map_err(|_| EncryptionError::CipherError)?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce_bytes: [u8; NONCE_BYTES] = rand::rng().random();
+        let nonce = Nonce::try_from(nonce_bytes.as_slice()).expect("12-byte nonce");
         let ciphertext = cipher
             .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|_| EncryptionError::CipherError)?;
@@ -88,9 +88,9 @@ impl AesGcmKeyManager {
 
         let cipher =
             Aes256Gcm::new_from_slice(&self.key).map_err(|_| EncryptionError::CipherError)?;
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes.as_slice()).expect("12-byte nonce");
         let plaintext = cipher
-            .decrypt(nonce, ciphertext_with_tag.as_ref())
+            .decrypt(&nonce, ciphertext_with_tag.as_ref())
             .map_err(|_| EncryptionError::DecryptKey)?;
 
         String::from_utf8(plaintext).map_err(|_| EncryptionError::DecryptFormat)

@@ -1558,7 +1558,13 @@ async fn rejected_nonstream(combo: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    super::responses::fixture("validation-http-error.json", &response.to_string());
+    super::responses::fixture(
+        &format!(
+            "validation-http-error-{}.json",
+            if combo { "combo" } else { "standard" }
+        ),
+        &response.to_string(),
+    );
     assert_failure(&g.accounting, combo);
     assert!(g
         .fallback

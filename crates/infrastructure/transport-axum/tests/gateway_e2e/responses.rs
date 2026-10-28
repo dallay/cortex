@@ -202,6 +202,29 @@ async fn responses_replay_interleaved_real_sse_output_is_one_turn() {
     assert_eq!(messages[4]["tool_calls"][0]["id"], "c");
 }
 
+#[test]
+fn fixture_directory_must_be_under_system_temp() {
+    let temp = std::env::temp_dir();
+    assert!(fixture_directory_is_allowed(&temp, &temp).is_some());
+
+    let outside = std::path::Path::new("/etc");
+    assert!(fixture_directory_is_allowed(outside, &temp).is_none());
+
+    let non_existing = temp.join("rook-responses-does-not-exist");
+    assert!(fixture_directory_is_allowed(&non_existing, &temp).is_none());
+}
+
+fn fixture_directory_is_allowed(
+    directory: &std::path::Path,
+    temp_directory: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let canonical_directory = std::fs::canonicalize(directory).ok()?;
+    let canonical_temp_directory = std::fs::canonicalize(temp_directory).ok()?;
+    canonical_directory
+        .starts_with(canonical_temp_directory)
+        .then_some(canonical_directory)
+}
+
 pub(super) fn fixture(name: &str, body: &str) {
     if name.is_empty()
         || name.contains(['/', '\\'])
@@ -214,7 +237,12 @@ pub(super) fn fixture(name: &str, body: &str) {
         panic!("fixture name must be a safe filename: {name:?}");
     }
     if let Some(directory) = std::env::var_os("ROOK_RESPONSES_FIXTURES_DIR") {
-        std::fs::write(std::path::Path::new(&directory).join(name), body).unwrap();
+        let Some(directory) =
+            fixture_directory_is_allowed(std::path::Path::new(&directory), &std::env::temp_dir())
+        else {
+            panic!("fixture directory must be under the system temp directory");
+        };
+        std::fs::write(directory.join(name), body).unwrap();
     }
 }
 
@@ -251,7 +279,11 @@ async fn responses_empty_arguments_with_separate_incomplete_finish() {
                 assert!(!body.contains("response.failed"));
                 assert!(!body.contains("response.completed"));
                 fixture(
-                    &format!("empty-{finish}-{}.sse", if done { "done" } else { "eof" }),
+                    &format!(
+                        "empty-{finish}-{}-{}.sse",
+                        if combo { "combo" } else { "standard" },
+                        if done { "done" } else { "eof" }
+                    ),
                     &body,
                 );
             }
@@ -636,10 +668,13 @@ async fn responses_partial_tool_other_finishes_still_fail() {
 
 #[tokio::test]
 async fn responses_stream_errors_and_missing_finish_never_complete_or_fallback() {
-    for suffix in [
-        "data: {\"error\":{\"message\":\"private upstream error\"}}\n\n",
-        "data: [DONE]\n\n",
-        "",
+    for (label, suffix) in [
+        (
+            "error",
+            "data: {\"error\":{\"message\":\"private upstream error\"}}\n\n",
+        ),
+        ("done", "data: [DONE]\n\n"),
+        ("eof", ""),
     ] {
         let upstream = openai_stream_frame(
             json!({"tool_calls":[{"index":0,"id":"call_partial", "function":{"name":"lookup","arguments":"{\"key\":"}}]}),
@@ -683,7 +718,7 @@ async fn responses_stream_errors_and_missing_finish_never_complete_or_fallback()
             .await
             .unwrap()
             .is_empty());
-        fixture("failed.sse", &body);
+        fixture(&format!("failed-{label}.sse"), &body);
     }
 }
 
