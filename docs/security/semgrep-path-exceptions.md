@@ -108,18 +108,17 @@ Ejecutar con el Semgrep instalado por CI:
 python3 .github/scripts/check-semgrep-path-exceptions.py
 ```
 
-Para reproducir el motor de CI sin cambiar la instalación global:
+Para reproducir el motor de CI sin cambiar la instalación global, instala Semgrep
+1.126.0 con Python 3.12 y setuptools 80.9.0 en un entorno aislado. Luego ejecuta:
 
 ```sh
 python3 .github/scripts/check-semgrep-path-exceptions.py \
-  --output-dir "$EVIDENCE_DIR" \
-  --semgrep-command uvx --python 3.12 --with setuptools==80.9.0 \
-  --from semgrep==1.126.0 semgrep
+  --output-dir "$EVIDENCE_DIR"
 ```
 
-`--semgrep-command` debe ser la última opción y recibe un ejecutable y sus
-argumentos, sin evaluación de shell. El directorio de evidencia debe estar fuera
-de fuentes. Sin esa opción se conserva evidencia en un directorio temporal.
+El script invoca el ejecutable fijo `semgrep` desde `PATH`; no acepta un comando o
+argumentos alternativos. El directorio de evidencia debe estar fuera de fuentes.
+Sin `--output-dir`, conserva evidencia en un directorio temporal.
 
 El script genera Rust deliberadamente inseguro solo en un temporal externo.
 Con `p/rust` y severidad ERROR comprueba JSON, archivos escaneados y códigos:
