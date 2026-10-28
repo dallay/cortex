@@ -23,7 +23,10 @@ use tracing::error;
 
 use super::{
     alias_routes,
-    anthropic_adapter::{AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicSseEvent},
+    anthropic_adapter::{
+        AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicSseEvent,
+        AnthropicStreamEncoder,
+    },
     authz, combo_routes, handlers,
     middleware::csrf_guard,
     openai_adapter::{
@@ -958,42 +961,38 @@ async fn anthropic_messages_stream(
         }
     };
 
-    let events = stream
-        .flat_map(|chunk| {
-            let events: Vec<Event> = match chunk {
-                Ok(chunk) => AnthropicSseEvent::events_from_chunk(&chunk)
-                    .into_iter()
-                    .map(|event| {
-                        serde_json::to_string(&event)
-                            .map(|data| Event::default().data(data))
-                            .unwrap_or_else(|e| {
-                                Event::default().data(
-                                    serde_json::to_string(&AnthropicSseEvent::from(
-                                        CortexError::provider(format!("serialization error: {e}")),
-                                    ))
-                                    .unwrap_or_else(|_| r#"{"type":"error","error":{"type":"internal_error","message":"serialization error"}}"#.to_string()),
-                                )
-                            })
-                    })
-                    .collect(),
-                Err(error) => vec![
-                    serde_json::to_string(&AnthropicSseEvent::from(error))
-                        .map(|data| Event::default().data(data))
-                        .unwrap_or_else(|_| {
-                            Event::default().data(
-                                r#"{"type":"error","error":{"type":"internal_error","message":"stream error"}}"#,
-                            )
-                        }),
-                ],
+    let events = futures::stream::unfold(
+        Some((stream, AnthropicStreamEncoder::default())),
+        |state| async move {
+            let (mut stream, mut encoder) = state?;
+            let (events, next) = match stream.next().await {
+                Some(chunk) => match chunk.and_then(|chunk| encoder.push(chunk)) {
+                    Ok(events) => (events, Some((stream, encoder))),
+                    Err(error) => (vec![AnthropicSseEvent::from(error)], None),
+                },
+                None => (encoder.finish(), None),
             };
-            futures::stream::iter(events)
-        })
-        .chain(futures::stream::once(async { Event::default().data("[DONE]") }))
-        .map(Ok::<Event, Infallible>);
+            Some((events, next))
+        },
+    )
+    .flat_map(futures::stream::iter)
+    .map(anthropic_stream_event)
+    .chain(futures::stream::once(async {
+        Event::default().data("[DONE]")
+    }))
+    .map(Ok::<Event, Infallible>);
 
     let mut response = Sse::new(events).into_response();
     apply_sse_headers(response.headers_mut());
     Ok(response)
+}
+
+fn anthropic_stream_event(event: AnthropicSseEvent) -> Event {
+    let data = serde_json::to_string(&event).unwrap_or_else(|_| {
+        r#"{"type":"error","error":{"type":"internal_error","message":"serialization error"}}"#
+            .to_string()
+    });
+    Event::default().data(data)
 }
 
 /// GET /health

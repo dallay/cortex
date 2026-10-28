@@ -12,7 +12,7 @@ Esta guía cubre el setup local, herramientas, testing y flujo de CI.
 ## Setup inicial
 
 ```bash
-# Instalar dependencias y tooling
+# Instalar dependencias, tooling y crear ~/.cortex/rook/config.toml
 just setup
 
 # Verificar herramientas
@@ -21,6 +21,10 @@ just doctor
 # Ver recetas disponibles
 just --list
 ```
+
+`just setup` ejecuta `just init-config`, que crea `~/.cortex/rook/config.toml`
+solo si no existe; nunca sobrescribe una configuración previa. Rook exige ese
+archivo (o la ruta indicada por `ROOK_CONFIG`) para arrancar.
 
 `just doctor` no instala ni modifica nada. Devuelve código distinto de cero si
 falta una herramienta obligatoria o si Node.js/pnpm no cumplen las versiones
@@ -185,7 +189,7 @@ Comprueba que no haya otro proceso usando la base de datos de prueba. No borres 
 
 ### Dashboard no carga
 
-1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`. Con `cargo run -p rook`, usa el puerto definido en `ServerConfig` (sección `[server]` del archivo indicado por `ROOK_CONFIG` o, si no está definido, `$XDG_CONFIG_HOME/cortex/rook.toml` cuando `XDG_CONFIG_HOME` esté definido, con `~/.config/cortex/rook.toml` como alternativa): `curl http://127.0.0.1:3773/health` solo si contiene `port = 3773`; en otro caso, sustituye `3773` por el puerto configurado.
+1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`. Con `cargo run -p rook`, usa el puerto definido en `ServerConfig` (sección `[server]` del archivo indicado por `ROOK_CONFIG` o, si no está definido, `~/.cortex/rook/config.toml`): `curl http://127.0.0.1:3773/health` solo si contiene `port = 3773`; en otro caso, sustituye `3773` por el puerto configurado.
 2. Comprueba que la sesión de administración sea válida.
 3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
 

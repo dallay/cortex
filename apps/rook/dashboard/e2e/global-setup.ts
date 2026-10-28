@@ -148,7 +148,7 @@ async function globalSetup(): Promise<void> {
 				throw new Error(
 					`[globalSetup] Cannot login with ADMIN_PASSWORD="${ADMIN_PASSWORD}".\n` +
 						`The backend DB was initialized with a different password.\n` +
-						`Fix: delete ~/.local/share/cortex/rook/rook.db, restart rook, then re-run tests.\n` +
+						`Fix: delete ~/.cortex/rook/rook.db, restart rook, then re-run tests.\n` +
 						`Or set ADMIN_PASSWORD env var to match your existing admin password.`,
 				);
 			}

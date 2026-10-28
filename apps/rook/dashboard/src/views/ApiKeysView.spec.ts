@@ -193,6 +193,7 @@ vi.mock("@lucide/vue", () => {
 		ShieldAlert: icon,
 		ChevronLeft: icon,
 		ChevronRight: icon,
+		ChevronDownIcon: icon,
 	};
 });
 
