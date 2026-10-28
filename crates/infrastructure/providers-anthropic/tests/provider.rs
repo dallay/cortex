@@ -206,7 +206,7 @@ async fn responses_message_start_publishes_usage_before_text_error_eof_or_cancel
         let sse = format!(
             "data: {}\n\ndata: {}\n\n{suffix}",
             serde_json::json!({"type":"message_start","message":{"usage":{"input_tokens":12,"output_tokens":0,"cache_read_input_tokens":8,"cache_creation_input_tokens":4}}}),
-            serde_json::json!({"type":"content_block_delta","index":0,"delta":{"text":"hi"}})
+            serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}})
         );
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
@@ -325,7 +325,7 @@ async fn responses_missing_or_unknown_finish_keeps_usage_without_inventing_stop(
             }
             let template = if stream {
                 ResponseTemplate::new(200).set_body_string(format!(
-                    "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
+                    "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
                     serde_json::json!({"type":"message_delta","delta":delta,"usage":{"input_tokens":3,"output_tokens":2}})
                 ))
             } else {
@@ -386,12 +386,16 @@ async fn responses_missing_or_unknown_finish_keeps_usage_without_inventing_stop(
 
 #[tokio::test]
 async fn responses_malformed_or_pending_sse_fails_without_losing_prior_chunks() {
-    for suffix in ["data: {bad}\n\n", "data: {\"type\":\"error\",\"error\":{"] {
+    for suffix in [
+        "data: {bad}\n\n",
+        "data: {\"type\":\"error\",\"error\":{",
+        "data: {\"type\":\"message_delta\"}\n\n",
+    ] {
         for prior in [false, true] {
             let server = MockServer::start().await;
             let prefix = if prior {
                 concat!(
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"hi\"}}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
                 "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}\n\n"
             )
             } else {
@@ -1255,6 +1259,53 @@ async fn complete_sanitizes_error_body_sensitive_data() {
 // ---------------------------------------------------------------------------
 // Streaming tests — stream() SSE parsing
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn responses_stream_skips_well_formed_unknown_event_and_delta() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            concat!(
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n",
+                "data: {\"type\":\"future_event\",\"extra\":true}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"future_delta\",\"value\":7}}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after\"}}\n\n",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2,\"input_tokens\":1}}\n\n",
+                "data: {\"type\":\"message_stop\"}\n\n",
+            ),
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-test"),
+        api_key: "sk-test".to_string(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("claude-3-5-sonnet")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let mut request = make_test_request("claude-3-5-sonnet");
+    request.stream = true;
+    request.metadata.origin = "responses".to_string();
+
+    let chunks = provider
+        .stream(&request)
+        .await
+        .expect("stream should survive unknown events");
+    let chunks = chunks
+        .map(|chunk| chunk.expect("well-formed event should not fail"))
+        .collect::<Vec<_>>()
+        .await;
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.delta.as_str())
+            .collect::<String>(),
+        "beforeafter"
+    );
+}
 
 #[tokio::test]
 async fn stream_returns_chunks_on_anthropic_sse_success() {

@@ -529,7 +529,48 @@ impl AnthropicProvider {
             if data.trim().is_empty() {
                 return vec![];
             }
-            return match serde_json::from_str::<AnthropicStreamEvent>(&data) {
+            let value = match serde_json::from_str::<serde_json::Value>(&data) {
+                Ok(value) => value,
+                Err(_) => {
+                    return vec![Err(CortexError::provider(
+                        "Invalid Anthropic SSE JSON event",
+                    ))]
+                }
+            };
+            let Some(event_type) = value.get("type").and_then(serde_json::Value::as_str) else {
+                return vec![Err(CortexError::provider(
+                    "Invalid Anthropic SSE JSON event",
+                ))];
+            };
+            let known_event = matches!(
+                event_type,
+                "content_block_delta"
+                    | "message_delta"
+                    | "error"
+                    | "message_start"
+                    | "content_block_start"
+                    | "content_block_stop"
+                    | "message_stop"
+                    | "ping"
+            );
+            if !known_event {
+                return vec![];
+            }
+            if event_type == "content_block_delta" {
+                let Some(delta_type) = value
+                    .get("delta")
+                    .and_then(|delta| delta.get("type"))
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    return vec![Err(CortexError::provider(
+                        "Invalid Anthropic SSE JSON event",
+                    ))];
+                };
+                if !matches!(delta_type, "text_delta" | "input_json_delta") {
+                    return vec![];
+                }
+            }
+            return match serde_json::from_value::<AnthropicStreamEvent>(value) {
                 Ok(parsed) => Self::event_to_chunk(parsed, request_id, model, tracker)
                     .into_iter()
                     .collect(),

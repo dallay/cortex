@@ -203,6 +203,16 @@ async fn responses_replay_interleaved_real_sse_output_is_one_turn() {
 }
 
 pub(super) fn fixture(name: &str, body: &str) {
+    if name.is_empty()
+        || name.contains(['/', '\\'])
+        || name == "."
+        || name == ".."
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        panic!("fixture name must be a safe filename: {name:?}");
+    }
     if let Some(directory) = std::env::var_os("ROOK_RESPONSES_FIXTURES_DIR") {
         std::fs::write(std::path::Path::new(&directory).join(name), body).unwrap();
     }
