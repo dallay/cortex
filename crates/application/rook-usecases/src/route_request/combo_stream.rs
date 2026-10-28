@@ -513,7 +513,7 @@ impl RouteRequest {
     }
 }
 
-fn stream_error_status(error: &CortexError) -> RequestStatus {
+pub(super) fn stream_error_status(error: &CortexError) -> RequestStatus {
     if error.is_rate_limited() {
         RequestStatus::RateLimited
     } else {

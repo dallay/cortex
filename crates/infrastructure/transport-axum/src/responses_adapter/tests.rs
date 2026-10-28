@@ -68,3 +68,83 @@ fn nonstream_partial_tool_arguments_preserve_incomplete_state() {
     assert_eq!(body["status"], "incomplete");
     assert_eq!(body["output"][0]["arguments"], "{\"a\":");
 }
+
+
+#[test]
+fn test_valid_name_and_valid_id() {
+    assert!(valid_name("tool_name-123"));
+    assert!(!valid_name(""));
+    assert!(!valid_name(&"a".repeat(65)));
+    assert!(!valid_name("invalid name!"));
+
+    assert!(valid_id("id-123"));
+    assert!(!valid_id(""));
+    assert!(!valid_id(&"a".repeat(257)));
+    assert!(!valid_id("id\nwith\ncontrol"));
+}
+
+#[test]
+fn test_validate_replay_cases() {
+    assert!(validate_replay(&Some("valid_id".into()), &Some("completed".into())).is_ok());
+    assert!(validate_replay(&Some("valid_id".into()), &Some("incomplete".into())).is_ok());
+    assert!(validate_replay(&Some("".into()), &Some("completed".into())).is_err());
+    assert!(validate_replay(&Some("valid_id".into()), &Some("other".into())).is_err());
+}
+
+#[test]
+fn test_responses_request_validation_errors() {
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": "hi", "max_output_tokens": 0
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": "hi", "temperature": -1.0
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": "hi", "store": true
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": []
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": [{"role": "unknown", "content": "hi"}]
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": [{"type": "function_call", "call_id": "c", "name": "f", "arguments": "invalid_json"}]
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": [{"type": "function_call_output", "call_id": "unmatched", "output": "o"}]
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+}
+
+#[test]
+fn test_responses_request_tool_choice_validation() {
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": "hi", "tool_choice": "required"
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+
+    let req: ResponsesRequest = serde_json::from_value(json!({
+        "model": "m", "input": "hi", "tool_choice": {"type": "function", "name": "undeclared"}
+    })).unwrap();
+    assert!(req.into_domain().is_err());
+}
+
+#[test]
+fn test_response_context_envelope_content_filter() {
+    let ctx = context();
+    let env = ctx.envelope("completed", vec![], None, Some(FinishReason::ContentFilter));
+    assert_eq!(env["incomplete_details"]["reason"], "content_filter");
+}

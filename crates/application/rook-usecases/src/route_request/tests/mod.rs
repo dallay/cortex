@@ -4704,3 +4704,36 @@ async fn streaming_normal_alias_still_resolves() {
         "normal alias must still resolve in streaming path"
     );
 }
+
+
+
+
+#[test]
+fn test_stream_error_status_variants() {
+    let rl_err = CortexError::rate_limited(ProviderId::new("p"), 10);
+    assert_eq!(combo_stream::stream_error_status(&rl_err), RequestStatus::RateLimited);
+
+    let other_err = CortexError::provider("some error");
+    assert_eq!(combo_stream::stream_error_status(&other_err), RequestStatus::Failure);
+}
+
+#[test]
+fn test_classify_connection_adapter_unusable_unavailable() {
+    struct UnavailProvider;
+    #[async_trait]
+    impl ProviderPort for UnavailProvider {
+        fn id(&self) -> &ProviderId { static P: std::sync::LazyLock<ProviderId> = std::sync::LazyLock::new(|| ProviderId::new("p")); &P }
+        fn supported_models(&self) -> &[shared_kernel::ModelId] { &[] }
+        fn api_format(&self) -> ApiFormat { ApiFormat::OpenAI }
+        fn is_available(&self) -> bool { false }
+        async fn health_check(&self) -> HealthStatus { HealthStatus::Healthy { provider: ProviderId::new("p"), latency_ms: 5 } }
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse, CortexError> { Err(CortexError::provider("no")) }
+        async fn stream(&self, _: &CompletionRequest) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError> { Err(CortexError::provider("no")) }
+    }
+
+    let p = UnavailProvider;
+    let pid = ProviderId::new("p");
+    let model = shared_kernel::ModelId::new("m");
+    let dec = classify_connection_adapter(&p, &pid, &model, &[]);
+    assert_eq!(dec, ConnectionAdapterDecision::Unusable("provider_unavailable"));
+}
