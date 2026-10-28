@@ -136,7 +136,9 @@ cargo test --locked -p huginn --features experimental-wasm --test guardrails
 Real-component tests rebuild the guest separately and package it using pinned
 Rust development dependencies. They do not require a globally installed
 `wasm-tools`, use checked-in binaries, or silently skip a missing target. Their
-guest build uses a separate target directory and removes host coverage flags.
+guest build uses a separate target directory and removes host coverage flags,
+compiler wrappers, and coverage-specific environment markers from that child
+command only. Host tests remain instrumented by the parent coverage run.
 The pure parser also runs natively. Generated ABI bindings live in the small
 `huginn-outline-bindings` dependency so external generated export macros retain
 their hygiene; all workspace crates retain `unsafe_code = "deny"`, with no
