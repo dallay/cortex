@@ -622,7 +622,7 @@ async fn responses_anthropic_usage_omissions_retain_updated_counters_and_zeros()
                 let mut sse = anthropic_initial_usage()
                     + &format!(
                         "data: {}\n\ndata: {}\n\n",
-                        json!({"type":"content_block_delta","index":0,"delta":{"text":"hi"}}),
+                        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}),
                         json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":14,"cache_read_input_tokens":10,"cache_creation_input_tokens":5,"output_tokens":2}})
                     );
                 if zero {
@@ -796,7 +796,7 @@ async fn responses_anthropic_initial_usage_survives_error_eof_and_commits_select
                 if text {
                     sse += &format!(
                         "data: {}\n\n",
-                        json!({"type":"content_block_delta","index":0,"delta":{"text":"observed"}})
+                        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"observed"}})
                     );
                 }
                 sse += suffix;

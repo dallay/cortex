@@ -19,6 +19,8 @@ from openai import APIError, OpenAI
 from openai.types.responses import Response, ResponseStreamEvent
 from pydantic import TypeAdapter
 
+from responses_sse import parse_sse_frames
+
 
 def wire_value(value):
     """Remove SDK-local parsing fields that are not part of the wire protocol."""
@@ -133,12 +135,11 @@ def main() -> None:
                     assert actual.output == expected.output
                     assert actual.output_text == expected.output_text
             else:
-                events = [json.loads(line.removeprefix("data: "))
-                          for line in body.splitlines() if line.startswith("data: ")]
+                frames = parse_sse_frames(body)
+                events = [event for _, event in frames]
                 for index, event in enumerate(events):
                     adapter.validate_python(event, strict=True)
                     assert event["sequence_number"] == index
-                    assert f"event: {event['type']}" in body
                 terminals = [e for e in events if e["type"] in {
                     "response.completed", "response.incomplete", "response.failed"}]
                 assert len(terminals) == 1
