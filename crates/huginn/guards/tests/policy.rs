@@ -130,3 +130,61 @@ fn project_paths_survive_workspace_aliases_and_absolute_requests() {
         .check_path(&workspace, &workspace.join("alias-file"))
         .is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn new_descendants_resolve_existing_aliases_and_dangling_aliases_fail_closed() {
+    use std::{os::unix::fs::symlink, path::Path};
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("private")).unwrap();
+    symlink("private", root.path().join("alias")).unwrap();
+    symlink("missing", root.path().join("dangling")).unwrap();
+    let policy = Guardrails::from_toml("block_paths=['private']").unwrap();
+    for name in ["alias/new/deep/file", "dangling", "dangling/new"] {
+        assert!(
+            policy.check_path(root.path(), Path::new(name)).is_err(),
+            "{name}"
+        );
+    }
+    assert!(policy
+        .check_path(root.path(), Path::new("public/new/deep/file"))
+        .is_ok());
+}
+
+#[test]
+fn normalized_project_prefixes_keep_component_boundaries() {
+    use std::path::Path;
+    let root = tempfile::tempdir().unwrap();
+    let policy = Guardrails::from_toml("block_paths=['private/data']").unwrap();
+    for name in [
+        "private/data/new",
+        "public/../private/data/new",
+        "private/data",
+    ] {
+        assert!(
+            policy.check_path(root.path(), Path::new(name)).is_err(),
+            "{name}"
+        );
+    }
+    for name in [
+        "private/database",
+        "private/data-other/new",
+        "public/private/data",
+    ] {
+        assert!(
+            policy.check_path(root.path(), Path::new(name)).is_ok(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn unavailable_workspace_fails_even_for_an_ordinary_new_path() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(Guardrails::default()
+        .check_path(
+            &root.path().join("missing"),
+            std::path::Path::new("public.txt")
+        )
+        .is_err());
+}

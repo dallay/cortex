@@ -120,3 +120,31 @@ async fn collisions_roll_back_and_ids_are_sorted() {
     supervisor.shutdown().await;
     assert!(hooks.ids().is_empty());
 }
+
+#[tokio::test]
+async fn removed_hook_ids_can_be_registered_by_a_new_generation() {
+    let hooks = Arc::new(ToolHooks::default());
+    let (mut supervisor, result) = compose(
+        hooks.clone(),
+        vec![Author {
+            id: "guard",
+            hooks: vec![("guard.shell", Arc::new(Probe))],
+            fail: false,
+        }],
+    )
+    .await;
+    result.unwrap();
+    supervisor.remove("guard").await.unwrap();
+    assert!(hooks.ids().is_empty());
+    supervisor
+        .register(Box::new(Author {
+            id: "guard",
+            hooks: vec![("guard.shell", Arc::new(Probe))],
+            fail: false,
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    assert_eq!(hooks.ids(), ["guard.shell"]);
+    supervisor.shutdown().await;
+    assert!(hooks.ids().is_empty());
+}

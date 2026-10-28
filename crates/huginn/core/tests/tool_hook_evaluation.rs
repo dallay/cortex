@@ -53,6 +53,8 @@ impl ToolHook for Probe {
             Behavior::Note(note) => Ok(Some(note.clone())),
             Behavior::Fail => Err(AgentError::Tool("injected".into())),
             Behavior::LongFail(text) => Err(AgentError::Tool(text.clone())),
+            Behavior::Hang => std::future::pending().await,
+            Behavior::Panic => panic!("after hook panicked"),
             _ => Ok(None),
         }
     }
@@ -242,4 +244,130 @@ async fn long_before_error_includes_prefix_within_utf8_budget() {
 #[tokio::test]
 async fn long_after_error_includes_prefix_within_utf8_budget() {
     assert_bounded_error(&long_error_output(true).await);
+}
+
+#[tokio::test]
+async fn after_failures_are_visible_and_do_not_skip_later_hooks() {
+    for (behavior, expected) in [
+        (Behavior::Fail, "injected"),
+        (Behavior::Hang, "timed out"),
+        (Behavior::Panic, "panicked"),
+    ] {
+        let hooks = Arc::new(ToolHooks::with_timeout(Duration::from_millis(20)));
+        let (failing, _) = probe(behavior);
+        let (later, _) = probe(Behavior::Note("later observation".into()));
+        let (mut supervisor, result) = compose(
+            hooks.clone(),
+            vec![Author {
+                id: "after-errors",
+                hooks: vec![("z.later", later), ("a.failing", failing)],
+                fail: false,
+            }],
+        )
+        .await;
+        result.unwrap();
+        let notes = hooks
+            .after(
+                &call(),
+                ToolOutcome {
+                    output: "failed effect",
+                    is_error: true,
+                },
+                &context(),
+            )
+            .await;
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].hook, "a.failing");
+        assert!(notes[0].text.starts_with("hook failed: "));
+        assert!(notes[0].text.contains(expected), "{}", notes[0].text);
+        assert_eq!(notes[1].hook, "z.later");
+        assert_eq!(notes[1].text, "later observation");
+        supervisor.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn sanitized_empty_notes_are_omitted_and_multibyte_notes_end_at_a_character_boundary() {
+    let hooks = Arc::new(ToolHooks::default());
+    let (empty, _) = probe(Behavior::Note("\u{0}\u{1b}\u{200e}\u{2069}".into()));
+    let (unicode, _) = probe(Behavior::Note(format!("\t\n{}", "🦀".repeat(2048))));
+    let (mut supervisor, result) = compose(
+        hooks.clone(),
+        vec![Author {
+            id: "sanitize",
+            hooks: vec![("a.empty", empty), ("b.unicode", unicode)],
+            fail: false,
+        }],
+    )
+    .await;
+    result.unwrap();
+    let notes = hooks
+        .after(
+            &call(),
+            ToolOutcome {
+                output: "ok",
+                is_error: false,
+            },
+            &context(),
+        )
+        .await;
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].hook, "b.unicode");
+    assert_eq!(
+        notes[0].text,
+        format!(
+            "\t\n{}",
+            "🦀".repeat((huginn_core::hooks::MAX_NOTE_BYTES - 2) / 4)
+        )
+    );
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn dropping_a_before_evaluation_cancels_the_hook_future() {
+    struct PendingHook {
+        started: Arc<tokio::sync::Notify>,
+        dropped: Arc<AtomicUsize>,
+    }
+    struct OnDrop(Arc<AtomicUsize>);
+    impl Drop for OnDrop {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    #[async_trait]
+    impl ToolHook for PendingHook {
+        async fn before(&self, _: &ToolCall, _: &ToolContext) -> Result<ToolVerdict> {
+            let _guard = OnDrop(self.dropped.clone());
+            self.started.notify_one();
+            std::future::pending().await
+        }
+    }
+    let hooks = Arc::new(ToolHooks::default());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (mut supervisor, result) = compose(
+        hooks.clone(),
+        vec![Author {
+            id: "pending",
+            hooks: vec![(
+                "pending.hook",
+                Arc::new(PendingHook {
+                    started: started.clone(),
+                    dropped: dropped.clone(),
+                }),
+            )],
+            fail: false,
+        }],
+    )
+    .await;
+    result.unwrap();
+    let evaluation = tokio::spawn(async move { hooks.before(&call(), &context()).await });
+    tokio::time::timeout(Duration::from_secs(1), started.notified())
+        .await
+        .unwrap();
+    evaluation.abort();
+    assert!(evaluation.await.unwrap_err().is_cancelled());
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    supervisor.shutdown().await;
 }

@@ -101,12 +101,12 @@ impl ToolRegistry for Tools {
         Some(self.0.clone())
     }
 }
-struct Approve(Arc<Counts>);
+struct Approve(Arc<Counts>, bool);
 #[async_trait]
 impl ApprovalPrompt for Approve {
     async fn request_decision(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
         self.0.prompts.fetch_add(1, Ordering::SeqCst);
-        Ok(true)
+        Ok(self.1)
     }
 }
 #[derive(Default)]
@@ -164,6 +164,14 @@ async fn run_with_output(
     hooks: Vec<HookPlugin>,
     output: String,
 ) -> (Arc<Counts>, Session, Vec<Event>) {
+    run_with_decision(hooks, output, true).await
+}
+
+async fn run_with_decision(
+    hooks: Vec<HookPlugin>,
+    output: String,
+    approved: bool,
+) -> (Arc<Counts>, Session, Vec<Event>) {
     let counts = Arc::new(Counts::default());
     let memory = Arc::new(Memory::default());
     let mut supervisor = composition::build(
@@ -187,7 +195,10 @@ async fn run_with_output(
     let implementation = supervisor
         .resolve::<LoopService>(&composition::loop_id())
         .unwrap();
-    let policy = HostPolicy::new(Arc::new(Approve(counts.clone())), Default::default());
+    let policy = HostPolicy::new(
+        Arc::new(Approve(counts.clone(), approved)),
+        Default::default(),
+    );
     let events = Events::default();
     let mut session = Session::new(".".into());
     implementation
@@ -325,5 +336,190 @@ async fn annotated_results_reserve_visible_notes_within_the_output_budget() {
                 .all(|input| input == &(expected_input.clone(), false)));
             drop(inputs);
         }
+    }
+}
+
+struct ObserveOutcome(Arc<Mutex<Vec<(String, bool)>>>);
+#[async_trait]
+impl ToolHook for ObserveOutcome {
+    async fn after(
+        &self,
+        _: &ToolCall,
+        outcome: ToolOutcome<'_>,
+        _: &ToolContext,
+    ) -> Result<Option<String>> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((outcome.output.into(), outcome.is_error));
+        Ok(Some("observed".into()))
+    }
+}
+
+#[tokio::test]
+async fn continuing_hooks_cannot_override_a_host_denial_and_observe_the_error() {
+    let observed = Arc::new(Mutex::new(vec![]));
+    let (counts, session, events) = run_with_decision(
+        vec![HookPlugin(
+            "note.outcome",
+            Arc::new(ObserveOutcome(observed.clone())),
+        )],
+        "must not execute".into(),
+        false,
+    )
+    .await;
+    assert_eq!(counts.prepared.load(Ordering::SeqCst), 1);
+    assert_eq!(counts.prompts.load(Ordering::SeqCst), 1);
+    assert_eq!(counts.executed.load(Ordering::SeqCst), 0);
+    let observations = observed.lock().unwrap();
+    assert_eq!(observations.len(), 1);
+    assert!(observations[0].1);
+    assert!(observations[0].0.contains("action denied by user"));
+    assert_eq!(
+        tool_result(&session),
+        format!("{}\n\n[hook note.outcome] observed", observations[0].0)
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::ApprovalResolved {
+            approved: false,
+            ..
+        }
+    )));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::ToolFinished { is_error: true, .. })));
+}
+
+struct FailedAfter;
+#[async_trait]
+impl ToolHook for FailedAfter {
+    async fn after(
+        &self,
+        _: &ToolCall,
+        _: ToolOutcome<'_>,
+        _: &ToolContext,
+    ) -> Result<Option<String>> {
+        Err(huginn_core::AgentError::Tool("observer unavailable".into()))
+    }
+}
+
+#[tokio::test]
+async fn an_after_failure_preserves_the_successful_effect_and_original_outcome_for_later_hooks() {
+    let observed = Arc::new(Mutex::new(vec![]));
+    let (counts, session, events) = run_with_output(
+        vec![
+            HookPlugin("a.failure", Arc::new(FailedAfter)),
+            HookPlugin("z.observe", Arc::new(ObserveOutcome(observed.clone()))),
+        ],
+        "executed".into(),
+    )
+    .await;
+    assert_eq!(counts.executed.load(Ordering::SeqCst), 1);
+    assert_eq!(*observed.lock().unwrap(), [("executed".into(), false)]);
+    assert_eq!(tool_result(&session), "executed\n\n[hook a.failure] hook failed: tool: observer unavailable\n\n[hook z.observe] observed");
+    assert!(events.iter().any(|event| matches!(event, Event::ToolFinished { output, is_error: false, .. } if output == tool_result(&session))));
+}
+
+#[tokio::test]
+async fn cancellation_during_before_or_after_hooks_drops_pending_work_without_finishing_the_tool() {
+    use huginn_core::AgentError;
+    use std::time::Duration;
+    struct Pending {
+        after: bool,
+        started: Arc<tokio::sync::Notify>,
+        dropped: Arc<AtomicUsize>,
+    }
+    struct OnDrop(Arc<AtomicUsize>);
+    impl Drop for OnDrop {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    impl Pending {
+        async fn wait<T>(&self) -> T {
+            let _guard = OnDrop(self.dropped.clone());
+            self.started.notify_one();
+            std::future::pending().await
+        }
+    }
+    #[async_trait]
+    impl ToolHook for Pending {
+        async fn before(&self, _: &ToolCall, _: &ToolContext) -> Result<ToolVerdict> {
+            if self.after {
+                Ok(ToolVerdict::Continue)
+            } else {
+                self.wait().await
+            }
+        }
+        async fn after(
+            &self,
+            _: &ToolCall,
+            _: ToolOutcome<'_>,
+            _: &ToolContext,
+        ) -> Result<Option<String>> {
+            self.wait().await
+        }
+    }
+    for after in [false, true] {
+        let counts = Arc::new(Counts::default());
+        let mut supervisor = composition::build(
+            Arc::new(ShellModel),
+            Arc::new(Tools(Arc::new(Shell(counts.clone(), "executed".into())))),
+            Arc::new(Memory::default()),
+            LoopConfig::default(),
+            Arc::new(Instructions),
+        )
+        .await
+        .unwrap();
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(AtomicUsize::new(0));
+        supervisor
+            .register(Box::new(HookPlugin(
+                "pending",
+                Arc::new(Pending {
+                    after,
+                    started: started.clone(),
+                    dropped: dropped.clone(),
+                }),
+            )))
+            .unwrap();
+        supervisor.start().await.unwrap();
+        let implementation = supervisor
+            .resolve::<LoopService>(&composition::loop_id())
+            .unwrap();
+        let policy = HostPolicy::new(Arc::new(Approve(counts.clone(), true)), Default::default());
+        let cancel = CancellationToken::new();
+        let events = Events::default();
+        let mut session = Session::new(".".into());
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(
+                implementation.0.run(
+                    &mut session,
+                    "clean up".into(),
+                    &policy,
+                    &events,
+                    cancel.clone()
+                ),
+                async {
+                    started.notified().await;
+                    cancel.cancel();
+                },
+            )
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(AgentError::Cancelled)));
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert_eq!(counts.prepared.load(Ordering::SeqCst), usize::from(after));
+        assert_eq!(counts.prompts.load(Ordering::SeqCst), usize::from(after));
+        assert_eq!(counts.executed.load(Ordering::SeqCst), usize::from(after));
+        assert!(!events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, Event::ToolFinished { .. })));
+        supervisor.shutdown().await;
     }
 }
