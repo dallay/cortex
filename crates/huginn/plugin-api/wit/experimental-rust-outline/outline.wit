@@ -1,0 +1,17 @@
+package huginn:rust-outline@0.1.0;
+
+// Experimental contract. The host alone creates resources; the guest cannot
+// open paths, create grants, or retain an owned file between invocations.
+interface snapshots {
+    resource snapshot {
+        size: func() -> u32;
+        read: func(offset: u32, length: u32) -> result<list<u8>, string>;
+    }
+}
+
+world rust-outline {
+    import snapshots;
+    use snapshots.{snapshot};
+    // UTF-8 JSON, bounded and validated by the host before model consumption.
+    export outline: func(file: borrow<snapshot>) -> string;
+}

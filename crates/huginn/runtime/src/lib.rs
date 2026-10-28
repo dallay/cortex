@@ -12,3 +12,5 @@ pub mod providers;
 pub mod sessions;
 pub mod skills;
 pub mod tools;
+#[cfg(feature = "experimental-wasm")]
+pub mod wasm;
