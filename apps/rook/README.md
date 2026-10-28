@@ -70,10 +70,10 @@ cargo build --release -p rook
 ### Run
 
 ```bash
-# Basic run (no config file)
+# Basic run (reads ~/.cortex/rook/config.toml)
 cargo run --release -p rook
 
-# With config file
+# With an explicit config file
 ROOK_CONFIG=./rook.toml cargo run --release -p rook
 ```
 
@@ -81,7 +81,7 @@ ROOK_CONFIG=./rook.toml cargo run --release -p rook
 
 ```bash
 # 1. Start Rook
-ROOK_CONFIG=./rook.toml cargo run --release -p rook
+cargo run --release -p rook
 
 # 2. Access dashboard at http://localhost:3773/dashboard/
 
