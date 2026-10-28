@@ -3,7 +3,9 @@
 set -euo pipefail
 
 if command -v codegraph >/dev/null 2>&1; then
-  codegraph init
+  if ! codegraph init; then
+    printf '%s\n' 'CodeGraph initialization failed; continuing setup without an index.' >&2
+  fi
 else
   printf '%s\n' 'CodeGraph CLI not found; skipping index initialization. Install codegraph and rerun setup to enable it.'
 fi

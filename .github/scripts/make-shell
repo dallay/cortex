@@ -2,8 +2,7 @@
 """Run Make recipes after loading dotenv values with python-dotenv-style parsing."""
 
 import os
-import shlex
-import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -45,7 +44,9 @@ def main() -> int:
     shell_args = sys.argv[1:]
     if not shell_args:
         return 0
-    return subprocess.run(["/bin/bash", *shell_args], env=os.environ.copy(), check=False).returncode
+    bash = shutil.which("bash") or "/bin/bash"
+    os.execve(bash, [bash, *shell_args], os.environ)
+    return 0
 
 
 if __name__ == "__main__":
