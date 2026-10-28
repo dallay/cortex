@@ -1,4 +1,4 @@
-# Copy to the OS config directory at cortex/huginn/config.toml, or use --config.
+# Copy to ~/.cortex/huginn/config.toml, or use --config.
 provider = "openai" # "mock" for an offline diagnostic
 base_url = "http://127.0.0.1:8000/v1"
 # Required for this local HTTP example; defaults to false. Never permits LAN HTTP.
@@ -7,7 +7,7 @@ allow_loopback_http = true
 model = "your-tool-capable-model"
 api_key_env = "HUGINN_API_KEY" # empty string disables authentication
 # Only HUGINN_API_KEY falls back to legacy AGENT_API_KEY when unavailable.
-# db = "/absolute/path/to/sessions.db" # default: OS data directory/cortex/huginn/
+# db = "/absolute/path/to/sessions.db" # default: ~/.cortex/huginn/sessions.db
 timeout_secs = 120
 tool_timeout_secs = 60
 max_iterations = 20

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 sys.dont_write_bytecode = True
@@ -27,6 +28,21 @@ class InventoryTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(gate.ROOT / filename, target)
 
+    def test_cli_rejects_semgrep_command_override(self):
+        with (
+            patch.object(gate, "ROOT", self.root),
+            patch.object(gate, "check_inventory"),
+            patch.object(gate, "scanner_controls") as scanner_controls,
+            patch("sys.argv", ["check-semgrep-path-exceptions.py", "--output-dir", str(self.root)]),
+        ):
+            gate.main()
+        self.assertEqual(scanner_controls.call_args.args[0], self.root)
+
+        with patch("sys.argv", ["check-semgrep-path-exceptions.py", "--semgrep-command", "sh"]):
+            with self.assertRaises(SystemExit) as error:
+                gate.main()
+        self.assertEqual(error.exception.code, 2)
+
     def mutate(self, filename, original, replacement):
         target = self.root / filename
         content = target.read_text()
@@ -34,6 +50,21 @@ class InventoryTests(unittest.TestCase):
         target.write_text(content.replace(original, replacement, 1))
         with self.assertRaises(ValueError):
             gate.check_inventory(self.root)
+
+    def test_semgrep_fixture_git_visibility_is_initialized(self):
+        target = self.root / "positive.rs"
+        target.write_text("fn read(path: &str) -> std::io::Result<String> {\n    std::fs::read_to_string(path)\n}\n")
+        gate.initialize_fixture_repository(self.root, target)
+        status = subprocess.run(
+            ["git", "-C", str(self.root), "status", "--short", "--", target.name],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(status, "")
+        tracked = subprocess.run(
+            ["git", "-C", str(self.root), "ls-files", "--error-unmatch", "--", target.name],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(tracked.returncode, 0, tracked.stderr)
 
     def test_exact_inventory_passes(self):
         gate.check_inventory(self.root)
