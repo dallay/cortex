@@ -110,6 +110,8 @@ const routeCases = [
   ['.github/scripts/ci-quality-ruleset.cjs', ['github']],
   ['.github/scripts/ci-quality-ruleset.test.cjs', ['github']],
   ['.github/scripts/ci-workflow.test.cjs', ['github']],
+  ['.github/scripts/check-semgrep-path-exceptions.py', ['github']],
+  ['.github/scripts/test-semgrep-path-exceptions.py', ['github']],
   ['.github/ci-path-filters.json', ['github']],
   ['.github/ci-quality-policy.json', ['github']],
   // El paquete completo incluye el dashboard: se aceptan controles backend adicionales.
@@ -219,6 +221,21 @@ for (const eventName of ['pull_request', 'push']) {
     assert.match(script, /--exit-code 1/);
   });
 }
+
+it('falla solo ante findings Semgrep activos, no ante excepciones SARIF en source', () => {
+  const scan = jobBlock('semgrep-pr');
+  assert.match(scan, /FINDINGS_COUNT=.*suppressions/);
+  assert.match(scan, /select\(\(\.suppressions \/\/ \[\]\) \| length == 0\)/);
+});
+
+it('autentica los controles y el escaneo Semgrep con el secret de CI', () => {
+  const scan = jobBlock('semgrep-pr');
+  for (const name of ['Check exact path exceptions and scanner controls', 'Run Semgrep SAST scan']) {
+    const step = scan.match(new RegExp(`^      - name: ${name}\\n([\\s\\S]*?)(?=^      - )`, 'm'))?.[1];
+    assert.ok(step, name);
+    assert.match(step, /SEMGREP_APP_TOKEN: \$\{\{ secrets\.SEMGREP_APP_TOKEN \}\}/);
+  }
+});
 
 it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   const contract = jobBlock('ci-contract');

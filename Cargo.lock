@@ -2061,6 +2061,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "huginn-guards"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "huginn-plugin-api",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
 name = "huginn-plugin-api"
 version = "0.0.1"
 dependencies = [
@@ -2119,6 +2132,8 @@ dependencies = [
  "futures",
  "huginn-application",
  "huginn-core",
+ "huginn-guards",
+ "huginn-plugin-api",
  "keyring",
  "libc",
  "process-wrap",

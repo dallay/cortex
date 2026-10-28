@@ -160,26 +160,38 @@ Para detalles completos de arquitectura Docker y troubleshooting, ver [dev/READM
 
 ## Validación pre-PR
 
-### `just ci-local` vs `just ci-ci`
+### `just ci` — gates locales de PR
 
-| Comando | Lint | Arquitectura Huginn | Tests Rust | Tests Dashboard | Docs Rust | Auditoría | E2E Docker |
-|---------|------|---------------------|------------|-----------------|-----------|-----------|------------|
-| `just ci-local` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `just ci-ci` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+`just ci` ejecuta en secuencia y detiene el proceso ante el primer fallo. Incluye los gates bloqueantes aplicables a una PR: instalación congelada de dependencias, contratos CI, pruebas de doctor e issue labeler, build del dashboard, markdown, formato, Clippy, arquitectura de Huginn, compilación, suites Rust y frontend, documentación, auditoría de dependencias, escáneres de seguridad, cobertura y E2E.
 
 ```bash
-# Validación local completa (recomendado antes de PR)
-just ci-local
+# Suite local de PR, recomendada antes de abrir o actualizar un PR
+just ci
 
-# Solo linting (fast feedback)
+# Atajos para iteración focalizada
 just ci-lint
-
-# Simulación de CI (sin E2E, para iteración rápida)
+just ci-check-only
+just ci-test-only
 just ci-ci
 ```
 
-> **Nota:** `just ci-ci` omite la validación de arquitectura Huginn y E2E.
-> `just ci-local` incluye ambos pasos. Consulta `justfile` para la secuencia exacta.
+`just ci-local` se conserva como alias compatible de `just ci`. `just ci-ci` es un atajo anterior sin E2E ni todos los gates; no sustituye `just ci` y `just ci-audit` ya es bloqueante cuando se llama directamente.
+
+`just ci` requiere las dependencias del repositorio y las herramientas `cargo-audit`, `cargo-llvm-cov`, Docker, Gitleaks, `jq` y `uv`. `uv` prepara temporalmente Semgrep `1.126.0` (la versión fijada en GitHub Actions), con `setuptools<81` para mantener compatible el import de `pkg_resources`; Trivy debe estar instalado. Los artefactos temporales de coverage y Semgrep se guardan en `~/.cache/cortex-ci` por defecto; `CORTEX_CI_TMPDIR` puede cambiar esa ubicación. La receta no instala herramientas del sistema; si falta una dependencia, el paso falla. Docker debe estar iniciado para E2E.
+
+| Gate de GitHub Actions | Validación local | Límite local |
+|------------------------|-----------------|--------------|
+| Contratos CI | `node --test .github/scripts/ci-*.test.cjs` | Incluye el contrato del propio runner local. |
+| Doctor e issue labeler | `just doctor-test` y pruebas Node del labeler | Sin diferencia funcional prevista. |
+| Build dashboard, fmt, Markdown, Clippy, check, Rust tests, frontend, docs y cargo audit | Mismos comandos y configuración del workflow | Las dependencias se comparten desde el checkout local. |
+| Coverage Rust (87% líneas) y frontend | Generación local de ambos reportes y umbrales configurados | No carga reportes a Codecov. |
+| Trivy y Semgrep | Mismos escáneres/reglas y severidades; Semgrep usa `jq` para detectar findings SARIF sin supresión | GitHub Actions publica SARIF; los reportes locales se borran al terminar cada escaneo. |
+| Gitleaks | Escanea desde el merge-base de `CI_BASE_REF` hasta `HEAD` | GitHub analiza el rango exacto de commits de la PR; el clone local puede tener distinta profundidad. Define `CI_BASE_REF` si la ref local predeterminada `origin/main` no corresponde al target del PR. |
+| E2E | Requiere Docker y la imagen/flujo de `dev/e2e` | El entorno local puede diferir de `ubuntu-latest`. |
+| SonarCloud | No se ejecuta | Requiere `SONAR_TOKEN` y acceso al servicio remoto. |
+| Cross-compile Windows y builds de push | No incluidos en la suite de PR | Son validaciones exclusivas de push en GitHub Actions. |
+
+Consulta `.github/workflows/ci.yml` y `justfile` para la secuencia fuente de verdad. `just ci-local` y `just ci-ci` permanecen disponibles para compatibilidad, pero solo `just ci` representa la suite local completa de gates de PR.
 
 ## Troubleshooting
 

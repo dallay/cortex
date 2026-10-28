@@ -42,7 +42,7 @@ Hexagonal architecture is a dependency and responsibility model, not a requireme
 - Apply least privilege, secure defaults, explicit permission boundaries, and defense in depth.
 - Never hardcode, expose, or log credentials, tokens, secrets, or sensitive payloads.
 - Preserve workspace `unsafe_code = "deny"` and clippy with `-D warnings`. Do not weaken them to make a change compile.
-- Preserve the blocking CI security gates: gitleaks (`.gitleaks.toml`), semgrep ERROR findings for Rust, Dockerfiles and GitHub Actions, trivy, and cargo audit. `just ci-audit` is advisory and does not replace those gates.
+- Preserve the blocking CI security gates: gitleaks (`.gitleaks.toml`), semgrep ERROR findings for Rust, Dockerfiles and GitHub Actions, trivy, and cargo audit. `just ci-audit` ejecuta `cargo audit` como control bloqueante: si la auditoría falla, CI falla. No sustituye los otros controles de seguridad.
 - Fail securely on authorization and integrity violations. Do not silently bypass security controls to maintain availability.
 - Protect against injection, path traversal, unauthorized execution, sensitive data disclosure, and resource exhaustion where applicable.
 - Evaluate the security impact of new dependencies, external integrations, and changes to execution permissions.

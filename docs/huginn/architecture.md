@@ -175,6 +175,28 @@ pub trait ToolRegistry: Send + Sync {
 }
 ```
 
+### Puerto de registro de herramientas
+
+`huginn-core::tools` define el puerto `ToolRegistration` y el servicio
+`ToolRegistrationService`, reexportados por `huginn-plugin-api::v1::tools`.
+`RegistryPlugin` añade `agent:tool-registration@1` sin sustituir sus servicios
+anteriores ni cambiar sus tipos. El adaptador delega en el mismo registro de
+runtime y reutiliza sus leases, publicación en commit y revocación por generación.
+Core y plugin-api no dependen de runtime ni contienen el I/O de herramientas.
+El puerto no modifica `HostPolicy`, las aprobaciones ni los hooks restrict-only.
+
+### Tool hooks
+
+La [biblioteca de rutas y shell `huginn-guards`](guardrails.md) ofrece comprobaciones
+explícitas. La raíz CLI carga desde `session.workspace` una instantánea y selecciona
+el builder protegido para run/chat/resume, antes de bifurcar hacia línea o TUI.
+
+`huginn-core::hooks::ToolHooks` is a generation-owned registry published as
+`agent:tool-hooks@1`. The loop asks it about every tool call before
+`prepare`. A `Block` verdict, or a failing hook, ends the call with an error and
+no approval prompt. Hooks have no verdict that grants authorization
+([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
+
 ### SessionStore
 
 Persistent session management:

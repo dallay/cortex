@@ -33,6 +33,7 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0013](0013-authorable-plugin-contract-and-loading.md) | Contrato de plugins extensible y estrategia futura de carga | Accepted para el contrato in-process; la carga en runtime, hot reload y sandboxing quedan diferidos |
 | [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Providers integrados y routing del modelo por turno | Dirección Accepted; el estado de entregas y su aceptación se registran por separado |
 | [ADR-0015](0015-separate-product-releases-from-cargo-publishing.md) | Separar releases de producto de publicación Cargo | Accepted; la publicación de Huginn sigue condicionada a la aceptación del producto |
+| [ADR-0016](0016-restrict-only-tool-hooks.md) | Hooks de herramientas que solo restringen | Proposed; complementa ADR-0007 y ADR-0013 sin ceder autoridad de aprobación |
 
 ## Record format
 

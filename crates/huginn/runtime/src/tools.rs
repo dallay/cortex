@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use huginn_core::{
+    tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},
     AgentError, ApprovalRequest, PreparedAction, Result, Tool, ToolCall, ToolContext,
     ToolDefinition, ToolRegistry,
 };
@@ -118,6 +119,12 @@ impl Registry {
         ctx: &mut huginn_core::kernel::PluginContext,
         tool: Arc<dyn Tool>,
     ) -> Result<()> {
+        let registry = ctx.resolve::<Self>(&registry_id())?;
+        if !Arc::ptr_eq(&self.tools, &registry.tools) {
+            return Err(AgentError::Composition(
+                "tool registry does not match declared dependency".into(),
+            ));
+        }
         self.register_batch(ctx, vec![tool])
     }
     pub(crate) fn register_batch(
@@ -205,7 +212,30 @@ impl ToolRegistry for Registry {
             .map(|entry| entry.clone() as Arc<dyn Tool>)
     }
 }
+impl ToolRegistration for Registry {
+    fn register(
+        &self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+        tool: Arc<dyn Tool>,
+    ) -> Result<()> {
+        self.register_batch(ctx, vec![tool])
+    }
+}
 pub fn native_tools(timeout_secs: u64) -> Vec<Arc<dyn Tool>> {
+    native_tools_configured(timeout_secs, None)
+}
+
+pub fn native_tools_with_guards(
+    timeout_secs: u64,
+    guards: Arc<huginn_guards::Guardrails>,
+) -> Vec<Arc<dyn Tool>> {
+    native_tools_configured(timeout_secs, Some(guards))
+}
+
+fn native_tools_configured(
+    timeout_secs: u64,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
+) -> Vec<Arc<dyn Tool>> {
     [
         Kind::List,
         Kind::Read,
@@ -215,7 +245,13 @@ pub fn native_tools(timeout_secs: u64) -> Vec<Arc<dyn Tool>> {
         Kind::Shell,
     ]
     .into_iter()
-    .map(|kind| Arc::new(NativeTool { kind, timeout_secs }) as Arc<dyn Tool>)
+    .map(|kind| {
+        Arc::new(NativeTool {
+            kind,
+            timeout_secs,
+            guards: guards.clone(),
+        }) as Arc<dyn Tool>
+    })
     .collect()
 }
 
@@ -244,11 +280,19 @@ impl huginn_core::kernel::Plugin for RegistryPlugin {
     fn manifest(&self) -> huginn_core::kernel::Manifest {
         huginn_core::kernel::Manifest {
             id: "tools.registry".into(),
-            provides: vec![registry_id(), huginn_application::composition::tools_id()],
+            provides: vec![
+                registry_id(),
+                huginn_application::composition::tools_id(),
+                tool_registration_id(),
+            ],
             requires: vec![],
         }
     }
     async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        ctx.provide(
+            tool_registration_id(),
+            ToolRegistrationService::new(Arc::new(self.0.clone())),
+        )?;
         ctx.provide(
             huginn_application::composition::tools_id(),
             huginn_core::ToolsService(Arc::new(self.0.clone())),
@@ -305,6 +349,13 @@ fn skipped(name: &str) -> bool {
     )
 }
 pub fn workspace_files(root: &Path, path: &Path) -> Result<Vec<PathBuf>> {
+    workspace_files_guarded(root, path, None)
+}
+fn workspace_files_guarded(
+    root: &Path,
+    path: &Path,
+    guards: Option<&huginn_guards::Guardrails>,
+) -> Result<Vec<PathBuf>> {
     let mut pending = vec![path.to_path_buf()];
     let mut files = vec![];
     let mut visited = 0;
@@ -314,6 +365,9 @@ pub fn workspace_files(root: &Path, path: &Path) -> Result<Vec<PathBuf>> {
             return Err(AgentError::Tool(
                 "search exceeds 20000 entries; select a narrower path".into(),
             ));
+        }
+        if guards.is_some_and(|policy| policy.check_path(root, &path).is_err()) {
+            continue;
         }
         if path.is_file() {
             files.push(path);
@@ -348,6 +402,7 @@ enum Kind {
 struct NativeTool {
     kind: Kind,
     timeout_secs: u64,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
 }
 #[async_trait]
 impl Tool for NativeTool {
@@ -372,6 +427,11 @@ impl Tool for NativeTool {
         }
         if matches!(self.kind, Kind::Shell) {
             let command = argument(&call.arguments, "command")?;
+            if let Some(guards) = &self.guards {
+                guards
+                    .check_shell_in(&ctx.workspace, command)
+                    .map_err(|e| AgentError::Tool(e.into()))?;
+            }
             if command.trim().is_empty() || command.len() > 16_384 {
                 return Err(AgentError::Tool("invalid command length".into()));
             }
@@ -385,10 +445,20 @@ impl Tool for NativeTool {
             });
         }
         let path = call.arguments["path"].as_str().unwrap_or(".");
+        if let Some(guards) = &self.guards {
+            guards
+                .check_path(&ctx.workspace, Path::new(path))
+                .map_err(|e| AgentError::Tool(e.into()))?;
+        }
         if matches!(self.kind, Kind::Read | Kind::Write | Kind::Edit) {
             argument(&call.arguments, "path")?;
         }
         let resolved = resolve_path(&ctx.workspace, path, matches!(self.kind, Kind::Write))?;
+        if let Some(guards) = &self.guards {
+            guards
+                .check_path(&ctx.workspace, &resolved)
+                .map_err(|e| AgentError::Tool(e.into()))?;
+        }
         let mut payload = call.arguments.clone();
         payload["resolved"] = json!(resolved);
         if matches!(self.kind, Kind::Write | Kind::Edit) {
@@ -399,6 +469,9 @@ impl Tool for NativeTool {
                             "edit target must be a regular file under 1 MiB".into(),
                         ));
                     }
+                    // resolve_path confines preview read to workspace; stable-tree guarantee only.
+                    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-prepare
+                    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
                     Some(tokio::fs::read_to_string(&resolved).await?)
                 }
                 Err(e)
@@ -458,10 +531,23 @@ impl Tool for NativeTool {
         }
         let args = action.payload;
         if matches!(self.kind, Kind::Shell) {
+            if let Some(guards) = &self.guards {
+                guards
+                    .check_shell_in(&ctx.workspace, argument(&args, "command")?)
+                    .map_err(|e| AgentError::Tool(e.into()))?;
+            }
             return run_shell(argument(&args, "command")?, ctx, self.timeout_secs).await;
         }
         let raw = args["path"].as_str().unwrap_or(".");
         let path = resolve_path(&ctx.workspace, raw, matches!(self.kind, Kind::Write))?;
+        if let Some(guards) = &self.guards {
+            guards
+                .check_path(&ctx.workspace, Path::new(raw))
+                .map_err(|e| AgentError::Tool(e.into()))?;
+            guards
+                .check_path(&ctx.workspace, &path)
+                .map_err(|e| AgentError::Tool(e.into()))?;
+        }
         if json!(path) != args["resolved"] {
             return Err(AgentError::Tool(
                 "path changed after preparation; request a new approval".into(),
@@ -470,8 +556,8 @@ impl Tool for NativeTool {
         match self.kind {
             Kind::Write | Kind::Edit => execute_mutation(&args, &path).await,
             Kind::Read => execute_read(&args, &path).await,
-            Kind::List => execute_list(&path, ctx).await,
-            Kind::Search => execute_search(&args, &path, ctx).await,
+            Kind::List => execute_list(&path, ctx, self.guards.clone()).await,
+            Kind::Search => execute_search(&args, &path, ctx, self.guards.clone()).await,
             Kind::Shell => unreachable!(),
         }
     }
@@ -486,6 +572,9 @@ async fn execute_mutation(args: &Value, path: &Path) -> Result<String> {
             ));
         }
     }
+    // Private caller revalidates workspace path before stale check; stable-tree only.
+    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-mutation
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let current = match tokio::fs::read_to_string(path).await {
         Ok(value) => Some(value),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -537,6 +626,9 @@ async fn execute_read(args: &Value, path: &Path) -> Result<String> {
             "read target must be a regular file under 1 MiB".into(),
         ));
     }
+    // Private caller revalidates workspace path before read; stable-tree only.
+    // Evidence: docs/security/semgrep-path-exceptions.md#runtime-read
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let text = tokio::fs::read_to_string(path).await?;
     let start = args["start_line"].as_u64().unwrap_or(1);
     let end = args["end_line"]
@@ -555,16 +647,24 @@ async fn execute_read(args: &Value, path: &Path) -> Result<String> {
     ))
 }
 
-async fn workspace_file_list(path: &Path, ctx: &ToolContext) -> Result<Vec<PathBuf>> {
+async fn workspace_file_list(
+    path: &Path,
+    ctx: &ToolContext,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
+) -> Result<Vec<PathBuf>> {
     let root = ctx.workspace.clone();
     let input = path.to_path_buf();
-    tokio::task::spawn_blocking(move || workspace_files(&root, &input))
+    tokio::task::spawn_blocking(move || workspace_files_guarded(&root, &input, guards.as_deref()))
         .await
         .map_err(|_| AgentError::Tool("file traversal failed".into()))?
 }
 
-async fn execute_list(path: &Path, ctx: &ToolContext) -> Result<String> {
-    let files = workspace_file_list(path, ctx).await?;
+async fn execute_list(
+    path: &Path,
+    ctx: &ToolContext,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
+) -> Result<String> {
+    let files = workspace_file_list(path, ctx, guards).await?;
     let mut listing = files
         .iter()
         .take(100)
@@ -582,8 +682,13 @@ async fn execute_list(path: &Path, ctx: &ToolContext) -> Result<String> {
     Ok(bounded_text(listing))
 }
 
-async fn execute_search(args: &Value, path: &Path, ctx: &ToolContext) -> Result<String> {
-    let files = workspace_file_list(path, ctx).await?;
+async fn execute_search(
+    args: &Value,
+    path: &Path,
+    ctx: &ToolContext,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
+) -> Result<String> {
+    let files = workspace_file_list(path, ctx, guards.clone()).await?;
     let query = argument(args, "query")?;
     if query.is_empty() {
         return Err(AgentError::Tool("query must not be empty".into()));
@@ -593,9 +698,18 @@ async fn execute_search(args: &Value, path: &Path, ctx: &ToolContext) -> Result<
         if ctx.cancellation.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
+        if guards
+            .as_ref()
+            .is_some_and(|policy| policy.check_path(&ctx.workspace, &file).is_err())
+        {
+            continue;
+        }
         if tokio::fs::metadata(&file).await?.len() > MAX_FILE_BYTES {
             continue;
         }
+        // Validated workspace root and regular non-link entries; stable-tree only.
+        // Evidence: docs/security/semgrep-path-exceptions.md#runtime-search
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let Ok(text) = tokio::fs::read_to_string(&file).await else {
             continue;
         };
