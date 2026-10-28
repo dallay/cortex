@@ -32,6 +32,8 @@ members = [
     "crates/huginn/presentation",
     "crates/huginn/plugin-api",
     "crates/huginn/reference-extension",
+    "crates/huginn/rust-outline-component",
+    "crates/huginn/outline-bindings",
 ]
 
 [workspace.package]

@@ -12,6 +12,7 @@ test = false
 
 [features]
 test-hooks = ["huginn-application/test-hooks"]
+experimental-wasm = ["dep:wasmtime"]
 
 [package.metadata.cargo-all-features]
 skip_feature_sets = [["test-hooks"]]
@@ -40,6 +41,7 @@ rmcp = { version = "=3.7.0", default-features = false, features = ["client", "tr
 similar = "3"
 fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
+wasmtime = { version = "=50.0.0", optional = true, default-features = false, features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
@@ -58,6 +60,9 @@ path = "tests/connection_workers.rs"
 required-features = ["test-hooks"]
 
 [dev-dependencies]
+wit-component = "=0.262.0"
+wit-parser = "=0.262.0"
+wat = "=1.262.0"
 huginn-plugin-api = { path = "../plugin-api" }
 tempfile = "=3.27.0"
 axum.workspace = true

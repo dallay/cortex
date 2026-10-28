@@ -1,0 +1,11 @@
+[package]
+name = "huginn-outline-bindings"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = { version = "=0.63.0", default-features = false, features = ["macros", "realloc", "std"] }
+
+[lints]
+workspace = true

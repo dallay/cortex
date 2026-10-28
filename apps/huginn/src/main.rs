@@ -53,6 +53,10 @@ struct Cli {
     /// Use the explicit line-oriented recovery adapter instead of Ratatui.
     #[arg(long, global = true)]
     line_mode: bool,
+    /// Explicitly load one experimental local WASM outline component in headless mode.
+    #[cfg(feature = "experimental-wasm")]
+    #[arg(long, global = true)]
+    experimental_wasm_outline: Option<PathBuf>,
     /// Explicit action grants for this invocation only (e.g. native.shell).
     #[arg(long, global = true, value_delimiter = ',')]
     allow: Vec<String>,
@@ -234,6 +238,21 @@ fn prepare_interaction(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "experimental-wasm")]
+    if cli.experimental_wasm_outline.is_some()
+        && !matches!(
+            &cli.command,
+            Some(
+                Commands::Run { .. }
+                    | Commands::Resume {
+                        prompt: Some(_),
+                        ..
+                    }
+            )
+        )
+    {
+        anyhow::bail!("--experimental-wasm-outline requires run or resume --prompt; interactive loading is not supported");
+    }
     if matches!(cli.command, Some(Commands::Skills { .. })) {
         use huginn_application::skills::SkillCatalogQuery;
         let workspace = resolve_workspace(cli.workspace.clone())?;
@@ -323,7 +342,7 @@ async fn main() -> anyhow::Result<()> {
         sessions.clone(),
         loop_config,
         config.tool_timeout_secs,
-        guards,
+        guards.clone(),
     )
     .await?;
     // Explicit headless configurations need neither durable metadata nor its
@@ -424,6 +443,16 @@ async fn main() -> anyhow::Result<()> {
     if prompt.is_some() && !router.is_configured() {
         supervisor.shutdown().await;
         config.require_model()?;
+    }
+    #[cfg(feature = "experimental-wasm")]
+    if let Some(path) = &cli.experimental_wasm_outline {
+        let result =
+            huginn_runtime::wasm::WasmOutlinePlugin::load(path, &session.workspace, guards)
+                .and_then(|plugin| supervisor.register(Box::new(plugin)));
+        if let Err(error) = result {
+            supervisor.shutdown().await;
+            return Err(error.into());
+        }
     }
     if let Err(error) = mcp::register_plugins(
         &mut supervisor,

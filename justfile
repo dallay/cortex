@@ -85,6 +85,18 @@ fmt-check:
 test:
     cargo test --workspace --all-features
 
+# Build the independent Rust outline guest and wrap its versioned component metadata
+huginn-wasm-build:
+    cargo build --locked -p huginn-rust-outline-component --target wasm32-unknown-unknown --release
+    wasm-tools component new target/wasm32-unknown-unknown/release/huginn_rust_outline_component.wasm -o target/rust-file-outline.component.wasm
+
+# Verify the experimental adapter and real headless path with independently built components
+huginn-wasm-test:
+    cargo test --locked -p huginn-rust-outline-component
+    cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_outline
+    cargo test --locked -p huginn --features experimental-wasm --test wasm_outline
+    just huginn-architecture
+
 # Run library unit tests across the workspace
 test-unit:
     cargo test --workspace --lib
