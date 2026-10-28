@@ -42,15 +42,24 @@ fn nonstream_requires_coherent_terminal_state() {
 #[test]
 fn nonstream_response_has_same_resource_limits_as_streaming() {
     let mut response = completion();
-    response.tool_calls = (0..65)
+    response.finish_reason = Some(FinishReason::ToolCalls);
+    response.tool_calls = (0..64)
         .map(|i| rook_core::MessageToolCall {
             id: Some(format!("call_{i}")),
             name: "lookup".into(),
             arguments: json!({}),
         })
         .collect();
+    let body = context().response_body(&response).unwrap();
+    assert_eq!(body["output"].as_array().unwrap().len(), 64);
+    response.tool_calls.push(rook_core::MessageToolCall {
+        id: Some("call_64".into()),
+        name: "lookup".into(),
+        arguments: json!({}),
+    });
     assert!(context().response_body(&response).is_err());
     response.tool_calls.clear();
+    response.finish_reason = Some(FinishReason::Stop);
     response.content = "x".repeat(4 * 1024 * 1024 + 1);
     assert!(context().response_body(&response).is_err());
 }

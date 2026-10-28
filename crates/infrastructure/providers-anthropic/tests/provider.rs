@@ -1,5 +1,8 @@
 use futures::StreamExt;
-use providers_anthropic::{AnthropicProvider, AnthropicProviderConfig};
+use providers_anthropic::{
+    parse_anthropic_rate_limit_headers, AnthropicProvider, AnthropicProviderConfig,
+};
+use reqwest::header::{HeaderMap, HeaderValue};
 use rook_core::{
     ApiKeyRestrictions, CompletionRequest, FinishReason, HealthStatus, MessageContent, ModelId,
     ProviderPort, RequestMetadata, Role,
@@ -1912,4 +1915,77 @@ async fn stream_emits_tool_call_fragments() {
             .any(|t| t.id.as_deref() == Some("toolu_123")),
         "final chunk carries tool summary for SSE stops"
     );
+}
+
+#[test]
+fn test_parse_anthropic_rate_limit_headers_all_metrics() {
+    let mut headers = HeaderMap::new();
+    headers.insert("anthropic-workspace-id", HeaderValue::from_static("ws_123"));
+    headers.insert(
+        "anthropic-ratelimit-requests-limit",
+        HeaderValue::from_static("100"),
+    );
+    headers.insert(
+        "anthropic-ratelimit-requests-remaining",
+        HeaderValue::from_static("95"),
+    );
+    headers.insert(
+        "anthropic-ratelimit-requests-reset",
+        HeaderValue::from_static("2026-01-01T00:00:00Z"),
+    );
+
+    headers.insert(
+        "anthropic-priority-input-tokens-limit",
+        HeaderValue::from_static("5000"),
+    );
+    headers.insert(
+        "anthropic-priority-input-tokens-remaining",
+        HeaderValue::from_static("4000"),
+    );
+
+    let provider = ProviderId::new("anthropic-test");
+    let now = chrono::Utc::now();
+    let obs = parse_anthropic_rate_limit_headers(&headers, provider, now);
+
+    assert!(!obs.is_empty());
+    let req_obs = obs.iter().find(|o| o.metric == "requests").unwrap();
+    assert_eq!(req_obs.scope, Some("ws_123".to_string()));
+    assert_eq!(req_obs.limit, Some(100.0));
+    assert_eq!(req_obs.remaining, Some(95.0));
+
+    let prio_obs = obs
+        .iter()
+        .find(|o| o.metric == "priority_input_tokens")
+        .unwrap();
+    assert_eq!(prio_obs.limit, Some(5000.0));
+    assert_eq!(prio_obs.remaining, Some(4000.0));
+}
+
+#[tokio::test]
+async fn complete_maps_anthropic_finish_reason_variants() {
+    for (reason, expected) in [
+        ("end_turn", Some(FinishReason::Stop)),
+        ("stop_sequence", Some(FinishReason::Stop)),
+        ("pause_turn", Some(FinishReason::Stop)),
+        ("max_tokens", Some(FinishReason::Length)),
+        ("tool_use", Some(FinishReason::ToolCalls)),
+        ("refusal", Some(FinishReason::ContentFilter)),
+        ("unknown_reason", None),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model":"claude-3-5-sonnet",
+                "content":[],
+                "stop_reason":reason,
+                "usage":{"input_tokens":3,"output_tokens":2}
+            })))
+            .mount(&server)
+            .await;
+        let mut request = make_test_request("claude-3-5-sonnet");
+        request.metadata.origin = "responses".into();
+        let response = test_provider(&server).complete(&request).await.unwrap();
+        assert_eq!(response.finish_reason, expected, "stop_reason={reason}");
+    }
 }

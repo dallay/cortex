@@ -42,6 +42,8 @@ use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 mod responses;
 #[path = "gateway_e2e/responses_accounting.rs"]
 mod responses_accounting;
+#[path = "gateway_e2e/responses_routes.rs"]
+mod responses_routes;
 
 // ---------------------------------------------------------------------------
 // Fakes (deterministic, in-process)
