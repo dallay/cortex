@@ -57,6 +57,385 @@ async fn stream_results_from_body(
         .await
 }
 
+#[tokio::test]
+async fn responses_omitted_tool_ids_reach_generation_in_both_modes() {
+    use serde_json::json;
+    for stream in [false, true] {
+        for origin in ["responses", "openai", "anthropic"] {
+            let server = wiremock::MockServer::start().await;
+            let calls = json!([{"index":0,"function":{"name":"lookup","arguments":"{}"}}, {"index":1,"function":{"name":"search","arguments":"{}"}}]);
+            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+            let body = if stream {
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage})
+                )
+            } else {
+                json!({"model":"gpt-4","choices":[{"message":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
+            };
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+                    body,
+                    if stream {
+                        "text/event-stream"
+                    } else {
+                        "application/json"
+                    },
+                ))
+                .mount(&server)
+                .await;
+            let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                id: ProviderId::new("openai-test"),
+                api_key: "test".into(),
+                base_url: server.uri(),
+                models: vec![ModelId::new("gpt-4")],
+                timeout_secs: 10,
+            })
+            .unwrap();
+            let mut req = stream_request();
+            req.stream = stream;
+            req.metadata.origin = origin.into();
+            if stream {
+                let chunks = provider
+                    .stream(&req)
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await;
+                if origin == "responses" {
+                    let chunk = chunks[0]
+                        .as_ref()
+                        .expect("omitted IDs must reach Responses generation");
+                    assert_eq!(chunk.tool_calls.len(), 2);
+                    assert!(chunk.tool_calls.iter().all(|call| call.id.is_none()));
+                    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
+                    assert!(chunks.iter().all(Result::is_ok));
+                } else {
+                    assert!(chunks.iter().any(Result::is_err));
+                }
+            } else {
+                let result = provider.complete(&req).await;
+                if origin == "responses" {
+                    let response = result.expect("omitted IDs must reach Responses generation");
+                    assert_eq!(response.tool_calls.len(), 2);
+                    assert!(response.tool_calls.iter().all(|call| call.id.is_none()));
+                    assert_eq!(response.usage.total_tokens, 5);
+                } else {
+                    assert!(result.is_err());
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_tool_id_type_matrix_retains_usage_and_legacy_rejection() {
+    use serde_json::json;
+    for id in [
+        json!(null),
+        json!(""),
+        json!("call_valid"),
+        json!("bad\n"),
+        json!("x".repeat(257)),
+        json!(123),
+        json!(-1),
+        json!(1.5),
+        json!(true),
+        json!(false),
+        json!([]),
+        json!({"nested":[{}, []]}),
+    ] {
+        for stream in [false, true] {
+            let server = wiremock::MockServer::start().await;
+            let call = json!({"index":0,"id":id,"function":{"name":"lookup","arguments":"{}"}});
+            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+            // A nonterminal frame exposes normalization without finish-time validation.
+            let body = if stream {
+                format!(
+                    "data: {}\n\n",
+                    json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}],"usage":usage})
+                )
+            } else {
+                json!({"model":"gpt-4","choices":[{"message":{"tool_calls":[call]},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
+            };
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+                    body,
+                    if stream {
+                        "text/event-stream"
+                    } else {
+                        "application/json"
+                    },
+                ))
+                .mount(&server)
+                .await;
+            let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                id: ProviderId::new("openai-test"),
+                api_key: "test".into(),
+                base_url: server.uri(),
+                models: vec![ModelId::new("gpt-4")],
+                timeout_secs: 10,
+            })
+            .unwrap();
+            for origin in ["responses", "openai", "anthropic"] {
+                let mut req = stream_request();
+                req.stream = stream;
+                req.metadata.origin = origin.into();
+                if stream {
+                    let chunks = provider
+                        .stream(&req)
+                        .await
+                        .unwrap()
+                        .collect::<Vec<_>>()
+                        .await;
+                    if id.as_str().is_some_and(|id| id.len() > 256) {
+                        assert!(chunks[0].is_err());
+                        continue;
+                    }
+                    if origin != "responses" && !id.is_string() && !id.is_null() {
+                        assert!(chunks[0].is_err());
+                        continue;
+                    }
+                    let chunk = chunks[0].as_ref().unwrap();
+                    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
+                    assert_eq!(
+                        chunk.tool_calls[0].id.as_deref(),
+                        if id.is_null() {
+                            None
+                        } else {
+                            Some(id.as_str().unwrap_or_default())
+                        }
+                    );
+                } else {
+                    let response = provider.complete(&req).await;
+                    if origin != "responses" && !id.is_string() {
+                        assert!(response.is_err());
+                        continue;
+                    }
+                    let response = response.unwrap();
+                    assert_eq!(
+                        response.tool_calls[0].id.as_deref(),
+                        Some(id.as_str().unwrap_or_default())
+                    );
+                    assert_eq!(response.usage.total_tokens, 5);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn nullable_and_omitted_delta_ids_do_not_change_valid_tool_identity() {
+    use serde_json::json;
+    let server = wiremock::MockServer::start().await;
+    let frames = [
+        json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_valid","function":{"name":"lookup","arguments":"{"}}]},"finish_reason":null}]}),
+        json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"\"key\":"}}]},"finish_reason":null}]}),
+        json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"1}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}),
+    ];
+    let body = frames
+        .iter()
+        .map(|frame| format!("data: {frame}\n\n"))
+        .collect::<String>()
+        + "data: [DONE]\n\n";
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "test".into(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    for origin in ["responses", "openai", "anthropic"] {
+        let mut req = stream_request();
+        req.metadata.origin = origin.into();
+        let chunks = provider
+            .stream(&req)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.iter().all(Result::is_ok), "{chunks:?}");
+        assert_eq!(
+            chunks[0].as_ref().unwrap().tool_calls[0].id.as_deref(),
+            Some("call_valid")
+        );
+        assert!(chunks[1..]
+            .iter()
+            .all(|chunk| chunk.as_ref().unwrap().tool_calls[0].id.is_none()));
+        assert_eq!(
+            chunks[2].as_ref().unwrap().finish_reason,
+            Some(FinishReason::ToolCalls)
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_id_validation_still_includes_unselected_choices() {
+    use serde_json::json;
+    for stream in [false, true] {
+        let server = wiremock::MockServer::start().await;
+        let invalid = json!({"index":0,"id":123,"function":{"name":"lookup","arguments":"{}"}});
+        let body = if stream {
+            format!(
+                "data: {}\n\n",
+                json!({"model":"gpt-4","choices":[
+                    {"delta":{"content":"selected"},"finish_reason":"stop"},
+                    {"delta":{"tool_calls":[invalid]},"finish_reason":"tool_calls"}
+                ]})
+            )
+        } else {
+            json!({"model":"gpt-4","choices":[
+                {"message":{"content":"selected"},"finish_reason":"stop"},
+                {"message":{"tool_calls":[invalid]},"finish_reason":"tool_calls"}
+            ],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}})
+            .to_string()
+        };
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+                body,
+                if stream {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                },
+            ))
+            .mount(&server)
+            .await;
+        let provider = OpenAIProvider::new(OpenAIProviderConfig {
+            id: ProviderId::new("openai-test"),
+            api_key: "test".into(),
+            base_url: server.uri(),
+            models: vec![ModelId::new("gpt-4")],
+            timeout_secs: 10,
+        })
+        .unwrap();
+        for origin in ["openai", "anthropic"] {
+            let mut req = stream_request();
+            req.stream = stream;
+            req.metadata.origin = origin.into();
+            if stream {
+                let chunks = provider
+                    .stream(&req)
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await;
+                assert!(
+                    chunks[0].is_err(),
+                    "legacy parsing rejects invalid types in every choice"
+                );
+            } else {
+                assert!(
+                    provider.complete(&req).await.is_err(),
+                    "legacy parsing rejects invalid types in every choice"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_unknown_finish_rejects_frame_and_retains_usage() {
+    use serde_json::json;
+    for prior_finish in [false, true] {
+        for reason in [
+            None,
+            Some(json!(null)),
+            Some(json!("unknown")),
+            Some(json!("")),
+        ] {
+            let server = wiremock::MockServer::start().await;
+            let mut choice = json!({"delta":{}});
+            if let Some(reason) = &reason {
+                choice["finish_reason"] = reason.clone();
+            }
+            let last = json!({"model":"gpt-4","choices":[choice],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
+            let first = json!({"model":"gpt-4","choices":[{"delta":{"content":"prior"},"finish_reason":"stop"}]});
+            let sse = format!(
+                "{}data: {last}\n\n",
+                if prior_finish {
+                    format!("data: {first}\n\n")
+                } else {
+                    String::new()
+                }
+            );
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse))
+                .mount(&server)
+                .await;
+            let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                id: ProviderId::new("openai-test"),
+                api_key: "test".into(),
+                base_url: server.uri(),
+                models: vec![ModelId::new("gpt-4")],
+                timeout_secs: 10,
+            })
+            .unwrap();
+            for origin in ["responses", "openai", "anthropic"] {
+                let mut req = stream_request();
+                req.metadata.origin = origin.into();
+                let chunks = provider
+                    .stream(&req)
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await;
+                assert_eq!(chunks.len(), 1 + usize::from(prior_finish));
+                let last = chunks.last().unwrap();
+                if origin == "responses" && reason.as_ref().is_some_and(|r| !r.is_null()) {
+                    let error = last
+                        .as_ref()
+                        .expect_err("explicit unknown finish must fail");
+                    assert!(error.is_retryable());
+                    let usage = rook_core::StreamValidationError::usage(error).unwrap();
+                    assert_eq!(usage.total_tokens, 5);
+                    assert_eq!(usage.prompt_tokens, 3);
+                    assert_eq!(usage.completion_tokens, 2);
+                } else {
+                    let chunk = last.as_ref().unwrap();
+                    assert!(chunk.finish_reason.is_none());
+                    assert!(chunk.delta.is_empty());
+                    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn rejected_frame_retains_usage_without_publishing_invalid_arguments() {
+    for observe_error in [false, true] {
+        let frame = serde_json::json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad","function":{"name":if observe_error {"x".repeat(4097)} else {"lookup".into()},"arguments":"{"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens_details":{"reasoning_tokens":1}}});
+        let results = stream_results_from_body(format!("data: {frame}\n\ndata: [DONE]\n\n")).await;
+        assert!(
+            results.iter().all(Result::is_err),
+            "ningún argumento inválido se publica como éxito"
+        );
+        let error = results[0].as_ref().unwrap_err();
+        assert!(error.is_retryable());
+        assert!(!error.is_invalid_request());
+        let usage =
+            rook_core::StreamValidationError::usage(error).expect("uso del frame rechazado");
+        assert_eq!(usage.prompt_tokens, 3);
+        assert_eq!(usage.completion_tokens, 2);
+        assert_eq!(usage.total_tokens, 5);
+        assert_eq!(usage.cache_read_tokens, Some(1));
+        assert_eq!(usage.reasoning_tokens, Some(1));
+        assert!(error.to_string().contains(if observe_error {
+            "name limit"
+        } else {
+            "invalid tool-call arguments"
+        }));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // health_check tests
 // ---------------------------------------------------------------------------

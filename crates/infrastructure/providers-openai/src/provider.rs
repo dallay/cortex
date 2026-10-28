@@ -296,14 +296,32 @@ impl OpenAIProvider {
         message_index: usize,
     ) -> OpenAIMessage {
         OpenAIMessage {
-            role: match message.role {
-                rook_core::Role::System => "system",
-                rook_core::Role::User => "user",
-                rook_core::Role::Assistant => "assistant",
-                rook_core::Role::Developer => "developer",
+            role: if matches!(
+                message.content,
+                rook_core::MessageContent::ToolResult { .. }
+            ) {
+                "tool"
+            } else {
+                match message.role {
+                    rook_core::Role::System => "system",
+                    rook_core::Role::User => "user",
+                    rook_core::Role::Assistant => "assistant",
+                    rook_core::Role::Developer => "developer",
+                }
             }
             .to_string(),
-            content: message.content.as_text().to_string(),
+            content: match &message.content {
+                rook_core::MessageContent::ToolResult { content, .. } => {
+                    content.iter().map(|part| part.as_text()).collect()
+                }
+                content => content.as_text().to_string(),
+            },
+            tool_call_id: match &message.content {
+                rook_core::MessageContent::ToolResult { tool_use_id, .. } => {
+                    Some(tool_use_id.clone())
+                }
+                _ => None,
+            },
             tool_calls: (!message.tool_calls.is_empty()).then(|| {
                 message
                     .tool_calls
@@ -411,6 +429,17 @@ impl OpenAIProvider {
         request_id: &RequestId,
         tool_call_validator: &mut ToolCallStreamValidator,
     ) -> Result<StreamChunk, CortexError> {
+        if !tool_call_validator.allow_incomplete_calls
+            && parsed.choices.iter().any(|choice| {
+                choice
+                    .delta
+                    .tool_calls
+                    .iter()
+                    .any(|call| call.id.is_invalid_type())
+            })
+        {
+            return Err(CortexError::provider("invalid OpenAI tool-call id type"));
+        }
         let choice = parsed.choices.first();
         let usage = parsed.usage.map(|usage| TokenUsage {
             prompt_tokens: usage.prompt_tokens,
@@ -431,12 +460,35 @@ impl OpenAIProvider {
         let tool_calls = choice
             .map(|c| c.delta.tool_calls.as_slice())
             .unwrap_or_default();
-        tool_call_validator.observe(tool_calls)?;
+        tool_call_validator
+            .observe(tool_calls)
+            .map_err(|error| rook_core::StreamValidationError::attach(error, usage.clone()))?;
         let finish_reason = choice
             .and_then(|c| c.finish_reason.as_deref())
             .and_then(parse_finish_reason);
+        if tool_call_validator.allow_incomplete_calls
+            && choice.is_some_and(|c| c.finish_reason.is_some())
+            && finish_reason.is_none()
+        {
+            return Err(rook_core::StreamValidationError::attach(
+                CortexError::provider("Unknown OpenAI finish_reason"),
+                usage,
+            ));
+        }
         if finish_reason == Some(FinishReason::ToolCalls) {
-            tool_call_validator.validate_and_reset()?;
+            tool_call_validator
+                .validate_and_reset()
+                .map_err(|error| rook_core::StreamValidationError::attach(error, usage.clone()))?;
+        } else if tool_call_validator.allow_incomplete_calls
+            && matches!(
+                finish_reason,
+                Some(FinishReason::Length | FinishReason::ContentFilter)
+            )
+        {
+            // Responses conserva los argumentos parciales cuando el proveedor
+            // declara un finish incompleto; Chat y Messages mantienen su contrato.
+            tool_call_validator.calls.clear();
+            tool_call_validator.total_argument_bytes = 0;
         }
 
         Ok(StreamChunk {
@@ -450,7 +502,7 @@ impl OpenAIProvider {
                 .iter()
                 .map(|tool_call| ToolCallDelta {
                     index: tool_call.index,
-                    id: tool_call.id.clone(),
+                    id: tool_call.id.delta(),
                     function: ToolCallFunctionDelta {
                         name: tool_call.function.name.clone(),
                         arguments: tool_call.function.arguments.clone(),
@@ -487,6 +539,8 @@ struct OpenAIStreamOptions {
 struct OpenAIMessage {
     role: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAIRequestToolCall>>,
 }
@@ -530,7 +584,8 @@ struct OpenAIMessageResp {
 
 #[derive(Debug, serde::Deserialize)]
 struct OpenAIResponseToolCall {
-    id: String,
+    #[serde(default)]
+    id: providers_core::tool_id::ToolId,
     function: OpenAIResponseFunction,
 }
 
@@ -590,7 +645,7 @@ struct OpenAIStreamDelta {
 struct OpenAIStreamToolCallDelta {
     index: u32,
     #[serde(default)]
-    id: Option<String>,
+    id: providers_core::tool_id::ToolId,
     #[serde(default)]
     function: OpenAIStreamFunctionDelta,
 }
@@ -607,6 +662,7 @@ struct OpenAIStreamFunctionDelta {
 struct ToolCallStreamValidator {
     calls: BTreeMap<u32, ToolCallAssembly>,
     total_argument_bytes: usize,
+    allow_incomplete_calls: bool,
 }
 
 #[derive(Debug, Default)]
@@ -621,7 +677,7 @@ impl ToolCallStreamValidator {
         for delta in deltas {
             if delta
                 .id
-                .as_ref()
+                .as_str()
                 .is_some_and(|id| id.len() > MAX_TOOL_CALL_ID_BYTES)
             {
                 return Err(CortexError::provider(format!(
@@ -636,16 +692,16 @@ impl ToolCallStreamValidator {
                 )));
             }
             let call = self.calls.entry(delta.index).or_default();
-            if let Some(id) = &delta.id {
+            if let Some(id) = delta.id.delta() {
                 match &call.id {
-                    Some(previous) if previous != id => {
+                    Some(previous) if previous != &id => {
                         return Err(CortexError::provider(format!(
                             "OpenAI stream changed tool-call identity at index {}",
                             delta.index
                         )));
                     }
                     Some(_) => {}
-                    None => call.id = Some(id.clone()),
+                    None => call.id = Some(id),
                 }
             }
             if let Some(name) = &delta.function.name {
@@ -680,7 +736,10 @@ impl ToolCallStreamValidator {
             ));
         }
         for (index, call) in &calls {
-            if call.id.as_deref().is_none_or(str::is_empty) || call.name.is_empty() {
+            if call.id.as_deref().is_some_and(str::is_empty)
+                || (!self.allow_incomplete_calls && call.id.is_none())
+                || call.name.is_empty()
+            {
                 return Err(CortexError::provider(format!(
                     "OpenAI stream ended with incomplete tool-call identity at index {index}"
                 )));
@@ -835,6 +894,18 @@ impl ProviderPort for OpenAIProvider {
             .first()
             .ok_or_else(|| CortexError::provider("no choices in response"))?;
 
+        if req.metadata.origin != "responses"
+            && openai_resp.choices.iter().any(|choice| {
+                choice
+                    .message
+                    .tool_calls
+                    .iter()
+                    .any(|call| call.id.as_str().is_none())
+            })
+        {
+            return Err(CortexError::provider("missing or null OpenAI tool-call id"));
+        }
+
         Ok(CompletionResponse {
             id: req.id.clone(),
             provider: self.config.id.clone(),
@@ -849,7 +920,7 @@ impl ProviderPort for OpenAIProvider {
                 .tool_calls
                 .iter()
                 .map(|tool_call| rook_core::MessageToolCall {
-                    id: Some(tool_call.id.clone()),
+                    id: tool_call.id.canonical(),
                     name: tool_call.function.name.clone(),
                     arguments: serde_json::from_str(&tool_call.function.arguments).unwrap_or_else(
                         |_| serde_json::Value::String(tool_call.function.arguments.clone()),
@@ -895,7 +966,10 @@ impl ProviderPort for OpenAIProvider {
             (
                 resp.bytes_stream(),
                 SseBuffer::new(),
-                ToolCallStreamValidator::default(),
+                ToolCallStreamValidator {
+                    allow_incomplete_calls: req.metadata.origin == "responses",
+                    ..ToolCallStreamValidator::default()
+                },
                 req.id.clone(),
                 VecDeque::<CortexResult<StreamChunk>>::new(),
                 false,

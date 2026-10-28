@@ -118,6 +118,33 @@ impl FormatRegistry {
         to: ApiFormat,
         req: CompletionRequest,
     ) -> CortexResult<CompletionRequest> {
+        let mut req = req;
+        // Responses normaliza funciones al contrato OpenAI. La traducción al
+        // formato Anthropic ocurre en el límite de formato existente, no en routing.
+        // Los contratos de los endpoints anteriores permanecen sin cambios.
+        if req.metadata.origin == "responses"
+            && from == ApiFormat::OpenAI
+            && to == ApiFormat::Anthropic
+        {
+            if let Some(serde_json::Value::Array(tools)) = req.tools.as_mut() {
+                for tool in tools {
+                    let function = &tool["function"];
+                    let mut native = serde_json::json!({"name":function["name"], "input_schema":function["parameters"]});
+                    if let Some(description) = function.get("description") {
+                        native["description"] = description.clone();
+                    }
+                    *tool = native;
+                }
+            }
+            if let Some(choice) = req.tool_choice.as_mut() {
+                *choice = match choice.as_str() {
+                    Some("auto") => serde_json::json!({"type":"auto"}),
+                    Some("none") => serde_json::json!({"type":"none"}),
+                    Some("required") => serde_json::json!({"type":"any"}),
+                    _ => serde_json::json!({"type":"tool","name":choice["function"]["name"]}),
+                };
+            }
+        }
         self.get_request_translator(from, to)
             .ok_or_else(|| missing_translator("request", from, to))?
             .translate_request(req)
@@ -250,5 +277,125 @@ mod tests {
             .translate_request(ApiFormat::OpenAI, ApiFormat::Anthropic, req)
             .expect_err("translator should be missing");
         assert!(error.is_invalid_request());
+    }
+
+    #[test]
+    fn test_translate_request_responses_origin_tool_choice_variants() {
+        let mut registry = FormatRegistry::new();
+        registry.register(
+            ApiFormat::OpenAI,
+            ApiFormat::Anthropic,
+            DomainPivotTranslator,
+        );
+
+        let make_req = |tool_choice: serde_json::Value| CompletionRequest {
+            id: shared_kernel::RequestId::new(),
+            model: shared_kernel::ModelId::new("model"),
+            messages: Vec::new(),
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: Some(serde_json::json!([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get current weather",
+                        "parameters": {"type": "object"}
+                    }
+                }
+            ])),
+            tool_choice: Some(tool_choice),
+            metadata: rook_core::RequestMetadata {
+                origin: "responses".to_string(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: rook_core::ApiKeyRestrictions::default(),
+        };
+
+        let req_req = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!("required")),
+            )
+            .unwrap();
+        assert_eq!(
+            req_req.tool_choice,
+            Some(serde_json::json!({"type": "any"}))
+        );
+
+        let req_none = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!("none")),
+            )
+            .unwrap();
+        assert_eq!(
+            req_none.tool_choice,
+            Some(serde_json::json!({"type": "none"}))
+        );
+
+        let req_func = registry
+            .translate_request(
+                ApiFormat::OpenAI,
+                ApiFormat::Anthropic,
+                make_req(serde_json::json!({
+                    "type": "function",
+                    "function": {"name": "get_weather"}
+                })),
+            )
+            .unwrap();
+        assert_eq!(
+            req_func.tool_choice,
+            Some(serde_json::json!({"type": "tool", "name": "get_weather"}))
+        );
+
+        let tool = &req_func.tools.as_ref().unwrap()[0];
+        assert_eq!(tool["name"], "get_weather");
+        assert_eq!(tool["description"], "Get current weather");
+        assert_eq!(tool["input_schema"], serde_json::json!({"type": "object"}));
+    }
+
+    #[test]
+    fn test_translate_response_success() {
+        let mut registry = FormatRegistry::new();
+        registry.register(
+            ApiFormat::OpenAI,
+            ApiFormat::Anthropic,
+            DomainPivotTranslator,
+        );
+
+        let resp = CompletionResponse {
+            id: shared_kernel::RequestId::new(),
+            provider: shared_kernel::ProviderId::new("p"),
+            model: shared_kernel::ModelId::new("m"),
+            content: "hello".into(),
+            content_blocks: vec![],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: Some(rook_core::FinishReason::Stop),
+            usage: rook_core::TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 10,
+            cache_hit: None,
+        };
+
+        let translated = registry
+            .translate_response(ApiFormat::OpenAI, ApiFormat::Anthropic, resp)
+            .unwrap();
+        assert_eq!(translated.content, "hello");
     }
 }

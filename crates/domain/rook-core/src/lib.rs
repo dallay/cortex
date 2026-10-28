@@ -11,6 +11,7 @@ pub mod ports;
 pub mod probes;
 pub mod provider_connection;
 pub mod quota;
+pub mod stream_validation_error;
 
 pub use api_key::*;
 pub use decrypted_credentials::*;
@@ -20,6 +21,7 @@ pub use model_capabilities::*;
 pub use ports::*;
 pub use provider_connection::*;
 pub use quota::*;
+pub use stream_validation_error::StreamValidationError;
 
 // Re-export shared_kernel types that are used across the domain
 pub use shared_kernel::{

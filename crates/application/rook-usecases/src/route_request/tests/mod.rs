@@ -57,6 +57,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 }
 
 mod default_combo;
+mod output_validation;
 mod progressive_combo;
 
 struct TestProvider {
@@ -1398,6 +1399,9 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
         entries: Mutex::new(Vec::new()),
         fail_recording: false,
     });
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
     let connection_id = ConnectionId::new();
     let mut pricing = crate::PricingConfig::default();
     pricing.providers.insert(
@@ -1419,9 +1423,7 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
             get_calls: Mutex::new(0),
             set_calls: Mutex::new(0),
         }),
-        Arc::new(TestAudit {
-            entries: Mutex::new(Vec::new()),
-        }),
+        audit.clone(),
         Some(usage_recorder.clone()),
         Some(Arc::new(TestProviderRepository {
             connection_id: Some(connection_id),
@@ -1458,6 +1460,54 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
     assert_eq!(entry.tokens_reasoning, None);
     assert_eq!(entry.ttft_ms, Some(entry.latency_ms));
     assert_eq!(entry.cost_usd, Some(0.000003));
+    let audit_entries = audit.entries.lock().unwrap();
+    assert_eq!(audit_entries.len(), 1);
+    assert_eq!(audit_entries[0].request_id, req.id);
+    assert_eq!(audit_entries[0].connection_id, Some(connection_id));
+}
+
+#[tokio::test]
+async fn non_stream_success_preserves_unknown_connection_in_audit_and_usage() {
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: ProviderId::new("test-provider"),
+        complete_error: None,
+        stream_error: None,
+    });
+    let usage_recorder = Arc::new(TestUsageRecorder {
+        entries: Mutex::new(Vec::new()),
+        fail_recording: false,
+    });
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usecase = RouteRequest::new(
+        Arc::new(TestRouter { provider }),
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        audit.clone(),
+        Some(usage_recorder.clone()),
+        None,
+        None,
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestFormatTranslator),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    );
+    let req = request();
+
+    usecase.execute(req.clone()).await.expect("success");
+
+    let entries = usage_recorder.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].request_id, req.id);
+    assert_eq!(entries[0].connection_id, None);
+    let audit_entries = audit.entries.lock().unwrap();
+    assert_eq!(audit_entries.len(), 1);
+    assert_eq!(audit_entries[0].request_id, req.id);
+    assert_eq!(audit_entries[0].connection_id, None);
 }
 
 #[tokio::test]
@@ -4653,5 +4703,69 @@ async fn streaming_normal_alias_still_resolves() {
         chunk.model.as_str(),
         "gpt-4o",
         "normal alias must still resolve in streaming path"
+    );
+}
+
+#[test]
+fn test_stream_error_status_variants() {
+    let rl_err = CortexError::rate_limited(ProviderId::new("p"), 10);
+    assert_eq!(
+        combo_stream::stream_error_status(&rl_err),
+        RequestStatus::RateLimited
+    );
+
+    let other_err = CortexError::provider("some error");
+    assert_eq!(
+        combo_stream::stream_error_status(&other_err),
+        RequestStatus::Failure
+    );
+}
+
+#[test]
+fn test_classify_connection_adapter_unusable_unavailable() {
+    struct UnavailProvider;
+    #[async_trait]
+    impl ProviderPort for UnavailProvider {
+        fn id(&self) -> &ProviderId {
+            static P: std::sync::LazyLock<ProviderId> =
+                std::sync::LazyLock::new(|| ProviderId::new("p"));
+            &P
+        }
+        fn supported_models(&self) -> &[shared_kernel::ModelId] {
+            &[]
+        }
+        fn api_format(&self) -> ApiFormat {
+            ApiFormat::OpenAI
+        }
+        fn is_available(&self) -> bool {
+            false
+        }
+        async fn health_check(&self) -> HealthStatus {
+            HealthStatus::Healthy {
+                provider: ProviderId::new("p"),
+                latency_ms: 5,
+            }
+        }
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse, CortexError> {
+            Err(CortexError::provider("no"))
+        }
+        async fn stream(
+            &self,
+            _: &CompletionRequest,
+        ) -> Result<
+            futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>,
+            CortexError,
+        > {
+            Err(CortexError::provider("no"))
+        }
+    }
+
+    let p = UnavailProvider;
+    let pid = ProviderId::new("p");
+    let model = shared_kernel::ModelId::new("m");
+    let dec = classify_connection_adapter(&p, &pid, &model, &[]);
+    assert_eq!(
+        dec,
+        ConnectionAdapterDecision::Unusable("provider_unavailable")
     );
 }

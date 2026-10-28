@@ -55,6 +55,7 @@ pub fn router(
     let mut router = Router::new()
         // OpenAI-compatible endpoints
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/responses", post(crate::responses_routes::create))
         .route("/v1/models", get(list_models))
         // Anthropic-compatible endpoint
         .route("/v1/messages", post(anthropic_messages))
@@ -461,7 +462,9 @@ pub async fn ip_rate_limiter_middleware(
 /// Fails closed if the headers are missing or non-UTF-8: the authz middleware must
 /// always stamp these headers, so missing/invalid values indicate a routing bug or
 /// an attempt to bypass the middleware.
-fn restrictions_from_headers(headers: &HeaderMap) -> Result<ApiKeyRestrictions, HttpError> {
+pub(crate) fn restrictions_from_headers(
+    headers: &HeaderMap,
+) -> Result<ApiKeyRestrictions, HttpError> {
     let allowed_models = parse_csv_header(headers, "x-authz-allowed-models")?
         .into_iter()
         .map(ModelId::new)
@@ -520,7 +523,10 @@ fn parse_csv_header(headers: &HeaderMap, name: &'static str) -> Result<Vec<Strin
 ///
 /// Returns the legacy `combo_id` when present; virtual (`rook/*`) and normal
 /// models need no header action here.
-fn combo_id_from_headers(headers: &HeaderMap, model: &str) -> Result<Option<ComboId>, HttpError> {
+pub(crate) fn combo_id_from_headers(
+    headers: &HeaderMap,
+    model: &str,
+) -> Result<Option<ComboId>, HttpError> {
     let mut values: Vec<String> = Vec::new();
     for v in headers.get_all("x-rook-combo").iter() {
         match v.to_str() {

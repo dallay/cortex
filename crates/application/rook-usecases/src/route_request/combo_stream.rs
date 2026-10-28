@@ -19,7 +19,9 @@ static ACCOUNTING_SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
 struct AccountingSnapshot {
     owner: RouteRequest,
     req: CompletionRequest,
-    step: ComboStepContext,
+    step: Option<ComboStepContext>,
+    provider_id: super::ProviderId,
+    connection_id: Option<ConnectionId>,
     usage: Option<TokenUsage>,
     ttft_ms: Option<u64>,
     start: tokio::time::Instant,
@@ -28,11 +30,42 @@ struct AccountingSnapshot {
 struct StreamAccounting(Option<AccountingSnapshot>);
 
 impl StreamAccounting {
+    fn standard(
+        owner: RouteRequest,
+        req: CompletionRequest,
+        provider_id: super::ProviderId,
+        connection_id: Option<ConnectionId>,
+        start: tokio::time::Instant,
+    ) -> Self {
+        Self(Some(AccountingSnapshot {
+            owner,
+            req,
+            step: None,
+            provider_id,
+            connection_id,
+            usage: None,
+            ttft_ms: None,
+            start,
+        }))
+    }
+
     fn observe(&mut self, chunk: &StreamChunk) {
         if let Some(snapshot) = self.0.as_mut() {
+            snapshot
+                .ttft_ms
+                .get_or_insert_with(|| snapshot.start.elapsed().as_millis() as u64);
             if chunk.usage.is_some() {
                 snapshot.usage = chunk.usage.clone();
             }
+        }
+    }
+
+    fn observe_error(&mut self, error: &CortexError) {
+        if let (Some(snapshot), Some(usage)) = (
+            self.0.as_mut(),
+            rook_core::StreamValidationError::usage(error),
+        ) {
+            snapshot.usage = Some(usage.clone());
         }
     }
 
@@ -84,12 +117,24 @@ fn spawn_accounting(
             ttft_ms: snapshot.ttft_ms,
             latency_ms: snapshot.start.elapsed().as_millis() as u64,
         };
-        if tokio::time::timeout(
-            Duration::from_secs(10),
-            snapshot
-                .owner
-                .record_combo_stream_outcome(&snapshot.step, &snapshot.req, metrics),
-        )
+        if tokio::time::timeout(Duration::from_secs(10), async {
+            if let Some(step) = &snapshot.step {
+                snapshot
+                    .owner
+                    .record_combo_stream_outcome(step, &snapshot.req, metrics)
+                    .await;
+            } else {
+                snapshot
+                    .owner
+                    .record_standard_outcome(
+                        &snapshot.req,
+                        &snapshot.provider_id,
+                        snapshot.connection_id,
+                        metrics,
+                    )
+                    .await;
+            }
+        })
         .await
         .is_err()
         {
@@ -100,6 +145,91 @@ fn spawn_accounting(
 }
 
 impl RouteRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn forward_validated_stream(
+        &self,
+        mut upstream: ChunkStream,
+        req: CompletionRequest,
+        provider_id: super::ProviderId,
+        connection_id: Option<ConnectionId>,
+        permit: rook_core::RouterTrialPermit,
+        start: std::time::Instant,
+        mut validation: Box<dyn super::StreamOutputValidation>,
+    ) -> ChunkStream {
+        let router = self.router.clone();
+        let mut accounting = StreamAccounting::standard(
+            self.clone(),
+            req,
+            provider_id.clone(),
+            connection_id,
+            tokio::time::Instant::from_std(start),
+        );
+        Box::pin(async_stream::try_stream! {
+            let mut permit = Some(permit);
+            while let Some(next) = upstream.next().await {
+                match next {
+                    Ok(chunk) => {
+                        accounting.observe(&chunk);
+                        if let Err(error) = validation.chunk(&chunk) {
+                            accounting.finish(RequestStatus::Failure).await;
+                            Err(error)?;
+                        }
+                        yield chunk;
+                    }
+                    Err(error) => {
+                        accounting.observe_error(&error);
+                        notify_provider_failure(router.as_ref(), &provider_id, &error).await;
+                        if let Some(permit) = permit.take() { permit.complete(); }
+                        accounting.finish(stream_error_status(&error)).await;
+                        Err(error)?;
+                    }
+                }
+            }
+            if let Err(error) = validation.finish() {
+                accounting.finish(RequestStatus::Failure).await;
+                Err(error)?;
+            }
+            notify_provider_success(router.as_ref(), &provider_id).await;
+            if let Some(permit) = permit.take() { permit.complete(); }
+            accounting.finish(RequestStatus::Success).await;
+        })
+    }
+
+    pub(super) async fn record_standard_outcome(
+        &self,
+        req: &CompletionRequest,
+        provider_id: &super::ProviderId,
+        connection_id: Option<ConnectionId>,
+        metrics: UsageMetrics<'_>,
+    ) {
+        let mut entry = AuditEntry::success(
+            &req.id,
+            provider_id,
+            &req.model,
+            metrics.usage.cloned(),
+            metrics.latency_ms,
+        );
+        entry.status = metrics.status;
+        entry.connection_id = connection_id;
+        if let Err(error) = self.audit.record(entry).await {
+            tracing::warn!(%error, "failed to record stream audit");
+        }
+        if let Some(tracker) = &self.telemetry {
+            tracker.record_observation(
+                provider_id.clone(),
+                metrics.latency_ms,
+                metrics.ttft_ms,
+                match metrics.status {
+                    RequestStatus::Success => ObservationStatus::Success,
+                    RequestStatus::RateLimited => ObservationStatus::RateLimited,
+                    _ => ObservationStatus::Failure,
+                },
+            );
+        }
+        self.record_usage(req, provider_id, connection_id, metrics)
+            .await;
+    }
+
     pub(super) async fn execute_combo_stream(
         &self,
         req: CompletionRequest,
@@ -232,7 +362,7 @@ impl RouteRequest {
                         &step_req,
                         UsageMetrics {
                             status: stream_error_status(&error),
-                            usage: None,
+                            usage: rook_core::StreamValidationError::usage(&error),
                             ttft_ms: None,
                             latency_ms: step_start.elapsed().as_millis() as u64,
                         },
@@ -271,11 +401,17 @@ impl RouteRequest {
         let mut accounting = StreamAccounting(Some(AccountingSnapshot {
             owner: self.clone(),
             req,
-            step: context,
+            connection_id: context.connection_id,
+            provider_id: provider_id.clone(),
+            step: Some(context),
             usage: first.usage.clone(),
             ttft_ms: Some(start.elapsed().as_millis() as u64),
             start,
         }));
+        let mut validation = self
+            .output_validation
+            .as_ref()
+            .map(|policy| policy.stream());
         Box::pin(async_stream::try_stream! {
             let mut permit = Some(permit);
             let mut finished = false;
@@ -286,15 +422,28 @@ impl RouteRequest {
                         finished |= chunk.finish_reason.is_some();
                         accounting.observe(&chunk);
                         chunk.model = requested.clone();
+                        if let Some(validation) = validation.as_mut() {
+                            if let Err(error) = validation.chunk(&chunk) {
+                                accounting.finish(RequestStatus::Failure).await;
+                                Err(error)?;
+                            }
+                        }
                         yield chunk;
                     }
                     Some(Err(error)) => {
+                        accounting.observe_error(&error);
                         notify_provider_failure(router.as_ref(), &provider_id, &error).await;
                         if let Some(permit) = permit.take() { permit.complete(); }
                         accounting.finish(stream_error_status(&error)).await;
                         Err(error)?;
                     }
                     None => {
+                        if let Some(validation) = validation.as_mut() {
+                            if let Err(error) = validation.finish() {
+                                accounting.finish(RequestStatus::Failure).await;
+                                Err(error)?;
+                            }
+                        }
                         if !finished {
                             next = Some(Err(CortexError::provider("combo upstream ended without a finish reason")));
                             continue;
@@ -313,7 +462,7 @@ impl RouteRequest {
         })
     }
 
-    async fn record_combo_stream_outcome(
+    pub(super) async fn record_combo_stream_outcome(
         &self,
         step: &ComboStepContext,
         req: &CompletionRequest,
@@ -341,6 +490,7 @@ impl RouteRequest {
             )
         };
         entry.connection_id = step.connection_id;
+        entry.usage = metrics.usage.cloned();
         entry.provider_runtime_id = step.runtime_id.clone();
         if let Err(error) = self.audit.record(entry).await {
             tracing::warn!(%error, "failed to record combo stream audit");
@@ -363,7 +513,7 @@ impl RouteRequest {
     }
 }
 
-fn stream_error_status(error: &CortexError) -> RequestStatus {
+pub(super) fn stream_error_status(error: &CortexError) -> RequestStatus {
     if error.is_rate_limited() {
         RequestStatus::RateLimited
     } else {

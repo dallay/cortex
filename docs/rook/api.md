@@ -7,6 +7,7 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 | Method | Path | Authentication | Availability |
 |---|---|---|---|
 | `POST` | `/v1/chat/completions` | API key if configured; otherwise public | Always |
+| `POST` | `/v1/responses` | API key if configured; otherwise public | Stateless text/function subset |
 | `GET` | `/v1/models` | API key if configured; otherwise public | Always |
 | `POST` | `/v1/messages` | API key if configured; otherwise public | Always |
 | `GET` | `/health` | Public | Always |
@@ -31,6 +32,11 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 | `DELETE` | `/api/oauth/{provider}` | Admin session + CSRF | Connection management enabled |
 
 The `/api/models/aliases` prefix stores ordinary aliases from an alias to a canonical model. The `rook/` prefix is reserved for virtual combo aliases and cannot be created as a model alias.
+
+## `POST /v1/responses`
+
+The [Responses compatibility guide](responses.md) defines the stateless subset,
+supported SSE events, errors, and validation against a pinned SDK version.
 
 ## `GET /v1/models`
 

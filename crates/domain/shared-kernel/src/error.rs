@@ -12,6 +12,11 @@ pub struct CortexError {
 }
 
 impl CortexError {
+    /// Permite recuperar contexto tipado sin acoplar el kernel a sus consumidores.
+    pub fn downcast_ref<E: std::error::Error + 'static>(&self) -> Option<&E> {
+        self.source.downcast_ref()
+    }
+
     pub fn provider(msg: impl Into<String>) -> Self {
         Self {
             source: Box::new(ProviderError(msg.into())),

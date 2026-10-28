@@ -18,6 +18,9 @@ pub mod oauth_routes;
 pub mod openai_adapter;
 pub mod provider_dto;
 pub mod provider_routes;
+pub mod responses_adapter;
+mod responses_routes;
+mod responses_stream;
 pub mod routes;
 
 pub use middleware::{
