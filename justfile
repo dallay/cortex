@@ -144,7 +144,17 @@ huginn-test: huginn-architecture
 
 # Run the backend (rook) in dev mode
 run:
-    ROOK_CONFIG=$HOME/.config/cortex/rook.toml cargo run -p rook
+    cargo run -p rook
+
+# Create the default Rook config at ~/.cortex/rook/config.toml (never overwrites)
+init-config:
+    @mkdir -p ~/.cortex/rook
+    @if [ -f ~/.cortex/rook/config.toml ]; then \
+        echo "{{YELLOW}}~/.cortex/rook/config.toml already exists — leaving it untouched{{RESET}}"; \
+    else \
+        printf '[server]\nhost = "127.0.0.1"\nport = 3773\n\n[routing]\nstrategy = "priority"\n\n[cache]\nenabled = true\nttl_secs = 300\n\n[database]\ndb_path = "~/.cortex/rook/rook.db"\n\n[provider_crud]\nenabled = true\n' > ~/.cortex/rook/config.toml && \
+        echo "{{GREEN}}Created ~/.cortex/rook/config.toml{{RESET}}"; \
+    fi
 
 # Run the Vue dashboard dev server (requires pnpm install first)
 run-dashboard:
@@ -160,7 +170,7 @@ dashboard-install:
 # Always delete all three files together; a leftover -wal against a fresh DB
 # causes SQLite error 522 ("file truncated") on the next startup.
 db-reset:
-    @rm -f ~/.local/share/cortex/rook/rook.db{,-wal,-shm}
+    @rm -f ~/.cortex/rook/rook.db{,-wal,-shm}
     @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
 
 # Kill any process occupying port 3773 (stale rook instance)
@@ -173,6 +183,7 @@ setup:
     cd apps/rook/dashboard && pnpm install
     @echo "{{YELLOW}}Verifying Rust toolchain...{{RESET}}"
     rustup show
+    @just init-config
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
 # Read-only checks for the local development environment.
