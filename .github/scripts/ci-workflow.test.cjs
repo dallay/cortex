@@ -222,6 +222,12 @@ for (const eventName of ['pull_request', 'push']) {
   });
 }
 
+it('falla solo ante findings Semgrep activos, no ante excepciones SARIF en source', () => {
+  const scan = jobBlock('semgrep-pr');
+  assert.match(scan, /FINDINGS_COUNT=.*suppressions/);
+  assert.match(scan, /select\(\(\.suppressions \/\/ \[\]\) \| length == 0\)/);
+});
+
 it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   const contract = jobBlock('ci-contract');
   assert.match(contract, /^    if: always\(\)\s*$/m);

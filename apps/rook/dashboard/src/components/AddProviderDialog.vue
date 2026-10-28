@@ -30,13 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import {Input} from "@/components/ui/input";
 import {Label} from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import {Switch} from "@/components/ui/switch";
 import {ToggleGroup, ToggleGroupItem} from "@/components/ui/toggle-group";
 import {useProviders} from "@/composables/useProviders";
@@ -564,30 +558,23 @@ onUnmounted(stopOAuthPolling);
       <div class="space-y-4 py-2">
         <!-- Kind selector (hidden when providerKind is pre-scoped) -->
         <div v-if="showKindSelector" class="space-y-2">
-          <Label id="kind-label" for="kind">
+          <Label for="kind">
             {{ t('providers.form.selectProvider') }}
           </Label>
-          <Select
-            :model-value="kind"
-            @update:model-value="(v) => v && (kind = v as ProviderKind)"
+          <NativeSelect
+            id="kind"
+            v-model="kind"
+            data-testid="kind-select-trigger"
+            :aria-label="t('providers.form.selectProvider')"
           >
-            <SelectTrigger
-              id="kind"
-              aria-labelledby="kind-label"
-              data-testid="kind-select-trigger"
+            <NativeSelectOption
+              v-for="entry in PROVIDER_KINDS"
+              :key="entry.kind"
+              :value="entry.kind"
             >
-              <SelectValue :placeholder="t('providers.form.selectProvider')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem
-                v-for="entry in PROVIDER_KINDS"
-                :key="entry.kind"
-                :value="entry.kind"
-              >
-                {{ t(entry.displayNameKey) }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+              {{ t(entry.displayNameKey) }}
+            </NativeSelectOption>
+          </NativeSelect>
         </div>
 
         <!-- Auth type toggle (OAuth disabled when kind doesn't support it) -->
@@ -687,25 +674,22 @@ onUnmounted(stopOAuthPolling);
               :disabled="oauthBusy"
               data-testid="oauth-tenant-id"
             />
-            <Label id="oauthFlowTypeLabel" for="oauthFlowType">
+            <Label for="oauthFlowType">
               {{ t('providers.oauth.flowType') }}
             </Label>
-            <Select
+            <NativeSelect
+              id="oauthFlowType"
               v-model="form.oauthFlowType"
               :disabled="oauthBusy"
+              :aria-label="t('providers.oauth.flowType')"
             >
-              <SelectTrigger id="oauthFlowType" aria-labelledby="oauthFlowTypeLabel">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="OAUTH_FLOW_TYPES.AUTHORIZATION_CODE">
-                  {{ t('providers.oauth.authorizationCode') }}
-                </SelectItem>
-                <SelectItem :value="OAUTH_FLOW_TYPES.DEVICE_CODE">
-                  {{ t('providers.oauth.deviceCode') }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
+              <NativeSelectOption :value="OAUTH_FLOW_TYPES.AUTHORIZATION_CODE">
+                {{ t('providers.oauth.authorizationCode') }}
+              </NativeSelectOption>
+              <NativeSelectOption :value="OAUTH_FLOW_TYPES.DEVICE_CODE">
+                {{ t('providers.oauth.deviceCode') }}
+              </NativeSelectOption>
+            </NativeSelect>
           </div>
           <div v-if="kind === 'gemini'" class="space-y-2">
             <Label for="oauthProjectId">{{ t('providers.oauth.googleProjectId') }}</Label>
