@@ -16,6 +16,25 @@ use std::{
 mod workflow;
 pub use workflow::{Field, FieldKind, FormInput, Workflow, WorkflowFuture, WorkflowHandler};
 
+/// Restrict-only tool hooks: authors can block or annotate, never authorize.
+pub mod hooks {
+    pub use huginn_core::{
+        hooks::{
+            tool_hooks_id, Blocked, Note, ToolHook, ToolHooks, ToolHooksService, ToolOutcome,
+            ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
+        },
+        ToolCall, ToolContext,
+    };
+}
+
+/// Registro de herramientas de autores nativos confiables; no concede permisos.
+pub mod tools {
+    pub use huginn_core::{
+        tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},
+        ApprovalRequest, PreparedAction, Tool, ToolCall, ToolContext, ToolDefinition,
+    };
+}
+
 pub fn contributions_id() -> ServiceId {
     ServiceId::new("agent:ui-contributions", 1)
 }

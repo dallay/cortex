@@ -38,6 +38,8 @@
     "sonar-project.properties",
     ".semgrepignore",
     ".github/scripts/ci-*.cjs",
+    ".github/scripts/check-semgrep-path-exceptions.py",
+    ".github/scripts/test-semgrep-path-exceptions.py",
     ".github/ci-*.json"
   ],
   "labeler": [

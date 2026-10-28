@@ -26,6 +26,7 @@ members = [
     "apps/rook",
     "apps/huginn",
     "crates/huginn/core",
+    "crates/huginn/guards",
     "crates/huginn/application",
     "crates/huginn/runtime",
     "crates/huginn/presentation",
