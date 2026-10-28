@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 sys.dont_write_bytecode = True
@@ -26,6 +27,21 @@ class InventoryTests(unittest.TestCase):
             target = self.root / filename
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(gate.ROOT / filename, target)
+
+    def test_cli_rejects_semgrep_command_override(self):
+        with (
+            patch.object(gate, "ROOT", self.root),
+            patch.object(gate, "check_inventory"),
+            patch.object(gate, "scanner_controls") as scanner_controls,
+            patch("sys.argv", ["check-semgrep-path-exceptions.py", "--output-dir", str(self.root)]),
+        ):
+            gate.main()
+        self.assertEqual(scanner_controls.call_args.args[0], self.root)
+
+        with patch("sys.argv", ["check-semgrep-path-exceptions.py", "--semgrep-command", "sh"]):
+            with self.assertRaises(SystemExit) as error:
+                gate.main()
+        self.assertEqual(error.exception.code, 2)
 
     def mutate(self, filename, original, replacement):
         target = self.root / filename
