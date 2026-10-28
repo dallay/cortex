@@ -1,28 +1,42 @@
 //! Protecciones restrictivas para herramientas nativas; no constituyen un sandbox.
 mod paths;
+mod plugin;
+mod shell;
+pub use plugin::GuardsPlugin;
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Default)]
 pub struct Guardrails {
+    block_commands: Vec<String>,
     block_paths: Vec<PathBuf>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Configuration {
+    block_commands: Vec<String>,
     block_paths: Vec<String>,
 }
 impl Guardrails {
     /// Construye restricciones aditivas desde texto; no lee un archivo de proyecto.
-    /// Solo acepta `block_paths`; los campos desconocidos producen un error.
+    /// Acepta `block_paths` y `block_commands`; los campos desconocidos producen un error.
     pub fn from_toml(text: &str) -> std::result::Result<Self, &'static str> {
         if text.len() > 65_536 {
             return Err("guardrails: configuration exceeds 64 KiB");
         }
         let config: Configuration =
             toml::from_str(text).map_err(|_| "guardrails: invalid configuration")?;
-        if config.block_paths.len() > 128 {
+        if config.block_commands.len() > 128 || config.block_paths.len() > 128 {
             return Err("guardrails: too many project rules");
+        }
+        if config.block_commands.iter().any(|s| {
+            s.is_empty()
+                || s.len() > 128
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        }) {
+            return Err("guardrails: invalid blocked executable");
         }
         if config.block_paths.iter().any(|s| {
             s.is_empty()
@@ -35,8 +49,37 @@ impl Guardrails {
             return Err("guardrails: blocked paths must be relative without traversal");
         }
         Ok(Self {
+            block_commands: config.block_commands,
             block_paths: config.block_paths.into_iter().map(Into::into).collect(),
         })
+    }
+    pub fn check_shell(&self, command: &str) -> std::result::Result<(), &'static str> {
+        shell::check(command, &self.block_commands)?;
+        for command in shell::words(command)? {
+            for word in command.args.iter().chain(&command.redirects) {
+                self.check_lexical_path(Path::new(word))?;
+                if let Some((_, value)) = word.split_once('=') {
+                    self.check_lexical_path(Path::new(value))?;
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn check_shell_in(
+        &self,
+        workspace: &Path,
+        command: &str,
+    ) -> std::result::Result<(), &'static str> {
+        self.check_shell(command)?;
+        for command in shell::words(command)? {
+            for word in command.args.iter().chain(&command.redirects) {
+                self.check_path(workspace, Path::new(word))?;
+                if let Some((_, value)) = word.split_once('=') {
+                    self.check_path(workspace, Path::new(value))?;
+                }
+            }
+        }
+        Ok(())
     }
     /// Comprueba nombres sensibles y prefijos del proyecto, sin conceder acceso.
     /// Resuelve aliases y el ancestro existente de destinos nuevos.
