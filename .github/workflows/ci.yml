@@ -425,10 +425,14 @@ jobs:
       - name: Install Semgrep CLI
         run: pip install semgrep==1.126.0
       - name: Check exact path exceptions and scanner controls
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
         run: |
           python3 .github/scripts/test-semgrep-path-exceptions.py
           python3 .github/scripts/check-semgrep-path-exceptions.py
       - name: Run Semgrep SAST scan
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
         run: |
           mkdir -p reports/semgrep
           semgrep scan \

@@ -379,6 +379,7 @@ async fn continuing_hooks_cannot_override_a_host_denial_and_observe_the_error() 
         tool_result(&session),
         format!("{}\n\n[hook note.outcome] observed", observations[0].0)
     );
+    drop(observations);
     assert!(events.iter().any(|event| matches!(
         event,
         Event::ApprovalResolved {
