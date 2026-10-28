@@ -119,7 +119,7 @@ def initialize_fixture_repository(fixtures, target):
     )
 
 
-def scanner_controls(command, output):
+def scanner_controls(output):
     """Use real remote rules, not a substitute rule that could mask drift."""
     with tempfile.TemporaryDirectory(prefix="semgrep-path-fixtures-") as directory:
         fixtures = Path(directory).resolve()
@@ -145,8 +145,8 @@ def scanner_controls(command, output):
             target = fixtures / f"{name}.rs"
             target.write_text(source)
             initialize_fixture_repository(fixtures, target)
-            argv = command + [
-                "scan", "--project-root", str(fixtures),
+            argv = [
+                "semgrep", "scan", "--project-root", str(fixtures),
                 "--config", "p/rust", "--severity", "ERROR",
                 "--json", "--error", "--metrics", "off", "--disable-version-check",
             ]
@@ -175,14 +175,12 @@ def scanner_controls(command, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--semgrep-command", nargs=argparse.REMAINDER, default=["semgrep"],
-                        help="executable and argv; must be the last option")
     args = parser.parse_args()
     output = args.output_dir or Path(tempfile.mkdtemp(prefix="semgrep-path-evidence-"))
     require(not output.resolve().is_relative_to(ROOT), "evidence must be outside source tree")
     output.mkdir(parents=True, exist_ok=True)
     print(f"Evidence: {output.resolve()}", flush=True)
-    scanner_controls(args.semgrep_command, output)
+    scanner_controls(output)
     check_inventory()
 
 

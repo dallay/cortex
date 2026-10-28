@@ -236,15 +236,16 @@ pnpm install --dir apps/rook/dashboard
 # Build Rook (with embedded dashboard)
 cargo build --release -p rook
 
-# Run it
-ROOK_CONFIG=./rook.toml cargo run --release -p rook
+# Run it (reads ~/.cortex/rook/config.toml by default)
+cargo run --release -p rook
 ```
 
 ### Configure Rook
 
 ```bash
 # Create config file
-cat > rook.toml << 'EOF'
+mkdir -p ~/.cortex/rook
+cat > ~/.cortex/rook/config.toml << 'EOF'
 [server]
 host = "127.0.0.1"
 port = 3773

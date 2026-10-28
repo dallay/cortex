@@ -33,7 +33,7 @@ Then restart your shell or run `source ~/.zshrc`.
 On first run, Rook auto-generates a secret and stores it at:
 
 ```
-~/.local/share/cortex/rook/api_key_secret.key
+~/.cortex/rook/api_key_secret.key
 ```
 
 **Problem:** If you delete this file or use a different DB path, Rook generates a new secret and all existing API keys break.
@@ -47,7 +47,7 @@ Set the env var AND keep the file. This way:
 
 ```bash
 # In your shell or .env file
-export API_KEY_HASH_SECRET=$(cat ~/.local/share/cortex/rook/api_key_secret.key)
+export API_KEY_HASH_SECRET=$(cat ~/.cortex/rook/api_key_secret.key)
 ```
 
 ## Starting Rook Correctly
@@ -56,16 +56,19 @@ Always set both environment variables:
 
 ```bash
 # From cortex directory
-API_KEY_HASH_SECRET=$(cat ~/.local/share/cortex/rook/api_key_secret.key) \
-ROOK_CONFIG=$HOME/.config/cortex/rook.toml \
+API_KEY_HASH_SECRET=$(cat ~/.cortex/rook/api_key_secret.key) \
+ROOK_CONFIG=$HOME/.cortex/rook/config.toml \
 cargo run -p rook
 ```
 
 Or with just:
 
 ```bash
-ROOK_CONFIG=$HOME/.config/cortex/rook.toml cargo run -p rook
+just run
 ```
+
+Rook reads `~/.cortex/rook/config.toml` by default; `ROOK_CONFIG` only exists to
+point at a different file.
 
 Rook will read `API_KEY_HASH_SECRET` from environment first, then fall back to the file.
 
@@ -84,14 +87,14 @@ echo $API_KEY_HASH_SECRET
 Check the secret file:
 
 ```bash
-cat ~/.local/share/cortex/rook/api_key_secret.key
+cat ~/.cortex/rook/api_key_secret.key
 ```
 
 ### Step 2: Use the Correct Secret When Starting Rook
 
 ```bash
 API_KEY_HASH_SECRET="correct-secret-here" \
-ROOK_CONFIG=$HOME/.config/cortex/rook.toml \
+ROOK_CONFIG=$HOME/.cortex/rook/config.toml \
 cargo run -p rook
 ```
 
