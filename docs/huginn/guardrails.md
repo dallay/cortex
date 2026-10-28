@@ -2,9 +2,9 @@
 
 ## Estado
 
-`huginn-guards` expone una biblioteca de rutas y shell. Todavía no se registra como plugin,
-no está conectada a herramientas nativas y no protege run/chat/resume por defecto.
-No incorpora cargador de archivos ni integración con la CLI.
+El host puede registrar `GuardsPlugin` y componer adaptadores nativos protegidos.
+La CLI protege run/chat/resume con esa composición, sin flags de desprotección.
+Carga una instantánea desde `session.workspace` tras crear o recuperar la sesión.
 
 ## Uso explícito
 
@@ -84,6 +84,39 @@ El nombre del ejecutable se toma del último componente de su ruta y se compara
 sin distinguir mayúsculas ASCII. `alias` y `trap` se bloquean incluso cuando sus
 payloads parecen inocuos; no se interpreta su contenido para decidir permisos.
 
+## Integración explícita del host
+
+`GuardsPlugin(Arc<Guardrails>)` declara `agent:tool-hooks@1` y registra un hook
+restrictivo por generación. Antes de preparar herramientas nativas, comprueba
+comandos shell o rutas. Al retirar el plugin se revoca el hook; nunca concede
+autorización ni modifica `HostPolicy`.
+
+`native_tools_with_guards` comparte la política con los adaptadores. Comprueba
+rutas crudas y resueltas antes de leer para previews y otra vez al ejecutar.
+La búsqueda/listado filtra entradas antes de recursión o lectura; búsqueda repite
+el filtro antes de metadata/lectura. Así no depende solo del hook de la raíz.
+
+`build_native_with_connections_and_guards` exige una política `Arc<Guardrails>`
+seleccionada por el host y compone juntos hook y herramientas protegidas. No
+carga configuración del proyecto. Los builders legacy y `native_tools` conservan
+sus firmas y comportamiento sin política para compatibilidad; no son la entrada
+protegida. La CLI selecciona el builder protegido; otros hosts deben elegirlo explícitamente.
+
+## Carga explícita del host
+
+`huginn_runtime::guardrails::load_guardrails(workspace)` lee una vez
+`.huginn/guardrails.toml` y devuelve una instantánea `Arc<Guardrails>` para el
+builder protegido. El host elige el workspace; no hay watcher ni recarga automática.
+Si falta `.huginn` o el archivo, devuelve el catálogo predeterminado. Una
+configuración inválida falla; no desactiva ni reduce las restricciones incorporadas.
+
+El cargador usa capacidades de directorio y abre `.huginn` y el archivo sin seguir
+enlaces. Exige archivo regular, UTF-8 y hasta 64 KiB; combina metadata con lectura
+acotada de 65537 bytes para detectar crecimiento. En Unix, `O_NONBLOCK` evita
+bloquear al abrir un FIFO, que se rechaza como no regular. Los fallos no se ignoran.
+La CLI llama al cargador una vez después de `prepare_session`, con `session.workspace`,
+también en resume. Comparte la misma `Arc` entre hook y adaptadores; no hay hot reload.
+
 ## Límites de seguridad
 
 No es un sandbox ni un mecanismo de autorización ni un intérprete shell completo.
@@ -91,4 +124,4 @@ No inspecciona el interior de scripts o programas arbitrarios, ni implementa una
 política para MCP. Tampoco detecta todos los alias mediante hardlinks.
 La sustitución concurrente entre comprobación e I/O sigue sin resolverse: no hay
 confinamiento atómico. La pertenencia al workspace y los efectos siguen siendo
-responsabilidad del host y de sus adaptadores, que aún no usan esta biblioteca.
+responsabilidad del host y de sus adaptadores; los builders legacy no activan la política.

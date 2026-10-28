@@ -1,6 +1,8 @@
 //! Protecciones restrictivas para herramientas nativas; no constituyen un sandbox.
 mod paths;
+mod plugin;
 mod shell;
+pub use plugin::GuardsPlugin;
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 
