@@ -2,6 +2,7 @@
 pub mod composition;
 pub mod connection_config;
 pub mod connections;
+pub mod guardrails;
 pub mod instructions;
 pub mod loop_engine;
 pub mod mcp;

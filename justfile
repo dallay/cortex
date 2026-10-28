@@ -140,7 +140,7 @@ huginn-architecture:
     python3 .github/scripts/check-huginn-architecture.py
 
 huginn-test: huginn-architecture
-    cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn --all-features
+    cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn-plugin-api -p huginn-reference-extension -p huginn-guards -p huginn --all-features
 
 # Run the backend (rook) in dev mode
 run:
