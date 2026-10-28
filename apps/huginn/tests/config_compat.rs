@@ -5,34 +5,24 @@ fn huginn() -> Command {
     Command::new(env!("CARGO_BIN_EXE_huginn"))
 }
 
-/// Mirror `dirs::data_local_dir()` resolution using only the env vars we
-/// care about, so the test stays platform-portable. The production code
-/// uses `dirs::data_local_dir()`, which on Linux consults `XDG_DATA_HOME`
-/// and on macOS uses `$HOME/Library/Application Support`.
-fn fake_data_local_dir(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library/Application Support")
-    } else {
-        // Tests explicitly set XDG_DATA_HOME to this isolated path for both
-        // parent and child, matching dirs::data_local_dir() on Linux.
-        home.join("xdg-data")
-    }
+/// Mirror the default data directory: `$HOME/.cortex/huginn`. Production code
+/// resolves it from `dirs::home_dir()`, which honors `HOME` on Unix.
+fn default_data_dir(home: &Path) -> PathBuf {
+    home.join(".cortex").join("huginn")
 }
 
 #[test]
 fn canonical_environment_values_take_precedence_over_legacy_values() {
     let home = tempfile::tempdir().expect("home directory");
     let workspace = tempfile::tempdir().expect("workspace");
-    let data_root = fake_data_local_dir(home.path());
-    let canonical_db = data_root.join("cortex/huginn/sessions.db");
+    let data_root = default_data_dir(home.path());
+    let canonical_db = data_root.join("sessions.db");
     let _ = std::fs::remove_file(&canonical_db);
     let output = huginn()
         .args(["--provider", "mock", "--workspace"])
         .arg(workspace.path())
         .arg("doctor")
         .env("HOME", home.path())
-        .env("XDG_DATA_HOME", &data_root)
-        .env_remove("XDG_CONFIG_HOME")
         .env_remove("HUGINN_API_KEY")
         .env_remove("AGENT_API_KEY")
         .env("HUGINN_BASE_URL", "http://canonical.invalid/v1")
@@ -51,6 +41,11 @@ fn canonical_environment_values_take_precedence_over_legacy_values() {
         serde_json::from_slice(&output.stdout).expect("doctor JSON report");
     assert_eq!(report["base_url"], "http://canonical.invalid/v1");
     assert_eq!(report["model"], "canonical-model");
+    assert_eq!(
+        report["database"],
+        canonical_db.to_string_lossy().as_ref(),
+        "the default database must live under ~/.cortex/huginn"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("AGENT_BASE_URL is deprecated"));
     assert!(!stderr.contains("AGENT_MODEL is deprecated"));
@@ -60,15 +55,11 @@ fn canonical_environment_values_take_precedence_over_legacy_values() {
 fn legacy_credential_variables_fill_canonical_and_default_key_name() {
     let home = tempfile::tempdir().expect("home directory");
     let workspace = tempfile::tempdir().expect("workspace");
-    let data_root = fake_data_local_dir(home.path());
-    let canonical_db = data_root.join("cortex/huginn/sessions.db");
-    let _ = std::fs::remove_file(&canonical_db);
     let output = huginn()
         .args(["--provider", "mock", "--workspace"])
         .arg(workspace.path())
         .arg("doctor")
         .env("HOME", home.path())
-        .env("XDG_DATA_HOME", &data_root)
         .env_remove("HUGINN_API_KEY")
         .env("AGENT_API_KEY", "legacy-key")
         .env("AGENT_BASE_URL", "http://legacy.invalid/v1")
@@ -98,9 +89,6 @@ fn legacy_credential_variables_fill_canonical_and_default_key_name() {
 fn custom_api_key_env_is_not_migrated_from_legacy_name() {
     let home = tempfile::tempdir().expect("home directory");
     let workspace = tempfile::tempdir().expect("workspace");
-    let data_root = fake_data_local_dir(home.path());
-    let canonical_db = data_root.join("cortex/huginn/sessions.db");
-    let _ = std::fs::remove_file(&canonical_db);
     let config_toml = home.path().join("custom-huginn.toml");
     std::fs::write(&config_toml, "api_key_env = \"MY_PROVIDER_KEY\"\n")
         .expect("write custom config");
@@ -111,7 +99,6 @@ fn custom_api_key_env_is_not_migrated_from_legacy_name() {
         .arg(&config_toml)
         .arg("doctor")
         .env("HOME", home.path())
-        .env("XDG_DATA_HOME", &data_root)
         .env_remove("HUGINN_API_KEY")
         .env("AGENT_API_KEY", "legacy-key")
         .env("MY_PROVIDER_KEY", "custom-key")
@@ -135,42 +122,31 @@ fn custom_api_key_env_is_not_migrated_from_legacy_name() {
 }
 
 #[test]
-fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
+fn legacy_data_directory_is_ignored() {
     let home = tempfile::tempdir().expect("home directory");
     let workspace = tempfile::tempdir().expect("workspace");
-    let data_root = fake_data_local_dir(home.path());
-    let legacy_dir = data_root.join("cortex/agent");
-    std::fs::create_dir_all(&legacy_dir).expect("create legacy data directory");
-    let legacy_db = legacy_dir.join("sessions.db");
-    let setup = huginn()
-        .args(["--provider", "mock", "--workspace"])
-        .arg(workspace.path())
-        .arg("--db")
-        .arg(&legacy_db)
-        .arg("sessions")
-        .env("HOME", home.path())
-        .env("XDG_DATA_HOME", &data_root)
-        .env_remove("XDG_CONFIG_HOME")
-        .env_remove("HUGINN_API_KEY")
-        .env_remove("AGENT_API_KEY")
-        .env_remove("HUGINN_BASE_URL")
-        .env_remove("HUGINN_MODEL")
-        .env_remove("AGENT_BASE_URL")
-        .env_remove("AGENT_MODEL")
-        .output()
-        .expect("initialize legacy database with Huginn");
-    assert!(
-        setup.status.success(),
-        "{}",
-        String::from_utf8_lossy(&setup.stderr)
-    );
+    // A database left at either historical location must not be picked up.
+    for legacy_dir in [
+        home.path()
+            .join("Library/Application Support")
+            .join("cortex")
+            .join("agent"),
+        home.path()
+            .join(".local/share")
+            .join("cortex")
+            .join("agent"),
+        home.path().join(".config").join("cortex").join("agent"),
+    ] {
+        std::fs::create_dir_all(&legacy_dir).expect("create legacy data directory");
+        std::fs::write(legacy_dir.join("sessions.db"), b"not a database")
+            .expect("write legacy placeholder");
+    }
+
     let output = huginn()
         .args(["--provider", "mock", "--workspace"])
         .arg(workspace.path())
         .arg("doctor")
         .env("HOME", home.path())
-        .env("XDG_DATA_HOME", &data_root)
-        .env_remove("XDG_CONFIG_HOME")
         .env_remove("HUGINN_API_KEY")
         .env_remove("AGENT_API_KEY")
         .env_remove("HUGINN_BASE_URL")
@@ -185,11 +161,12 @@ fn uses_existing_legacy_database_in_place_when_canonical_database_is_absent() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
-    assert_eq!(report["database"], legacy_db.to_string_lossy().as_ref());
-    assert!(legacy_db.exists(), "legacy database must remain in place");
-    assert!(
-        !data_root.join("cortex/huginn/sessions.db").exists(),
-        "do not create/copy a canonical DB during legacy fallback"
+    assert_eq!(
+        report["database"],
+        default_data_dir(home.path())
+            .join("sessions.db")
+            .to_string_lossy()
+            .as_ref()
     );
 }
 
