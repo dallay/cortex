@@ -1,8 +1,6 @@
 //! Explicit UI event categories. UI-only events are never conversation entries.
-use aes_gcm::{
-    aead::{Aead, OsRng},
-    Aes256Gcm, KeyInit, Nonce,
-};
+use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+use rand::RngExt;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -108,11 +106,11 @@ impl ErrorDeduplicator {
         // Generate a fresh AES-256 key from the OS CSPRNG for this instance.
         // Nonces need uniqueness under this key, not randomness or separation
         // from the nonces used by other instances with independently generated keys.
-        let key = Aes256Gcm::generate_key(&mut OsRng);
+        let key_bytes: [u8; 32] = rand::rng().random();
         Self {
             clock,
             hash_message,
-            cipher: Aes256Gcm::new(&key),
+            cipher: Aes256Gcm::new_from_slice(&key_bytes).expect("32-byte key"),
             nonce_prefix: [0; 4],
             nonce_counter: 0,
             entries: VecDeque::new(),
@@ -136,8 +134,8 @@ impl ErrorDeduplicator {
             if entry.key != key {
                 return None;
             }
-            let nonce = Nonce::from_slice(&entry.fingerprint[..12]);
-            let plaintext = self.cipher.decrypt(nonce, &entry.fingerprint[12..]).ok()?;
+            let nonce = Nonce::try_from(&entry.fingerprint[..12]).ok()?;
+            let plaintext = self.cipher.decrypt(&nonce, &entry.fingerprint[12..]).ok()?;
             (plaintext == message.as_bytes()).then_some(index)
         }) {
             if now.saturating_sub(self.entries[index].last_visible) < ERROR_DEDUP_WINDOW {
@@ -168,7 +166,10 @@ impl ErrorDeduplicator {
         let nonce = [self.nonce_prefix.as_slice(), counter.as_slice()].concat();
         let ciphertext = self
             .cipher
-            .encrypt(Nonce::from_slice(&nonce), message.as_bytes())
+            .encrypt(
+                &Nonce::try_from(nonce.as_slice()).expect("12-byte nonce"),
+                message.as_bytes(),
+            )
             .expect("AES-GCM encryption");
         let mut fingerprint = nonce;
         fingerprint.extend(ciphertext);
