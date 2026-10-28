@@ -18,6 +18,7 @@ enum Behavior {
     Continue,
     Block(&'static str),
     Fail,
+    LongFail(String),
     Hang,
     Panic,
     Note(String),
@@ -33,6 +34,7 @@ impl ToolHook for Probe {
         match &self.behavior {
             Behavior::Block(reason) => Ok(ToolVerdict::Block((*reason).into())),
             Behavior::Fail => Err(AgentError::Tool("injected".into())),
+            Behavior::LongFail(text) => Err(AgentError::Tool(text.clone())),
             Behavior::Hang => {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 Ok(ToolVerdict::Continue)
@@ -50,6 +52,7 @@ impl ToolHook for Probe {
         match &self.behavior {
             Behavior::Note(note) => Ok(Some(note.clone())),
             Behavior::Fail => Err(AgentError::Tool("injected".into())),
+            Behavior::LongFail(text) => Err(AgentError::Tool(text.clone())),
             _ => Ok(None),
         }
     }
@@ -185,4 +188,58 @@ async fn rolled_back_and_revoked_hooks_are_not_evaluated() {
         assert_eq!(calls.load(Ordering::SeqCst), usize::from(!fail));
         supervisor.shutdown().await;
     }
+}
+
+async fn long_error_output(after: bool) -> String {
+    let hooks = Arc::new(ToolHooks::default());
+    let (hook, _) = probe(Behavior::LongFail("\u{1b}\u{202E}é".repeat(4096)));
+    let (mut supervisor, result) = compose(
+        hooks.clone(),
+        vec![Author {
+            id: "long-error",
+            hooks: vec![("error.long", hook)],
+            fail: false,
+        }],
+    )
+    .await;
+    result.unwrap();
+    let text = if after {
+        hooks
+            .after(
+                &call(),
+                ToolOutcome {
+                    output: "ok",
+                    is_error: false,
+                },
+                &context(),
+            )
+            .await
+            .remove(0)
+            .text
+    } else {
+        hooks.before(&call(), &context()).await.unwrap().reason
+    };
+    supervisor.shutdown().await;
+    text
+}
+
+fn assert_bounded_error(text: &str) {
+    assert!(
+        text.len() <= huginn_core::hooks::MAX_NOTE_BYTES,
+        "{} bytes",
+        text.len()
+    );
+    assert!(text.starts_with("hook failed: tool: "));
+    assert!(text.contains('é'));
+    assert!(!text.contains('\u{1b}') && !text.contains('\u{202E}'));
+}
+
+#[tokio::test]
+async fn long_before_error_includes_prefix_within_utf8_budget() {
+    assert_bounded_error(&long_error_output(false).await);
+}
+
+#[tokio::test]
+async fn long_after_error_includes_prefix_within_utf8_budget() {
+    assert_bounded_error(&long_error_output(true).await);
 }

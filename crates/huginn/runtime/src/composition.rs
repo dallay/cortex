@@ -1,7 +1,7 @@
 //! Adapter composition. The application kernel contracts are re-exported for compatibility.
 pub use huginn_application::composition::{
-    instructions_id, loop_id, model_id, sessions_id, tools_id, InstructionsPlugin, LoopPlugin,
-    ModelPlugin, SessionsPlugin, ToolsPlugin,
+    instructions_id, loop_id, model_id, sessions_id, tools_id, HooksPlugin, InstructionsPlugin,
+    LoopPlugin, ModelPlugin, SessionsPlugin, ToolsPlugin,
 };
 use huginn_application::loop_engine::LoopConfig;
 use huginn_core::{kernel::Supervisor, ModelProvider, Result, SessionStore, ToolRegistry};
@@ -40,6 +40,7 @@ pub async fn build_native(
         sessions,
         config,
         timeout_secs,
+        None,
     )
     .await
 }
@@ -62,6 +63,32 @@ pub async fn build_native_with_connections(
         sessions,
         config,
         timeout_secs,
+        None,
+    )
+    .await
+}
+
+/// Composición protegida; la política es una instantánea seleccionada por el host.
+pub async fn build_native_with_connections_and_guards(
+    model: Arc<dyn ModelProvider>,
+    access: Arc<huginn_application::connections::ConnectionAccess>,
+    registry: crate::tools::Registry,
+    sessions: Arc<dyn SessionStore>,
+    config: LoopConfig,
+    timeout_secs: u64,
+    guards: Arc<huginn_guards::Guardrails>,
+) -> Result<Supervisor> {
+    build_native_plugin(
+        Box::new(
+            huginn_application::providers::ProvidersPlugin::with_credentials_and_legacy(
+                access, model,
+            ),
+        ),
+        registry,
+        sessions,
+        config,
+        timeout_secs,
+        Some(guards),
     )
     .await
 }
@@ -72,6 +99,7 @@ async fn build_native_plugin(
     sessions: Arc<dyn SessionStore>,
     mut config: LoopConfig,
     timeout_secs: u64,
+    guards: Option<Arc<huginn_guards::Guardrails>>,
 ) -> Result<Supervisor> {
     let skills = Arc::new(crate::skills::FilesystemSkillLoader::new(configured_home(
         std::env::var_os("HOME"),
@@ -83,13 +111,21 @@ async fn build_native_plugin(
     supervisor.register(Box::new(crate::tools::NativeToolPlugin(Arc::new(
         huginn_application::skills::SkillTool(skills),
     ))))?;
-    for tool in crate::tools::native_tools(timeout_secs) {
+    let tools = guards.as_ref().map_or_else(
+        || crate::tools::native_tools(timeout_secs),
+        |policy| crate::tools::native_tools_with_guards(timeout_secs, policy.clone()),
+    );
+    for tool in tools {
         supervisor.register(Box::new(crate::tools::NativeToolPlugin(tool)))?;
     }
     supervisor.register(Box::new(SessionsPlugin(sessions)))?;
     supervisor.register(Box::new(InstructionsPlugin(Arc::new(
         crate::instructions::FilesystemInstructions,
     ))))?;
+    supervisor.register(Box::new(HooksPlugin(Arc::default())))?;
+    if let Some(guards) = guards {
+        supervisor.register(Box::new(huginn_guards::GuardsPlugin(guards)))?;
+    }
     supervisor.register(Box::new(LoopPlugin(config)))?;
     if let Err(error) = supervisor.start().await {
         supervisor.shutdown().await;

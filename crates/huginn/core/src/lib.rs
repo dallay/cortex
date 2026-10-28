@@ -321,3 +321,4 @@ pub trait ApprovalPrompt: Send + Sync {
     fn granted(&self, _request: &ApprovalRequest) {}
 }
 pub mod hooks;
+pub mod tools;
