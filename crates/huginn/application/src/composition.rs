@@ -4,6 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use huginn_core::{
+    hooks::{tool_hooks_id, ToolHooks, ToolHooksService},
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
     AgentLoop, InstructionSource, InstructionsService, LoopService, ModelProvider, ModelService,
     Result, SessionStore, SessionsService, ToolRegistry, ToolsService,
@@ -81,6 +82,22 @@ impl Plugin for InstructionsPlugin {
     }
 }
 
+/// Host-owned registry where plugins add restrict-only tool hooks.
+pub struct HooksPlugin(pub Arc<ToolHooks>);
+#[async_trait]
+impl Plugin for HooksPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "core.hooks".into(),
+            provides: vec![tool_hooks_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(tool_hooks_id(), ToolHooksService(self.0.clone()))
+    }
+}
+
 pub struct LoopPlugin(pub LoopConfig);
 #[async_trait]
 impl Plugin for LoopPlugin {
@@ -88,10 +105,18 @@ impl Plugin for LoopPlugin {
         Manifest {
             id: "core.loop".into(),
             provides: vec![loop_id()],
-            requires: vec![model_id(), tools_id(), sessions_id(), instructions_id()],
+            requires: vec![
+                model_id(),
+                tools_id(),
+                sessions_id(),
+                instructions_id(),
+                tool_hooks_id(),
+            ],
         }
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let mut config = self.0.clone();
+        config.hooks = Some(ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone());
         let implementation = StandardLoop {
             model: ctx.resolve::<ModelService>(&model_id())?.0.clone(),
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
@@ -100,7 +125,7 @@ impl Plugin for LoopPlugin {
                 .resolve::<InstructionsService>(&instructions_id())?
                 .0
                 .clone(),
-            config: self.0.clone(),
+            config,
             lifecycle: ctx.cancellation.clone(),
         };
         let implementation: Arc<dyn AgentLoop> = Arc::new(implementation);
@@ -119,6 +144,7 @@ pub async fn build(
     supervisor.register(Box::new(ToolsPlugin(tools)))?;
     supervisor.register(Box::new(SessionsPlugin(sessions)))?;
     supervisor.register(Box::new(InstructionsPlugin(instructions)))?;
+    supervisor.register(Box::new(HooksPlugin(Arc::default())))?;
     supervisor.register(Box::new(LoopPlugin(config)))?;
     if let Err(error) = supervisor.start().await {
         supervisor.shutdown().await;

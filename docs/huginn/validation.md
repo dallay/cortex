@@ -3,6 +3,41 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## Cadena de hooks, registro y guards — 2026-10-27
+
+**Estado: Ready para abrir la cadena de PRs; no es aprobación de merge.**
+Código integrado verificado: `6236d57`, sobre main `cb92f8a`. Doce ramas locales
+en `feature-branch-chain`, con referencia `integration/huginn-guards`.
+Cada capa cumple su presupuesto: 400 líneas, salvo las excepciones autorizadas
+del scanner, 455/470, y shell, 786/800. Los PRs dependientes apuntan a su rama padre.
+
+- `just ci-local`: nueve etapas aprobadas en 524 segundos; incluye tests Rust,
+  frontend, documentación y 90 E2E con imagen reconstruida desde el candidato.
+- `RUST_TEST_THREADS=1 cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov`:
+  aprobado; 37068 de 41326 líneas, **89,70 %**, por encima del umbral de 87 %.
+- Semgrep 1.126.0 con los tres rulesets de CI: cero findings activos, 233 targets.
+  Se mantienen visibles cuatro avisos de parsing parcial preexistentes en
+  PowerShell de `release.yml`; no se afirma cobertura completa del scanner.
+- Siete excepciones nuevas exactas y siete históricas separadas, con controles
+  positivos, negativos y supresiones desactivadas. Diez tests Python aprobados.
+  Los cambios aislados de los scripts activan CI: 290 tests Node de metadatos
+  aprobados, incluidos los dos casos de clasificación añadidos tras actualizar main.
+- `cargo audit`: cero vulnerabilidades, con avisos de mantenimiento. Gitleaks:
+  rango completo de la cadena desde `cb92f8a`, catorce commits sin secretos.
+- Trivy 0.76.1, con filtros de CI `HIGH,CRITICAL` e `ignore-unfixed`: cero findings
+  en ambos lockfiles y ambos Dockerfiles. El snapshot se analizó sin usuario root
+  ni escritura en el proyecto; no se extiende el resultado fuera de esos filtros.
+- Revisiones independientes aprobaron las unidades y sus correcciones. Los límites
+  heredados de notas/resultados y las dos fronteras del lexer tienen regresiones
+  que fallaron antes de corregirlos y pasaron después. No se eliminaron pruebas.
+
+Se conservan los límites de código nativo confiable, ausencia de sandbox y riesgo
+residual de sustitución concurrente de archivos. ADR-0016 sigue `Proposed`.
+Los quality gates remotos, incluidos Sonar/CodeQL y la revisión humana, deberán
+ejecutarse al publicar: esta evidencia local no los sustituye.
+No se ha realizado push ni se han abierto PRs. El cierre posterior a `6236d57`
+solo incorpora esta evidencia documental, sin modificar código ejecutable.
+
 ## Skills and prompt templates S1 acceptance (DALLAY-717) — 2026-10-26
 
 Automated integration acceptance for the S1 skills/template seam
@@ -288,3 +323,58 @@ Focal checks: `cargo fmt --check`; runtime `stream_persistence` (4 passed),
 and CLI integration tests (4 passed); `cargo clippy -p huginn
 -p huginn-runtime --all-targets -- -D warnings`; focused Markdown lint (0 issues);
 `git diff --check`.
+
+## Integración nativa de políticas, sin activación CLI (B9)
+
+La unidad añade plugin restrictivo, checks de adaptadores y builder protegido
+explícito. Conserva el registro existente y las firmas de composición legacy.
+Las pruebas de `huginn-guards` incluyen lifecycle del plugin; runtime `guardrails`
+cubre bloqueo antes de previews y búsqueda recursiva con `.env` y `.ENV`.
+Checks focales: guards, runtime `guardrails`, `tool_authoring`, `tool_lifecycle`,
+`mcp_lifecycle`, `coding_workflow`, clippy de guards/runtime, formato y arquitectura.
+`just huginn-test` incluye guards, plugin-api y reference-extension.
+Esto no certifica carga de archivos, activación run/chat/resume ni CI/cobertura
+global. Esas validaciones corresponden a las capas y al extremo integrado siguientes.
+
+## Cargador explícito de políticas (B10)
+
+Runtime `guardrails` conserva las dos regresiones nativas de B9 y añade carga
+aditiva acotada, rechazo de configuración inválida/no regular y, en Unix, enlaces
+y FIFO sin bloqueo. El FIFO se crea únicamente en una fixture temporal propia.
+La carga es una API explícita del host; esta unidad no activa la CLI ni sustituye
+las comprobaciones del extremo integrado, cobertura Rust o quality gates remotos.
+
+## Activación CLI y verificación local (B11)
+
+Las secciones B9/B10 anteriores describen snapshots históricos, no el estado
+actual del binario. B11 carga la política desde la sesión preparada y selecciona
+el builder protegido antes de run/chat/resume, línea o TUI. No cambia credenciales,
+MCP, providers, instrucciones ni persistencia; conserva la autoridad de `HostPolicy`.
+
+TDD local: antes de activar la entrada protegida, cinco tests CLI fallaron y uno
+pasó: hubo efectos solo dentro de fixtures, búsqueda sensible y política ignorada.
+Tras el wiring original, los seis aprobaron, incluido rechazo de alias/trap con
+payloads inocuos, bloqueo pese a grants, política inválida, búsqueda y resume.
+
+Comandos reproducibles ejecutados con caché Cargo externa:
+
+```sh
+cargo test -p huginn --test guardrails --test cli --test skills_acceptance \
+  --test skill_invocation --test skills_cli --test prompt_templates \
+  --test providers_recovery --test session_ownership --locked -- --test-threads=1
+cargo test -p huginn --test tui --locked -- --test-threads=1
+```
+
+Aprobaron 36 tests del primer comando y 14 del TUI completo: diez escenarios y
+cuatro tests del lector PTY. Se usó ejecución secuencial local, sin cambiar producto
+ni CI; no hubo fallo transitorio de `openpty` ni fue necesario repetir casos.
+También aprobaron guards (24), runtime `coding_workflow` (34) y `guardrails` (4),
+core `tool_hook_evaluation`/`tool_hooks` (6/4), application `tool_hooks` (3) y los
+dos tests focales de `output`. Estos no son totales de suites no ejecutadas.
+Clippy de huginn/runtime/guards con todos los targets/features y `-D warnings`,
+formato, arquitectura, Markdown e inventario Python se verifican en esta capa.
+
+Los logs primarios están en el temporal aprobado `huginn-cli-chain-evidence/`.
+El respaldo `ee44ab8` y el plan RPI conservan la evidencia anterior; no se atribuye
+a esta ejecución. No se ejecutan aquí CI global, cobertura Rust del 87 %, Sonar ni
+gates remotos: su validación integrada corresponde al orquestador antes del PR.

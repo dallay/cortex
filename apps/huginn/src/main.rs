@@ -287,6 +287,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let (mut session, prompt, lease) = prepare_session(&cli, &sessions).await?;
+    let guards = huginn_runtime::guardrails::load_guardrails(&session.workspace)?;
     let _lease = match lease {
         Some(lease) => lease,
         None => sessions.lease(&session.id)?,
@@ -307,6 +308,7 @@ async fn main() -> anyhow::Result<()> {
     let startup = CancellationToken::new();
     let loop_config = LoopConfig {
         skills: None,
+        hooks: None,
         max_iterations: config.max_iterations,
         context_tokens: config.context_tokens,
         max_output_tokens: config.max_output_tokens,
@@ -314,13 +316,14 @@ async fn main() -> anyhow::Result<()> {
     let access = huginn_application::connections::ConnectionAccess::new(Arc::new(
         huginn_runtime::connections::HostSecrets::default(),
     ));
-    let mut supervisor = composition::build_native_with_connections(
+    let mut supervisor = composition::build_native_with_connections_and_guards(
         model.clone(),
         access.clone(),
         registry.clone(),
         sessions.clone(),
         loop_config,
         config.tool_timeout_secs,
+        guards,
     )
     .await?;
     // Explicit headless configurations need neither durable metadata nor its
