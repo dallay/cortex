@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Run Make recipes after loading dotenv values with python-dotenv-style parsing."""
+
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+def dotenv_value(raw: str) -> str:
+    value = raw.strip()
+    if value.startswith(('"', "'")):
+        quote = value[0]
+        closing_quote = value.find(quote, 1)
+        if closing_quote >= 0:
+            value = value[1:closing_quote]
+            if quote == '"':
+                value = value.replace("\\n", "\n").replace("\\r", "\r")
+                value = value.replace('\\"', '"').replace("\\\\", "\\")
+            return value
+    return value.split(" #", 1)[0].strip()
+
+
+def load_dotenv() -> None:
+    env_file = Path(".env")
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].lstrip()
+        if "=" not in stripped:
+            continue
+        key, raw = stripped.split("=", 1)
+        key = key.strip()
+        if key and key.replace("_", "a").isalnum() and not key[0].isdigit():
+            os.environ.setdefault(key, dotenv_value(raw))
+
+
+def main() -> int:
+    load_dotenv()
+    shell_args = sys.argv[1:]
+    if not shell_args:
+        return 0
+    return subprocess.run(["/bin/bash", *shell_args], env=os.environ.copy(), check=False).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

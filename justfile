@@ -215,6 +215,7 @@ setup:
     @echo "{{YELLOW}}Verifying Rust toolchain...{{RESET}}"
     rustup show
     @just init-config
+    @bash scripts/setup-codegraph.sh
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
 # Read-only checks for the local development environment
