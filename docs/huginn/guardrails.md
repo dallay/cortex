@@ -3,8 +3,8 @@
 ## Estado
 
 El host puede registrar `GuardsPlugin` y componer adaptadores nativos protegidos.
-La CLI todavía no selecciona esa composición: run/chat/resume no la activan por defecto.
-Esta capa no incorpora cargador de archivos ni activación desde la CLI.
+La CLI protege run/chat/resume con esa composición, sin flags de desprotección.
+Carga una instantánea desde `session.workspace` tras crear o recuperar la sesión.
 
 ## Uso explícito
 
@@ -100,7 +100,22 @@ el filtro antes de metadata/lectura. Así no depende solo del hook de la raíz.
 seleccionada por el host y compone juntos hook y herramientas protegidas. No
 carga configuración del proyecto. Los builders legacy y `native_tools` conservan
 sus firmas y comportamiento sin política para compatibilidad; no son la entrada
-protegida. La CLI sigue usando el builder anterior hasta su capa de activación.
+protegida. La CLI selecciona el builder protegido; otros hosts deben elegirlo explícitamente.
+
+## Carga explícita del host
+
+`huginn_runtime::guardrails::load_guardrails(workspace)` lee una vez
+`.huginn/guardrails.toml` y devuelve una instantánea `Arc<Guardrails>` para el
+builder protegido. El host elige el workspace; no hay watcher ni recarga automática.
+Si falta `.huginn` o el archivo, devuelve el catálogo predeterminado. Una
+configuración inválida falla; no desactiva ni reduce las restricciones incorporadas.
+
+El cargador usa capacidades de directorio y abre `.huginn` y el archivo sin seguir
+enlaces. Exige archivo regular, UTF-8 y hasta 64 KiB; combina metadata con lectura
+acotada de 65537 bytes para detectar crecimiento. En Unix, `O_NONBLOCK` evita
+bloquear al abrir un FIFO, que se rechaza como no regular. Los fallos no se ignoran.
+La CLI llama al cargador una vez después de `prepare_session`, con `session.workspace`,
+también en resume. Comparte la misma `Arc` entre hook y adaptadores; no hay hot reload.
 
 ## Límites de seguridad
 
