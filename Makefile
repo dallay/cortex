@@ -139,10 +139,10 @@ run:
 init-config:
 	@mkdir -p ~/.cortex/rook
 	@if [ -f ~/.cortex/rook/config.toml ]; then \
-		echo "\033[0;33m~/.cortex/rook/config.toml already exists — leaving it untouched\033[0m"; \
+		printf '\033[0;33m%s\033[0m\n' '~/.cortex/rook/config.toml already exists — leaving it untouched'; \
 	else \
 		printf '[server]\nhost = "127.0.0.1"\nport = 3773\n\n[routing]\nstrategy = "priority"\n\n[cache]\nenabled = true\nttl_secs = 300\n\n[database]\ndb_path = "~/.cortex/rook/rook.db"\n\n[provider_crud]\nenabled = true\n' > ~/.cortex/rook/config.toml && \
-		echo "\033[0;32mCreated ~/.cortex/rook/config.toml\033[0m"; \
+		printf '\033[0;32m%s\033[0m\n' 'Created ~/.cortex/rook/config.toml'; \
 	fi
 
 run-dashboard:
@@ -153,10 +153,10 @@ dashboard-install:
 
 db-reset:
 	@rm -f ~/.cortex/rook/rook.db ~/.cortex/rook/rook.db-wal ~/.cortex/rook/rook.db-shm
-	@echo "\033[0;32mDatabase reset — rook.db, rook.db-wal, rook.db-shm removed\033[0m"
+	@printf '\033[0;32m%s\033[0m\n' 'Database reset — rook.db, rook.db-wal, rook.db-shm removed'
 
 kill-backend:
-	@lsof -ti :3773 | xargs kill -9 2>/dev/null && echo "\033[0;32mKilled process on :3773\033[0m" || echo "\033[0;33mNothing running on :3773\033[0m"
+	@lsof -ti :3773 | xargs kill -9 2>/dev/null && printf '\033[0;32m%s\033[0m\n' 'Killed process on :3773' || printf '\033[0;33m%s\033[0m\n' 'Nothing running on :3773'
 
 setup:
 	@printf '\033[0;33mInstalling dashboard dependencies...\033[0m\n'
