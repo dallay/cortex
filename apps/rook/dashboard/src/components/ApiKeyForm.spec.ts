@@ -95,6 +95,38 @@ vi.mock("@/components/ui/badge", () => ({
 	}),
 }));
 
+vi.mock("@/components/ui/native-select", () => ({
+	NativeSelect: defineComponent({
+		inheritAttrs: false,
+		props: { id: String, modelValue: String, dataTestid: String },
+		emits: ["update:modelValue"],
+		setup(props, { attrs, slots, emit }) {
+			return () =>
+				h(
+					"select",
+					{
+						...attrs,
+						id: props.id,
+						value: props.modelValue,
+						"data-testid": props.dataTestid,
+						onChange: (event: Event) =>
+							emit(
+								"update:modelValue",
+								(event.target as HTMLSelectElement).value,
+							),
+					},
+					slots.default?.(),
+				);
+		},
+	}),
+	NativeSelectOption: defineComponent({
+		props: { value: String },
+		setup(props, { slots }) {
+			return () => h("option", { value: props.value }, slots.default?.());
+		},
+	}),
+}));
+
 vi.mock("@/components/ui/select", () => ({
 	Select: defineComponent({
 		props: { modelValue: String },
@@ -121,14 +153,15 @@ vi.mock("@/components/ui/select", () => ({
 		},
 	}),
 	SelectTrigger: defineComponent({
-		props: { id: String, dataTestid: String, ariaLabelledby: String },
-		setup(props, { slots }) {
+		inheritAttrs: false,
+		props: { id: String, dataTestid: String },
+		setup(props, { attrs, slots }) {
 			return () =>
 				h(
-					"div",
+					"button",
 					{
+						...attrs,
 						id: props.id,
-						"aria-labelledby": props.ariaLabelledby,
 						"data-testid": props.dataTestid,
 					},
 					slots.default?.(),
@@ -293,6 +326,15 @@ function makeWrapper(state: ApiKeyFormState) {
 // ---------------------------------------------------------------------------
 
 describe("ApiKeyForm", () => {
+	it("labels the tier select trigger for assistive technology", () => {
+		const wrapper = makeWrapper(makeFormState());
+		const trigger = wrapper.find('[data-testid="api-key-tier"]');
+
+		expect(trigger.element.tagName).toBe("SELECT");
+		expect(trigger.attributes("id")).toBe("api-key-tier");
+		expect(trigger.attributes("aria-label")).toBe("Rate limit tier");
+	});
+
 	describe("scope rendering", () => {
 		it("renders all 5 scopes from the registry", () => {
 			const wrapper = makeWrapper(makeFormState());
@@ -487,24 +529,28 @@ describe("ApiKeyForm", () => {
 	});
 
 	describe("tier", () => {
-		it("renders the tier with description visible", () => {
+		it("renders the tier with an accessible label", () => {
 			const wrapper = makeWrapper(makeFormState({ tier: "enterprise" }));
-			const trigger = wrapper.find('[data-testid="api-key-tier"]');
+			const trigger = wrapper.find<HTMLSelectElement>(
+				'[data-testid="api-key-tier"]',
+			);
 			expect(trigger.exists()).toBe(true);
+			expect(trigger.element.tagName).toBe("SELECT");
 			expect(trigger.attributes("id")).toBe("api-key-tier");
-			expect(trigger.attributes("aria-labelledby")).toBe("api-key-tier-label");
-			expect(wrapper.find("#api-key-tier-label").exists()).toBe(true);
+			expect(trigger.attributes("aria-label")).toBe("Rate limit tier");
+			expect(wrapper.find('label[for="api-key-tier"]').exists()).toBe(true);
 		});
 
-		it("renders all tier options in the dropdown", () => {
+		it("renders all tier options", () => {
 			const wrapper = makeWrapper(makeFormState());
+			const options = wrapper.findAll<HTMLSelectElement>(
+				'[data-testid="api-key-tier"] option',
+			);
+			expect(options).toHaveLength(TIER_OPTIONS.length);
 			for (const opt of TIER_OPTIONS) {
-				const item = wrapper.find(`[data-testid="select-item-${opt.value}"]`);
-				expect(item.exists(), `tier option ${opt.value} should exist`).toBe(
-					true,
-				);
-				expect(item.text()).toContain(opt.label);
-				expect(item.text()).toContain(opt.description);
+				expect(
+					options.find((option) => option.element.value === opt.value)?.text(),
+				).toContain(opt.label);
 			}
 		});
 	});

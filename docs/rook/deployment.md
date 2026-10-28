@@ -37,7 +37,7 @@ API_KEY_HASH_SECRET="your-hash-secret-here"
 # Log level (default: info)
 RUST_LOG=info
 
-# Config file path (default: ~/.config/cortex/rook.toml)
+# Config file path (default: ~/.cortex/rook/config.toml)
 ROOK_CONFIG=/app/config/rook.toml
 ```
 

@@ -278,7 +278,7 @@ pub enum AnthropicSseEvent {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: u32,
-        content_block: AnthropicStartBlock,
+        content_block: AnthropicContentBlockStart,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: u32, delta: AnthropicDelta },
@@ -291,6 +291,28 @@ pub enum AnthropicSseEvent {
     },
     #[serde(rename = "error")]
     Error(AnthropicErrorEvent),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum AnthropicContentBlockStart {
+    Thinking(AnthropicThinkingBlock),
+    Text(AnthropicTextBlock),
+    ToolUse(AnthropicStartBlock),
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnthropicThinkingBlock {
+    #[serde(rename = "type")]
+    pub block_type: &'static str,
+    pub thinking: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnthropicTextBlock {
+    #[serde(rename = "type")]
+    pub block_type: &'static str,
+    pub text: String,
 }
 
 /// `content_block` payload for a `tool_use` start.
@@ -307,6 +329,8 @@ pub struct AnthropicStartBlock {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum AnthropicDelta {
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
     #[serde(rename = "input_json_delta")]
@@ -376,12 +400,12 @@ impl AnthropicSseEvent {
                 if tc.id.is_some() || tc.function.name.is_some() {
                     events.push(AnthropicSseEvent::ContentBlockStart {
                         index: tc.index,
-                        content_block: AnthropicStartBlock {
+                        content_block: AnthropicContentBlockStart::ToolUse(AnthropicStartBlock {
                             block_type: "tool_use".to_string(),
                             id: tc.id.clone().unwrap_or_default(),
                             name: tc.function.name.clone().unwrap_or_default(),
                             input: serde_json::Value::Object(Default::default()),
-                        },
+                        }),
                     });
                 }
                 if let Some(args) = &tc.function.arguments {
@@ -460,6 +484,133 @@ impl From<&StreamChunk> for AnthropicSseEvent {
     }
 }
 
+/// Per-response metadata needed to bridge native provider streams. Only tool
+/// indices, usage, and a content-free terminal chunk are retained, never output.
+/// Finish serialization waits for EOF because OpenAI can report usage afterward.
+#[derive(Default)]
+pub(crate) struct AnthropicStreamEncoder {
+    tools: std::collections::BTreeMap<u32, u32>,
+    text_index: Option<u32>,
+    thinking_index: Option<u32>,
+    next_index: u32,
+    terminal: Option<StreamChunk>,
+    usage: Option<rook_core::TokenUsage>,
+}
+
+impl AnthropicStreamEncoder {
+    pub(crate) fn push(
+        &mut self,
+        mut chunk: StreamChunk,
+    ) -> Result<Vec<AnthropicSseEvent>, CortexError> {
+        if chunk.usage.is_some() {
+            self.usage = chunk.usage.take();
+        }
+        let finish = chunk.finish_reason.take();
+        let mut events = Vec::new();
+        if let Some(thinking) = chunk.thinking.take().filter(|value| !value.is_empty()) {
+            let index = if let Some(index) = self.thinking_index {
+                index
+            } else {
+                let index = self.next_index;
+                self.next_index += 1;
+                self.thinking_index = Some(index);
+                events.push(AnthropicSseEvent::ContentBlockStart {
+                    index,
+                    content_block: AnthropicContentBlockStart::Thinking(AnthropicThinkingBlock {
+                        block_type: "thinking",
+                        thinking: String::new(),
+                    }),
+                });
+                index
+            };
+            events.push(AnthropicSseEvent::ContentBlockDelta {
+                index,
+                delta: AnthropicDelta::ThinkingDelta { thinking },
+            });
+        }
+        if !chunk.delta.is_empty() {
+            let index = if let Some(index) = self.text_index {
+                index
+            } else {
+                let index = self.next_index;
+                self.next_index += 1;
+                self.text_index = Some(index);
+                events.push(AnthropicSseEvent::ContentBlockStart {
+                    index,
+                    content_block: AnthropicContentBlockStart::Text(AnthropicTextBlock {
+                        block_type: "text",
+                        text: String::new(),
+                    }),
+                });
+                index
+            };
+            events.push(AnthropicSseEvent::ContentBlockDelta {
+                index,
+                delta: AnthropicDelta::TextDelta {
+                    text: std::mem::take(&mut chunk.delta),
+                },
+            });
+        }
+        for tool in &mut chunk.tool_calls {
+            if let Some(index) = self.tools.get(&tool.index) {
+                // Anthropic upstream repeats starts as terminal summaries.
+                // Preserve argument fragments without emitting duplicate starts.
+                tool.id = None;
+                tool.function.name = None;
+                tool.index = *index;
+            } else {
+                if self.tools.len() >= 64 {
+                    return Err(CortexError::provider(
+                        "Anthropic output exceeds 64 tool calls",
+                    ));
+                }
+                let index = self.next_index;
+                self.next_index += 1;
+                self.tools.insert(tool.index, index);
+                if tool.id.is_none() {
+                    tool.id = Some(format!("call_{}_{}", chunk.id, tool.index));
+                }
+                tool.index = index;
+            }
+        }
+        events.extend(AnthropicSseEvent::events_from_chunk(&chunk));
+        if let Some(finish) = finish {
+            // Drop output before storing terminal metadata. A single final
+            // chunk (e.g. Ollama) still emits its starts and arguments above.
+            chunk.delta.clear();
+            chunk.thinking = None;
+            chunk.tool_calls.clear();
+            chunk.finish_reason = Some(finish);
+            self.terminal = Some(chunk);
+        }
+        Ok(events)
+    }
+
+    pub(crate) fn finish(mut self) -> Vec<AnthropicSseEvent> {
+        let Some(mut terminal) = self.terminal.take() else {
+            return vec![];
+        };
+        terminal.usage = self.usage;
+        terminal.tool_calls = self
+            .tools
+            .into_values()
+            .chain(self.text_index)
+            .chain(self.thinking_index)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|index| rook_core::ToolCallDelta {
+                index,
+                id: None,
+                function: rook_core::ToolCallFunctionDelta {
+                    name: None,
+                    arguments: None,
+                },
+            })
+            .collect();
+        AnthropicSseEvent::events_from_chunk(&terminal)
+    }
+}
+
 impl From<CortexError> for AnthropicSseEvent {
     fn from(error: CortexError) -> Self {
         AnthropicSseEvent::Error(AnthropicErrorEvent {
@@ -487,6 +638,46 @@ mod tests {
             reasoning_tokens: None,
             estimated_cost_usd: None,
         }
+    }
+
+    #[test]
+    fn content_block_start_serialization_preserves_block_types() {
+        let events = [
+            AnthropicSseEvent::ContentBlockStart {
+                index: 0,
+                content_block: AnthropicContentBlockStart::Thinking(AnthropicThinkingBlock {
+                    block_type: "thinking",
+                    thinking: String::new(),
+                }),
+            },
+            AnthropicSseEvent::ContentBlockStart {
+                index: 1,
+                content_block: AnthropicContentBlockStart::Text(AnthropicTextBlock {
+                    block_type: "text",
+                    text: String::new(),
+                }),
+            },
+            AnthropicSseEvent::ContentBlockStart {
+                index: 2,
+                content_block: AnthropicContentBlockStart::ToolUse(AnthropicStartBlock {
+                    block_type: "tool_use".to_string(),
+                    id: "call-1".to_string(),
+                    name: "lookup".to_string(),
+                    input: serde_json::Value::Object(Default::default()),
+                }),
+            },
+        ];
+        let serialized: Vec<_> = events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect();
+
+        assert_eq!(serialized[0]["type"], "content_block_start");
+        assert_eq!(serialized[0]["content_block"]["type"], "thinking");
+        assert_eq!(serialized[1]["type"], "content_block_start");
+        assert_eq!(serialized[1]["content_block"]["type"], "text");
+        assert_eq!(serialized[2]["type"], "content_block_start");
+        assert_eq!(serialized[2]["content_block"]["type"], "tool_use");
     }
 
     #[test]
