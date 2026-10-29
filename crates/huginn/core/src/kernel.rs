@@ -671,6 +671,20 @@ impl Supervisor {
     pub fn resolve_lease<T: Any + Send + Sync>(&self, id: &ServiceId) -> Result<ServiceLease<T>> {
         self.service_handle::<T>(id)?.acquire()
     }
+    /// Replaces an active provider and then finalizes the retired provider and dependents.
+    ///
+    /// An error can be returned after publication when retired-provider deactivation or
+    /// dependent resumption fails. The alternative remains active in that case. Inspect
+    /// `provider_of` and `substitution_diagnostics`; do not treat a post-commit error as
+    /// a rollback.
+    ///
+    /// # Cancellation
+    ///
+    /// Dropping this future before publication starts rollback. After publication,
+    /// finalization runs inline. Dropping the future then leaves the alternative active,
+    /// can interrupt retired-plugin cleanup or dependent resumption, and prevents the
+    /// substitution diagnostic from being recorded. No background task completes this
+    /// post-commit finalization.
     pub async fn substitute(
         &mut self,
         service: &ServiceId,

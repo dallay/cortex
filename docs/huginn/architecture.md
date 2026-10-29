@@ -113,7 +113,7 @@ The `Supervisor` manages plugin lifecycle:
 | `service_handle::<T>(service)` | Create a generation-bound handle that can issue cooperative leases |
 | `service_slot_handle::<T>(service)` | Create a dynamic handle that resolves the current provider on each `acquire()` |
 | `resolve_lease::<T>(service)` | Resolve and acquire one cooperative lease |
-| `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback |
+| `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback; a post-commit finalization error leaves the alternative active |
 
 The methods are asynchronous where lifecycle work requires it. See
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for exact signatures.
@@ -135,15 +135,21 @@ precommit o el vencimiento del plazo restaura los slots anteriores, reabre sus
 gates y reanuda los dependientes cuyo drenaje se intentó. El timeout no cancela
 operaciones válidas representadas por leases.
 
-Si se cancela la future de sustitución antes del commit, el supervisor reabre los
-gates anteriores y programa la limpieza de la alternativa y la reanudación de los
-dependientes intentados en el runtime actual. Si la cancelación ocurre después
-del commit, el nuevo provider permanece activo y el supervisor programa la
-finalización pendiente. Al destruir el `Supervisor`, se revocan los gates y se
-vacían los slots; los handles retenidos no pueden adquirir leases nuevas.
-El orden de ciclo de vida coloca la alternativa después de sus providers
-requeridos y antes de sus dependientes existentes. Si no existe una posición que
-cumpla ambas condiciones, se rechaza la sustitución.
+If the substitution future is cancelled before commit, the supervisor reopens the
+previous gates and schedules cleanup of the alternative and resumption of attempted
+dependents in the current runtime. After commit, finalization runs inline, not in a
+background task. Dropping the future at that point leaves the alternative active,
+can interrupt retired-plugin cleanup or dependent resumption, and prevents recording
+the substitution diagnostic. Do not cancel the future after publication.
+
+`Supervisor::substitute` can return `Err` after commit when retired-provider
+deactivation or dependent resumption fails. The alternative remains active. Check
+`provider_of(service)` and the corresponding entry in `substitution_diagnostics()`;
+do not treat this error as a rollback. When the `Supervisor` is dropped, the kernel
+revokes its gates and clears its slots, so retained handles cannot acquire new leases.
+The lifecycle order places the alternative after its required providers and before
+its existing dependents. The supervisor rejects a substitution when no position
+satisfies both constraints.
 
 ### Rebind del loop de producción
 

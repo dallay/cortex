@@ -66,6 +66,27 @@ impl Plugin for DeactivationFailurePlugin {
     }
 }
 
+struct DeactivationTimeoutPlugin(ServiceId);
+
+#[async_trait]
+impl Plugin for DeactivationTimeoutPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "original-timeout".into(),
+            provides: vec![self.0.clone()],
+            requires: Vec::new(),
+        }
+    }
+
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(self.0.clone(), 1_u64)
+    }
+
+    async fn deactivate(&mut self) -> Result<()> {
+        std::future::pending::<Result<()>>().await
+    }
+}
+
 struct DependentPlugin {
     id: &'static str,
     requires: ServiceId,
@@ -470,6 +491,46 @@ async fn substitution_reports_retired_provider_deactivation_failure_after_commit
         .as_ref()
         .unwrap_err()
         .contains("injected deactivation failure"));
+}
+
+#[tokio::test]
+async fn retired_provider_deactivation_timeout_reports_committed_substitution() {
+    let service = ServiceId::new("test:deactivation-timeout", 1);
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(DeactivationTimeoutPlugin(service.clone())))
+        .unwrap();
+    supervisor.start().await.unwrap();
+
+    let error = supervisor
+        .substitute(
+            &service,
+            Box::new(ValuePlugin {
+                id: "replacement-after-timeout",
+                service: service.clone(),
+                value: 2,
+                fail: false,
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("substitution committed but finalization failed"));
+    assert!(error.contains("original-timeout: deactivation timed out"));
+    assert_eq!(
+        supervisor.provider_of(&service).unwrap().plugin_id,
+        "replacement-after-timeout"
+    );
+    let diagnostic = supervisor.substitution_diagnostics().last().unwrap();
+    assert_eq!(diagnostic.alternative_owner, "replacement-after-timeout");
+    assert!(diagnostic
+        .outcome
+        .as_ref()
+        .unwrap_err()
+        .contains("original-timeout: deactivation timed out"));
 }
 
 struct MultiServicePlugin {
