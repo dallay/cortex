@@ -1,0 +1,348 @@
+# Verification Report — `huginn-service-provider-substitution` (reverify QA-01)
+
+## Resultado vigente
+
+- **Cambio:** `huginn-service-provider-substitution` (Issue #509 / DALLAY-718).
+- **Fecha:** 2026-10-29.
+- **Persistencia:** modo configurado `openspec`; artefacto en la ruta activa `.agents/sdd/changes/huginn-service-provider-substitution/verify-report.md`.
+- **Ejecución:** `fallback`. `.agents/sdd/quality-runner.json` no existe; no hubo enforcement determinista ni envelopes versionados. La ausencia no se considera un PASS.
+- **Strict TDD:** inactivo según `.agents/sdd/config.yaml` (`strict_tdd: false`); no se cargó `strict-tdd-verify.md`.
+- **Veredicto actual:** **PASS WITH WARNINGS**. QA-01 se verificó con tests in-process que llaman directamente los dos builders runtime pendientes; V-01–V-03 ya no bloquean.
+- La verificación cubre conformidad técnica. No representa aceptación del operador. QA, aceptación y archive no se marcan como completados.
+
+| Completitud | Resultado |
+|---|---|
+| Implementación/tasks | Las tareas listadas hasta 5.12 están marcadas completas. El handoff 5.11/5.7 es de workflow; no queda implementación pendiente declarada. |
+| Spec | Los requisitos y sus 10 escenarios se contrastaron con código y tests realmente ejecutados. Todos tienen evidencia de ejecución aprobada. |
+| QA-01 / V-03 | Los dos tests nuevos llaman directamente a los builders con conexiones y con conexiones+guards; retienen el `LoopService`, sustituyen `SessionsService` y observan saves en store B. Ambos pasaron en la suite combinada. |
+| TDD | `apply-progress.md` registra RED→GREEN→REFACTOR para los batches anteriores. Los tests de cobertura 5.8–5.10 y 5.12 se describen como coverage-only y pasaron sin cambios productivos. No hay commits; no se infiere historia Git. |
+
+## Evidencia de ejecución de esta pasada
+
+| Comando | Exit | Resultado |
+|---|---:|---|
+| `cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn` | 0 | Pasaron todos los targets de los cuatro paquetes. Incluye `service_lease` (23), `service_slot_rebinding` (5), `tool_lifecycle` (7), readiness del binario y las demás suites; sin fallos. Los dos tests QA-01 se ejecutaron y pasaron. |
+| `cargo fmt --all -- --check` | 0 | Pasó. |
+| `cargo clippy -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets -- -D warnings` | 0 | Pasó sin warnings. |
+| `just huginn-architecture` | 0 | Pasó; incluye negative control. |
+| `pnpm exec markdownlint-cli2 docs/huginn/architecture.md docs/huginn/adr/0003-minimal-service-composition-kernel.md .agents/sdd/changes/huginn-service-provider-substitution/*.md .agents/sdd/changes/huginn-service-provider-substitution/specs/huginn-kernel/spec.md` | 0 | Pasó después de esta actualización; se incluyen propuesta, spec, diseño, tareas, apply-progress, QA y verify report. |
+| `git diff --check` | 0 | Pasó para los cambios rastreados del worktree. El reporte/state nuevos también se validaron sin whitespace final. |
+| Parseo de `.agents/sdd/changes/huginn-service-provider-substitution/state.yaml` | 0 | Parseo YAML correcto; `current_phase: verify`, `next: qa`. |
+| `cargo llvm-cov -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets --summary-only` | 0 | La suite instrumentada pasó. Cobertura agregada de líneas: 91.69%; `kernel.rs` 87.09%, application `composition.rs` 95.26%, `loop_engine.rs` 95.11%, runtime `composition.rs` 86.26%, `apps/huginn/main.rs` 91.60%. No hay umbral de cobertura específico; el porcentaje no sustituye la matriz. |
+
+La suite combinada dejó dos tests `ignored`; no cuentan como PASS:
+
+- `old_and_new_binaries_compete_for_the_shared_lock_in_both_directions` requiere `CORTEX_AGENT_LEGACY_BIN` con un binario local anterior al renombre.
+- `os_secret_backend_contract` requiere macOS Keychain accesible o Linux Secret Service/D-Bus de sesión.
+
+**Omitido deliberadamente:** `just ci-local`, `cargo test --workspace --all-features` y CI completa, conforme a la instrucción del usuario. Los tests CLI/TUI subprocess pasaron como regresión de flujo normal; no se atribuye a ellos sustitución in-process.
+
+## Matriz de conformidad de requisitos y escenarios
+
+`PASS` requiere un test de cobertura que pasó en esta ejecución. La inspección de fuente complementa la evidencia, pero no la reemplaza. Los 10 escenarios de la spec están incluidos; no se añade como requisito el escenario QA de una TUI abierta sin disparador.
+
+| Requirement / Scenario | Test ejecutado y evidencia | Estado |
+|---|---|---|
+| **Identidad y composición — IDs, major, ambigüedad y ciclos** | `kernel_lifecycle::ambiguity_cycles_and_major_version_mismatch_are_explicit`; pasó en la suite combinada. | PASS |
+| **Activación transaccional — fallo limpia efectos y no publica** | `kernel_lifecycle::failed_activation_rolls_back_services_and_owned_tasks`, `service_lease::failed_alternative_activation_keeps_previous_provider_available` y `staged_abort_tests`; pasaron. | PASS |
+| **Ownership y dependientes — consulta tras commit** | `service_lease::ownership_and_dependents_are_observable_before_and_after_substitution` y `substituting_multi_service_provider_preserves_its_services_and_adds_free_services`; pasaron. | PASS |
+| **Sustitución transaccional — alternativa válida/fallida, preservación y diagnóstico** | `failed_alternative_activation_keeps_previous_provider_available`, `substitution_rejects_an_alternative_that_drops_an_existing_service`, `substitution_rejects_an_alternative_that_collides_on_an_additional_service`, `substituting_multi_service_provider_preserves_its_services_and_adds_free_services` y tests de cleanup/preflight; pasaron. | PASS |
+| **Leases cooperativas — operación activa, timeout, cierre y atomicidad observable** | `timed_out_slot_substitution_keeps_active_lease_and_reopens_admission`, `timed_out_substitution_preserves_provider_until_existing_lease_drops`, `multi_service_slots_reject_new_leases_while_old_generation_drains` y `concurrent_multi_slot_lease_pairs_never_report_mixed_values`; pasaron. Los dos handles rechazan durante gate-close y las parejas completas observadas son antiguas o nuevas, nunca mixtas. | PASS |
+| **Drenaje/reanudación — políticas, abort y commit** | `require_full_drain_checks_dependents_of_every_service_from_the_provider`, `report_undrained_lists_dependents_of_secondary_services`, `drain_failure_resumes_prior_dependents_reopens_leases_and_records_failure`, `timed_out_drain_hook_is_bounded_and_reopens_the_previous_generation` y tests de drain application; pasaron. | PASS |
+| **Rebind de model — operación activa termina con A, commit espera y misma loop usa B después** | `service_slot_rebinding::successful_model_substitution_waits_for_active_run_then_rebinds_same_loop` pasó: run activo usa A; sustitución espera; tras commit, el mismo `LoopService` usa B. `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact` pasó para rebind entre operaciones y compactación posterior. | PASS |
+| **Rebind de session — saves activos en A, siguiente operación en B, sin migración** | `active_operation_saves_only_to_old_store_and_next_run_uses_new_store` pasó para varias saves de un ID en A, ausencia de ese ID en B y saves de la operación siguiente en B. Los tests runtime QA-01 completan cobertura directa de los builders enumerados para sus operaciones posteriores. | PASS |
+| **Builders runtime QA-01 — `build_native_with_connections`** | `tool_lifecycle::connections_builder_rebinds_retained_loop_to_new_sessions_store` llama directamente a ese builder, retiene el `Arc<LoopService>` obtenido, sustituye `SessionsService` A→B y comprueba que la run posterior guarda en B mientras A no recibe saves posteriores. Pasó en la suite combinada. | PASS |
+| **Builders runtime QA-01 — `build_native_with_connections_and_guards`** | `tool_lifecycle::connections_and_guards_builder_rebinds_retained_loop_to_new_sessions_store` llama directamente a ese builder, retiene el `Arc<LoopService>` obtenido, sustituye `SessionsService` A→B y comprueba que la run posterior guarda en B mientras A no recibe saves posteriores. Pasó en la suite combinada. | PASS |
+| **Builder runtime `build_native` y builder application** | `tool_lifecycle::runtime_composition_build_retains_a_dynamically_rebound_loop_service` cubre `build_native`; `service_slot_rebinding::successful_model_substitution_waits_for_active_run_then_rebinds_same_loop` y `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact` cubren `huginn_application::composition::build`. Pasaron. | PASS |
+| **Legacy/custom — `resolve() -> Arc<T>` fuera de garantía de rebind** | `service_lease::resolved_arc_remains_on_old_value_after_provider_substitution` pasó: Arc retenido mantiene A; resolve posterior obtiene B. `LoopPlugin(pub LoopConfig)` conserva su API pública y sigue siendo el camino legacy estático, sin garantía de rebind. | PASS |
+| **Genericidad/compatibilidad — kernel neutral y `huginn-plugin-api::v1`** | Inspección confirmó que kernel no referencia `ModelProvider`/`SessionStore`; `resolve()` y API v1 no se modificaron. Los targets seleccionados compilaron; no hubo cambio de API pública v1. | PASS |
+
+### QA fuera del alcance normativo
+
+`qa-report.md` registró como QA-02 la observación de readiness/sustitución en una TUI ya abierta. Ese flujo no aparece en los requisitos ni escenarios de `specs/huginn-kernel/spec.md`; no se añade a esta matriz ni se convierte en blocker técnico. Los tests CLI/TUI subprocess solo demuestran el flujo normal y no se usan como prueba de sustitución in-process.
+
+### Límite de observabilidad multi-slot
+
+El kernel no expone una operación pública de snapshot/acquire multi-slot. Los tests nuevos prueban rechazo durante el gate-close y que las parejas de leases simultáneamente retenidas observan `(1, 2)` o `(10, 20)`. No se afirma una API de snapshot que no existe; la inspección de fuente confirma además que adquisición, cierre y publicación usan el mutex global común.
+
+## Correctitud y coherencia de diseño
+
+| Área | Inspección | Resultado |
+|---|---|---|
+| Tabla/gate/contador | Acquire resuelve slot y aumenta contador con `checked_add` mientras conserva sincronización común; close y commit toman esa mutex; el commit actualiza todos los slots afectados en una sección crítica. | Conforme; tests de gate-close multi-servicio y parejas pasaron con el límite de snapshot indicado. |
+| `PluginContext::service_slot_handle` | Exige ID en `Manifest.requires`; valida presencia y tipo; activation/staging cablean requirements y tabla compartida. | Conforme; tests de rechazo y rebind pasaron. |
+| Rollback/timeout | Aborto precommit conserva provider anterior, reabre gates y reanuda dependientes intentados; timeout no cancela lease activa. | Conforme en tests ejecutados. |
+| `LoopExecution`/leases | `LeasedAgentLoop::run` y `compact` mantienen admisión y leases model/session hasta terminar el future; todos los saves de una operación usan el mismo store. | Conforme; tests de run activo y store A/B pasaron. |
+| APIs públicas | `StandardLoop` conserva campos/firmas; `LoopPlugin(pub LoopConfig)` sigue público; adapters concretos permanecen privados; factory aditiva devuelve `Box<dyn Plugin>`. | Conforme; tests y struct literals compilaron. |
+| Builders application/runtime | Application `build` publica factory leased. `build_native` y ambas variantes con conexiones están ejercitadas por tests; los dos nuevos tests verifican cada builder directamente y store B. Runtime `build` delega a application. | Conforme; V-03 resuelto. |
+| Readiness CLI/TUI | `ServiceSlotHandle<ModelService>` consulta slot vigente y falla cerrada; test in-process de readiness pasó. | Conforme por código/test. Subprocess no es evidencia de sustitución in-process. |
+| Persistencia | `SqliteSessions::lease/load/list` permanecen directos y fuera de `SessionsService`; no hay migración, transferencia de locks ni cambio de esquema en el diff. | Conforme por inspección y suites de sesiones/locks pasadas. |
+| Propuesta/diseño/tareas | Los builders y la factory concuerdan con la propuesta y diseño. QA-01 añade únicamente pruebas runtime, como declara tarea 5.12; no cambia producción. | Sin desviación que rompa spec. Los criterios de éxito de la propuesta siguen como checklist sin marcar y no se usan como estado de tareas. |
+
+## Hallazgos actuales
+
+No se invocaron jueces independientes; Judge A/B no son evaluaciones externas.
+
+| Finding | Judge A | Judge B | Severity | Status |
+|---|---|---|---|---|
+| V-01 — Run activo de model con sustitución exitosa | No invocado | No invocado | P1 (resuelto) | Test ejecutado y pasó; no blocker actual. |
+| V-02 — Gate-close y parejas multi-slot | No invocado | No invocado | P1 (resuelto para API observable) | Tests ejecutados y pasaron; no se afirma snapshot multi-slot público. |
+| V-03 — Builders runtime y `resolve() -> Arc<T>` | No invocado | No invocado | WARNING anterior, resuelto | Tests directos de ambos builders y test Arc ejecutados y pasaron. |
+
+### Issues
+
+#### CRITICAL
+
+Ninguno identificado.
+
+#### WARNING
+
+- **Runner SDD:** modo `fallback`; no existen `.agents/sdd/quality-runner.json` ni envelopes versionados.
+- **Tests ignored:** los dos casos opt-in/dependientes del entorno descritos arriba no se convirtieron en PASS.
+- No se ejecutó CI completa ni los comandos de workspace solicitados como omitidos.
+
+#### SUGGESTION
+
+- Mantener documentado el límite: parejas multi-slot validadas por leases simultáneas; la API no ofrece snapshot/acquire multi-slot.
+
+## Decisión y siguiente fase
+
+**PASS WITH WARNINGS.** V-01, V-02 y V-03 quedan cubiertos por tests aprobados. No quedan blockers técnicos para pasar a QA. Se recomienda handoff a QA; no se declara QA/aceptación ni archive.
+
+## Historial de verify anterior
+
+El bloque que sigue conserva el detalle sustantivo del reporte anterior al batch QA-01; se actualizaron su encabezado y la etiqueta del veredicto para identificarlo como histórico. Su resultado fue PASS WITH WARNINGS, con V-03 pendiente. La sección de primera pasada conserva el FAIL inicial previo a 5.8–5.10. Ninguno de esos veredictos reemplaza el resultado vigente de esta re-verificación.
+
+---
+
+## Resultado de la pasada previa a QA-01
+
+- **Cambio:** `huginn-service-provider-substitution` (Issue #509 / DALLAY-718).
+- **Fecha:** 2026-10-29.
+- **Persistencia:** modo `openspec`; reporte guardado en `.agents/sdd/changes/huginn-service-provider-substitution/verify-report.md`.
+- **Ejecución:** `fallback`. No existe `.agents/sdd/quality-runner.json` ni se encontró un runner SDD en el proyecto; no hubo enforcement determinista ni envelopes versionados. La ausencia del runner no se considera un PASS.
+- **Strict TDD:** inactivo (`.agents/sdd/config.yaml`: `strict_tdd: false`); no se cargó `strict-tdd-verify.md`.
+- **Veredicto de aquella pasada:** **PASS WITH WARNINGS**. Los hallazgos críticos V-01 y V-02 de la primera pasada tienen cobertura nueva que pasó. V-03 quedaba como advertencia de cobertura directa de dos variantes del builder runtime.
+- Esta verificación cubre conformidad técnica. No representa aceptación del operador. QA, aceptación y archive siguen pendientes.
+
+| Completitud | Resultado |
+|---|---|
+| Artefactos | Leídos: propuesta, spec activa, diseño, tareas, apply-progress, reporte previo, configuración y fuentes/tests relevantes. |
+| Tareas | 26/26 checkboxes de `tasks.md` marcados; 0 incompletos. No se marca QA ni archive. |
+| Cobertura de especificación | Los diez escenarios activos tienen tests ejecutados que pasaron; la cobertura de las variantes `build_native_with_connections` y `build_native_with_connections_and_guards` queda como advertencia porque no se ejercitaron directamente. |
+| TDD | Se auditaron los registros RED→GREEN existentes en `apply-progress.md`. Los seguimientos 5.8–5.10 fueron cambios de cobertura: sus tests pasaron en primera ejecución y no requirieron cambios productivos, según el registro. Esta verificación repitió los tests; no recreó estados RED históricos. |
+
+## Evidencia de ejecución actual
+
+| Comando | Exit | Resultado |
+|---|---:|---|
+| `cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn` | 0 | Todos los tests ejecutados pasaron. Incluye `service_lease` (23), `service_slot_rebinding` (5), `kernel_lifecycle` (4), `tool_lifecycle` (5), readiness de Huginn y suites runtime. Los cuatro tests nuevos indicados abajo pasaron. |
+| `cargo fmt --all -- --check` | 0 | Pasó. |
+| `cargo clippy -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets -- -D warnings` | 0 | Pasó sin warnings. |
+| `just huginn-architecture` | 0 | Pasó; el control incluye negative control. |
+| `pnpm exec markdownlint-cli2 docs/huginn/architecture.md docs/huginn/adr/0003-minimal-service-composition-kernel.md .agents/sdd/changes/huginn-service-provider-substitution/*.md .agents/sdd/changes/huginn-service-provider-substitution/specs/huginn-kernel/spec.md` | 0 | Pasó en la ejecución previa a esta actualización: 8 archivos, 0 issues. Se repitió después de guardar este reporte; el resultado final se registra más abajo. |
+| `git diff --check` | 0 | Pasó antes de esta actualización. Se repitió después de guardar los artefactos; el resultado final se registra más abajo. |
+| `cargo llvm-cov -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets --summary-only` | 0 | Suite instrumentada pasó; cobertura agregada de líneas: 91.41%. `kernel.rs` 87.09%, `application/composition.rs` 95.26%, `loop_engine.rs` 95.11%, `runtime/composition.rs` 68.70%, `apps/huginn/main.rs` 91.60%. No hay umbral de cobertura definido para este cambio; estos porcentajes no sustituyen la matriz de escenarios. |
+
+La suite combinada reportó exactamente dos tests `ignored`; ninguno cuenta como PASS:
+
+- `old_and_new_binaries_compete_for_the_shared_lock_in_both_directions` requiere `CORTEX_AGENT_LEGACY_BIN` con un binario local anterior al renombre.
+- `os_secret_backend_contract` requiere macOS Keychain accesible o Linux Secret Service/D-Bus de sesión; el test escribe entradas aisladas.
+
+**Omitido deliberadamente:** `just ci-local` y las pruebas del workspace con `--all-features`, según la instrucción del usuario. La ejecución no se presenta como CI completa. Las pruebas CLI/TUI que pasaron son regresiones de flujo normal y no prueban sustitución in-process.
+
+### Resultados reales de los tests de remediación
+
+| Hallazgo | Test ejecutado | Resultado y alcance |
+|---|---|---|
+| V-01 | `successful_model_substitution_waits_for_active_run_then_rebinds_same_loop` | PASS en la suite combinada. La sustitución permanece pendiente mientras model A bloquea el run; el run termina con A y el `LoopService` retenido ejecuta después con B. No se reconstruye el `LoopService`. |
+| V-02, cierre de gates | `multi_service_slots_reject_new_leases_while_old_generation_drains` | PASS. Una vez observada la notificación de cierre, ambos handles rechazan nuevas leases mientras la lease antigua mantiene el drenaje bloqueado; después del commit ambos adquieren los valores nuevos. |
+| V-02, parejas | `concurrent_multi_slot_lease_pairs_never_report_mixed_values` | PASS. Cada pareja completa de leases observada es `(1, 2)` o `(10, 20)`. La prueba no afirma ni intenta observar un snapshot público multi-slot; la API no expone tal operación. |
+| V-03, contrato legacy | `resolved_arc_remains_on_old_value_after_provider_substitution` | PASS. El `Arc` retenido conserva A/`1`; un `resolve()` posterior devuelve B/`2`. |
+
+Markdownlint y `git diff --check` finales se ejecutaron después de esta actualización y pasaron (8 archivos, 0 issues; exit 0, respectivamente). Se actualizó `state.yaml` a `current_phase: verify` y `next: qa`, sin iniciar QA ni archive.
+
+## Matriz de conformidad de requisitos y escenarios
+
+`PASS` requiere un test de cobertura que pasó en runtime. La inspección de fuente complementa esa evidencia, pero no la reemplaza. `PASS WITH WARNING` indica que el escenario está cubierto, con una variante de entrada no ejercitada directamente.
+
+| Requirement / Scenario | Test ejecutado y evidencia | Estado |
+|---|---|---|
+| **Identidad y composición — IDs, major, ambigüedad y ciclos** | `kernel_lifecycle::ambiguity_cycles_and_major_version_mismatch_are_explicit`; pasó en la suite combinada. | PASS |
+| **Activación transaccional — fallo limpia efectos y no publica** | `kernel_lifecycle::failed_activation_rolls_back_services_and_owned_tasks`, `service_lease::failed_alternative_activation_keeps_previous_provider_available` y los tests `staged_abort_tests`; pasaron. | PASS |
+| **Ownership y dependientes — consulta tras commit** | `service_lease::ownership_and_dependents_are_observable_before_and_after_substitution` y `substituting_multi_service_provider_preserves_its_services_and_adds_free_services`; pasaron. | PASS |
+| **Sustitución transaccional — alternativa válida/fallida, preservación y diagnóstico** | `failed_alternative_activation_keeps_previous_provider_available`, `substitution_rejects_an_alternative_that_drops_an_existing_service`, `substitution_rejects_an_alternative_that_collides_on_an_additional_service`, `substituting_multi_service_provider_preserves_its_services_and_adds_free_services` y tests de cleanup/preflight; pasaron. | PASS |
+| **Leases — operación en vuelo, timeout, admisión cerrada** | `timed_out_slot_substitution_keeps_active_lease_and_reopens_admission`, `timed_out_substitution_preserves_provider_until_existing_lease_drops`, `drain_timeout_does_not_cancel_run_and_admission_reopens_after_resume` y `multi_service_slots_reject_new_leases_while_old_generation_drains`; pasaron. Cubren no cancelación, conservación/reapertura tras timeout y rechazo de ambos slots durante cierre. | PASS |
+| **Drenaje y reanudación — políticas, abort y commit** | `require_full_drain_checks_dependents_of_every_service_from_the_provider`, `report_undrained_lists_dependents_of_secondary_services`, `drain_failure_resumes_prior_dependents_reopens_leases_and_records_failure`, `timed_out_drain_hook_is_bounded_and_reopens_the_previous_generation` y tests de drain de application; pasaron. | PASS |
+| **Rebind de model — operación activa, commit exitoso, siguiente operación** | `successful_model_substitution_waits_for_active_run_then_rebinds_same_loop` pasó con el flujo completo; `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact` pasó para rebind entre operaciones. Runtime `build_native` se cubre en `tool_lifecycle::runtime_composition_build_retains_a_dynamically_rebound_loop_service`. La fuente muestra que los otros dos builders delegan al mismo helper privado; no hay test directo de sustitución para esas dos variantes. | PASS WITH WARNING |
+| **Rebind de session — saves en A durante operación, B después, sin migración** | `active_operation_saves_only_to_old_store_and_next_run_uses_new_store` y `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact`; pasaron. El primero valida saves múltiples de la operación en A y ausencia del registro identificable en B por efecto de sustitución. | PASS |
+| **Composición legacy/personalizada — `resolve() -> Arc<T>` no se revoca** | `resolved_arc_remains_on_old_value_after_provider_substitution` pasó: el `Arc` previo conserva A y el resolve posterior ve B. La excepción de `LoopPlugin(pub LoopConfig)` permanece documentada; no se garantiza rebind para ese camino legacy. | PASS |
+| **Genericidad y compatibilidad — kernel neutral y API v1** | Inspección de `kernel.rs` confirma que no referencia `ModelProvider` ni `SessionStore`; `resolve() -> Arc<T>` conserva la semántica observada por el test anterior. No hay cambios en `huginn-plugin-api/v1`; las dependencias de plugin-api se compilaron como parte de los targets seleccionados. | PASS |
+
+### Límite de observabilidad multi-slot
+
+La adquisición de cada slot, el cierre de gates y la publicación comparten el mutex global de slots; el commit actualiza todos los slots del provider dentro de una sección crítica. Las nuevas pruebas añaden evidencia runtime de rechazo para los dos handles durante gate-close y de parejas completas de leases sin valores mezclados. No existe una API pública de adquisición o snapshot multi-slot, por lo que la prueba concurrente no demuestra una lectura atómica de tupla pública ni hace tal afirmación. Esta limitación de observabilidad no se trata como incumplimiento del contrato disponible.
+
+## Correctitud y coherencia de diseño
+
+| Área | Inspección | Resultado |
+|---|---|---|
+| Tabla, gate y contador | `ServiceSlotHandle::acquire` resuelve valor/gate y adquiere bajo el lock compartido; el cierre y publicación toman la misma mutex. Los contadores usan `checked_add`. El commit reemplaza todas las entradas staged antes de liberar el lock. | Coherente; tests nuevos cubren gate-close multi-slot y parejas de leases. |
+| Seam `PluginContext::service_slot_handle` | Verifica que el ID esté en `Manifest.requires`, y que el slot exista y tenga el tipo esperado; activation/staging reciben requisitos y tabla compartida. | Conforme; tests de autorización, slot no disponible y tipo incompatible pasaron. |
+| Timeout, rollback y reanudación | Los fallos precommit reabren gates, descartan alternativa y reanudan dependientes intentados; timeout no cancela la lease/run. | Conforme en fuente y escenarios ejecutados. |
+| Rebind de `LeasedAgentLoop` | `run` y `compact` adquieren admisión y ambas leases antes de efectos; conservan referencias prestadas y leases hasta completar la operación. | Conforme; se ejecutaron casos de run activo y rebind de model/session. |
+| APIs legacy | `StandardLoop` conserva campos/firma, `LoopPlugin(pub LoopConfig)` permanece; el adapter concreto es privado y la factory pública aditiva comparte el seam application/runtime. | Sin ruptura observada; struct literals compilaron en las suites. |
+| Builders runtime | `build_native` se cubre con test de rebind. `build_native_with_connections` y `build_native_with_connections_and_guards` pasan por `build_native_plugin`, que registra `leased_loop_plugin`; `build` delega en application. | Coherente con diseño; las dos variantes nombradas no tienen prueba directa de sustitución y quedan como WARNING. |
+| Readiness y persistencia | Readiness adquiere el slot vigente y falla cerrada; `SqliteSessions::lease/load/list` sigue fuera de `SessionsService`; no se implementa transferencia/migración. | Conforme por tests de readiness y persistencia, y por inspección. |
+| Desviaciones de diseño | La factory pública `leased_loop_plugin` permite que runtime use el plugin concreto privado. La propuesta/diseño ya documentan este seam aditivo. | Desviación conocida, no rompe spec. |
+
+## Hallazgos actuales
+
+No se invocaron jueces independientes; `Judge A/B` no son evaluaciones externas.
+
+| Finding | Judge A | Judge B | Severity | Status |
+|---|---|---|---|---|
+| **V-01 — Rebind de model activo sin test de commit exitoso** | No invocado | No invocado | P1 / CRITICAL (inicial) | Resuelto: el test de run activo, sustitución exitosa y uso posterior de B en el mismo `LoopService` pasó. |
+| **V-02 — Rechazo durante gate-close y parejas multi-slot** | No invocado | No invocado | P1 / CRITICAL (inicial) | Resuelto para el contrato disponible: ambos handles rechazan leases en gate-close y las parejas completas observadas no son mixtas. No se afirma un snapshot público multi-slot. |
+| **V-03 — Cobertura legacy y builders runtime** | No invocado | No invocado | WARNING | Parcialmente cubierto: el `Arc` retenido tiene regresión runtime aprobada. Dos variantes de builder no tienen test directo, pero el código comparte el helper ejercitado por `build_native`; no se observó una desviación funcional. |
+
+### Issues
+
+#### WARNING
+
+- **V-03, alcance reducido:** añadir cobertura in-process para `build_native_with_connections` y `build_native_with_connections_and_guards` cuando sea práctico. Las dos funciones llaman al mismo `build_native_plugin` que el test runtime ya ejercita. Es una brecha de cobertura directa, no un fallo observado ni un bloqueo del escenario cubierto.
+- **Runner SDD:** modo `fallback`; el proyecto no tiene `.agents/sdd/quality-runner.json` ni envelopes versionados. No hubo enforcement determinista.
+- **Tests ignorados:** los dos casos opt-in/dependientes del entorno descritos arriba no se convirtieron en PASS.
+
+#### CRITICAL
+
+Ninguno identificado en la verificación actual.
+
+#### SUGGESTION
+
+- Conservar explícita la diferencia entre consistencia de parejas de leases probada y snapshot multi-slot que la API no expone.
+
+## Decisión y siguiente fase
+
+**PASS WITH WARNINGS.** V-01 y V-02 quedan cubiertos por tests que pasaron en la ejecución actual. El test de `resolve() -> Arc<T>` también pasó; V-03 se conserva solo como warning por las dos variantes de builder runtime sin test directo. La matriz activa no contiene un escenario crítico sin cobertura aprobada. Se permite el handoff a **QA**; no se marca QA, aceptación del operador ni archive.
+
+## Historial de primera pasada — evidencia conservada
+
+El reporte inicial que sigue se conserva para no borrar la evidencia histórica. Su veredicto `FAIL` y sus hallazgos V-01–V-03 describen la cobertura anterior a la remediación; no son el veredicto vigente. Los tests nuevos 5.8–5.10 arriba cubren los puntos históricos y pasaron en esta re-verificación.
+
+---
+
+## Primera pasada archivada (contenido original)
+
+## Resultado
+
+- **Cambio:** `huginn-service-provider-substitution` (Issue #509 / DALLAY-718).
+- **Fecha:** 2026-10-29.
+- **Persistencia:** modo configurado `openspec`; reporte guardado en la ruta activa `.agents/sdd/changes/huginn-service-provider-substitution/verify-report.md`.
+- **Modo de ejecución:** **fallback**. No existe `.agents/sdd/quality-runner.json`; no hubo enforcement determinista ni envelopes versionados.
+- **Strict TDD:** inactivo según `.agents/sdd/config.yaml` (`strict_tdd: false`); no se cargó el módulo Strict TDD.
+- **Veredicto:** **FAIL** por escenarios normativos con cobertura de ejecución parcial. No se observó un fallo de ejecución en las suites corridas; el bloqueo es de evidencia conductual incompleta.
+- Esta verificación cubre conformidad técnica. No representa aceptación del operador, QA ni archive.
+
+| Completitud | Resultado |
+|---|---|
+| Tareas 1.1–2.13 | Completadas según `tasks.md` y `apply-progress.md`. |
+| Tareas 3.1–3.12 | Completadas; slots y seam de contexto inspeccionados y probados. |
+| Tareas 4.1–4.10 | Completadas según los artefactos; suites application/core ejecutadas. |
+| Tareas 5.1–5.6 | Completadas; suites, lint, arquitectura y persistencia ejecutadas. |
+| 5.7 | Handoff de verify/QA/archive, no implementación pendiente. Verify se ejecutó; QA y archive siguen pendientes. |
+| TDD | `apply-progress.md` registra RED → GREEN → REFACTOR. No hay commits; no se atribuye ni inventa evidencia desde Git. La cronología RED/GREEN se considera evidencia declarada por Apply, no reproducida independientemente aquí. |
+
+## Evidencia de ejecución
+
+| Comando | Exit | Resultado |
+|---|---:|---|
+| `cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn` | 0 | Pasaron todos los targets de los cuatro paquetes. Incluye `service_lease` (20), `service_slot_rebinding` (4), readiness del binario (12 tests unitarios del binario), `tool_lifecycle` (5), `session_locks` (6) y `sessions_persistence` (2). Sin fallos. |
+| `cargo test -p huginn-runtime --test session_locks --test sessions_persistence` | 0 | 6 tests de locks y 2 de persistencia pasaron. |
+| `cargo fmt --all -- --check` | 0 | Pasó. |
+| `cargo clippy -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets -- -D warnings` | 0 | Pasó sin warnings. |
+| `just huginn-architecture` | 0 | Pasó; incluidos límites de arquitectura y negative control. |
+| `pnpm exec markdownlint-cli2 docs/huginn/architecture.md docs/huginn/adr/0003-minimal-service-composition-kernel.md .agents/sdd/changes/huginn-service-provider-substitution/*.md .agents/sdd/changes/huginn-service-provider-substitution/specs/huginn-kernel/spec.md` | 0 | Pasó; 7 archivos, 0 issues. El reporte se lintará de nuevo tras guardarlo. |
+| `git diff --check` | 0 | Pasó para los cambios rastreados en el worktree. |
+| Parseo de `state.yaml` con Ruby `YAML.load_file` | 0 | Pasó; raíz tipo mapping y claves esperadas. Se repetirá después de actualizar el estado. |
+| `cargo llvm-cov -p huginn-core -p huginn-application -p huginn-runtime -p huginn --all-targets --summary-only` | 0 | Suite instrumentada pasó. Cobertura agregada de líneas: 91.40%; `kernel.rs` 87.09%, `application/composition.rs` 95.26%, `loop_engine.rs` 94.99%, `runtime/composition.rs` 68.70%, `apps/huginn/main.rs` 91.60%. No hay umbral de cobertura específico para este cambio; estos porcentajes no sustituyen la matriz de escenarios. |
+
+La suite combinada dejó dos tests `ignored` por dependencias externas: `legacy_lock_interop` necesita `CORTEX_AGENT_LEGACY_BIN`; el contrato de secretos del sistema requiere macOS Keychain o Linux Secret Service/D-Bus accesible. No son resultados PASS ni fallos del cambio.
+
+**Omitido deliberadamente:** `just ci-local`, la suite completa del workspace y CI completa, conforme a la instrucción del usuario. Los tests CLI/TUI del binario pasaron como regresión de proceso normal; no prueban sustitución in-process. No se ejecutó QA manual de aceptación.
+
+## Matriz de conformidad de requisitos y escenarios
+
+`PASS` requiere un test que pasó y que cubra el comportamiento declarado. `PARTIAL` indica evidencia ejecutada para una parte del escenario, pero no para toda la combinación normativa. El código inspeccionado por sí solo no convierte `PARTIAL` o `UNTESTED` en PASS.
+
+| Requirement / Scenario | Test ejecutado y evidencia | Estado |
+|---|---|---|
+| **Identidad y composición** — IDs/versiones; rechazar ambigüedad, ciclos y mismatch de major | `kernel_lifecycle::ambiguity_cycles_and_major_version_mismatch_are_explicit`; `cargo test` combinado pasó. | PASS |
+| **Activación transaccional** — plugin que registra y falla no publica y limpia efectos | `kernel_lifecycle::failed_activation_rolls_back_services_and_owned_tasks`; `service_lease::failed_alternative_activation_keeps_previous_provider_available`; tests `staged_abort_tests`. | PASS |
+| **Ownership y dependientes** — consulta tras commit informa owner/generación y dependientes vigentes | `service_lease::ownership_and_dependents_are_observable_before_and_after_substitution`; `substituting_multi_service_provider_preserves_its_services_and_adds_free_services`. | PASS |
+| **Sustitución transaccional** — commit publica alternativa; fallo conserva provider anterior, limpia staging y diagnostica | `service_lease::failed_alternative_activation_keeps_previous_provider_available`, `substitution_rejects_an_alternative_that_drops_an_existing_service`, `substitution_rejects_an_alternative_that_collides_on_an_additional_service`, `substituting_multi_service_provider_preserves_its_services_and_adds_free_services`; unit tests de cleanup/preflight. | PASS |
+| **Leases cooperativas con plazo** — lease activa no se cancela; timeout conserva provider y reabre; admisión cerrada rechaza nuevas leases | `timed_out_slot_substitution_keeps_active_lease_and_reopens_admission`, `service_slot_tracks_replacement_while_existing_lease_keeps_previous_provider` y `service_slot_acquisition_can_race_with_commit_and_multi_service_slots_refresh` pasaron. Código: `ServiceSlotHandle::acquire` mantiene el lock de tabla mientras localiza slot e incrementa con `checked_add`; `close_gates` toma el mismo lock antes de cerrar gates. Sin embargo, la prueba concurrente ignora adquisiciones fallidas y no aserta directamente que una adquisición nueva falle durante el intervalo cerrado. | **PARTIAL** |
+| **Drenaje y reanudación** — `RequireFullDrain` rechaza; `ReportUndrained` diagnostica; abort reanuda anterior y commit reanuda nuevo | Pasaron `require_full_drain_checks_dependents_of_every_service_from_the_provider`, `report_undrained_lists_dependents_of_secondary_services`, `drain_failure_resumes_prior_dependents_reopens_leases_and_records_failure`, `timed_out_drain_hook_is_bounded_and_reopens_the_previous_generation` y los tests de drain/timeout de application. | PASS |
+| **Rebind de consumidores** — modelo: una operación activa termina con modelo anterior, commit espera y siguiente `run`/`compact` usa el nuevo en el mismo `LoopService` | `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact` pasó para sustituir providers entre operaciones. `drain_timeout_does_not_cancel_run_and_admission_reopens_after_resume` pasó para un run activo durante un intento de sustitución que aborta por timeout, pero sustituye sessions. Ningún test ejecutado combina un run o compact activo con una sustitución **exitosa de ModelService**, seguida de operación nueva con el modelo reemplazado. | **PARTIAL — bloqueo** |
+| **Rebind de consumidores** — session: saves de operación activa usan store A; siguiente operación usa B y no migra el registro identificable | `active_operation_saves_only_to_old_store_and_next_run_uses_new_store` pasó; valida múltiples saves del mismo ID en A, ausencia de ese ID en B y saves de la siguiente operación en B. `retained_loop_service_uses_replaced_model_and_store_for_run_and_compact` valida el store nuevo en la operación posterior. | PASS |
+| **Rebind de consumidores** — legacy/custom `resolve() -> Arc<T>` conserva la referencia capturada; handle requerido obtiene slot/lease/hooks | `dependent_retains_context_slot_handle_across_provider_substitution`, pruebas de denegación del ID no declarado/tipo incorrecto y pruebas `StandardLoop` existentes pasaron. El código y documentación describen el límite legacy, pero no se ejecutó una regresión que retenga un `Arc<T>` de `resolve()`/`LoopPlugin` y observe su comportamiento tras sustituir. | **PARTIAL** |
+| **Genericidad y compatibilidad** — kernel genérico, no revoca `Arc` arbitrarios; `huginn-plugin-api::v1` compatible | Inspección: `kernel.rs` no depende de `ModelProvider`/`SessionStore`; `resolve() -> Arc<T>` sigue; el diff no modifica `huginn-plugin-api/v1`; las APIs públicas `StandardLoop`/`LoopPlugin` siguen compilando en los targets seleccionados. No hay test ejecutado específico de referencia `Arc` retenida o contrato v1 tras sustitución. | **PARTIAL** |
+
+### Límites observados en la prueba multi-slot
+
+La implementación es coherente con atomicidad: `ServiceSlotHandle::acquire` y el cierre de gates se serializan con el mutex global de slots; `publish_staged_plugin` actualiza todos los slots del provider dentro de una sección crítica y revoca gates anteriores allí. El test `service_slot_acquisition_can_race_with_commit_and_multi_service_slots_refresh` hace adquisición concurrente solo sobre el slot primario; permite tanto errores de adquisición como valores previos/nuevos, y comprueba ambos slots reemplazados solo después del commit. Por tanto, acredita carrera de adquisición y refresh post-commit, pero **no observa atómicamente una tupla multi-slot durante el commit**. No existe una API de adquisición/snapshot multi-slot. No se atribuye una garantía de observación multi-slot más fuerte que la disponible en la API.
+
+## Correctitud y diseño
+
+| Área | Inspección | Resultado |
+|---|---|---|
+| Tabla/gate/contador | Tabla global indexada por `ServiceId`; adquisición lee valor/gate y hace incremento checked bajo sincronización compartida; cierre y publicación usan la misma mutex. Commit reemplaza todas las entradas staged antes de soltarla. No se ejecuta código de plugin bajo ese lock de acquire. | Coherente con diseño; cobertura concurrente multi-slot parcial, como arriba. |
+| `PluginContext::service_slot_handle` | Comprueba primero `Manifest.requires`; valida slot presente y `TypeId`; activation y staging pasan requisitos y tabla compartida. | Conforme; tests de ID no declarado y tipo incompatible pasaron. |
+| Timeout/rollback | El timeout de drenaje de leases aborta precommit; reabre gates, limpia alternativa y reanuda dependientes intentados. No hay cancelación del future que posee la lease activa; los tests de timeout pasaron. | Conforme en código y casos ejecutados. |
+| Leases del loop | `LeasedAgentLoop::run` y `compact` adquieren admisión, model y sessions antes de delegar a `LoopExecution`, y mantienen las variables lease vivas hasta que el future termina. Todos los `save` llaman al store prestado por la misma lease. | Diseño conforme; falta test de sustitución exitosa de modelo mientras una operación está activa. |
+| APIs públicas | `StandardLoop` conserva seis campos y las firmas; `LoopPlugin(pub LoopConfig)` continúa público y sin cambio; `LeasedAgentLoop` y `LeasedLoopPlugin` son privados. `leased_loop_plugin` es una factory pública aditiva que devuelve `Box<dyn Plugin>`. Struct literals existentes compilaron. | Conforme; no se encontró ruptura observada. |
+| Builders productivos | `application::composition::build` usa `leased_loop_plugin`; `runtime::composition::build` delega a application; `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards` llaman a `build_native_plugin`, que registra la misma factory. El test in-process runtime ejercita `build_native`; no ejercita sustitución con los otros dos builders. | Código coherente; cobertura conductual incompleta de variantes de runtime. |
+| Readiness CLI/TUI | `main.rs` retiene `ServiceSlotHandle<ModelService>` y vuelve a adquirir para doctor, prompts CLI y callback/prompt TUI; falla cerrada ante error. | Conforme por inspección; test unitario de sustitución/readiness pasó. CLI/TUI subprocess solo prueba flujo normal. |
+| Compatibilidad y persistencia | `resolve() -> Arc<T>` no se presenta como revocable; el plugin API v1 y `SqliteSessions::lease/load/list` no aparecen en el diff. No hay migración, transferencia de locks ni cambio de esquema. | Conforme por inspección de diff/código; la semántica legacy negativa no tiene test dedicado. |
+| Propuesta, diseño y tareas | El helper privado/factory pública coincide con diseño y tareas. `apply-progress.md` termina con una nota histórica de que Verify está pendiente; ahora esta fase se ejecutó. Los checkboxes de criterios de éxito de `proposal.md` permanecen sin marcar y no se usan como evidencia de estado. | Sin desviación de diseño que rompa spec; hay documentación de Apply que no se ha actualizado, no se corrige durante Verify. |
+
+## Hallazgos
+
+No se invocaron jueces independientes; `Judge A/B` no son evaluaciones externas.
+
+| Finding | Judge A | Judge B | Severity | Status |
+|---|---|---|---|---|
+| **V-01 — Rebind de modelo activo sin test de commit exitoso.** El escenario exige que la sustitución espere una operación activa que usa el modelo previo, confirme el modelo nuevo y permita la operación siguiente en el mismo `LoopService`. Los tests cubren las mitades por separado, no esa secuencia. | No invocado | No invocado | **P1 / CRITICAL — UNTESTED** | Confirmado en la matriz; el código sugiere la conducta, pero no reemplaza el test que falta. |
+| **V-02 — Ventana de gate cerrado y atomicidad multi-slot sin observación conductual completa.** La sincronización de fuente es coherente, pero ningún test afirma que `ServiceSlotHandle.acquire()` rechace durante el cierre; el test concurrente no demuestra una tupla multi-slot atómica. | No invocado | No invocado | **P1 / CRITICAL — PARTIAL** | Confirmado por el alcance del test ejecutado y el código inspeccionado. |
+| **V-03 — Cobertura de límites legacy y builders runtime.** Falta test de retención `resolve() -> Arc<T>`/`LoopPlugin` después de sustituir y test in-process de sustitución para `build_native_with_connections` y `build_native_with_connections_and_guards`. Las tres rutas runtime comparten el helper probado por `build_native`. | No invocado | No invocado | WARNING | Confirmado como brecha de cobertura, no como fallo observado. |
+
+### Issues
+
+#### CRITICAL
+
+- **P1 V-01:** falta la secuencia runtime completa de rebind con operación de modelo activa y sustitución exitosa. Solicitar regresión de `run` y/o `compact` que bloquee la llamada al modelo A, inicie sustitución, pruebe que la sustitución espera, libere A, confirme, y compruebe que el mismo `LoopService` usa B en la siguiente operación. Hasta entonces, el escenario de modelo queda `PARTIAL` y no se acredita la garantía completa.
+- **P1 V-02:** falta prueba directa del rechazo de nuevas leases mientras el gate está cerrado y falta observación concurrente multi-slot equivalente a una publicación completa. La implementación inspeccionada mantiene el lock común, pero el escenario de lease/atomicidad no está completamente probado en runtime.
+
+#### WARNING
+
+- **V-03:** añadir cobertura in-process para los builders runtime con conexiones y guards y una regresión explícita del límite `resolve() -> Arc<T>`/`LoopPlugin` legacy. Código y documentación actuales describen correctamente el helper y la excepción.
+- La ejecución `fallback` no tuvo envelopes versionados. El reporte conserva identidad de comandos, exit codes, parser/status, evidencia y referencias de artefactos disponibles, pero no hubo enforcement de `sdd-quality-runner.mjs`.
+- Los dos tests `ignored` descritos arriba no se convirtieron en PASS.
+
+#### SUGGESTION
+
+- Mantener una distinción explícita en Verify entre atomicidad demostrada por inspección del lock y atomicidad observada por pruebas; el artefacto Apply ya declara el límite, y este reporte lo conserva.
+
+## Decisión y siguiente fase
+
+**FAIL.** No se detectó una regresión en las suites ejecutadas y la implementación coincide en gran medida con el diseño. Sin embargo, V-01 y V-02 incumplen el gate de verificación: escenarios normativos centrales no tienen evidencia runtime completa. No se recomienda pasar a QA hasta que se cubran y se repita Verify. No se marcaron QA, aceptación ni archive.
+
+## Referencias
+
+- Propuesta: `.agents/sdd/changes/huginn-service-provider-substitution/proposal.md`
+- Especificación: `.agents/sdd/changes/huginn-service-provider-substitution/specs/huginn-kernel/spec.md`
+- Diseño: `.agents/sdd/changes/huginn-service-provider-substitution/design.md`
+- Tareas: `.agents/sdd/changes/huginn-service-provider-substitution/tasks.md`
+- Evidencia TDD de Apply: `.agents/sdd/changes/huginn-service-provider-substitution/apply-progress.md`
+- Implementación principal: `crates/huginn/core/src/kernel.rs`, `crates/huginn/application/src/composition.rs`, `crates/huginn/application/src/loop_engine.rs`, `crates/huginn/runtime/src/composition.rs`, `apps/huginn/src/main.rs`
+- Suites focalizadas: `crates/huginn/core/tests/service_lease.rs`, `crates/huginn/application/tests/service_slot_rebinding.rs`, `crates/huginn/runtime/tests/tool_lifecycle.rs`

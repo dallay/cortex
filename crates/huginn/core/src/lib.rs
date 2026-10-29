@@ -2,6 +2,7 @@
 pub mod connections;
 pub mod kernel;
 pub mod providers;
+pub use kernel::{ServiceHandle, ServiceLease, ServiceSlotHandle};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

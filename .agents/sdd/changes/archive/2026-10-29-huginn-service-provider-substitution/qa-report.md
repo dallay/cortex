@@ -1,0 +1,125 @@
+# Informe QA — `huginn-service-provider-substitution`
+
+## 1. Identidad y veredicto
+
+- **Cambio:** `huginn-service-provider-substitution` (Issue #509 / DALLAY-718).
+- **Modo:** `openspec`. **Fase:** `qa`. **Fecha:** 2026-10-29.
+- **Ejecución:** `fallback`; no existe `.agents/sdd/quality-runner.json` ni un ejecutor QA con envelopes versionados en el repositorio.
+- **Veredicto QA:** **PASS WITH WARNINGS** para los escenarios de aceptación aplicables.
+- **Gate Archive:** **AUTORIZADO CON ADVERTENCIAS**. No quedan escenarios acceptance-relevant en estado `BLOCKED` o `NOT TESTED`, ni hallazgos CRITICAL/P0/P1 abiertos.
+
+Los escenarios de aceptación aplicables tienen evidencia conductual. Los dos tests nuevos ejercitan in-process los builders runtime que antes bloqueaban QA-01. La sustitución desde una TUI ya abierta sigue `NOT TESTED`, pero no es un escenario separado de aceptación en la spec y se registra como advertencia no bloqueante. Este informe no declara aceptación del operador.
+
+## 2. Fuentes y handoff técnico
+
+Se leyeron los artefactos requeridos:
+
+- `proposal.md`
+- `specs/huginn-kernel/spec.md`
+- `design.md`
+- `tasks.md`
+- `verify-report.md`
+- `state.yaml`
+- `.agents/sdd/config.yaml`
+- `.agents/AGENTS.md` y `.agents/contexts/huginn.md`
+- `apply-progress.md` como contexto adicional
+
+También se inspeccionaron las fuentes y tests de `crates/huginn/application`, `crates/huginn/runtime` y `apps/huginn` que se citan en la matriz.
+
+**Handoff de Verify:** `verify-report.md` informa **PASS WITH WARNINGS**. V-01 y V-02 están resueltos. La re-verificación posterior a la tarea 5.12 indica que los tests in-process de `build_native_with_connections` y `build_native_with_connections_and_guards` pasaron. QA volvió a ejecutarlos y observó directamente la sustitución A→B a través del `LoopService` retenido. QA-01 queda resuelto por esa evidencia, no por inspección del helper común.
+
+QA volvió a ejecutar las pruebas enumeradas en este informe. No repitió `fmt`, Clippy, `just huginn-architecture`, cobertura ni CI completa: son controles técnicos entregados por Verify y no aceptación observable. No se declara CI completa.
+
+## 3. Target, entorno, permisos y límites
+
+- **Target:** composición productiva Huginn local. Incluye la publicación de `LeasedAgentLoop` por los builders application/runtime y la lectura dinámica de readiness en `apps/huginn`.
+- **Entorno:** worktree local macOS, Cargo, tests Rust del workspace y bases/recursos temporales aislados por los tests. Las pruebas usan providers y stores controlados; el test de locks/persistencia ejercita SQLite local temporal.
+- **Permisos y datos:** no se usaron credenciales externas, servicios de producción ni datos persistentes del usuario. No se hizo reset de datos. No hubo commit, push ni publicación.
+- **Observabilidad de TUI:** se ejecutaron los tests PTY/subprocess existentes. No hay un control observable en esos tests para sustituir un provider dentro de la misma TUI ya en ejecución. La spec no define esa interacción como aceptación separada; no se inventó un comando ni una acción de UI.
+- **Alcance de builders:** los tests runtime observan `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards` por separado. El test CLI usa el builder con conexiones/guards para el flujo normal y no se cuenta como prueba de rebind. La cobertura de sustitución para ese builder procede del nuevo test in-process.
+
+## 4. Inventario de capacidades
+
+| Capacidad | Estado | Selección y motivo |
+|---|---|---|
+| Cargo, tests de integración application/runtime | available / selected | Observan sustitución, operaciones activas, drenaje y el loop retenido usando providers nuevos. |
+| Tests CLI y TUI con subprocess/PTY | available / selected, alcance limitado | Observan regresiones de flujo normal. No ejercitan sustitución in-process; no se atribuye esa capacidad. |
+| Test in-process de readiness | available / selected | Observa readiness antes y después de reemplazar y retirar el provider. |
+| Tests SQLite de persistencia y locks de sesión | available / selected | Observan reapertura/persistencia, exclusión, liberación y concurrencia de leases locales. |
+| Tests de autorización de `service_slot_handle` y `resolve() -> Arc<T>` | available / selected | Observan rechazo de requisito no declarado/tipo incorrecto y semántica legacy del `Arc` retenido. |
+| Rebind in-process mediante `build_native_with_connections` | available / selected | Test ejecutado: retiene `Arc<LoopService>`, sustituye `SessionsService` y comprueba saves posteriores en store B. |
+| Rebind in-process mediante `build_native_with_connections_and_guards` | available / selected | Test ejecutado por separado: retiene `Arc<LoopService>`, sustituye `SessionsService` y comprueba saves posteriores en store B. |
+| Sustitución dentro de una TUI ya abierta | unavailable / not selected | El target no expone una acción observable de sustitución en esa sesión. La spec no lo define como aceptación separada; queda como `NOT TESTED`, fuera de alcance y no bloqueante. |
+| Navegador web y responsive | rejected / no aplicable | Huginn es CLI/TUI; el cambio no añade superficie web. |
+| API HTTP externa | rejected / no aplicable | La sustitución ocurre dentro del proceso del kernel; no hay endpoint HTTP de sustitución en este alcance. |
+| Accesibilidad asistiva y locales completos | rejected / no aplicable | No cambia interacción, textos ni contrato de localización. Los tests TUI ejecutados no se presentan como auditoría de lector de pantalla o traducciones. |
+| Provider remoto / credenciales reales / secure store del SO | unavailable / rejected | No son necesarios para los escenarios controlados; no se solicitaron ni usaron credenciales o escrituras externas. |
+| Runner QA SDD con envelopes | unavailable | Se usa `fallback`; no hay envelopes de runner que preservar. El resultado se basa en los comandos ejecutados y sus salidas Cargo. |
+| Inspección estática | available / selected como contexto | Ayuda a identificar rutas y límites. No asigna PASS a ningún escenario por sí sola. |
+
+## 5. Comandos ejecutados y resultados
+
+| Comando | Resultado observable |
+|---|---|
+| `cargo test -p huginn-runtime --test tool_lifecycle connections_builder_rebinds_retained_loop_to_new_sessions_store` | Exit 0; 1 passed, 0 failed. Rebind in-process de `build_native_with_connections`. |
+| `cargo test -p huginn-runtime --test tool_lifecycle connections_and_guards_builder_rebinds_retained_loop_to_new_sessions_store` | Exit 0; 1 passed, 0 failed. Rebind in-process de `build_native_with_connections_and_guards`. |
+| `cargo test -p huginn-runtime --test tool_lifecycle runtime_composition_build_retains_a_dynamically_rebound_loop_service` | Exit 0; 1 passed, 0 failed. Rebind in-process de `build_native`. |
+| `cargo test -p huginn-application --test service_slot_rebinding` | Exit 0; 5 passed, 0 failed, 0 ignored. |
+| `cargo test -p huginn --bin huginn retained_readiness_slot_tracks_replacement_and_fails_closed` | Exit 0; 1 passed, 0 failed. |
+| `cargo test -p huginn --test cli` | Exit 0; 8 passed, 0 failed. Flujo normal; no prueba sustitución in-process. |
+| `cargo test -p huginn --test tui` | Exit 0; 14 passed, 0 failed. Flujos PTY normales; no prueban sustitución in-process. |
+| `cargo test -p huginn-runtime --test session_locks --test sessions_persistence` | Exit 0; locks 6 passed y persistencia 2 passed. |
+| `cargo test -p huginn-core --test service_lease resolved_arc_remains_on_old_value_after_provider_substitution` | Exit 0; 1 passed, 0 failed. |
+| `cargo test -p huginn-core --test service_lease context_rejects_slot_handle` | Exit 0; 2 passed, 0 failed. |
+
+Total de casos seleccionados en estos comandos: **42 passed, 0 failed, 0 ignored**. Este total excluye evidencia anterior de Verify y no representa una suite completa del workspace.
+
+## 6. Matriz de escenarios
+
+| Escenario | Resultado | Evidencia / razón |
+|---|---|---|
+| Rebind de model en `huginn_application::composition::build`: una operación ya activa termina con A; la sustitución espera; el mismo `LoopService` usa B en la siguiente operación | PASS | `service_slot_rebinding::successful_model_substitution_waits_for_active_run_then_rebinds_same_loop`; el test observa el run activo, la espera, su finalización con A y el siguiente run con B en la misma instancia retenida. |
+| Rebind de model y session entre operaciones retenidas; `run` y `compact` | PASS | `service_slot_rebinding::retained_loop_service_uses_replaced_model_and_store_for_run_and_compact`. |
+| Operación activa no cancelada y siguiente run usa B tras commit exitoso | PASS | `successful_model_substitution_waits_for_active_run_then_rebinds_same_loop`; la operación activa finaliza con A y la operación posterior usa B. |
+| Timeout/abort de drain no cancela run activo y reabre admisión | PASS | `service_slot_rebinding::drain_timeout_does_not_cancel_run_and_admission_reopens_after_resume`; se observa la run aún activa, el rechazo durante el drain sin cambios de sesión/eventos/saves y la recuperación con el provider previo. |
+| Rechazo pre-efectos mientras la admisión está cerrada durante drain | PASS | `drain_timeout_does_not_cancel_run_and_admission_reopens_after_resume`; `assert_no_run_effects` y el número de saves sin cambios verifican ausencia de efectos. `active_operation_saves_only_to_old_store_and_next_run_uses_new_store` también verifica rechazo durante resume antes de habilitar una operación nueva. |
+| Fallo al adquirir el segundo slot no produce efectos y libera el primer lease | PASS | `service_slot_rebinding::second_slot_failure_has_no_effects_and_releases_first_lease`; se comprueban ausencia de mutación, eventos, llamada al model y save. |
+| Sustitución de session durante una operación con varias llamadas `save`: la operación usa A; la siguiente usa B; el registro de A no se migra a B | PASS | `service_slot_rebinding::active_operation_saves_only_to_old_store_and_next_run_uses_new_store`; observa varias saves en A, ninguna save del registro en B, y saves de la operación nueva en B. |
+| Builder runtime `build_native` publica loop retenido que usa el servicio de session sustituido | PASS | `tool_lifecycle::runtime_composition_build_retains_a_dynamically_rebound_loop_service`; reemplaza `SessionsService` y observa saves en el store nuevo mediante el `LoopService` retenido. |
+| Rebind por todos los builders runtime públicos de la spec | PASS | `runtime_composition_build_retains_a_dynamically_rebound_loop_service` cubre `build_native`; `connections_builder_rebinds_retained_loop_to_new_sessions_store` cubre `build_native_with_connections`; `connections_and_guards_builder_rebinds_retained_loop_to_new_sessions_store` cubre `build_native_with_connections_and_guards`. Los tres tests retienen el `LoopService`, sustituyen `SessionsService` y observan saves posteriores en B. Cada comando pasó por separado en esta ejecución. |
+| Readiness dinámica: provider no configurado → reemplazo configurado → provider retirado; fallo cerrado | PASS | `readiness_tests::retained_readiness_slot_tracks_replacement_and_fails_closed`; el mismo handle informa false, true y false tras las transiciones. |
+| Readiness observada en una TUI que ya está abierta mientras se sustituye el provider | NOT TESTED — fuera de alcance | No hay mecanismo de sustitución observable desde una TUI activa y la spec no define ese flujo como aceptación separada. La readiness dinámica sí se observó en `readiness_tests::retained_readiness_slot_tracks_replacement_and_fails_closed`. No se inventó una acción de usuario ni se atribuye PASS al test subprocess. |
+| Compatibilidad legacy `resolve() -> Arc<T>` tras sustitución | PASS | `service_lease::resolved_arc_remains_on_old_value_after_provider_substitution`; el `Arc` retenido conserva el valor anterior y un resolve nuevo observa el reemplazo. No se afirma revocación del `Arc`. |
+| Rechazo de slot no declarado o de tipo incompatible | PASS | `service_lease::context_rejects_slot_handle_for_undeclared_service` y `context_rejects_slot_handle_with_incompatible_service_type`; 2 pruebas seleccionadas pasaron. |
+| `LoopPlugin(pub LoopConfig)` y composiciones personalizadas que retienen `Arc` | PASS para el límite especificado | La prueba de `resolve() -> Arc<T>` acredita la semántica negativa del `Arc` retenido. No se garantiza rebind para el plugin legacy ni para composiciones personalizadas sin handles/leases. No se infiere que el camino legacy haga rebind. |
+| Persistencia SQLite al reabrir store | PASS | `sessions_persistence::reopened_store_loads_the_latest_confirmed_session_snapshot` y `reopened_store_recovers_all_events_beyond_the_ui_retention_limit`; ambas pasaron. |
+| Locks de sesión: concurrencia, liberación y errores de ruta | PASS | Los 6 tests de `session_locks` pasaron, incluidos locks concurrentes por sesión, liberación tras terminar propietario y rechazo de symlink. |
+| Persistencia/no migración al sustituir `SessionsService` | PASS para el escenario observado | El test con stores A/B confirma que el ID activo de A no aparece en B por efecto de sustitución. La suite SQLite confirma persistencia local. No se ejecutó una migración ni se afirma una migración de esquema; no se reiniciaron datos persistentes. |
+| Seguridad/autorización para obtener un slot | PASS en el límite del kernel probado | Los tests seleccionados rechazan requisito no declarado y tipo incompatible. No se probó una autorización de usuario final: esta sustitución es interna y no añade endpoint ni acción de usuario. |
+| Navegador, responsive, internacionalización y lector de pantalla | NOT APPLICABLE | El cambio no introduce una interfaz web, cambios visuales, traducciones ni una nueva interacción accesible. Esto no es una declaración de conformidad general de la TUI. |
+| Exploración manual de sustitución mediante CLI/TUI productiva | NOT TESTED — fuera de alcance | No hay acción observable en el proceso interactivo para solicitar la sustitución, y esa interacción no está especificada como aceptación. Los subprocess existentes solo demuestran el flujo normal. |
+
+## 7. Alcance no probado y prerequisitos de repetición
+
+1. **TUI ya abierta:** la sustitución/actualización de readiness dentro de una TUI activa permanece `NOT TESTED`. No es aceptación separada en la spec; no bloquea Archive. Para probarla en un cambio futuro se necesitaría una vía observable, pero no se presume ni inventa una acción de usuario.
+2. **CI y controles técnicos:** QA no volvió a ejecutar `just ci-local`, `cargo test --workspace --all-features`, `fmt`, Clippy, gates de arquitectura ni cobertura. Verify informa sus resultados técnicos; esta pasada QA no se presenta como CI completa.
+3. **Tests `ignored` del handoff técnico:** Verify informa dos casos `ignored`, que no se convierten en PASS: `old_and_new_binaries_compete_for_the_shared_lock_in_both_directions` requiere `CORTEX_AGENT_LEGACY_BIN`; `os_secret_backend_contract` requiere Keychain macOS o Secret Service/D-Bus de sesión. Los comandos selectivos de QA de esta pasada no los ejecutaron.
+4. **Sin runner QA:** no hay envelopes versionados; `fallback` limita el enforcement determinista y la reproducción automatizada del informe, pero no invalida las salidas Cargo registradas.
+
+## 8. Hallazgos
+
+| ID | Severidad | Estado | Descripción y seguimiento |
+|---|---|---|---|
+| QA-01 | P2 | RESUELTO | Los dos tests nuevos se ejecutaron por separado y pasaron. Cada uno invoca directamente su builder, retiene `Arc<LoopService>`, sustituye `SessionsService` A→B y comprueba saves posteriores en B. El test de `build_native` también pasó; los tres builders nativos especificados quedan cubiertos conductualmente. |
+| QA-02 | P3 | NOT TESTED; advertencia fuera de alcance, no bloqueante | No se observó sustitución desde una TUI ya abierta. La spec no define esa interacción como aceptación separada y no existe acción observable en el target/harness. No se inventó un comando ni una acción de UI. |
+| QA-03 | P3 | OPEN, advertencia | El runner SDD QA está ausente; se usó `fallback` sin envelopes. Mantener el límite visible si se genera evidencia automatizada después. |
+
+No se observaron fallos en los escenarios ejecutados ni hallazgos CRITICAL/P0/P1 abiertos. QA-01 queda resuelto. QA-02 y QA-03 permanecen como advertencias no bloqueantes; QA-02 no corresponde a un escenario acceptance-relevant de la spec.
+
+## 9. Veredicto y handoff
+
+**PASS WITH WARNINGS. Gate QA para Archive autorizado con advertencias.**
+
+La evidencia confirma conductualmente el rebind en el builder application y en los tres builders runtime enumerados: `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards`. También confirma la operación activa sin cancelación, el uso de B en operaciones posteriores, el rechazo pre-efectos durante drain, readiness dinámica, el límite legacy de `resolve() -> Arc<T>`, persistencia y locks. El test CLI con conexiones/guards sigue siendo solo una regresión de flujo normal; el rebind de esa variante queda acreditado por su test in-process dedicado. La TUI ya abierta y el runner ausente permanecen como límites explícitos, no como aceptación del operador.
+
+**Siguiente paso recomendado:** handoff a Archive, sujeto a sus gates normales y con las advertencias QA-02/QA-03 visibles. Este informe no declara aceptación del operador. No se modificaron source, tests, spec, design, tasks ni `verify-report.md`; solo este informe y `state.yaml`.

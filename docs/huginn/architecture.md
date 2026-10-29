@@ -97,9 +97,67 @@ The `Supervisor` manages plugin lifecycle:
 | `remove(id)` | Unload a plugin and dependents |
 | `shutdown()` | Shut down all plugins |
 | `diagnostics()` | Inspect plugin state and activation errors |
+| `provider_of(service)` | Read the owning plugin and generation |
+| `dependents_of(service)` | Read active plugins that require the service |
+| `service_handle::<T>(service)` | Create a handle that can issue cooperative leases |
+| `resolve_lease::<T>(service)` | Resolve and acquire one cooperative lease |
+| `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback |
 
 The methods are asynchronous where lifecycle work requires it. See
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for exact signatures.
+
+### Sustitución de proveedores, drenaje y leases
+
+`ServiceSlotHandle<T>` conserva la tabla global y un `ServiceId`, no el provider.
+Cada `acquire()` resuelve el valor y su gate actuales y aumenta el contador de
+leases bajo la misma sincronización. `Supervisor::substitute` stagea la
+alternativa, drena dependientes y publica todos los slots afectados en una sola
+sección crítica; los lectores no observan una generación parcial.
+
+La alternativa debe conservar todos los servicios publicados por el provider
+actual. Puede publicar servicios adicionales solo si ningún otro plugin
+registrado declara esos IDs. `RequireFullDrain` rechaza la solicitud antes de
+cerrar admisión si algún dependent no declara soporte de drenaje.
+`ReportUndrained` registra esos IDs y aun así espera las leases activas. Un fallo
+precommit o el vencimiento del plazo restaura los slots anteriores, reabre sus
+gates y reanuda los dependientes cuyo drenaje se intentó. El timeout no cancela
+operaciones válidas representadas por leases.
+
+### Rebind del loop de producción
+
+`huginn_application::composition::build` y los builders nativos de
+`huginn_runtime::composition` publican `LeasedAgentLoop` mediante la factory
+`leased_loop_plugin` y el plugin privado `LeasedLoopPlugin`. El tipo concreto del
+plugin sigue privado. El adapter mantiene handles dinámicos de `ModelService` y
+`SessionsService`, no `Arc`s de esos providers. Antes de mutar session, emitir
+eventos, cargar skills o llamar model/store, cada `run` y `compact` obtiene
+admisión y ambas leases. Las conserva durante la operación completa, de modo que
+todas las llamadas `save` usan el mismo store. Si falla la segunda lease, RAII
+libera la primera sin producir efectos. `drain` cierra la admisión y espera las
+operaciones activas; las operaciones nuevas fallan antes de efectos. `resume`
+reabre admisión después de un abort o commit.
+
+La API legacy se mantiene compatible: `StandardLoop` conserva sus seis campos
+públicos, firmas y struct literals; `LoopPlugin(pub LoopConfig)` no cambia. El
+uso directo de `StandardLoop` o de `LoopPlugin` publica el loop estático y no
+obtiene garantía de rebind dinámico. La garantía aplica a los builders de
+producción que registran `LeasedLoopPlugin` mediante `leased_loop_plugin`.
+
+### Readiness y límites de persistencia
+
+`apps/huginn/src/main.rs` conserva `ServiceSlotHandle<ModelService>` y vuelve a
+adquirir el slot para doctor, readiness inicial y cada prompt de CLI, y para el
+callback de readiness y cada prompt TUI. No conserva un `Arc<ModelProvider>` ni
+una bool de readiness capturada. Si falla `acquire()`, la readiness falla
+cerrada. Los subprocess tests de CLI/TUI cubren su comportamiento normal; no
+prueban sustitución in-process.
+
+El contrato de lease es cooperativo. `resolve() -> Arc<T>` sigue disponible por
+compatibilidad, pero un `Arc` retenido fuera de una lease y el trabajo detached
+quedan fuera de la garantía. `SqliteSessions::lease`, `load` y `list` siguen
+directos a `SqliteSessions`, fuera de `SessionsService`. La sustitución no
+transfiere leases ni migra estado entre stores; no hay cambio de esquema ni
+migración.
 
 ### Plugin States
 
