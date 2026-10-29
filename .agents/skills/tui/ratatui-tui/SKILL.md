@@ -56,10 +56,10 @@ These are invariants, not style preferences.
 
 | Path | Owns |
 |---|---|
-| `src/terminal.rs` | TTY lifecycle, `TerminalGuard`, `HostBackend`, frame loop, layout, wrapping, markdown rendering |
-| `src/state.rs` | `Ui`, `UiState`, `View` snapshot, `safe`, composer/editor, approvals, scroll state |
+| `src/terminal.rs` | TTY lifecycle, `TerminalGuard`, `HostBackend`, frame loop, `View` snapshot, layout, wrapping, markdown rendering |
+| `src/state.rs` | `Ui`, `UiState`, projection of core `Event`s, `safe`, composer/editor, approvals, scroll state |
 | `src/overlay.rs` | Overlay/focus stack, tickets and leases |
-| `src/event.rs` | Projection of core `Event`s into UI state |
+| `src/event.rs` | Bounded UI-event buffer, summary sanitization, operation-scoped error deduplication |
 | `src/input.rs` | Unix input reader, paste assembly, revocation |
 | `src/contributions.rs` | Built-in plugin using the public contribution API |
 | `tests/pty.rs`, `tests/support/pty.rs` | End-to-end terminal behavior in a real PTY |

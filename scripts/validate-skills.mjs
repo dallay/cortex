@@ -108,15 +108,16 @@ function loadSkillOutputBytes(text, logicalPath, canonicalPath) {
   return Buffer.byteLength(JSON.stringify(envelope));
 }
 
-export function analyzeSkills(root = SKILLS_ROOT) {
+export function analyzeSkills(root = SKILLS_ROOT, repoRoot = REPO_ROOT) {
   const errors = [];
   const warnings = [];
   const skills = [];
   const names = new Map();
+  const repositoryRoot = resolve(repoRoot);
 
   for (const file of findSkillFiles(root)) {
     const text = readFileSync(file, 'utf8');
-    const where = relative(REPO_ROOT, file);
+    const where = relative(repositoryRoot, file);
     const directory = basename(dirname(file));
     const depth = relative(root, dirname(file)).split(sep).filter(Boolean).length;
     const discoverable = depth === 1;
@@ -190,7 +191,7 @@ export function analyzeSkills(root = SKILLS_ROOT) {
         continue;
       }
       const fromSkill = normalize(join(dirname(file), target));
-      const fromRepo = normalize(join(REPO_ROOT, target));
+      const fromRepo = normalize(join(repositoryRoot, target));
       if (!existsSync(fromSkill) && !existsSync(fromRepo)) {
         errors.push(`${where}: broken local link "${target}"`);
       }
@@ -200,8 +201,8 @@ export function analyzeSkills(root = SKILLS_ROOT) {
   return { errors, warnings, skills };
 }
 
-export function validateSkills(root = SKILLS_ROOT) {
-  return analyzeSkills(root).errors;
+export function validateSkills(root = SKILLS_ROOT, repoRoot = REPO_ROOT) {
+  return analyzeSkills(root, repoRoot).errors;
 }
 
 export function main(root = SKILLS_ROOT) {

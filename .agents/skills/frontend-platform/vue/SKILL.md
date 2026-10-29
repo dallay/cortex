@@ -61,9 +61,9 @@ const increment = () => {
 
 <template>
 	<div>
-		<h2>{{ title }}</h2>
-		<p>{{ t("common.count", { count: localCount, doubled }) }}</p>
-		<Button type="button" @click="increment">{{ t("common.increment") }}</Button>
+		<h2>{{ props.title }}</h2>
+		<p>{{ localCount }} · {{ doubled }}</p>
+		<Button type="button" @click="increment">{{ t("common.next") }}</Button>
 	</div>
 </template>
 ```
@@ -150,6 +150,7 @@ errors before the user interacts:
 import { toTypedSchema } from "@vee-validate/zod";
 import { useForm } from "vee-validate";
 import { z } from "zod";
+import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import {
 	FormControl,
@@ -160,10 +161,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 
-const schema = z.object({
-	email: z.string().email(),
-	password: z.string().min(8),
-});
+const schema = z.object({ name: z.string().min(1) });
+type FormValues = z.infer<typeof schema>;
+
+const props = defineProps<{
+	onSave: (values: FormValues) => Promise<void>;
+}>();
+const { t } = useI18n();
 
 const { handleSubmit, validateField } = useForm({
 	validationSchema: toTypedSchema(schema),
@@ -171,22 +175,22 @@ const { handleSubmit, validateField } = useForm({
 });
 
 const onSubmit = handleSubmit(async (values) => {
-	await save(values);
+	await props.onSave(values);
 });
 </script>
 
 <template>
 	<form @submit="onSubmit">
-		<FormField v-slot="{ componentField }" name="email">
+		<FormField v-slot="{ componentField }" name="name">
 			<FormItem>
-				<FormLabel>Email</FormLabel>
+				<FormLabel>{{ t("apiKeys.name") }}</FormLabel>
 				<FormControl>
-					<Input v-bind="componentField" @blur="validateField('email')" />
+					<Input v-bind="componentField" @blur="validateField('name')" />
 				</FormControl>
 				<FormMessage />
 			</FormItem>
 		</FormField>
-		<Button type="submit">Save</Button>
+		<Button type="submit">{{ t("common.save") }}</Button>
 	</form>
 </template>
 ```

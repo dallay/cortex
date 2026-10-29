@@ -79,9 +79,18 @@ describe('validateSkills', () => {
 
   it('resolves links written from the repository root', () => {
     const root = fixture({
-      'one/SKILL.md': skill('one', { body: '[pkg](package.json)\n' }),
+      'skills/one/SKILL.md': skill('one', { body: '[pkg](package.json)\n' }),
+      'package.json': '{}\n',
     });
-    assert.deepEqual(validateSkills(root), []);
+    assert.deepEqual(analyzeSkills(join(root, 'skills'), root).errors, []);
+  });
+
+  it('resolves repository-root links against the injected fixture root', () => {
+    const root = fixture({
+      'skills/one/SKILL.md': skill('one', { body: '[pkg](package.json)\n' }),
+    });
+    const result = analyzeSkills(join(root, 'skills'), root);
+    assert.match(result.errors.join('\n'), /broken local link "package\.json"/);
   });
 
   it('rejects skills larger than the documented limit', () => {

@@ -39,7 +39,7 @@ Use the script in this skill instead of ad-hoc pipelines:
 # Read-only resolution (one network round trip)
 .agents/skills/pinned-tag/scripts/resolve-action-sha.sh \
   https://github.com/actions/checkout.git v4
-# -> 11bd71901bbe5b1630ceea73d27597364c9af683
+# -> 11d5960a326750d5838078e36cf38b85af677262
 
 # Verify that the SHA is a commit, not a tag object, tree or blob
 .agents/skills/pinned-tag/scripts/resolve-action-sha.sh \
@@ -75,7 +75,7 @@ Avoid `rg` in these snippets: it is not guaranteed to be installed, while
 # Before
 - uses: actions/checkout@v4
 # After
-- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 ```
 
 4. Re-run the workflow. A pin that no longer matches the expected inputs is a

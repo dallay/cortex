@@ -105,7 +105,7 @@ import { expect, test } from "@playwright/test";
 
 test.describe("API keys", () => {
 	test("creates a key and shows it once", async ({ page }) => {
-		await page.goto("/api-keys");
+		await page.goto("api-keys");
 		await page.getByRole("button", { name: /create/i }).click();
 		await page.getByLabel(/label/i).fill("e2e-key");
 		await page.getByRole("button", { name: /save|create/i }).click();

@@ -120,9 +120,9 @@ import { mount } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import StatusBadge from "@/components/StatusBadge.vue";
 
-it("renders the active label", () => {
+it("renders the current status", () => {
 	const wrapper = mount(StatusBadge, { props: { status: "active" } });
-	expect(wrapper.text()).toContain("Active");
+	expect(wrapper.text()).toBe("active");
 });
 ```
 

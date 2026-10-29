@@ -96,13 +96,8 @@ defineConfig({
     // Pool for running tests: 'threads', 'forks', 'vmThreads'
     pool: 'threads',
     
-    // Number of threads/processes
-    poolOptions: {
-      threads: {
-        maxThreads: 4,
-        minThreads: 1,
-      },
-    },
+    // Maximum number of worker threads or processes
+    maxWorkers: 4,
     
     // Automatically clear mocks between tests
     clearMocks: true,
