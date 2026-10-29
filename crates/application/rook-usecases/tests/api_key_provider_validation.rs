@@ -72,6 +72,7 @@ fn create_request(label: &str, providers: Vec<&str>) -> CreateApiKeyRequest {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: providers.into_iter().map(ProviderId::new).collect(),
+        spending_budget: None,
     }
 }
 
@@ -107,6 +108,7 @@ async fn update_with_unknown_provider_filters_stale_providers() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -119,6 +121,7 @@ async fn update_with_unknown_provider_filters_stale_providers() {
         expires_at: None,
         allowed_models: None,
         allowed_providers: Some(vec![ProviderId::new("unknown-provider")]),
+        spending_budget: None,
     };
 
     let result = usecase.update(&record.id, update_req).await;
@@ -142,6 +145,7 @@ async fn create_with_empty_allowed_providers_passes() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![], // Empty = unrestricted
+        spending_budget: None,
     };
 
     let result = usecase.create(request).await;
@@ -164,6 +168,7 @@ async fn create_when_registry_is_empty_filters_all_providers() {
         allowed_models: vec![],
         // "openai" does not exist in empty registry - should be silently filtered
         allowed_providers: vec![ProviderId::new("openai")],
+        spending_budget: None,
     };
 
     let result = usecase.create(request).await;
@@ -191,6 +196,7 @@ async fn update_with_empty_allowed_providers_clears_restriction() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![ProviderId::new("openai")],
+        spending_budget: None,
     };
     let (record, _) = usecase.create(create_req).await.unwrap();
     assert_eq!(record.allowed_providers.len(), 1);
@@ -204,6 +210,7 @@ async fn update_with_empty_allowed_providers_clears_restriction() {
         expires_at: None,
         allowed_models: None,
         allowed_providers: Some(vec![]),
+        spending_budget: None,
     };
 
     let updated = usecase.update(&record.id, update_req).await.unwrap();

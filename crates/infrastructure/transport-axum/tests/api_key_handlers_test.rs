@@ -20,6 +20,7 @@ async fn test_create_and_get_api_key() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: None,
     };
 
     let (status, Json(created_resp)) = create_api_key(State(usecases.clone()), Json(create_req))
@@ -47,6 +48,7 @@ async fn test_create_and_get_api_key() {
         expires_at: None,
         allowed_models: None,
         allowed_providers: None,
+        spending_budget: None,
     };
     let Json(updated_resp) = update_api_key(
         State(usecases.clone()),
@@ -82,6 +84,7 @@ async fn test_create_api_key_invalid_scope_and_tier() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let scope_err = create_api_key(State(usecases.clone()), Json(invalid_scope_req))
         .await
@@ -96,6 +99,7 @@ async fn test_create_api_key_invalid_scope_and_tier() {
         expires_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let tier_err = create_api_key(State(usecases.clone()), Json(invalid_tier_req))
         .await

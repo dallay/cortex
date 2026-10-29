@@ -59,6 +59,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 mod default_combo;
 mod output_validation;
 mod progressive_combo;
+mod spending_budget;
 
 struct TestProvider {
     id: ProviderId,
@@ -1943,6 +1944,41 @@ async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_with
     );
 }
 
+#[tokio::test]
+async fn budgeted_request_without_verifiable_provider_bound_is_rejected_before_provider_io() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(SpyProvider {
+        id: ProviderId::new("test-provider"),
+        model: TEST_MODEL.clone(),
+        seen_models: calls.clone(),
+    });
+    let usecase = make_usecase_with_provider(provider);
+    let mut req = request();
+    req.metadata.cacheable = false;
+    req.restrictions = rook_core::ApiKeyRestrictions {
+        allowed_models: vec![],
+        allowed_providers: vec![],
+        spending_budget: Some(rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("budget-key"),
+            amount_micros_usd: 10_000_000,
+            request_limit_micros_usd: 1_000_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        }),
+    };
+
+    let error = usecase
+        .execute_with_format(req, ApiFormat::OpenAI)
+        .await
+        .expect_err("no provider exposes an enforceable preflight cost bound");
+
+    assert!(error.is_cost_unavailable());
+    assert!(error.to_string().contains("cost unavailable"));
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "provider must not be called"
+    );
+}
+
 // ------------------------------------------------------------------
 // R2 virtual combo routing (Task 2 IO)
 // ------------------------------------------------------------------
@@ -3496,6 +3532,7 @@ async fn unauthorized_later_connection_step_is_rejected_before_any_upstream_io()
                 rook_core::ApiKeyRestrictions {
                     allowed_models: vec![],
                     allowed_providers: vec![first_adapter],
+                    spending_budget: None,
                 },
             ),
             ApiFormat::OpenAI,
@@ -3550,6 +3587,7 @@ async fn connection_bound_step_rejects_another_account_before_upstream_io() {
     let restrictions = rook_core::ApiKeyRestrictions {
         allowed_models: vec![],
         allowed_providers: vec![ProviderId::new("some-other-account")],
+        spending_budget: None,
     };
 
     let error = h
@@ -3644,6 +3682,7 @@ async fn connection_bound_step_falls_back_to_the_next_step_on_rate_limit() {
                 rook_core::ApiKeyRestrictions {
                     allowed_models: vec![],
                     allowed_providers: vec![],
+                    spending_budget: None,
                 },
             ),
             ApiFormat::OpenAI,
@@ -3737,6 +3776,7 @@ async fn unusable_and_disallowed_connection_step_is_skipped_in_both_paths() {
                 rook_core::ApiKeyRestrictions {
                     allowed_models: vec![],
                     allowed_providers: vec![first_adapter],
+                    spending_budget: None,
                 },
             ),
             ApiFormat::OpenAI,
@@ -3808,6 +3848,7 @@ async fn combo_audit_and_usage_record_the_effective_connection() {
                 rook_core::ApiKeyRestrictions {
                     allowed_models: vec![],
                     allowed_providers: vec![],
+                    spending_budget: None,
                 },
             ),
             ApiFormat::OpenAI,
@@ -3877,6 +3918,7 @@ async fn legacy_step_keeps_its_adapter_id_without_connection_lookup() {
                 rook_core::ApiKeyRestrictions {
                     allowed_models: vec![],
                     allowed_providers: vec![],
+                    spending_budget: None,
                 },
             ),
             ApiFormat::OpenAI,
@@ -3956,6 +3998,7 @@ async fn unauthorized_physical_step_rejects_whole_combo() {
     let restrictions = rook_core::ApiKeyRestrictions {
         allowed_models: vec![ModelId::new("rook/coding"), ModelId::new("other-model")],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let err = h
         .usecase
@@ -3978,6 +4021,7 @@ async fn unauthorized_alias_rejects_whole_combo() {
     let restrictions = rook_core::ApiKeyRestrictions {
         allowed_models: vec![ModelId::new("gpt-4o")],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let err = h
         .usecase

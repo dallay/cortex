@@ -46,6 +46,7 @@ vi.mock("@/components/ui/input", () => ({
 			modelValue: { type: [String, null], default: "" },
 			placeholder: String,
 			dataTestid: String,
+			disabled: Boolean,
 		},
 		emits: ["update:modelValue"],
 		setup(props, { emit }) {
@@ -53,6 +54,7 @@ vi.mock("@/components/ui/input", () => ({
 				h("input", {
 					id: props.id,
 					type: (props.type as string) ?? "text",
+					disabled: props.disabled,
 					value: props.modelValue ?? "",
 					placeholder: props.placeholder,
 					"data-testid":
@@ -66,13 +68,20 @@ vi.mock("@/components/ui/input", () => ({
 
 vi.mock("@/components/ui/checkbox", () => ({
 	Checkbox: defineComponent({
-		props: { modelValue: Boolean, dataTestid: String },
+		props: {
+			modelValue: Boolean,
+			dataTestid: String,
+			id: String,
+			ariaLabel: String,
+		},
 		emits: ["update:modelValue"],
 		setup(props, { emit }) {
 			return () =>
 				h("input", {
 					type: "checkbox",
 					checked: props.modelValue === true,
+					id: props.id,
+					"aria-label": props.ariaLabel,
 					"data-testid": props.dataTestid ?? "checkbox",
 					onChange: (e: Event) =>
 						emit("update:modelValue", (e.target as HTMLInputElement).checked),
@@ -98,7 +107,13 @@ vi.mock("@/components/ui/badge", () => ({
 vi.mock("@/components/ui/native-select", () => ({
 	NativeSelect: defineComponent({
 		inheritAttrs: false,
-		props: { id: String, modelValue: String, dataTestid: String },
+		props: {
+			id: String,
+			modelValue: String,
+			dataTestid: String,
+			ariaLabel: String,
+			disabled: Boolean,
+		},
 		emits: ["update:modelValue"],
 		setup(props, { attrs, slots, emit }) {
 			return () =>
@@ -108,6 +123,8 @@ vi.mock("@/components/ui/native-select", () => ({
 						...attrs,
 						id: props.id,
 						value: props.modelValue,
+						disabled: props.disabled,
+						"aria-label": props.ariaLabel,
 						"data-testid": props.dataTestid,
 						onChange: (event: Event) =>
 							emit(
@@ -304,6 +321,10 @@ function makeFormState(
 		expiresAt: null,
 		allowedModels: [],
 		allowedProviders: [],
+		spendingBudgetEnabled: false,
+		spendingBudgetAmountUsd: "",
+		spendingBudgetRequestLimitUsd: "",
+		spendingBudgetWindow: "daily",
 		...overrides,
 	};
 }
@@ -333,6 +354,31 @@ describe("ApiKeyForm", () => {
 		expect(trigger.element.tagName).toBe("SELECT");
 		expect(trigger.attributes("id")).toBe("api-key-tier");
 		expect(trigger.attributes("aria-label")).toBe("Rate limit tier");
+	});
+
+	it("renders accessible spending budget controls and emits updates", async () => {
+		const wrapper = makeWrapper(makeFormState());
+		expect(
+			wrapper.find('[data-testid="input-spending-budget-amount"]').exists(),
+		).toBe(true);
+		expect(
+			wrapper
+				.find('[data-testid="input-spending-budget-request-limit"]')
+				.exists(),
+		).toBe(true);
+		expect(
+			wrapper.find('[data-testid="select-spending-budget-window"]').exists(),
+		).toBe(true);
+		const enabled = wrapper.find(
+			'[data-testid="checkbox-spending-budget-enabled"]',
+		);
+		expect(enabled.attributes("aria-label")).toBe("Enable spending budget");
+
+		await enabled.setValue(true);
+		const state = wrapper
+			.emitted("update:modelValue")
+			?.at(-1)?.[0] as ApiKeyFormState;
+		expect(state.spendingBudgetEnabled).toBe(true);
 	});
 
 	describe("scope rendering", () => {

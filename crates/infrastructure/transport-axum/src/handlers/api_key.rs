@@ -41,6 +41,8 @@ pub struct CreateApiKeyRequestDto {
     pub allowed_models: Vec<String>,
     #[serde(default)]
     pub allowed_providers: Vec<String>,
+    #[serde(default)]
+    pub spending_budget: Option<rook_core::SpendingBudgetRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +56,8 @@ pub struct UpdateApiKeyRequestDto {
     pub expires_at: Option<Option<DateTime<Utc>>>,
     pub allowed_models: Option<Vec<String>>,
     pub allowed_providers: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub spending_budget: Option<Option<rook_core::SpendingBudgetRequest>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,6 +75,7 @@ pub struct ApiKeyRecordResponseDto {
     pub last_used_at: Option<DateTime<Utc>>,
     pub allowed_models: Vec<String>,
     pub allowed_providers: Vec<String>,
+    pub spending_budget: Option<rook_core::SpendingBudgetRequest>,
 }
 
 impl From<&rook_core::ApiKeyRecord> for ApiKeyRecordResponseDto {
@@ -100,6 +105,13 @@ impl From<&rook_core::ApiKeyRecord> for ApiKeyRecordResponseDto {
                 .iter()
                 .map(|p| p.as_str().to_string())
                 .collect(),
+            spending_budget: record.spending_budget.as_ref().map(|budget| {
+                rook_core::SpendingBudgetRequest {
+                    amount_micros_usd: budget.amount_micros_usd,
+                    request_limit_micros_usd: budget.request_limit_micros_usd,
+                    window: budget.window,
+                }
+            }),
         }
     }
 }
@@ -165,6 +177,12 @@ pub async fn create_api_key(
         message: e.to_string(),
     })?;
 
+    let spending_budget = req.spending_budget.map(|budget| rook_core::SpendingBudget {
+        api_key_id: ApiKeyId::new("pending"),
+        amount_micros_usd: budget.amount_micros_usd,
+        request_limit_micros_usd: budget.request_limit_micros_usd,
+        window: budget.window,
+    });
     let domain_req = CreateApiKeyRequest {
         label: req.label,
         scopes,
@@ -176,6 +194,7 @@ pub async fn create_api_key(
             .into_iter()
             .map(ProviderId::new)
             .collect(),
+        spending_budget,
     };
 
     let (record, plaintext_key) = mak.create(domain_req).await.map_err(map_error)?;
@@ -239,6 +258,14 @@ pub async fn update_api_key(
         None => None,
     };
 
+    let spending_budget = req.spending_budget.map(|value| {
+        value.map(|budget| rook_core::SpendingBudget {
+            api_key_id: key_id.clone(),
+            amount_micros_usd: budget.amount_micros_usd,
+            request_limit_micros_usd: budget.request_limit_micros_usd,
+            window: budget.window,
+        })
+    });
     let domain_req = UpdateApiKeyRequest {
         label: req.label,
         scopes,
@@ -251,6 +278,7 @@ pub async fn update_api_key(
         allowed_providers: req
             .allowed_providers
             .map(|v| v.into_iter().map(ProviderId::new).collect()),
+        spending_budget,
     };
 
     let record = mak.update(&key_id, domain_req).await.map_err(map_error)?;
@@ -365,6 +393,7 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![ModelId::new("gpt-4o")],
             allowed_providers: vec![ProviderId::new("openai")],
+            spending_budget: None,
         }
     }
 

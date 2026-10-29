@@ -113,7 +113,16 @@
 		"created": "Created",
 		"lastUsed": "Last Used",
 		"empty": "No API keys yet",
-		"copyKey": "Copy key"
+		"copyKey": "Copy key",
+		"budgetTitle": "Spending budget",
+		"budgetExplanation": "Amounts use USD. The budget window follows the UTC calendar. Requests remain blocked unless Rook can enforce a strict cost limit.",
+		"budgetEnabled": "Enable spending budget",
+		"budgetAmount": "Total budget (USD)",
+		"budgetRequestLimit": "Maximum cost per request (USD)",
+		"budgetWindow": "Budget window (UTC)",
+		"budgetDaily": "Daily",
+		"budgetMonthly": "Monthly",
+		"budgetValidation": "Enter positive amounts with at most 6 decimal places. The per-request limit must not exceed the total budget."
 	},
 	"providers": {
 		"description": "Configure your AI providers and their status",

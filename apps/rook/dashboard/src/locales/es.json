@@ -158,7 +158,16 @@
 		"created": "Creada",
 		"lastUsed": "Último Uso",
 		"empty": "Sin claves API",
-		"copyKey": "Copiar clave"
+		"copyKey": "Copiar clave",
+		"budgetTitle": "Presupuesto de gasto",
+		"budgetExplanation": "Los importes se expresan en USD. El período sigue el calendario UTC. Las solicitudes se rechazan si Rook no puede exigir un límite estricto de costo.",
+		"budgetEnabled": "Activar presupuesto de gasto",
+		"budgetAmount": "Presupuesto total (USD)",
+		"budgetRequestLimit": "Costo máximo por solicitud (USD)",
+		"budgetWindow": "Período del presupuesto (UTC)",
+		"budgetDaily": "Diario",
+		"budgetMonthly": "Mensual",
+		"budgetValidation": "Escribe importes positivos con un máximo de 6 decimales. El límite por solicitud no puede superar el presupuesto total."
 	},
 	"providers": {
 		"description": "Configura tus proveedores AI y su estado",

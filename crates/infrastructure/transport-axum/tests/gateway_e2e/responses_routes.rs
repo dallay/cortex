@@ -19,6 +19,22 @@ async fn post_response(app: axum::Router, model: &str, stream: bool) -> axum::re
     .unwrap()
 }
 
+async fn post_budgeted_response(app: axum::Router, stream: bool) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/responses")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer e2e-key-1")
+            .body(axum::body::Body::from(
+                json!({"model":"gpt-4o","input":"hola","stream":stream}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
 async fn assert_route_failure(
     response: axum::response::Response,
     status: StatusCode,
@@ -121,6 +137,22 @@ async fn route_failure_invalid_request() {
             None,
         )
         .await;
+    }
+}
+
+#[tokio::test]
+async fn route_failure_cost_unavailable() {
+    for stream in [false, true] {
+        let g = build_gateway(vec![], false).await;
+        g.key_repo
+            .set_spending_budget(Some(rook_core::SpendingBudget {
+                api_key_id: ApiKeyId::new("e2e-key-1"),
+                amount_micros_usd: 10_000_000,
+                request_limit_micros_usd: 1_000_000,
+                window: rook_core::SpendingBudgetWindow::Daily,
+            }));
+        let response = post_budgeted_response(g.app, stream).await;
+        assert_route_failure(response, StatusCode::BAD_REQUEST, "COST_UNAVAILABLE", None).await;
     }
 }
 

@@ -48,6 +48,16 @@ impl ProviderPort for CataloguedProvider {
     fn model_capabilities(&self, model: &ModelId) -> ModelCapabilities {
         self.metadata.get(model).cloned().unwrap_or_default()
     }
+    fn strict_max_cost_micros_usd(&self, req: &CompletionRequest) -> Option<u64> {
+        self.inner.strict_max_cost_micros_usd(req)
+    }
+    fn strict_realized_cost_micros_usd(
+        &self,
+        req: &CompletionRequest,
+        resp: &CompletionResponse,
+    ) -> Option<u64> {
+        self.inner.strict_realized_cost_micros_usd(req, resp)
+    }
     fn api_format(&self) -> ApiFormat {
         self.inner.api_format()
     }

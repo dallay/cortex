@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use shared_kernel::{CacheKey, ComboId, ConnectionId, CortexResult, ModelId, ProviderId};
+use shared_kernel::{
+    CacheKey, ComboId, ConnectionId, CortexResult, ModelId, ProviderId, RequestId,
+};
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
@@ -20,7 +22,8 @@ use super::{
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
     NewSession, NewUser, PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session,
-    SessionId, User, UserId,
+    SessionId, SpendingBudgetReservation, SpendingBudgetReservationError,
+    SpendingReservationOutcome, User, UserId,
 };
 
 /// ---------------------------------------------------------------------------
@@ -51,6 +54,28 @@ pub trait ProviderPort: Send + Sync + 'static {
 
     /// Full health check with latency measurement
     async fn health_check(&self) -> HealthStatus;
+
+    /// Maximum cost, in integer micro-USD, that this adapter can enforce for
+    /// the given request before contacting the provider.
+    ///
+    /// `None` means the adapter cannot demonstrate a verifiable, enforceable
+    /// cost bound. Configured prices, declared context, or cost estimates are
+    /// not a substitute: callers must treat a missing bound as a hard stop.
+    fn strict_max_cost_micros_usd(&self, _req: &CompletionRequest) -> Option<u64> {
+        None
+    }
+
+    /// Exact cost, in integer micro-USD, incurred by a completed request.
+    ///
+    /// `None` means the final cost is unknown. Callers must keep the budget
+    /// reservation as unresolved spend instead of treating it as zero.
+    fn strict_realized_cost_micros_usd(
+        &self,
+        _req: &CompletionRequest,
+        _resp: &CompletionResponse,
+    ) -> Option<u64> {
+        None
+    }
 
     /// Execute a completion request
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse>;
@@ -371,6 +396,36 @@ pub trait ProviderRepositoryPort: Send + Sync {
 // ---------------------------------------------------------------------------
 // ApiKeyRepositoryPort — persistence for client API key subjects
 // ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait SpendingBudgetLedgerPort: Send + Sync {
+    /// Atomically admit one reservation, accounting for all non-released reservations
+    /// and settled charges in the same key/window against the supplied accepted budget.
+    /// A budget change affects new admission only: pending reservations retain their
+    /// bounds and may settle under existing rules; unresolved and settled charges
+    /// still count against the new budget.
+    /// Replays with identical parameters
+    /// are idempotent; reuse of the request ID with different parameters is rejected.
+    async fn reserve_spending(
+        &self,
+        reservation: &SpendingBudgetReservation,
+    ) -> Result<SpendingReservationOutcome, SpendingBudgetReservationError>;
+
+    /// Settle known cost, or mark cost as unresolved without releasing the reservation.
+    async fn settle_spending(
+        &self,
+        api_key_id: &ApiKeyId,
+        request_id: &RequestId,
+        cost_micros_usd: Option<u64>,
+    ) -> Result<(), SpendingBudgetReservationError>;
+
+    /// Release a reservation only when the caller can prove no upstream I/O occurred.
+    async fn release_spending_before_upstream(
+        &self,
+        api_key_id: &ApiKeyId,
+        request_id: &RequestId,
+    ) -> Result<(), SpendingBudgetReservationError>;
+}
 
 #[async_trait]
 pub trait ApiKeyRepositoryPort: Send + Sync {

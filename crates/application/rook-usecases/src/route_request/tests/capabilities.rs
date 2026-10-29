@@ -108,6 +108,7 @@ async fn unknown_capability_does_not_hide_unauthorized_later_step() {
         ApiKeyRestrictions {
             allowed_models: vec![],
             allowed_providers: vec![first_id],
+            spending_budget: None,
         },
     );
     req.tools = Some(serde_json::json!([{"type":"function","function":{"name":"lookup"}}]));
@@ -123,6 +124,7 @@ async fn catalog_alias_visibility_does_not_depend_on_active_router_registration(
     let permitted = ApiKeyRestrictions {
         allowed_models: vec![ModelId::new("rook/capabilities"), ModelId::new("gpt-test")],
         allowed_providers: vec![first.clone(), second],
+        spending_budget: None,
     };
     h.usecase.router = Arc::new(OrderedRouter {
         providers: vec![],

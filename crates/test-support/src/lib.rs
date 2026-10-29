@@ -146,6 +146,7 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         repo.create(&record).await.unwrap();
 
@@ -171,6 +172,7 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let duplicate_hash = ApiKeyRecord {
             id: ApiKeyId::new("second-id"),
@@ -200,6 +202,7 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let id = record.id.clone();
         let revoked_at = Utc.with_ymd_and_hms(2026, 10, 9, 12, 34, 56).unwrap();
