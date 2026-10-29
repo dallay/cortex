@@ -23,7 +23,7 @@ permissions:
 jobs:
   cleanup:
     name: 🧹 Clean Caches
-    uses: dallay/common-actions/.github/workflows/cache-maintenance.yml@5efa6a4c8865caf90a607cc5d5232564312048fd # v2.3.0
+    uses: dallay/common-actions/.github/workflows/cache-maintenance.yml@2914eb9522e67957a0b266f10132704d27389e80 # v2.9.0
     with:
       retention-days: 7
       cache-types: ${{ inputs.cache-type || 'all' }}
