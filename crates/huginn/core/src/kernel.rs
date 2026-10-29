@@ -63,7 +63,7 @@ struct SubstitutionAbort<'a> {
     previous_owner: &'a str,
     alternative_id: &'a str,
     gates: &'a [Arc<LeaseGate>],
-    resume_ids: &'a [String],
+    resume_ids: Vec<String>,
     drained: Vec<String>,
     undrained: Vec<String>,
     error: AgentError,
@@ -512,10 +512,49 @@ pub trait Plugin: Send + Sync {
     }
 }
 struct Entry {
-    plugin: Box<dyn Plugin>,
+    plugin: Option<Box<dyn Plugin>>,
     diagnostic: Diagnostic,
     context: Option<PluginContext>,
 }
+impl Entry {
+    fn plugin(&self) -> &dyn Plugin {
+        self.plugin.as_ref().expect("rollback completed").as_ref()
+    }
+
+    fn plugin_mut(&mut self) -> &mut dyn Plugin {
+        self.plugin.as_mut().expect("rollback completed").as_mut()
+    }
+}
+
+// Rollback owns attempted plugins while async resume hooks run. Their contexts and
+// diagnostics stay in the supervisor; subsequent lifecycle calls restore the plugins
+// before doing any work, even when the original substitution future was dropped.
+struct SubstitutionRollback {
+    plugins: Vec<(String, Box<dyn Plugin>)>,
+    diagnostic: SubstitutionDiagnostic,
+}
+
+struct SubstitutionGuard<'a, 'b> {
+    supervisor: &'a mut Supervisor,
+    abort: Option<SubstitutionAbort<'b>>,
+}
+
+impl Drop for SubstitutionGuard<'_, '_> {
+    fn drop(&mut self) {
+        if let Some(abort) = self.abort.take() {
+            self.supervisor.begin_substitution_abort(abort);
+        }
+    }
+}
+
+async fn resume_dependent(id: &str, plugin: &mut dyn Plugin) -> Option<String> {
+    match tokio::time::timeout(Duration::from_secs(5), plugin.resume()).await {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("{id}: {error}")),
+        Err(_) => Some(format!("{id}: resume timed out")),
+    }
+}
+
 #[derive(Default)]
 pub struct Supervisor {
     plugins: BTreeMap<String, Entry>,
@@ -527,6 +566,25 @@ pub struct Supervisor {
     substitutions: Vec<SubstitutionDiagnostic>,
     order: Vec<String>,
     generation: u64,
+    pending_rollback: Option<(usize, JoinHandle<SubstitutionRollback>)>,
+}
+
+impl Drop for Supervisor {
+    fn drop(&mut self) {
+        if let Some((_, task)) = &self.pending_rollback {
+            task.abort();
+        }
+        // Keep admission and slot removal atomic with respect to slot acquisition.
+        let mut slots = self.service_slots.lock().unwrap_or_else(|e| e.into_inner());
+        for slot in slots.entries.values() {
+            let _ = slot.gate.revoke();
+        }
+        slots.entries.clear();
+        drop(slots);
+        for gate in self.lease_gates.values() {
+            let _ = gate.revoke();
+        }
+    }
 }
 impl Supervisor {
     pub fn register(&mut self, plugin: Box<dyn Plugin>) -> Result<()> {
@@ -545,7 +603,7 @@ impl Supervisor {
         self.plugins.insert(
             manifest.id,
             Entry {
-                plugin,
+                plugin: Some(plugin),
                 diagnostic,
                 context: None,
             },
@@ -616,6 +674,7 @@ impl Supervisor {
         policy: SubstitutionPolicy,
         timeout: Duration,
     ) -> Result<()> {
+        self.finish_pending_rollback().await;
         let previous_owner = self
             .plugins
             .iter()
@@ -715,7 +774,7 @@ impl Supervisor {
                     previous_owner: &previous_owner,
                     alternative_id: &alternative_id,
                     gates: &[],
-                    resume_ids: &[],
+                    resume_ids: Vec::new(),
                     drained: Vec::new(),
                     undrained,
                     error,
@@ -745,7 +804,7 @@ impl Supervisor {
                     previous_owner: &previous_owner,
                     alternative_id: &alternative_id,
                     gates: &old_gates,
-                    resume_ids: &[],
+                    resume_ids: Vec::new(),
                     drained: Vec::new(),
                     undrained,
                     error,
@@ -760,75 +819,69 @@ impl Supervisor {
                     previous_owner: &previous_owner,
                     alternative_id: &alternative_id,
                     gates: &old_gates,
-                    resume_ids: &[],
+                    resume_ids: Vec::new(),
                     drained: Vec::new(),
                     undrained,
                     error,
                 })
                 .await);
         }
-        let mut drained = Vec::new();
-        let mut attempted = Vec::new();
-        for id in &dependents {
-            let entry = self.plugins.get_mut(id).expect("dependent exists");
-            if entry.plugin.supports_drain() {
-                attempted.push(id.clone());
-                let result = tokio::time::timeout_at(deadline, entry.plugin.drain()).await;
-                let error = match result {
-                    Ok(Ok(())) => {
-                        drained.push(id.clone());
-                        continue;
+        let mut rollback = SubstitutionGuard {
+            supervisor: self,
+            abort: Some(SubstitutionAbort {
+                service,
+                previous_owner: &previous_owner,
+                alternative_id: &alternative_id,
+                gates: &old_gates,
+                resume_ids: Vec::new(),
+                drained: Vec::new(),
+                undrained,
+                error: AgentError::Composition("substitution cancelled".into()),
+            }),
+        };
+        let result = async {
+            for id in &dependents {
+                let entry = rollback
+                    .supervisor
+                    .plugins
+                    .get_mut(id)
+                    .expect("dependent exists");
+                let plugin = entry.plugin_mut();
+                if plugin.supports_drain() {
+                    let abort = rollback.abort.as_mut().expect("rollback armed");
+                    abort.resume_ids.push(id.clone());
+                    match tokio::time::timeout_at(deadline, plugin.drain()).await {
+                        Ok(Ok(())) => abort.drained.push(id.clone()),
+                        Ok(Err(error)) => return Err(error),
+                        Err(_) => {
+                            return Err(AgentError::Composition(format!(
+                                "timed out draining dependent {id}"
+                            )))
+                        }
                     }
-                    Ok(Err(error)) => error,
-                    Err(_) => AgentError::Composition(format!("timed out draining dependent {id}")),
-                };
-                return Err(self
-                    .abort_substitution(SubstitutionAbort {
-                        service,
-                        previous_owner: &previous_owner,
-                        alternative_id: &alternative_id,
-                        gates: &old_gates,
-                        resume_ids: &attempted,
-                        drained,
-                        undrained,
-                        error,
-                    })
-                    .await);
+                }
             }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() || !wait_gates_idle(&old_gates, remaining).await {
+                return Err(AgentError::Composition(format!(
+                    "timed out waiting for leases on {}",
+                    service.0
+                )));
+            }
+            rollback
+                .supervisor
+                .publish_staged_plugin(&alternative_id, &old_gates)
         }
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() || !wait_gates_idle(&old_gates, remaining).await {
-            return Err(self
-                .abort_substitution(SubstitutionAbort {
-                    service,
-                    previous_owner: &previous_owner,
-                    alternative_id: &alternative_id,
-                    gates: &old_gates,
-                    resume_ids: &attempted,
-                    drained,
-                    undrained,
-                    error: AgentError::Composition(format!(
-                        "timed out waiting for leases on {}",
-                        service.0
-                    )),
-                })
-                .await);
+        .await;
+        if let Err(error) = result {
+            let mut abort = rollback.abort.take().expect("rollback armed");
+            abort.error = error;
+            return Err(rollback.supervisor.abort_substitution(abort).await);
         }
-
-        if let Err(error) = self.publish_staged_plugin(&alternative_id, &old_gates) {
-            return Err(self
-                .abort_substitution(SubstitutionAbort {
-                    service,
-                    previous_owner: &previous_owner,
-                    alternative_id: &alternative_id,
-                    gates: &old_gates,
-                    resume_ids: &attempted,
-                    drained,
-                    undrained,
-                    error,
-                })
-                .await);
-        }
+        let completed = rollback.abort.take().expect("rollback armed");
+        let drained = completed.drained;
+        let undrained = completed.undrained;
+        drop(rollback);
 
         if let Some(mut old) = self.plugins.remove(&previous_owner) {
             self.order.retain(|id| id != &previous_owner);
@@ -839,7 +892,8 @@ impl Supervisor {
             if let Some(mut ctx) = old.context.take() {
                 ctx.cleanup().await;
             }
-            let _ = tokio::time::timeout(Duration::from_secs(5), old.plugin.deactivate()).await;
+            let _ =
+                tokio::time::timeout(Duration::from_secs(5), old.plugin_mut().deactivate()).await;
         }
         let resume_errors = self.resume_dependents(&drained).await;
         let outcome = if resume_errors.is_empty() {
@@ -867,38 +921,112 @@ impl Supervisor {
             .filter(|id| {
                 self.plugins
                     .get(id.as_str())
-                    .is_some_and(|entry| !entry.plugin.supports_drain())
+                    .is_some_and(|entry| !entry.plugin().supports_drain())
             })
             .cloned()
             .collect()
     }
 
-    async fn abort_substitution(&mut self, abort: SubstitutionAbort<'_>) -> AgentError {
+    fn begin_substitution_abort(&mut self, abort: SubstitutionAbort<'_>) -> usize {
         let mut outcome = abort.error.to_string();
-        if let Err(reopen_error) = reopen_gates(&self.service_slots, abort.gates) {
-            outcome.push_str(&format!(
-                "; failed to reopen previous leases: {reopen_error}"
-            ));
+        if let Err(error) = reopen_gates(&self.service_slots, abort.gates) {
+            outcome.push_str(&format!("; failed to reopen previous leases: {error}"));
         }
-        for cleanup_error in self.discard_staged_plugin(abort.alternative_id).await {
-            outcome.push_str(&format!("; staged cleanup failed: {cleanup_error}"));
-        }
-        let resume_errors = self.resume_dependents(abort.resume_ids).await;
-        if !resume_errors.is_empty() {
-            outcome.push_str(&format!("; resume failures: {}", resume_errors.join(", ")));
-        }
-        self.substitutions.push(SubstitutionDiagnostic {
+        let alternative = self.plugins.remove(abort.alternative_id);
+        let plugins = abort
+            .resume_ids
+            .iter()
+            .filter_map(|id| {
+                self.plugins
+                    .get_mut(id)
+                    .and_then(|entry| entry.plugin.take())
+                    .map(|plugin| (id.clone(), plugin))
+            })
+            .collect();
+        let diagnostic = SubstitutionDiagnostic {
             service: abort.service.clone(),
             previous_owner: abort.previous_owner.into(),
             alternative_owner: abort.alternative_id.into(),
-            outcome: Err(outcome.clone()),
+            outcome: Err(outcome),
             drained: abort.drained,
             undrained: abort.undrained,
+        };
+        let index = self.substitutions.len();
+        self.substitutions.push(diagnostic.clone());
+        let task = tokio::spawn(async move {
+            let mut rollback = SubstitutionRollback {
+                plugins,
+                diagnostic,
+            };
+            let mut errors = Vec::new();
+            if let Some(mut entry) = alternative {
+                if let Some(mut ctx) = entry.context.take() {
+                    ctx.cleanup().await;
+                }
+                match tokio::time::timeout(Duration::from_secs(5), entry.plugin_mut().deactivate())
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => errors.push(format!(
+                        "staged cleanup failed: {}: deactivate failed: {error}",
+                        rollback.diagnostic.alternative_owner
+                    )),
+                    Err(_) => errors.push(format!(
+                        "staged cleanup failed: {}: deactivate timed out",
+                        rollback.diagnostic.alternative_owner
+                    )),
+                }
+            }
+            for (id, plugin) in rollback.plugins.iter_mut().rev() {
+                if let Some(error) = resume_dependent(id, plugin.as_mut()).await {
+                    errors.push(format!("resume failures: {error}"));
+                }
+            }
+            if let Err(outcome) = &mut rollback.diagnostic.outcome {
+                for error in errors {
+                    outcome.push_str(&format!("; {error}"));
+                }
+            }
+            rollback
         });
-        AgentError::Composition(outcome)
+        self.pending_rollback = Some((index, task));
+        index
+    }
+
+    async fn finish_pending_rollback(&mut self) {
+        if let Some((index, task)) = &mut self.pending_rollback {
+            let rollback = task.await.expect("substitution rollback task failed");
+            for (id, plugin) in rollback.plugins {
+                if let Some(entry) = self.plugins.get_mut(&id) {
+                    entry.plugin = Some(plugin);
+                }
+            }
+            self.substitutions[*index] = rollback.diagnostic;
+            self.pending_rollback = None;
+        }
+    }
+
+    async fn abort_substitution(&mut self, abort: SubstitutionAbort<'_>) -> AgentError {
+        let index = self.begin_substitution_abort(abort);
+        self.finish_pending_rollback().await;
+        AgentError::Composition(self.substitutions[index].outcome.clone().unwrap_err())
     }
 
     async fn stage_plugin(&mut self, id: &str) -> Result<()> {
+        let missing: Vec<_> = self.plugins[id]
+            .diagnostic
+            .manifest
+            .requires
+            .iter()
+            .filter(|service| !self.services.contains_key(*service))
+            .map(|service| service.0.clone())
+            .collect();
+        if !missing.is_empty() {
+            return Err(AgentError::Composition(format!(
+                "missing required service(s): {}",
+                missing.join(", ")
+            )));
+        }
         self.generation += 1;
         let service_slots = self.service_slots.clone();
         let entry = self.plugins.get_mut(id).expect("registered plugin");
@@ -910,11 +1038,21 @@ impl Supervisor {
             &entry.diagnostic.manifest,
             service_slots,
         );
-        let result = entry.plugin.activate(&mut ctx).await.and_then(|()| {
+        let result = entry.plugin_mut().activate(&mut ctx).await.and_then(|()| {
             let declared: BTreeSet<_> =
                 entry.diagnostic.manifest.provides.iter().cloned().collect();
             let actual: BTreeSet<_> = ctx.staged.keys().cloned().collect();
-            if declared == actual {
+            if entry
+                .diagnostic
+                .manifest
+                .requires
+                .iter()
+                .any(|service| declared.contains(service))
+            {
+                Err(AgentError::Composition(
+                    "alternative requires a service it provides".into(),
+                ))
+            } else if declared == actual {
                 Ok(())
             } else {
                 Err(AgentError::Composition(
@@ -1003,45 +1141,21 @@ impl Supervisor {
         Ok(())
     }
 
-    async fn discard_staged_plugin(&mut self, id: &str) -> Vec<String> {
-        let mut errors = Vec::new();
-        if let Some(mut entry) = self.plugins.remove(id) {
-            if let Some(mut ctx) = entry.context.take() {
-                ctx.cleanup().await;
-            }
-            match tokio::time::timeout(Duration::from_secs(5), entry.plugin.deactivate()).await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => errors.push(format!("{id}: deactivate failed: {error}")),
-                Err(_) => errors.push(format!("{id}: deactivate timed out")),
-            }
-        }
-        errors
-    }
-
     async fn resume_dependents(&mut self, ids: &[String]) -> Vec<String> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let mut errors = Vec::new();
         for id in ids.iter().rev() {
-            if tokio::time::Instant::now() >= deadline {
-                errors.push(format!("{id}: resume deadline expired"));
-                break;
-            }
             let Some(entry) = self.plugins.get_mut(id) else {
                 errors.push(format!("{id}: dependent no longer registered"));
                 continue;
             };
-            match tokio::time::timeout_at(deadline, entry.plugin.resume()).await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => errors.push(format!("{id}: {error}")),
-                Err(_) => {
-                    errors.push(format!("{id}: resume timed out"));
-                    break;
-                }
+            if let Some(error) = resume_dependent(id, entry.plugin_mut()).await {
+                errors.push(error);
             }
         }
         errors
     }
     pub async fn start(&mut self) -> Result<()> {
+        self.finish_pending_rollback().await;
         let order_start = self.order.len();
         let owners = self.provider_owners()?;
         self.validate_dependency_cycles(&owners)?;
@@ -1140,7 +1254,7 @@ impl Supervisor {
             &entry.diagnostic.manifest,
             service_slots,
         );
-        let result = entry.plugin.activate(&mut ctx).await.and_then(|()| {
+        let result = entry.plugin_mut().activate(&mut ctx).await.and_then(|()| {
             let declared: BTreeSet<_> =
                 entry.diagnostic.manifest.provides.iter().cloned().collect();
             let actual: BTreeSet<_> = ctx.staged.keys().cloned().collect();
@@ -1238,7 +1352,7 @@ impl Supervisor {
             if let Some(mut ctx) = e.context.take() {
                 ctx.cleanup().await;
                 if let Err(err) =
-                    tokio::time::timeout(Duration::from_secs(5), e.plugin.deactivate())
+                    tokio::time::timeout(Duration::from_secs(5), e.plugin_mut().deactivate())
                         .await
                         .unwrap_or_else(|_| {
                             Err(AgentError::Composition("deactivation timed out".into()))
@@ -1264,6 +1378,7 @@ impl Supervisor {
             .retain(|_, dependents| !dependents.is_empty());
     }
     pub async fn remove(&mut self, id: &str) -> Result<()> {
+        self.finish_pending_rollback().await;
         if !self.plugins.contains_key(id) {
             return Err(AgentError::Composition(format!("unknown plugin {id}")));
         }
@@ -1303,6 +1418,7 @@ impl Supervisor {
         Ok(())
     }
     pub async fn shutdown(&mut self) {
+        self.finish_pending_rollback().await;
         for id in std::mem::take(&mut self.order).into_iter().rev() {
             self.stop_entry(&id, State::Unloaded).await;
         }
@@ -1391,6 +1507,104 @@ mod staged_abort_tests {
                 published.fetch_add(1, Ordering::SeqCst);
             });
             Ok(())
+        }
+    }
+
+    struct RequiringAlternative {
+        service: ServiceId,
+        requires: Vec<ServiceId>,
+        activated: Arc<AtomicBool>,
+        dropped: Arc<AtomicUsize>,
+        committed: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Plugin for RequiringAlternative {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "requiring-alternative".into(),
+                provides: vec![self.service.clone()],
+                requires: self.requires.clone(),
+            }
+        }
+
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            self.activated.store(true, Ordering::SeqCst);
+            ctx.own_resource(DropSignal(self.dropped.clone()));
+            ctx.provide(self.service.clone(), 2_u64)?;
+            let committed = self.committed.clone();
+            ctx.on_commit(move || committed.store(true, Ordering::SeqCst));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn staging_validates_requirements_and_cleans_up_invalid_alternatives() {
+        for requirement in ["missing", "self", "available"] {
+            let service = ServiceId::new("test:value", 1);
+            let dependency = ServiceId::new("test:dependency", 1);
+            let mut supervisor = Supervisor::default();
+            supervisor.register(Box::new(provider(&service))).unwrap();
+            if requirement == "available" {
+                supervisor
+                    .register(Box::new(ResourcePlugin {
+                        id: "dependency",
+                        service: dependency.clone(),
+                        value: 10,
+                        dropped: None,
+                    }))
+                    .unwrap();
+            }
+            supervisor.start().await.unwrap();
+            let activated = Arc::new(AtomicBool::new(false));
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let committed = Arc::new(AtomicBool::new(false));
+            let result = supervisor
+                .substitute(
+                    &service,
+                    Box::new(RequiringAlternative {
+                        service: service.clone(),
+                        requires: vec![if requirement == "self" {
+                            service.clone()
+                        } else {
+                            dependency.clone()
+                        }],
+                        activated: activated.clone(),
+                        dropped: dropped.clone(),
+                        committed: committed.clone(),
+                    }),
+                    SubstitutionPolicy::ReportUndrained,
+                    Duration::from_secs(1),
+                )
+                .await;
+            if requirement == "available" {
+                result.unwrap();
+                assert!(activated.load(Ordering::SeqCst));
+                assert!(committed.load(Ordering::SeqCst));
+                assert_eq!(*supervisor.resolve_lease::<u64>(&service).unwrap(), 2);
+                assert_eq!(
+                    supervisor.dependents_of(&dependency),
+                    ["requiring-alternative"]
+                );
+            } else {
+                let error = result.unwrap_err().to_string();
+                if requirement == "missing" {
+                    assert!(error.contains(&dependency.0), "{error}");
+                    assert!(!activated.load(Ordering::SeqCst));
+                    assert_eq!(dropped.load(Ordering::SeqCst), 0);
+                } else {
+                    assert!(error.contains("requires a service it provides"), "{error}");
+                    assert!(activated.load(Ordering::SeqCst));
+                    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+                }
+                assert!(!committed.load(Ordering::SeqCst));
+                assert!(!supervisor.plugins.contains_key("requiring-alternative"));
+                assert_eq!(*supervisor.resolve_lease::<u64>(&service).unwrap(), 1);
+                assert_eq!(
+                    supervisor.provider_of(&service).unwrap().plugin_id,
+                    "original"
+                );
+            }
         }
     }
 

@@ -470,6 +470,9 @@ struct DrainDependentPlugin {
     supports_drain: bool,
     fail_drain: bool,
     hang_drain: bool,
+    hang_resume: bool,
+    fail_resume: bool,
+    resume_delay: Duration,
     events: Arc<Mutex<Vec<String>>>,
 }
 
@@ -509,6 +512,15 @@ impl Plugin for DrainDependentPlugin {
     }
 
     async fn resume(&mut self) -> Result<()> {
+        if self.hang_resume {
+            std::future::pending::<()>().await;
+        }
+        if !self.resume_delay.is_zero() {
+            tokio::time::sleep(self.resume_delay).await;
+        }
+        if self.fail_resume {
+            return Err(AgentError::Composition("injected resume failure".into()));
+        }
         self.events
             .lock()
             .unwrap()
@@ -531,6 +543,9 @@ fn drain_dependent(
         supports_drain,
         fail_drain,
         hang_drain,
+        hang_resume: false,
+        fail_resume: false,
+        resume_delay: Duration::ZERO,
         events: events.clone(),
     }
 }
@@ -1384,4 +1399,204 @@ async fn resolved_arc_remains_on_old_value_after_provider_substitution() {
     assert_eq!(*retained, 1);
     assert_eq!(*supervisor.resolve::<u64>(&service).unwrap(), 2);
     supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn dropping_supervisor_revokes_fixed_and_dynamic_handles_but_preserves_active_leases() {
+    let primary = ServiceId::new("test:primary", 1);
+    let secondary = ServiceId::new("test:secondary", 1);
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(MultiServicePlugin {
+            id: "original",
+            services: vec![(primary.clone(), 1), (secondary.clone(), 2)],
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let fixed = supervisor.service_handle::<u64>(&primary).unwrap();
+    let primary_slot = supervisor.service_slot_handle::<u64>(&primary).unwrap();
+    let secondary_slot = supervisor.service_slot_handle::<u64>(&secondary).unwrap();
+    let active = primary_slot.acquire().unwrap();
+
+    drop(supervisor);
+
+    assert!(fixed.acquire().is_err());
+    assert!(primary_slot.acquire().is_err());
+    assert!(secondary_slot.acquire().is_err());
+    assert_eq!(*active, 1);
+}
+
+#[tokio::test]
+async fn cancelled_drain_and_idle_wait_reopen_all_gates_and_resume_attempted_dependents() {
+    for hang_drain in [true, false] {
+        let primary = ServiceId::new("test:primary", 1);
+        let secondary = ServiceId::new("test:secondary", 1);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut supervisor = Supervisor::default();
+        supervisor
+            .register(Box::new(MultiServicePlugin {
+                id: "original",
+                services: vec![(primary.clone(), 1), (secondary.clone(), 2)],
+            }))
+            .unwrap();
+        for id in ["a-user", "z-user"] {
+            let mut plugin = drain_dependent(
+                id,
+                vec![secondary.clone()],
+                true,
+                false,
+                hang_drain && id == "z-user",
+                &events,
+            );
+            // Exercise resume that yields, so synchronous Drop cannot complete rollback.
+            plugin.resume_delay = Duration::from_millis(10);
+            supervisor.register(Box::new(plugin)).unwrap();
+        }
+        supervisor.start().await.unwrap();
+        let primary_slot = supervisor.service_slot_handle::<u64>(&primary).unwrap();
+        let secondary_slot = supervisor.service_slot_handle::<u64>(&secondary).unwrap();
+        let active = primary_slot.acquire().unwrap();
+        let mut substitution = Box::pin(supervisor.substitute(
+            &primary,
+            Box::new(MultiServicePlugin {
+                id: "replacement",
+                services: vec![(primary.clone(), 10), (secondary.clone(), 20)],
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(60),
+        ));
+        assert!(futures::poll!(substitution.as_mut()).is_pending());
+        assert!(primary_slot.acquire().is_err());
+        assert!(secondary_slot.acquire().is_err());
+
+        drop(substitution);
+
+        assert_eq!(*primary_slot.acquire().unwrap(), 1);
+        assert_eq!(*secondary_slot.acquire().unwrap(), 2);
+        assert_eq!(*active, 1);
+        let diagnostic = supervisor.substitution_diagnostics().last().unwrap();
+        assert!(diagnostic
+            .outcome
+            .as_ref()
+            .unwrap_err()
+            .contains("cancelled"));
+        assert_eq!(diagnostic.drained.len(), if hang_drain { 1 } else { 2 });
+        // Recovery must progress without another lifecycle call to drive it.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event == "resume:a-user")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        supervisor.start().await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "drain:a-user",
+                "drain:z-user",
+                "resume:z-user",
+                "resume:a-user"
+            ]
+        );
+        assert!(!supervisor
+            .diagnostics()
+            .iter()
+            .any(|d| d.manifest.id == "replacement"));
+        assert_eq!(
+            supervisor.provider_of(&primary).unwrap().plugin_id,
+            "original"
+        );
+        supervisor.remove("z-user").await.unwrap();
+        drop(active);
+        supervisor
+            .substitute(
+                &primary,
+                Box::new(MultiServicePlugin {
+                    id: "replacement",
+                    services: vec![(primary.clone(), 10), (secondary.clone(), 20)],
+                }),
+                SubstitutionPolicy::ReportUndrained,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(*secondary_slot.acquire().unwrap(), 20);
+    }
+}
+
+#[tokio::test]
+async fn resume_attempts_continue_after_timeout_and_error_on_commit_and_rollback() {
+    for fail_drain in [false, true] {
+        let service = ServiceId::new("test:value", 1);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut supervisor = Supervisor::default();
+        supervisor
+            .register(Box::new(ValuePlugin {
+                id: "original",
+                service: service.clone(),
+                value: 1,
+                fail: false,
+            }))
+            .unwrap();
+        for id in ["a-healthy", "b-error", "m-slow", "z-timeout"] {
+            let mut plugin = drain_dependent(
+                id,
+                vec![service.clone()],
+                true,
+                fail_drain && id == "z-timeout",
+                false,
+                &events,
+            );
+            plugin.hang_resume = id == "z-timeout";
+            plugin.fail_resume = id == "b-error";
+            if id == "m-slow" {
+                plugin.resume_delay = Duration::from_millis(10);
+            }
+            supervisor.register(Box::new(plugin)).unwrap();
+        }
+        supervisor.start().await.unwrap();
+        let error = supervisor
+            .substitute(
+                &service,
+                Box::new(ValuePlugin {
+                    id: "replacement",
+                    service: service.clone(),
+                    value: 2,
+                    fail: false,
+                }),
+                SubstitutionPolicy::ReportUndrained,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("z-timeout: resume timed out"), "{error}");
+        assert!(
+            error.contains("b-error: composition: injected resume failure"),
+            "{error}"
+        );
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event == "resume:m-slow"));
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event == "resume:a-healthy"));
+        assert_eq!(
+            *supervisor.resolve_lease::<u64>(&service).unwrap(),
+            if fail_drain { 1 } else { 2 }
+        );
+    }
 }
