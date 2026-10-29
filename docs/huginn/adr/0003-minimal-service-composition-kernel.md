@@ -52,6 +52,16 @@ falla la activación alternativa, se reabre la generación anterior y se reanuda
 los dependientes cuyo drenaje se intentó. El kernel registra el resultado de la
 sustitución y los IDs de dependientes drenados y no drenados.
 
+Si se cancela la future antes del commit, el supervisor reabre los gates previos
+y programa la limpieza de la alternativa y la reanudación de los dependientes
+intentados en el runtime actual. Si se cancela después del commit, conserva la
+nueva generación y programa la finalización pendiente. Al destruir el
+`Supervisor`, el kernel revoca los gates y elimina los slots, de modo que los
+handles retenidos no puedan adquirir leases nuevas.
+El orden de ciclo de vida coloca la alternativa después de sus providers
+requeridos y antes de sus dependientes existentes; si no existe una posición que
+cumpla ambas condiciones, se rechaza la sustitución.
+
 Las leases son un contrato cooperativo de API, no una revocación fuerte. El
 consumidor debe mantener la lease durante toda la operación y no debe conservar
 una referencia interna al proveedor después de liberar la lease. El método
