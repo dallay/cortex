@@ -93,8 +93,7 @@ plugin only implements it when it needs cleanup work.
 Plugins that support drain must override the capability method and coordinate
 their admission hooks with the supervisor.
 
-This is a shortened excerpt of the contract. The implementation also defines
-lifecycle hooks for task completion and termination; consult
+This is a shortened excerpt of the contract. Consult
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for the complete API.
 
 ### Supervisor
@@ -204,7 +203,7 @@ ctx.provide::<MyService>(service_id, value)?;
 let dep = ctx.resolve::<OtherService>(&required_id)?;
 
 // Create a dynamic handle for a service declared in `requires`
-let current_provider = ctx.service_slot_handle::<MyService>(&required_id)?;
+let current_provider = ctx.service_slot_handle::<MyService>(&my_service_required_id)?;
 
 // Track async tasks for cleanup
 ctx.own_task(task_handle);
