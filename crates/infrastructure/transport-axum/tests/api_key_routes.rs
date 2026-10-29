@@ -25,6 +25,12 @@ fn test_record() -> ApiKeyRecord {
         last_used_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: Some(rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("key_123"),
+            amount_micros_usd: 50_000_000,
+            request_limit_micros_usd: 5_000_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        }),
     }
 }
 
@@ -45,6 +51,14 @@ fn api_key_record_response_dto_converts_correctly() {
     assert!(dto.expires_at.is_some());
     assert_eq!(dto.created_at, record.created_at);
     assert_eq!(dto.last_used_at, None);
+    assert_eq!(
+        dto.spending_budget,
+        Some(rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 50_000_000,
+            request_limit_micros_usd: 5_000_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        })
+    );
 }
 
 #[test]
@@ -53,7 +67,12 @@ fn create_api_key_request_deserializes_correctly() {
         "label": "Test Key",
         "scopes": ["chat:read", "chat:write"],
         "tier": "enterprise",
-        "expiresAt": "2026-06-30T00:00:00Z"
+        "expiresAt": "2026-06-30T00:00:00Z",
+        "spendingBudget": {
+            "amountMicrosUsd": 50000000,
+            "requestLimitMicrosUsd": 5000000,
+            "window": "daily"
+        }
     });
 
     let dto: CreateApiKeyRequestDto = serde_json::from_value(json).expect("should deserialize");
@@ -64,6 +83,14 @@ fn create_api_key_request_deserializes_correctly() {
     );
     assert_eq!(dto.tier, "enterprise");
     assert!(dto.expires_at.is_some());
+    assert_eq!(
+        dto.spending_budget,
+        Some(rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 50_000_000,
+            request_limit_micros_usd: 5_000_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        })
+    );
 }
 
 #[test]
@@ -73,7 +100,8 @@ fn update_api_key_request_deserializes_correctly() {
         "scopes": ["chat:read"],
         "tier": "free",
         "isActive": false,
-        "expiresAt": null
+        "expiresAt": null,
+        "spendingBudget": null
     });
 
     let dto: UpdateApiKeyRequestDto = serde_json::from_value(json).expect("should deserialize");
@@ -82,6 +110,7 @@ fn update_api_key_request_deserializes_correctly() {
     assert_eq!(dto.tier, Some("free".to_string()));
     assert_eq!(dto.is_active, Some(false));
     assert_eq!(dto.expires_at, Some(None));
+    assert_eq!(dto.spending_budget, Some(None));
 }
 
 #[test]
@@ -131,6 +160,7 @@ fn rotation_response_uses_new_key_prefix_after_rotate() {
         last_used_at: None,
         allowed_models: vec![],
         allowed_providers: vec![],
+        spending_budget: None,
     };
     let dto = CreateApiKeyResponseDto {
         key: ApiKeyRecordResponseDto::from(&rotated),

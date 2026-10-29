@@ -220,8 +220,10 @@ impl RookContainer {
             rook_usecases::Login::new(user_repo.clone(), session_repo.clone(), hasher.clone());
         let logout = rook_usecases::Logout::new(session_repo.clone());
 
-        let api_key_repo: Arc<dyn ApiKeyRepositoryPort> =
-            Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
+        let sqlite_api_key_repo = Arc::new(SqliteApiKeyRepository::new(&config.database.db_path)?);
+        let api_key_repo: Arc<dyn ApiKeyRepositoryPort> = sqlite_api_key_repo.clone();
+        let spending_budget_ledger: Arc<dyn rook_core::SpendingBudgetLedgerPort> =
+            sqlite_api_key_repo.clone();
 
         let (authenticate_client_api, manage_api_keys) =
             build_api_key_auth(config, &api_key_repo, &registry)?;
@@ -382,7 +384,8 @@ impl RookContainer {
                 )
                 .with_combo_alias_repository(combo_alias_repo.clone())
                 .with_default_combo(default_combo)
-                .with_quota_observation_reader(quota_observation_recorder.clone()),
+                .with_quota_observation_reader(quota_observation_recorder.clone())
+                .with_spending_budget_ledger(spending_budget_ledger),
                 ManageProviders::new(router.clone()),
                 health_check,
                 authenticate_client_api.clone(),

@@ -473,9 +473,11 @@ pub(crate) fn restrictions_from_headers(
         .into_iter()
         .map(ProviderId::new)
         .collect();
+    let spending_budget = authz::extract_spending_budget_from_headers(headers)?;
     Ok(ApiKeyRestrictions {
         allowed_models,
         allowed_providers,
+        spending_budget,
     })
 }
 
@@ -629,6 +631,17 @@ async fn chat_completions(
             };
             Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response())
         }
+        Err(e) if e.is_spending_budget_exceeded() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "rate_limit_exceeded".to_string(),
+                    code: Some("spending_budget_exceeded".to_string()),
+                    message: e.to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response())
+        }
         Err(e) if e.is_rate_limited() => {
             let retry_after = e.retry_after_secs().unwrap_or(60);
             let body = OpenAIErrorResponse {
@@ -645,6 +658,28 @@ async fn chat_completions(
                 body_resp,
             )
                 .into_response())
+        }
+        Err(e) if e.is_cost_unavailable() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "invalid_request_error".to_string(),
+                    code: Some("COST_UNAVAILABLE".to_string()),
+                    message: e.to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::BAD_REQUEST, Json(body)).into_response())
+        }
+        Err(e) if e.is_invalid_request() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "invalid_request_error".to_string(),
+                    code: Some("invalid_request_error".to_string()),
+                    message: e.to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::BAD_REQUEST, Json(body)).into_response())
         }
         Err(e) => {
             error!(error = %e, "completion failed");
@@ -673,7 +708,32 @@ async fn chat_completions_stream(
         Ok(stream) => stream,
         Err(error) if error.is_forbidden() => return Err(map_forbidden_openai(&error)),
         Err(error) if error.is_not_found() => return Err(map_not_found_openai(&error)),
+        Err(error) if error.is_spending_budget_exceeded() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "rate_limit_exceeded".to_string(),
+                    code: Some("spending_budget_exceeded".to_string()),
+                    message: error.to_string(),
+                    param: None,
+                },
+            };
+            return Ok((StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response());
+        }
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
+        Err(error) if error.is_cost_unavailable() => {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                code: "COST_UNAVAILABLE",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_invalid_request() => {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_request_error",
+                message: error.to_string(),
+            });
+        }
         Err(error) => {
             let error_event = openai_error_event(error);
             let body = futures::stream::once(async move { Ok::<Event, Infallible>(error_event) });
@@ -920,6 +980,18 @@ async fn anthropic_messages(
         Err(e) if e.is_all_providers_exhausted() => {
             Ok((StatusCode::SERVICE_UNAVAILABLE, "All providers unavailable").into_response())
         }
+        Err(e) if e.is_spending_budget_exceeded() => Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({"error":{"type":"rate_limit_error","code":"spending_budget_exceeded","message":e.to_string()}})),
+        ).into_response()),
+        Err(e) if e.is_cost_unavailable() => Ok((
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error":{"type":"invalid_request_error","code":"COST_UNAVAILABLE","message":e.to_string()}})),
+        ).into_response()),
+        Err(e) if e.is_invalid_request() => Ok((
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error":{"type":"invalid_request_error","code":"invalid_request_error","message":e.to_string()}})),
+        ).into_response()),
         Err(e) => {
             error!(error = %e, "anthropic completion failed");
             Ok((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
@@ -951,7 +1023,28 @@ async fn anthropic_messages_stream(
                 message: error.to_string(),
             });
         }
+        Err(error) if error.is_spending_budget_exceeded() => {
+            return Err(HttpError {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                code: "spending_budget_exceeded",
+                message: error.to_string(),
+            });
+        }
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
+        Err(error) if error.is_cost_unavailable() => {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                code: "COST_UNAVAILABLE",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_invalid_request() => {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_request_error",
+                message: error.to_string(),
+            });
+        }
         Err(error) => {
             let error_event = serde_json::to_string(&AnthropicSseEvent::from(error))
                 .map(|data| Event::default().data(data))

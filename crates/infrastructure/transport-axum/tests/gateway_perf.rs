@@ -253,6 +253,7 @@ impl ApiKeyRepositoryPort for AllowAllKeys {
             tier: ApiKeyTier::Free,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         }))
     }
     async fn record_last_used(

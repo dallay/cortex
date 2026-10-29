@@ -18,6 +18,7 @@ use rook_usecases::{
 use uuid::Uuid;
 
 use crate::middleware::{ApiKeyRateLimiter, RateLimitSnapshot};
+use crate::HttpError;
 
 const DEFAULT_MAX_BODY_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 const LARGE_BODY_SIZE_BYTES: u64 = 100 * 1024 * 1024;
@@ -31,6 +32,7 @@ const TRUSTED_HEADERS: &[&str] = &[
     "x-authz-auth-scopes",
     "x-authz-allowed-models",
     "x-authz-allowed-providers",
+    "x-authz-spending-budget",
     "x-authz-tier",
     "x-authz-requested-tier",
 ];
@@ -270,6 +272,7 @@ pub struct Subject {
     pub scopes: Vec<String>,
     pub allowed_models: Vec<String>,
     pub allowed_providers: Vec<String>,
+    pub spending_budget: Option<rook_core::SpendingBudget>,
     /// Authenticated service tier — the ONLY server-side source for tiered
     /// decisions. Never populated from client headers.
     pub tier: ApiKeyTier,
@@ -284,6 +287,7 @@ impl Subject {
             scopes: Vec::new(),
             allowed_models: Vec::new(),
             allowed_providers: Vec::new(),
+            spending_budget: None,
             tier: ApiKeyTier::Free,
         }
     }
@@ -483,6 +487,11 @@ pub fn stamp_trusted_headers(
         "x-authz-allowed-providers",
         &subject.allowed_providers.join(","),
     );
+    if let Some(budget) = &subject.spending_budget {
+        if let Ok(value) = serde_json::to_string(budget) {
+            insert_header(headers, "x-authz-spending-budget", &value);
+        }
+    }
 }
 
 pub struct PreflightResponse {
@@ -606,6 +615,7 @@ async fn client_api_policy(
                         .iter()
                         .map(|p| p.as_str().to_string())
                         .collect(),
+                    spending_budget: api_key_subject.spending_budget,
                     tier: api_key_subject.tier,
                 };
                 if let Some(rejection) = check_scope(method, path, &subject) {
@@ -660,6 +670,7 @@ async fn client_api_policy(
         scopes: credential.scopes.clone(),
         allowed_models: Vec::new(),
         allowed_providers: Vec::new(),
+        spending_budget: None,
         tier: credential.tier,
     };
     if let Some(rejection) = check_scope(method, path, &subject) {
@@ -714,6 +725,7 @@ async fn management_policy(headers: &HeaderMap, config: &AuthzConfig) -> AuthOut
                 scopes: vec!["admin".to_string()],
                 allowed_models: Vec::new(),
                 allowed_providers: Vec::new(),
+                spending_budget: None,
                 tier: ApiKeyTier::Free,
             };
             AuthOutcome::allow(subject)
@@ -756,6 +768,33 @@ pub async fn require_admin(request: Request, next: Next) -> Response {
 
 pub fn extract_api_key_id(req: &Request) -> Option<ApiKeyId> {
     extract_api_key_id_from_headers(req.headers())
+}
+
+pub fn extract_spending_budget_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<rook_core::SpendingBudget>, HttpError> {
+    let is_api_key = headers
+        .get("x-authz-auth-kind")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind == "api_key");
+    if !is_api_key {
+        return Ok(None);
+    }
+    let Some(value) = headers.get("x-authz-spending-budget") else {
+        return Ok(None);
+    };
+    let serialized = value.to_str().map_err(|_| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "AUTH_CONTEXT_INVALID",
+        message: "trusted authorization context is invalid".into(),
+    })?;
+    serde_json::from_str(serialized)
+        .map(Some)
+        .map_err(|_| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "AUTH_CONTEXT_INVALID",
+            message: "trusted authorization context is invalid".into(),
+        })
 }
 
 pub fn extract_api_key_id_from_headers(headers: &HeaderMap) -> Option<ApiKeyId> {
@@ -1303,6 +1342,7 @@ mod tests {
             scopes: vec!["chat:read".to_string()],
             allowed_models: Vec::new(),
             allowed_providers: Vec::new(),
+            spending_budget: None,
             tier: ApiKeyTier::Free,
         };
         let mut headers = HeaderMap::new();
@@ -1396,6 +1436,7 @@ mod tests {
                 scopes: vec!["chat:read".to_string()],
                 allowed_models: Vec::new(),
                 allowed_providers: Vec::new(),
+                spending_budget: None,
                 tier,
             };
             let mut headers = HeaderMap::new();
@@ -1591,6 +1632,7 @@ mod tests {
             tier: ApiKeyTier::Enterprise,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         });
         let auth = AuthenticateClientApi::new(repo, "hash-secret");
         let config = AuthzConfig::with_client_auth(auth, false, "test-secret");

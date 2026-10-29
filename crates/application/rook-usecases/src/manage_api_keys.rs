@@ -79,6 +79,7 @@ impl ManageApiKeys {
 
         // Validate all requested scopes are canonical.
         validate_scopes(&request.scopes)?;
+        validate_spending_budget(request.spending_budget.as_ref(), None)?;
 
         // Filter to only providers that exist in the registry (remove stale IDs).
         let allowed_providers = self.filter_valid_providers(&request.allowed_providers);
@@ -87,6 +88,10 @@ impl ManageApiKeys {
         let key_hash = hash_api_key(&raw_key, &self.hash_secret);
         let key_prefix: String = raw_key.chars().take(8).collect();
         let id = ApiKeyId::new(format!("key_{}", uuid::Uuid::new_v4().simple()));
+        let spending_budget = request.spending_budget.map(|mut budget| {
+            budget.api_key_id = id.clone();
+            budget
+        });
         let now = Utc::now();
 
         let record = ApiKeyRecord {
@@ -103,6 +108,7 @@ impl ManageApiKeys {
             last_used_at: None,
             allowed_models: request.allowed_models,
             allowed_providers,
+            spending_budget,
         };
 
         self.repo.create(&record).await?;
@@ -120,6 +126,13 @@ impl ManageApiKeys {
             .await?
             .ok_or_else(|| ManageApiKeysError::NotFound(id.clone()))?;
 
+        validate_spending_budget(
+            request
+                .spending_budget
+                .as_ref()
+                .and_then(|value| value.as_ref()),
+            Some(&existing.id),
+        )?;
         let label = request.label.unwrap_or(existing.label);
         let scopes = match request.scopes {
             Some(new_scopes) => {
@@ -151,6 +164,13 @@ impl ManageApiKeys {
             Some(opt_dt) => opt_dt,
             None => existing.expires_at,
         };
+        let spending_budget = match request.spending_budget {
+            Some(value) => value.map(|mut budget| {
+                budget.api_key_id = existing.id.clone();
+                budget
+            }),
+            None => existing.spending_budget.clone(),
+        };
 
         let updated = ApiKeyRecord {
             id: existing.id,
@@ -166,6 +186,7 @@ impl ManageApiKeys {
             last_used_at: existing.last_used_at,
             allowed_models: request.allowed_models.unwrap_or(existing.allowed_models),
             allowed_providers,
+            spending_budget,
         };
 
         self.repo.update(&updated).await?;
@@ -245,6 +266,7 @@ pub struct CreateApiKeyRequest {
     pub expires_at: Option<DateTime<Utc>>,
     pub allowed_models: Vec<ModelId>,
     pub allowed_providers: Vec<ProviderId>,
+    pub spending_budget: Option<rook_core::SpendingBudget>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -256,10 +278,42 @@ pub struct UpdateApiKeyRequest {
     pub expires_at: Option<Option<DateTime<Utc>>>,
     pub allowed_models: Option<Vec<ModelId>>,
     pub allowed_providers: Option<Vec<ProviderId>>,
+    /// None leaves the policy unchanged; Some(None) clears it.
+    pub spending_budget: Option<Option<rook_core::SpendingBudget>>,
 }
 
 /// Validates that every scope in the slice is a known canonical value.
 /// Returns `ManageApiKeysError::Validation` on the first unknown scope found.
+fn validate_spending_budget(
+    budget: Option<&rook_core::SpendingBudget>,
+    expected_api_key_id: Option<&ApiKeyId>,
+) -> ManageApiKeysResult<()> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    if expected_api_key_id.is_some_and(|expected| expected != &budget.api_key_id) {
+        return Err(ManageApiKeysError::Validation(
+            "spending budget API key does not match target key".into(),
+        ));
+    }
+    if budget.amount_micros_usd == 0 || budget.request_limit_micros_usd == 0 {
+        return Err(ManageApiKeysError::Validation(
+            "spending budget and per-request limit must be greater than zero".into(),
+        ));
+    }
+    if budget.amount_micros_usd > i64::MAX as u64 {
+        return Err(ManageApiKeysError::Validation(
+            "spending budget exceeds the maximum supported amount".into(),
+        ));
+    }
+    if budget.request_limit_micros_usd > budget.amount_micros_usd {
+        return Err(ManageApiKeysError::Validation(
+            "per-request limit must not exceed the spending budget".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_scopes(scopes: &[ApiKeyScope]) -> ManageApiKeysResult<()> {
     for scope in scopes {
         ApiKeyScope::parse(scope.as_str()).map_err(|e| match e {
@@ -473,6 +527,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_rejects_invalid_spending_budget_limits() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
+        let result = usecase
+            .create(CreateApiKeyRequest {
+                label: "Budgeted".to_string(),
+                scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+                tier: ApiKeyTier::Free,
+                expires_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+                spending_budget: Some(rook_core::SpendingBudget {
+                    api_key_id: ApiKeyId::new("untrusted-client-id"),
+                    amount_micros_usd: 1_000_000,
+                    request_limit_micros_usd: 2_000_000,
+                    window: rook_core::SpendingBudgetWindow::Daily,
+                }),
+            })
+            .await;
+
+        assert!(matches!(result, Err(ManageApiKeysError::Validation(_))));
+        assert!(repo.records.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_rejects_out_of_range_spending_budget() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
+        let result = usecase
+            .create(CreateApiKeyRequest {
+                label: "Budgeted".to_string(),
+                scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+                tier: ApiKeyTier::Free,
+                expires_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+                spending_budget: Some(rook_core::SpendingBudget {
+                    api_key_id: ApiKeyId::new("untrusted-client-id"),
+                    amount_micros_usd: i64::MAX as u64 + 1,
+                    request_limit_micros_usd: 1,
+                    window: rook_core::SpendingBudgetWindow::Daily,
+                }),
+            })
+            .await;
+
+        assert!(matches!(result, Err(ManageApiKeysError::Validation(_))));
+        assert!(repo.records.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn spending_budget_validation_preserves_limits_and_accepts_sqlite_boundary() {
+        let mut budget = rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("key"),
+            amount_micros_usd: i64::MAX as u64,
+            request_limit_micros_usd: i64::MAX as u64,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        };
+        assert!(validate_spending_budget(Some(&budget), None).is_ok());
+        for (amount, per_request) in [
+            (0, 1),
+            (1, 0),
+            (1, 2),
+            (i64::MAX as u64 + 1, 1),
+            (u64::MAX, 1),
+        ] {
+            budget.amount_micros_usd = amount;
+            budget.request_limit_micros_usd = per_request;
+            assert!(
+                matches!(
+                    validate_spending_budget(Some(&budget), None),
+                    Err(ManageApiKeysError::Validation(_))
+                ),
+                "amount={amount}, per_request={per_request}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn test_manage_api_keys_workflow() {
         let repo = Arc::new(FakeApiKeyRepository::default());
         let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
@@ -485,6 +617,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, raw_key) = usecase.create(create_req).await.unwrap();
         assert_eq!(record.label, "Dev Key");
@@ -510,6 +643,7 @@ mod tests {
             expires_at: None,
             allowed_models: None,
             allowed_providers: None,
+            spending_budget: None,
         };
         let updated = usecase.update(&record.id, update_req).await.unwrap();
         assert_eq!(updated.label, "Prod Key");
@@ -536,6 +670,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
         assert!(record.is_active);
@@ -561,6 +696,7 @@ mod tests {
                 expires_at: None,
                 allowed_models: vec![],
                 allowed_providers: vec![],
+                spending_budget: None,
             };
             usecase.create(create_req).await.unwrap();
         }
@@ -588,6 +724,7 @@ mod tests {
             expires_at: Some(Utc::now() - chrono::Duration::days(1)),
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
 
         let result = usecase.create(create_req).await;
@@ -612,6 +749,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -640,6 +778,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
 
         let result = usecase.create(create_req).await;
@@ -665,6 +804,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -698,6 +838,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
             allowed_providers: vec![ProviderId::new("openai")],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -720,6 +861,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
         assert!(record.allowed_models.is_empty());
@@ -758,6 +900,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -787,6 +930,7 @@ mod tests {
             expires_at: Some(Utc::now() + chrono::Duration::days(7)),
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
             allowed_providers: vec![ProviderId::new("openai")],
+            spending_budget: None,
         };
         let (record, original_raw) = usecase.create(create_req).await.unwrap();
         let original_created_at = record.created_at;
@@ -879,6 +1023,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, original_raw) = usecase.create(create_req).await.unwrap();
 
@@ -917,6 +1062,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 
@@ -953,6 +1099,7 @@ mod tests {
             expires_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         let (record, _) = usecase.create(create_req).await.unwrap();
 

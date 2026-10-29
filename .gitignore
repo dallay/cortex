@@ -19,6 +19,7 @@ node_modules/
 # Build outputs
 *.tsbuildinfo
 apps/rook/dashboard/dist/
+*.profraw
 
 # === Environment ===
 .env

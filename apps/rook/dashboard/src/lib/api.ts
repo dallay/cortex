@@ -17,6 +17,32 @@ import type { ProviderKind } from "@/config/providerCatalog";
  */
 export type WireAuthType = "apiKey" | "oauth";
 
+export interface SpendingBudgetRequest {
+	amountMicrosUsd: number;
+	requestLimitMicrosUsd: number;
+	window: "daily" | "monthly";
+}
+
+const MICRO_USD_PER_USD = 1_000_000;
+
+/** Convert a USD decimal string to integer micro-USD without floating-point rounding. */
+export function usdToMicros(value: string): number | null {
+	const match = /^(0|[1-9]\d*)(?:\.(\d{1,6}))?$/.exec(value.trim());
+	if (!match) return null;
+	const whole = Number(match[1]);
+	const fraction = Number((match[2] ?? "").padEnd(6, "0"));
+	const micros = whole * MICRO_USD_PER_USD + fraction;
+	return Number.isSafeInteger(micros) && micros > 0 ? micros : null;
+}
+
+export function microsToUsd(value: number): string {
+	const whole = Math.floor(value / MICRO_USD_PER_USD);
+	const fraction = String(value % MICRO_USD_PER_USD)
+		.padStart(6, "0")
+		.replace(/0+$/, "");
+	return fraction ? `${whole}.${fraction}` : String(whole);
+}
+
 export interface ApiKeyRecordResponse {
 	id: string;
 	label: string;
@@ -30,6 +56,7 @@ export interface ApiKeyRecordResponse {
 	lastUsedAt: string | null;
 	allowedModels: string[];
 	allowedProviders: string[];
+	spendingBudget: SpendingBudgetRequest | null;
 }
 
 // =============================================================================
@@ -352,6 +379,7 @@ export interface CreateApiKeyRequest {
 	expiresAt: string | null;
 	allowedModels?: string[];
 	allowedProviders?: string[];
+	spendingBudget?: SpendingBudgetRequest | null;
 }
 
 export interface UpdateApiKeyRequest {
@@ -362,6 +390,7 @@ export interface UpdateApiKeyRequest {
 	expiresAt?: string | null;
 	allowedModels?: string[];
 	allowedProviders?: string[];
+	spendingBudget?: SpendingBudgetRequest | null;
 }
 
 // =============================================================================

@@ -187,6 +187,7 @@ async fn allowed_models_contains_requested_model_passes() {
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("gpt-3.5-turbo")],
             allowed_providers: vec![],
+            spending_budget: None,
         },
     };
 
@@ -244,6 +245,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("gpt-4")],
             allowed_providers: vec![],
+            spending_budget: None,
         },
     };
 
@@ -305,6 +307,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],
             allowed_providers: vec![ProviderId::new("openai"), ProviderId::new("anthropic")],
+            spending_budget: None,
         },
     };
 
@@ -362,6 +365,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![],
             allowed_providers: vec![ProviderId::new("openai")],
+            spending_budget: None,
         },
     };
 
