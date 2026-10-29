@@ -3,7 +3,7 @@ pub use huginn_application::composition::{
     instructions_id, loop_id, model_id, sessions_id, tools_id, HooksPlugin, InstructionsPlugin,
     LoopPlugin, ModelPlugin, SessionsPlugin, ToolsPlugin,
 };
-use huginn_application::loop_engine::LoopConfig;
+use huginn_application::{composition::leased_loop_plugin, loop_engine::LoopConfig};
 use huginn_core::{kernel::Supervisor, ModelProvider, Result, SessionStore, ToolRegistry};
 use std::sync::Arc;
 pub async fn build(
@@ -126,7 +126,7 @@ async fn build_native_plugin(
     if let Some(guards) = guards {
         supervisor.register(Box::new(huginn_guards::GuardsPlugin(guards)))?;
     }
-    supervisor.register(Box::new(LoopPlugin(config)))?;
+    supervisor.register(leased_loop_plugin(config))?;
     if let Err(error) = supervisor.start().await {
         supervisor.shutdown().await;
         return Err(error);

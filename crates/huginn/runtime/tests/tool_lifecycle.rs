@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
-    AgentError, CancellationToken, Result, Tool, ToolCall, ToolContext, ToolRegistry,
+    AgentError, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink, LoopService,
+    Result, Session, SessionInfo, SessionStore, Tool, ToolCall, ToolContext, ToolRegistry,
 };
 use huginn_runtime::tools::{
     native_tools, registry_id, NativeToolPlugin, Registry, RegistryPlugin,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 struct Fails {
     tools: Vec<Arc<dyn Tool>>,
@@ -156,5 +157,212 @@ async fn production_skill_tool_is_lifecycle_owned_and_read_only() {
     supervisor.remove("native.load_skill").await.unwrap();
     assert!(registry.get("load_skill").is_none());
     assert!(tool.prepare(&call, &ctx).await.is_err());
+    supervisor.shutdown().await;
+}
+
+#[derive(Default)]
+struct CaptureSessions(Mutex<Vec<Session>>);
+
+#[async_trait]
+impl SessionStore for CaptureSessions {
+    async fn save(&self, session: &Session) -> Result<()> {
+        self.0.lock().unwrap().push(session.clone());
+        Ok(())
+    }
+
+    async fn load(&self, _: &str) -> Result<Session> {
+        Err(AgentError::Session("load is not used in this test".into()))
+    }
+
+    async fn list(&self) -> Result<Vec<SessionInfo>> {
+        Ok(Vec::new())
+    }
+}
+
+struct CaptureSessionsPlugin(Arc<CaptureSessions>);
+
+#[async_trait]
+impl Plugin for CaptureSessionsPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "test.capture-sessions".into(),
+            provides: vec![huginn_runtime::composition::sessions_id()],
+            requires: Vec::new(),
+        }
+    }
+
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(
+            huginn_runtime::composition::sessions_id(),
+            huginn_core::SessionsService(self.0.clone()),
+        )
+    }
+}
+
+struct NoApproval;
+
+#[async_trait]
+impl ApprovalPolicy for NoApproval {
+    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+        Err(AgentError::Tool("unexpected approval request".into()))
+    }
+}
+
+struct IgnoreEvents;
+
+impl EventSink for IgnoreEvents {
+    fn emit(&self, _: Event) {}
+}
+
+async fn assert_retained_loop_rebinds_sessions(
+    mut supervisor: Supervisor,
+    store_a: Arc<CaptureSessions>,
+    store_b: Arc<CaptureSessions>,
+    workspace: &std::path::Path,
+) {
+    let loop_service: Arc<LoopService> = supervisor
+        .resolve(&huginn_runtime::composition::loop_id())
+        .unwrap();
+    let mut session = Session::new(workspace.to_path_buf());
+    let session_id = session.id.clone();
+    loop_service
+        .0
+        .run(
+            &mut session,
+            "before store replacement".into(),
+            &NoApproval,
+            &IgnoreEvents,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(store_a
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|saved| saved.id == session_id));
+    let old_store_saves = store_a.0.lock().unwrap().len();
+
+    supervisor
+        .substitute(
+            &huginn_runtime::composition::sessions_id(),
+            Box::new(CaptureSessionsPlugin(store_b.clone())),
+            huginn_core::kernel::SubstitutionPolicy::ReportUndrained,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    loop_service
+        .0
+        .run(
+            &mut session,
+            "after store replacement".into(),
+            &NoApproval,
+            &IgnoreEvents,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(store_a.0.lock().unwrap().len(), old_store_saves);
+    assert!(store_b
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|saved| saved.id == session_id
+            && saved
+                .messages
+                .iter()
+                .any(|message| message.content == "after store replacement")));
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn connections_builder_rebinds_retained_loop_to_new_sessions_store() {
+    let workspace = tempfile::tempdir().unwrap();
+    let store_a = Arc::new(CaptureSessions::default());
+    let store_b = Arc::new(CaptureSessions::default());
+    let supervisor = huginn_runtime::composition::build_native_with_connections(
+        Arc::new(huginn_runtime::model::MockProvider),
+        huginn_application::connections::ConnectionAccess::new(Arc::new(
+            huginn_runtime::connections::HostSecrets::default(),
+        )),
+        Registry::default(),
+        store_a.clone(),
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+    )
+    .await
+    .unwrap();
+
+    assert_retained_loop_rebinds_sessions(supervisor, store_a, store_b, workspace.path()).await;
+}
+
+#[tokio::test]
+async fn connections_and_guards_builder_rebinds_retained_loop_to_new_sessions_store() {
+    let workspace = tempfile::tempdir().unwrap();
+    let store_a = Arc::new(CaptureSessions::default());
+    let store_b = Arc::new(CaptureSessions::default());
+    let supervisor = huginn_runtime::composition::build_native_with_connections_and_guards(
+        Arc::new(huginn_runtime::model::MockProvider),
+        huginn_application::connections::ConnectionAccess::new(Arc::new(
+            huginn_runtime::connections::HostSecrets::default(),
+        )),
+        Registry::default(),
+        store_a.clone(),
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+        Arc::new(huginn_guards::Guardrails::default()),
+    )
+    .await
+    .unwrap();
+
+    assert_retained_loop_rebinds_sessions(supervisor, store_a, store_b, workspace.path()).await;
+}
+
+#[tokio::test]
+async fn runtime_composition_build_retains_a_dynamically_rebound_loop_service() {
+    let workspace = tempfile::tempdir().unwrap();
+    let database = workspace.path().join("sessions.db");
+    let sqlite = Arc::new(huginn_runtime::sessions::SqliteSessions::open(&database).unwrap());
+    let mut supervisor = huginn_runtime::composition::build_native(
+        Arc::new(huginn_runtime::model::MockProvider),
+        Registry::default(),
+        sqlite,
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+    )
+    .await
+    .unwrap();
+    let loop_service = supervisor
+        .resolve::<LoopService>(&huginn_runtime::composition::loop_id())
+        .unwrap();
+    let capture = Arc::new(CaptureSessions::default());
+
+    supervisor
+        .substitute(
+            &huginn_runtime::composition::sessions_id(),
+            Box::new(CaptureSessionsPlugin(capture.clone())),
+            huginn_core::kernel::SubstitutionPolicy::ReportUndrained,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+    let mut session = Session::new(workspace.path().into());
+    loop_service
+        .0
+        .run(
+            &mut session,
+            "runtime composition rebind".into(),
+            &NoApproval,
+            &IgnoreEvents,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(!capture.0.lock().unwrap().is_empty());
     supervisor.shutdown().await;
 }

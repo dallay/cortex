@@ -1,0 +1,23 @@
+change: huginn-service-provider-substitution
+current_phase: archive
+completed:
+  - init
+  - explore
+  - propose
+  - "spec (actualizada 2026-10-29: LoopService retenido reusa providers vigentes entre operaciones de builders productivos application/runtime)"
+  - "design (actualizado 2026-10-29: slots desde PluginContext, adapters privados y rutas runtime productivas)"
+  - "tasks (actualizadas 2026-10-29: seam PluginContext, adapters application/runtime, readiness y handoff)"
+  - "apply (completada hasta 5.6: slots, rebind application/runtime, readiness y documentación; sin commit/push)"
+  - "verify (FAIL inicial 2026-10-29: V-01/V-02; QA/archive no iniciados)"
+  - "apply (remediación de cobertura 5.8–5.11 completada; sin cambios de producción)"
+  - "verify (PASS WITH WARNINGS 2026-10-29: V-01/V-02 cubiertos por tests aprobados; V-03 queda como warning de cobertura de dos variantes runtime; QA/archive no iniciados)"
+  - "qa (NOT TESTED 2026-10-29: QA-01 requiere evidencia directa de dos builders runtime; Archive bloqueado)"
+  - "apply (tarea 5.12: cobertura in-process de ambos builders con conexiones; tests-only, sin cambio de producción)"
+  - "verify (PASS WITH WARNINGS 2026-10-29: reverify tras QA-01; ambos builders connections probados in-process; V-01–V-03 sin blockers; QA/archive no iniciados)"
+  - "qa (PASS WITH WARNINGS 2026-10-29: QA-01 resuelto con tests in-process de los tres builders runtime; sustitución en TUI ya abierta NOT TESTED fuera de alcance; Archive permitido con advertencias)"
+  - "archive (completado 2026-10-29: spec huginn-kernel sincronizado y cambio movido a archive; sin aceptación del operador)"
+next: none
+updated: "2026-10-29"
+epic: DALLAY-718
+epic_issue: 509
+slice: service-provider-substitution-with-rollback-and-drain

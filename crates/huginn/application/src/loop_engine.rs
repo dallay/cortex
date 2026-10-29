@@ -64,15 +64,63 @@ pub struct StandardLoop {
     pub config: LoopConfig,
     pub lifecycle: CancellationToken,
 }
-impl StandardLoop {
-    async fn pin_model(&self, cancel: CancellationToken) -> Result<Arc<dyn ModelProvider>> {
+
+pub(crate) async fn skill_commands(
+    config: &LoopConfig,
+    lifecycle: &CancellationToken,
+    workspace: &std::path::Path,
+    cancellation: CancellationToken,
+) -> Result<Vec<(String, String)>> {
+    let Some(loader) = &config.skills else {
+        return Ok(Vec::new());
+    };
+    let catalog = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(AgentError::Cancelled),
+        _ = lifecycle.cancelled() => return Err(AgentError::Cancelled),
+        result = loader.catalog(workspace, cancellation.clone()) => result?,
+    };
+    Ok(catalog
+        .skills
+        .iter()
+        .filter(|entry| entry.selected)
+        .map(|entry| (format!("/skill:{}", entry.name), entry.description.clone()))
+        .collect())
+}
+pub(crate) struct LoopExecution<'a> {
+    model: &'a dyn ModelProvider,
+    tools: &'a dyn ToolRegistry,
+    sessions: &'a dyn SessionStore,
+    instructions: &'a dyn InstructionSource,
+    config: &'a LoopConfig,
+    lifecycle: &'a CancellationToken,
+}
+
+impl<'a> LoopExecution<'a> {
+    pub(crate) fn new(
+        model: &'a dyn ModelProvider,
+        tools: &'a dyn ToolRegistry,
+        sessions: &'a dyn SessionStore,
+        instructions: &'a dyn InstructionSource,
+        config: &'a LoopConfig,
+        lifecycle: &'a CancellationToken,
+    ) -> Self {
+        Self {
+            model,
+            tools,
+            sessions,
+            instructions,
+            config,
+            lifecycle,
+        }
+    }
+
+    async fn pin_model(&self, cancel: CancellationToken) -> Result<Option<Arc<dyn ModelProvider>>> {
         tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => Err(AgentError::Cancelled),
-            result = self.model.pin_turn(cancel.clone()) => {
-                Ok(result?.unwrap_or_else(|| self.model.clone()))
-            }
+            result = self.model.pin_turn(cancel.clone()) => result,
         }
     }
     async fn record(
@@ -405,7 +453,7 @@ impl StandardLoop {
 
     async fn turn(
         &self,
-        model: Result<Arc<dyn ModelProvider>>,
+        model: Result<Option<Arc<dyn ModelProvider>>>,
         session: &mut Session,
         input: (String, &[String], Option<crate::skills::SkillCatalog>),
         approvals: &dyn ApprovalPolicy,
@@ -418,6 +466,7 @@ impl StandardLoop {
         self.sessions.save(session).await?;
         // Preserve the attempted prompt and normal error events even if pinning failed.
         let model = model?;
+        let model = model.as_deref().unwrap_or(self.model);
         let metadata = if let Some(loader) = &self.config.skills {
             let catalog = if let Some(catalog) = catalog_snapshot {
                 catalog
@@ -459,7 +508,7 @@ impl StandardLoop {
             let tool_bytes = serde_json::to_vec(&tools)?.len();
             let context = self
                 .context(
-                    model.as_ref(),
+                    model,
                     session,
                     &instructions,
                     tool_bytes,
@@ -469,7 +518,7 @@ impl StandardLoop {
                 .await?;
             let response = self
                 .collect_response(
-                    model.as_ref(),
+                    model,
                     ModelRequest {
                         messages: context,
                         tools,
@@ -555,21 +604,7 @@ impl AgentLoop for StandardLoop {
         workspace: &std::path::Path,
         cancellation: CancellationToken,
     ) -> Result<Vec<(String, String)>> {
-        let Some(loader) = &self.config.skills else {
-            return Ok(Vec::new());
-        };
-        let catalog = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => return Err(AgentError::Cancelled),
-            _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
-            result = loader.catalog(workspace, cancellation.clone()) => result?,
-        };
-        Ok(catalog
-            .skills
-            .iter()
-            .filter(|entry| entry.selected)
-            .map(|entry| (format!("/skill:{}", entry.name), entry.description.clone()))
-            .collect())
+        skill_commands(&self.config, &self.lifecycle, workspace, cancellation).await
     }
 
     async fn compact(
@@ -578,21 +613,54 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        let through = complete_turn_ends(&session.messages, session.summary_through)
-            .last()
-            .copied()
-            .unwrap_or(session.summary_through);
-        if through <= session.summary_through {
-            return Err(AgentError::Model(
-                "no complete turns available to summarize".into(),
-            ));
-        }
-        let model = self.pin_model(cancellation.clone()).await?;
-        self.summarize(model.as_ref(), session, through, cancellation, events)
+        self.execution()
+            .compact(session, events, cancellation)
             .await
     }
 
     async fn run(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.execution()
+            .run(session, prompt, approvals, events, cancellation)
+            .await
+    }
+}
+
+impl StandardLoop {
+    fn execution(&self) -> LoopExecution<'_> {
+        LoopExecution::new(
+            self.model.as_ref(),
+            self.tools.as_ref(),
+            self.sessions.as_ref(),
+            self.instructions.as_ref(),
+            &self.config,
+            &self.lifecycle,
+        )
+    }
+
+    pub async fn run_with_skills(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        selected: &[String],
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.execution()
+            .run_with_skills(session, prompt, selected, approvals, events, cancellation)
+            .await
+    }
+}
+
+impl LoopExecution<'_> {
+    pub(crate) async fn run(
         &self,
         session: &mut Session,
         prompt: String,
@@ -648,10 +716,34 @@ impl AgentLoop for StandardLoop {
         )
         .await
     }
-}
 
-impl StandardLoop {
-    pub async fn run_with_skills(
+    pub(crate) async fn compact(
+        &self,
+        session: &mut Session,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        let through = complete_turn_ends(&session.messages, session.summary_through)
+            .last()
+            .copied()
+            .unwrap_or(session.summary_through);
+        if through <= session.summary_through {
+            return Err(AgentError::Model(
+                "no complete turns available to summarize".into(),
+            ));
+        }
+        let model = self.pin_model(cancellation.clone()).await?;
+        self.summarize(
+            model.as_deref().unwrap_or(self.model),
+            session,
+            through,
+            cancellation,
+            events,
+        )
+        .await
+    }
+
+    async fn run_with_skills(
         &self,
         session: &mut Session,
         prompt: String,
