@@ -781,6 +781,24 @@ impl Supervisor {
                 })
                 .await);
         }
+        let replacement_position =
+            match self.replacement_order_index(&previous_owner, &manifest.requires, &dependents) {
+                Ok(position) => position,
+                Err(error) => {
+                    return Err(self
+                        .abort_substitution(SubstitutionAbort {
+                            service,
+                            previous_owner: &previous_owner,
+                            alternative_id: &alternative_id,
+                            gates: &[],
+                            resume_ids: Vec::new(),
+                            drained: Vec::new(),
+                            undrained,
+                            error,
+                        })
+                        .await)
+                }
+            };
         let mut old_gates: Vec<Arc<LeaseGate>> = Vec::new();
         let mut missing_gates = Vec::new();
         for id in &previous_provides {
@@ -883,7 +901,7 @@ impl Supervisor {
         let undrained = completed.undrained;
         drop(rollback);
 
-        if let Some(mut old) = self.plugins.remove(&previous_owner) {
+        let retired_cleanup_errors = if let Some(mut old) = self.plugins.remove(&previous_owner) {
             self.order.retain(|id| id != &previous_owner);
             for owners in self.dependents.values_mut() {
                 owners.remove(&previous_owner);
@@ -892,16 +910,34 @@ impl Supervisor {
             if let Some(mut ctx) = old.context.take() {
                 ctx.cleanup().await;
             }
-            let _ =
-                tokio::time::timeout(Duration::from_secs(5), old.plugin_mut().deactivate()).await;
-        }
+            match tokio::time::timeout(Duration::from_secs(5), old.plugin_mut().deactivate()).await
+            {
+                Ok(Ok(())) => Vec::new(),
+                Ok(Err(error)) => {
+                    vec![format!("{previous_owner}: deactivation failed: {error}")]
+                }
+                Err(_) => vec![format!("{previous_owner}: deactivation timed out")],
+            }
+        } else {
+            Vec::new()
+        };
+        self.order.retain(|id| id != &alternative_id);
+        self.order
+            .insert(replacement_position, alternative_id.clone());
         let resume_errors = self.resume_dependents(&drained).await;
-        let outcome = if resume_errors.is_empty() {
+        let mut finalization_errors = retired_cleanup_errors;
+        if !resume_errors.is_empty() {
+            finalization_errors.push(format!(
+                "dependents failed to resume: {}",
+                resume_errors.join(", ")
+            ));
+        }
+        let outcome = if finalization_errors.is_empty() {
             Ok(())
         } else {
             Err(format!(
-                "substitution committed but dependents failed to resume: {}",
-                resume_errors.join(", ")
+                "substitution committed but finalization failed: {}",
+                finalization_errors.join("; ")
             ))
         };
         self.substitutions.push(SubstitutionDiagnostic {
@@ -925,6 +961,63 @@ impl Supervisor {
             })
             .cloned()
             .collect()
+    }
+
+    fn replacement_order_index(
+        &self,
+        previous_owner: &str,
+        required_services: &[ServiceId],
+        dependents: &[String],
+    ) -> Result<usize> {
+        let previous_position = self
+            .order
+            .iter()
+            .position(|id| id == previous_owner)
+            .ok_or_else(|| {
+                AgentError::Composition(format!(
+                    "active provider {previous_owner} is missing from lifecycle order"
+                ))
+            })?;
+        let order_without_previous: Vec<_> = self
+            .order
+            .iter()
+            .filter(|id| id.as_str() != previous_owner)
+            .map(String::as_str)
+            .collect();
+        let mut insertion = previous_position;
+        for required in required_services {
+            let provider = self.providers.get(required).ok_or_else(|| {
+                AgentError::Composition(format!(
+                    "required service {} has no active provider",
+                    required.0
+                ))
+            })?;
+            let provider_position = order_without_previous
+                .iter()
+                .position(|id| *id == provider.plugin_id)
+                .ok_or_else(|| {
+                    AgentError::Composition(format!(
+                        "provider {} is missing from lifecycle order",
+                        provider.plugin_id
+                    ))
+                })?;
+            insertion = insertion.max(provider_position + 1);
+        }
+
+        let first_dependent = dependents
+            .iter()
+            .filter_map(|dependent| {
+                order_without_previous
+                    .iter()
+                    .position(|id| *id == dependent)
+            })
+            .min();
+        if first_dependent.is_some_and(|position| insertion > position) {
+            return Err(AgentError::Composition(format!(
+                "alternative dependencies cannot be ordered before current dependents of {previous_owner}"
+            )));
+        }
+        Ok(insertion)
     }
 
     fn begin_substitution_abort(&mut self, abort: SubstitutionAbort<'_>) -> usize {
