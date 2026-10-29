@@ -13,4 +13,4 @@ permissions:
 jobs:
   greeting:
     name: 👋 Welcome Contributor
-    uses: dallay/common-actions/.github/workflows/greetings.yml@5efa6a4c8865caf90a607cc5d5232564312048fd # v2.3.0
+    uses: dallay/common-actions/.github/workflows/greetings.yml@2914eb9522e67957a0b266f10132704d27389e80 # v2.9.0

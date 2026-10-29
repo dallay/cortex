@@ -14,8 +14,12 @@
     "**/Cargo.toml",
     "rust-toolchain.toml",
     ".github/scripts/check-huginn-architecture.py",
+    ".github/scripts/exec-args.py",
+    ".github/scripts/make-shell",
+    "Makefile",
     "package.json",
-    "justfile"
+    "justfile",
+    "scripts/setup-codegraph.sh"
   ],
   "frontend": [
     "apps/rook/dashboard/**",
@@ -40,7 +44,11 @@
     ".github/scripts/ci-*.cjs",
     ".github/scripts/check-semgrep-path-exceptions.py",
     ".github/scripts/test-semgrep-path-exceptions.py",
-    ".github/ci-*.json"
+    ".github/scripts/exec-args.py",
+    ".github/scripts/make-shell",
+    ".github/ci-*.json",
+    "Makefile",
+    "scripts/setup-codegraph.sh"
   ],
   "labeler": [
     ".github/scripts/issue-labeler.*",

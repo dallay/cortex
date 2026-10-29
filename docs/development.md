@@ -6,21 +6,26 @@ Esta guía cubre el setup local, herramientas, testing y flujo de CI.
 
 - **Rust** (toolchain, componentes y targets definidos en `rust-toolchain.toml`)
 - **Node.js** + **pnpm** (para el dashboard)
-- **just** — gestor de tareas (ver `justfile`)
+- **just** — interfaz recomendada para las tareas del repositorio (ver `justfile`)
+- **GNU Make** — alternativa independiente opcional, disponible mediante `Makefile`
 - **Docker** (para E2E tests)
 
 ## Setup inicial
 
 ```bash
-# Instalar dependencias, tooling y crear ~/.cortex/rook/config.toml
+# Interfaz recomendada: instalar dependencias, verificar Rust y crear config de Rook
 just setup
 
-# Verificar herramientas
-just doctor
+# Alternativa opcional sin instalar just
+make setup
+make doctor
+make help
 
-# Ver recetas disponibles
+# Ver recetas disponibles en la interfaz recomendada
 just --list
 ```
+
+GNU Make ejecuta directamente las herramientas y scripts del repositorio; no requiere ni invoca `just`. Para comandos con argumentos, pasa los valores mediante `ARGS`, por ejemplo `make huginn-run ARGS='--provider mock run "list files"'` o `make push ARGS='origin HEAD'`. `just` sigue siendo la interfaz recomendada y ofrece su propio paso de argumentos.
 
 `just setup` ejecuta `just init-config`, que crea `~/.cortex/rook/config.toml`
 solo si no existe; nunca sobrescribe una configuración previa. Rook exige ese
@@ -30,6 +35,11 @@ archivo (o la ruta indicada por `ROOK_CONFIG`) para arrancar.
 falta una herramienta obligatoria o si Node.js/pnpm no cumplen las versiones
 del repo. Docker, las dependencias del dashboard y las herramientas Cargo de
 recetas especializadas se reportan como avisos opcionales.
+
+`setup` también ejecuta `codegraph init` si la CLI `codegraph` ya está instalada.
+Si no está disponible, muestra un aviso y continúa sin inicializar el índice.
+El setup no instala CodeGraph ni administra credenciales; para habilitarlo,
+instala la CLI según su documentación y vuelve a ejecutar `just setup` o `make setup`.
 
 ## Desarrollo de Rook (Backend Rust)
 

@@ -196,6 +196,18 @@ fn first_run_opens_tui_without_configured_model() {
 }
 
 #[test]
+fn ctrl_c_exits_inline_tui_when_idle() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let mut pty = Pty::start(command(workspace.path(), &db), true);
+    pty.wait_for("Huginn");
+    pty.wait_for("Idle");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
@@ -205,9 +217,20 @@ fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     // composer carries the Huginn title.
     pty.wait_for("Huginn");
     pty.send("\x1b[200~hello\nsecond\x1b[201~\r");
-    pty.wait_for("Offline mock: hello");
-    pty.wait_for("second");
-    pty.send("\x03");
+    pty.wait_for("Assistant: Offline mock: hello");
+    pty.wait_for("Idle");
+    let screen = pty.screen_text();
+    let rows = screen.lines().collect::<Vec<_>>();
+    let assistant_row = rows
+        .iter()
+        .position(|row| row.contains("Assistant: Offline mock: hello"))
+        .expect("assistant response should be visible on screen");
+    assert!(
+        rows.get(assistant_row + 1)
+            .is_some_and(|row| row.contains("second")),
+        "assistant response should preserve the second line:\n{screen}"
+    );
+    pty.send("/quit\r");
     let output = pty.finish(true);
     assert!(output.contains("\x1b[?2004h"));
     assert!(!output.contains("\x1b[?1049h"));
@@ -224,8 +247,9 @@ fn default_chat_multiline_and_interactive_resume_use_inline_tui() {
     let mut pty = Pty::start(command, true);
     pty.wait_for("Offline mock: hello");
     pty.send("again\r");
-    pty.wait_for("Offline mock: again");
-    pty.send("\x03");
+    pty.wait_for("Assistant: Offline mock: again");
+    pty.wait_for("Idle");
+    pty.send("/quit\r");
     pty.finish(true);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let session = runtime.block_on(async {

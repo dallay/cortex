@@ -85,6 +85,18 @@ fmt-check:
 test:
     cargo test --workspace --all-features
 
+# Build the independent Rust outline guest and wrap its versioned component metadata
+huginn-wasm-build:
+    cargo build --locked -p huginn-rust-outline-component --target wasm32-unknown-unknown --release
+    wasm-tools component new target/wasm32-unknown-unknown/release/huginn_rust_outline_component.wasm -o target/rust-file-outline.component.wasm
+
+# Verify the experimental adapter and real headless path with independently built components
+huginn-wasm-test:
+    cargo test --locked -p huginn-rust-outline-component
+    cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_outline
+    cargo test --locked -p huginn --features experimental-wasm --test wasm_outline
+    just huginn-architecture
+
 # Run library unit tests across the workspace
 test-unit:
     cargo test --workspace --lib
@@ -215,6 +227,7 @@ setup:
     @echo "{{YELLOW}}Verifying Rust toolchain...{{RESET}}"
     rustup show
     @just init-config
+    @bash scripts/setup-codegraph.sh
     @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
 
 # Read-only checks for the local development environment

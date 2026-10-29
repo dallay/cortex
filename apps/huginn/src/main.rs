@@ -10,7 +10,8 @@ use huginn::{
 };
 use huginn_application::authorization::HostPolicy;
 use huginn_core::{
-    ApprovalPolicy, CancellationToken, EventSink, LoopService, Session, SessionStore,
+    kernel::ServiceSlotHandle, ApprovalPolicy, CancellationToken, EventSink, LoopService,
+    ModelService, Session, SessionStore,
 };
 use huginn_presentation::settings::UiConfig;
 use huginn_runtime::{
@@ -53,6 +54,10 @@ struct Cli {
     /// Use the explicit line-oriented recovery adapter instead of Ratatui.
     #[arg(long, global = true)]
     line_mode: bool,
+    /// Explicitly load one experimental local WASM outline component in headless mode.
+    #[cfg(feature = "experimental-wasm")]
+    #[arg(long, global = true)]
+    experimental_wasm_outline: Option<PathBuf>,
     /// Explicit action grants for this invocation only (e.g. native.shell).
     #[arg(long, global = true, value_delimiter = ',')]
     allow: Vec<String>,
@@ -148,6 +153,13 @@ fn doctor_report(
     }))
 }
 
+fn current_model_ready(model_slot: &ServiceSlotHandle<ModelService>) -> bool {
+    // `acquire` resolves the current slot generation; an unavailable slot is not ready.
+    model_slot
+        .acquire()
+        .is_ok_and(|model| model.0.is_configured())
+}
+
 async fn list_sessions_if_requested(
     cli: &Cli,
     sessions: &Arc<SqliteSessions>,
@@ -234,6 +246,21 @@ fn prepare_interaction(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "experimental-wasm")]
+    if cli.experimental_wasm_outline.is_some()
+        && !matches!(
+            &cli.command,
+            Some(
+                Commands::Run { .. }
+                    | Commands::Resume {
+                        prompt: Some(_),
+                        ..
+                    }
+            )
+        )
+    {
+        anyhow::bail!("--experimental-wasm-outline requires run or resume --prompt; interactive loading is not supported");
+    }
     if matches!(cli.command, Some(Commands::Skills { .. })) {
         use huginn_application::skills::SkillCatalogQuery;
         let workspace = resolve_workspace(cli.workspace.clone())?;
@@ -323,9 +350,10 @@ async fn main() -> anyhow::Result<()> {
         sessions.clone(),
         loop_config,
         config.tool_timeout_secs,
-        guards,
+        guards.clone(),
     )
     .await?;
+    drop(model);
     // Explicit headless configurations need neither durable metadata nor its
     // global writer lease. TUI always needs management for deliberate UI changes.
     let mut connection_management = false;
@@ -392,12 +420,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    let router = supervisor
-        .resolve::<huginn_core::ModelService>(&composition::model_id())?
-        .0
-        .clone();
+    let model_readiness =
+        supervisor.service_slot_handle::<ModelService>(&composition::model_id())?;
     if is_doctor {
-        let readiness = if router.is_configured() {
+        let readiness = if current_model_ready(&model_readiness) {
             "ready"
         } else {
             "unconfigured"
@@ -414,16 +440,26 @@ async fn main() -> anyhow::Result<()> {
             &mut session,
             &mut supervisor,
             allowed,
-            router,
+            model_readiness,
             connection_management,
         )
         .await;
         supervisor.shutdown().await;
         return result;
     }
-    if prompt.is_some() && !router.is_configured() {
+    if prompt.is_some() && !current_model_ready(&model_readiness) {
         supervisor.shutdown().await;
         config.require_model()?;
+    }
+    #[cfg(feature = "experimental-wasm")]
+    if let Some(path) = &cli.experimental_wasm_outline {
+        let result =
+            huginn_runtime::wasm::WasmOutlinePlugin::load(path, &session.workspace, guards)
+                .and_then(|plugin| supervisor.register(Box::new(plugin)));
+        if let Err(error) = result {
+            supervisor.shutdown().await;
+            return Err(error.into());
+        }
     }
     if let Err(error) = mcp::register_plugins(
         &mut supervisor,
@@ -459,7 +495,7 @@ async fn main() -> anyhow::Result<()> {
         &prompt_adapter,
         policy.as_ref(),
         &output,
-        router.is_configured(),
+        &model_readiness,
     )
     .await;
     drop(implementation);
@@ -476,9 +512,14 @@ async fn run_prompt_loop(
     prompt_adapter: &LinePrompt,
     policy: &dyn ApprovalPolicy,
     output: &Output,
-    router_configured: bool,
+    model_readiness: &ServiceSlotHandle<ModelService>,
 ) -> anyhow::Result<()> {
     if let Some(prompt) = prompt {
+        if !current_model_ready(model_readiness) {
+            anyhow::bail!(
+                "No model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference."
+            );
+        }
         let prompt = prompts::expand(session, prompt)?;
         prompt_adapter.reset_turn();
         let cancel = CancellationToken::new();
@@ -508,7 +549,7 @@ async fn run_prompt_loop(
         if line.is_empty() {
             continue;
         }
-        if !router_configured {
+        if !current_model_ready(model_readiness) {
             eprintln!(
                 "\nNo model configured. Set HUGINN_BASE_URL and HUGINN_MODEL to enable inference."
             );
@@ -597,13 +638,13 @@ async fn tui_chat(
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
     allowed: BTreeSet<String>,
-    router: Arc<dyn huginn_core::ModelProvider>,
+    model_readiness: ServiceSlotHandle<ModelService>,
     connection_management: bool,
 ) -> anyhow::Result<()> {
     use huginn_presentation::{
         contributions::ConversationPlugin, presentation_id, PresentationService, RatatuiPlugin,
     };
-    let readiness = router.clone();
+    let readiness = model_readiness.clone();
     // Reading and writing share one path: an explicit --config, otherwise
     // ~/.cortex/huginn/config.toml. There is no legacy layout to seed from.
     let save_path = cli_config.map_or_else(Config::primary_config_path, |path| path.to_path_buf());
@@ -611,7 +652,7 @@ async fn tui_chat(
     let save_ui_config: huginn_presentation::settings::SaveUiConfig =
         Arc::new(move |ui: &UiConfig| ui_settings::persist_seeded(ui, &save_path, None));
     supervisor.register(Box::new(
-        RatatuiPlugin::with_readiness(Arc::new(move || readiness.is_configured()))
+        RatatuiPlugin::with_readiness(Arc::new(move || current_model_ready(&readiness)))
             .with_connection(
                 supervisor
                     .resolve::<huginn_core::providers::ProvidersService>(
@@ -667,7 +708,7 @@ async fn tui_chat(
         ui.finish_operation(startup_operation);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
         while let Some(prompt) = ui.prompt().await {
-            if !router.is_configured() {
+            if !current_model_ready(&model_readiness) {
                 ui.notification("No model configured. Use /login, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
@@ -728,4 +769,90 @@ async fn tui_chat(
     result?;
     restored?;
     Ok(())
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use futures::stream::BoxStream;
+    use huginn_core::{
+        kernel::{Manifest, Plugin, PluginContext, SubstitutionPolicy, Supervisor},
+        AgentError, ModelDelta, ModelProvider, ModelRequest, ModelService,
+    };
+
+    struct ConfiguredModel(bool);
+
+    #[async_trait]
+    impl ModelProvider for ConfiguredModel {
+        fn is_configured(&self) -> bool {
+            self.0
+        }
+
+        async fn stream(
+            &self,
+            _: ModelRequest,
+            _: CancellationToken,
+        ) -> huginn_core::Result<BoxStream<'static, huginn_core::Result<ModelDelta>>> {
+            Err(AgentError::Model("readiness test does not infer".into()))
+        }
+    }
+
+    struct ModelPlugin {
+        id: &'static str,
+        configured: bool,
+    }
+
+    #[async_trait]
+    impl Plugin for ModelPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: self.id.into(),
+                provides: vec![huginn_runtime::composition::model_id()],
+                requires: Vec::new(),
+            }
+        }
+
+        async fn activate(&mut self, ctx: &mut PluginContext) -> huginn_core::Result<()> {
+            ctx.provide(
+                huginn_runtime::composition::model_id(),
+                ModelService(Arc::new(ConfiguredModel(self.configured))),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn retained_readiness_slot_tracks_replacement_and_fails_closed() {
+        let service = huginn_runtime::composition::model_id();
+        let mut supervisor = Supervisor::default();
+        supervisor
+            .register(Box::new(ModelPlugin {
+                id: "test.model.initial",
+                configured: false,
+            }))
+            .unwrap();
+        supervisor.start().await.unwrap();
+        let readiness = supervisor
+            .service_slot_handle::<ModelService>(&service)
+            .unwrap();
+
+        assert!(!current_model_ready(&readiness));
+        supervisor
+            .substitute(
+                &service,
+                Box::new(ModelPlugin {
+                    id: "test.model.replacement",
+                    configured: true,
+                }),
+                SubstitutionPolicy::ReportUndrained,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert!(current_model_ready(&readiness));
+
+        supervisor.remove("test.model.replacement").await.unwrap();
+        assert!(!current_model_ready(&readiness));
+        supervisor.shutdown().await;
+    }
 }

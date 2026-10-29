@@ -1,0 +1,12 @@
+change: huginn-epic-01-microkernel-service-composition
+current_phase: explore
+completed:
+  - init
+  - explore
+next: "slice implementation under huginn-service-provider-substitution"
+updated: "2026-10-28"
+epic: DALLAY-718
+policy: umbrella-epic
+slice: huginn-service-provider-substitution
+slice_issue: 509
+slice_status: approved
