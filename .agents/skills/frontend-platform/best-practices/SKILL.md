@@ -1,213 +1,174 @@
 ---
 name: best-practices
 description: >-
-  Apply modern web development best practices for security, compatibility, and code
-  quality. Use when the task involves `apply best practices`, `security audit`, `modernize
-  code`, `code quality review`, or `check for vulnerabilities`.
+  Security, compatibility, quality and performance rules for Cortex web surfaces,
+  especially the Rook dashboard. Use for security audits, modernization, code
+  quality reviews, or vulnerability checks.
 license: MIT
 metadata:
-  version: "1.0.0"
+  author: cortex
+  version: "2.0"
 ---
 
 # Best practices
 
-Modern web development standards based on Lighthouse best practices audits. Covers security, browser
-compatibility, and code quality patterns.
+Rules for web code in this monorepo. They follow the priority order in
+`.agents/AGENTS.md`: security, then performance, then UX. Apply them to
+`apps/rook/dashboard` and any future web surface; Rust services follow the
+security rules for headers, cookies and dependencies too.
 
 ## Security
 
-### HTTPS everywhere
+### HTTPS and transport
 
-**Enforce HTTPS:**
+- Serve production over HTTPS only. Do not ship `http://` assets, fonts, scripts
+  or API calls that would be blocked as mixed content.
+- Write absolute `https://` URLs. Protocol-relative `//host/path` inherits the
+  page protocol; it is not a guarantee of HTTPS and is best avoided.
+- Redirect HTTP to HTTPS at the edge and send HSTS:
 
-```html
-<!-- ❌ Mixed content -->
-<img src="http://example.com/image.jpg">
-<script src="http://cdn.example.com/script.js"></script>
-
-<!-- ✅ HTTPS only -->
-<img src="https://example.com/image.jpg">
-<script src="https://cdn.example.com/script.js"></script>
-
-<!-- ✅ Protocol-relative (will use page's protocol) -->
-<img src="//example.com/image.jpg">
-```
-
-**HSTS Header:**
-
-```
+```http
 Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 ```
 
-### Content Security Policy (CSP)
+Only add `preload` once every subdomain is HTTPS-ready; removal is slow.
 
-```html
-<!-- Basic CSP via meta tag -->
-<meta http-equiv="Content-Security-Policy"
-      content="default-src 'self'; 
-               script-src 'self' https://trusted-cdn.com; 
-               style-src 'self' 'unsafe-inline';
-               img-src 'self' data: https:;
-               connect-src 'self' https://api.example.com;">
+### Content Security Policy
 
-<!-- Better: HTTP header -->
-```
+Send CSP as an HTTP response header. A `<meta http-equiv>` tag works for basic
+directives but cannot enforce `frame-ancestors`, `report-uri` or `sandbox`.
 
-**CSP Header (recommended):**
-
-```
-Content-Security-Policy: 
+```http
+Content-Security-Policy:
   default-src 'self';
-  script-src 'self' 'nonce-abc123' https://trusted.com;
-  style-src 'self' 'nonce-abc123';
+  script-src 'self' 'nonce-<random>';
+  style-src 'self' 'nonce-<random>';
   img-src 'self' data: https:;
   connect-src 'self' https://api.example.com;
-  frame-ancestors 'self';
+  frame-ancestors 'none';
   base-uri 'self';
   form-action 'self';
+  object-src 'none';
 ```
 
-**Using nonces for inline scripts:**
-
-```html
-
-<script nonce="abc123">
-  // This inline script is allowed
-</script>
-```
+- Generate a fresh nonce per response; never reuse a literal nonce.
+- Avoid `'unsafe-inline'` and `'unsafe-eval'`. Vue's runtime compiler needs
+  `'unsafe-eval'`; the dashboard uses precompiled SFCs, so it does not.
+- Start with `Content-Security-Policy-Report-Only` to find violations, then
+  enforce.
+- Do not add a CSP that the application cannot satisfy; a broken page is not a
+  security win.
 
 ### Security headers
 
-```
-# Prevent clickjacking
+```http
+# Clickjacking — CSP frame-ancestors is the modern control
 X-Frame-Options: DENY
 
-# Prevent MIME type sniffing
+# Stop MIME sniffing
 X-Content-Type-Options: nosniff
 
-# Enable XSS filter (legacy browsers)
-X-XSS-Protection: 1; mode=block
-
-# Control referrer information
+# Limit referrer leakage
 Referrer-Policy: strict-origin-when-cross-origin
 
-# Permissions policy (formerly Feature-Policy)
+# Disable powerful features by default
 Permissions-Policy: geolocation=(), microphone=(), camera=()
 ```
 
-### No vulnerable libraries
+- **Do not send `X-XSS-Protection`.** It is obsolete, can introduce
+  vulnerabilities in old browsers, and CSP replaces it.
+- `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` are useful when
+  the app needs cross-origin isolation; add them deliberately, not by default.
+
+### Dependencies and supply chain
+
+Cortex uses **pnpm** and Cargo. Do not introduce npm/yarn lockfiles or scripts.
 
 ```bash
-# Check for vulnerabilities
-npm audit
-yarn audit
-
-# Auto-fix when possible
-npm audit fix
-
-# Check specific package
-npm ls lodash
+pnpm audit --audit-level=moderate     # JS dependencies
+cargo audit                           # Rust dependencies (just ci-audit)
+pnpm outdated -r                      # review upgrades
 ```
 
-**Keep dependencies updated:**
+- CI already blocks on gitleaks, semgrep, trivy and `cargo audit`. Keep those
+  gates; do not weaken them to land a change.
+- Commit `pnpm-lock.yaml`; the dashboard must not contain its own lockfile.
+- Review new dependencies for maintenance, license, install scripts and transitive
+  weight. Prefer the platform API over a package.
+- **Never load scripts from `polyfill.io`.** The domain was sold and served
+  malicious code in 2024. Ship only code you build.
 
-```json
-// package.json
-{
-  "scripts": {
-    "audit": "npm audit --audit-level=moderate",
-    "update": "npm update && npm audit fix"
-  }
-}
+### Untrusted input
+
+Validate at the trust boundary, then use typed values internally:
+
+```ts
+import { z } from "zod";
+
+const ProviderSchema = z.object({
+	name: z.string().min(1).max(120),
+	baseUrl: z.string().url().optional(),
+});
+
+const provider = ProviderSchema.parse(await response.json());
 ```
 
-**Known vulnerable patterns to avoid:**
-
-```javascript
-// ❌ Prototype pollution vulnerable patterns
-Object.assign(target, userInput);
-_.merge(target, userInput);
-
-// ✅ Safer alternatives
-const safeData = JSON.parse(JSON.stringify(userInput));
+```rust
+// Rust: deserialize into a typed struct; reject unknown shapes.
+let request: CreateProviderRequest = serde_json::from_slice(&body)?;
 ```
 
-### Input sanitization
+- Treat HTTP input, provider responses, model output, tool results and files as
+  untrusted.
+- Avoid `Object.assign(target, userInput)` and deep-merging untrusted objects
+  into prototypes. Use an allowlist of fields or a schema.
+- `JSON.parse(JSON.stringify(x))` is not a sanitizer; it drops `Date`, `Map`,
+  functions and `undefined`, and does not stop prototype pollution.
 
-```javascript
-// ❌ XSS vulnerable
-element.innerHTML = userInput;
-document.write(userInput);
+### Rendering untrusted content
 
-// ✅ Safe text content
-element.textContent = userInput;
+```vue
+<!-- ❌ Raw HTML from an API or user -->
+<div v-html="untrusted" />
 
-// ✅ If HTML needed, sanitize
-import DOMPurify from 'dompurify';
-
-element.innerHTML = DOMPurify.sanitize(userInput);
+<!-- ✅ Text is escaped by Vue -->
+<div>{{ untrusted }}</div>
 ```
 
-### Secure cookies
+- Prefer text interpolation, `textContent` and framework escaping.
+- `v-html` / `innerHTML` require sanitization with a reviewed library; none is
+  installed in the dashboard, so do not add a raw-HTML path casually.
+- Never interpolate untrusted data into `eval`, `new Function`, `document.write`
+  or inline event handler attributes.
 
-```javascript
-// ❌ Insecure cookie
-document.cookie = "session=abc123";
+### Cookies and sessions
 
-// ✅ Secure cookie (server-side)
-Set - Cookie
-:
-session = abc123;
-Secure;
-HttpOnly;
-SameSite = Strict;
-Path =
-/
+```http
+Set-Cookie: session=<opaque-token>; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600
 ```
 
----
+- `HttpOnly` keeps tokens away from JavaScript; `Secure` requires HTTPS;
+  `SameSite=Strict` or `Lax` blocks most CSRF.
+- The dashboard uses a double-submit CSRF token: state-changing requests send
+  `X-CSRF-Token` matching the `csrf_token` cookie. Keep that logic in
+  `src/lib/api.ts`; never bypass or duplicate it.
+- Do not store credentials or tokens in `localStorage` when a cookie works.
+- Never log cookies, authorization headers or API keys.
+
+### Secrets
+
+- Secrets belong in environment variables or the secret store, never in source,
+  tests, fixtures or logs.
+- Use placeholder values in examples; dev defaults are not production secrets.
+- Rotate any credential that appears in a commit, a screenshot or a trace.
 
 ## Browser compatibility
 
-### Doctype declaration
+### Document basics
 
 ```html
-<!-- ❌ Missing or invalid doctype -->
-<HTML>
-<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
-
-<!-- ✅ HTML5 doctype -->
 <!DOCTYPE html>
 <html lang="en">
-```
-
-### Character encoding
-
-```html
-<!-- ❌ Missing or late charset -->
-<html>
-<head>
-  <title>Page</title>
-  <meta charset="UTF-8">
-</head>
-
-<!-- ✅ Charset as first element in head -->
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Page</title>
-</head>
-```
-
-### Viewport meta tag
-
-```html
-<!-- ❌ Missing viewport -->
-<head>
-  <title>Page</title>
-</head>
-
-<!-- ✅ Responsive viewport -->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -215,262 +176,162 @@ Path =
 </head>
 ```
 
+- Charset first, then viewport, then title.
+- Set the document language; the dashboard ships `en` and `es` locales.
+
 ### Feature detection
 
 ```javascript
-// ❌ Browser detection (brittle)
-if (navigator.userAgent.includes('Chrome')) {
-  // Chrome-specific code
-}
-
-// ✅ Feature detection
-if ('IntersectionObserver' in window) {
-  // Use IntersectionObserver
+if ("IntersectionObserver" in window) {
+  // use it
 } else {
-  // Fallback
-}
-
-// ✅ Using @supports in CSS
-@supports(display:
-grid
-)
-{
-.
-  container
-  {
-    display: grid;
-  }
-}
-
-@supports
-not(display
-:
-grid
-)
-{
-.
-  container
-  {
-    display: flex;
-  }
+  // fallback
 }
 ```
 
-### Polyfills (when needed)
+Do not branch on `navigator.userAgent`. Use feature detection or `@supports`:
 
-```html
-<!-- Load polyfills conditionally -->
-<script>
-  if (!('fetch' in window)) {
-    document.write('<script src="/polyfills/fetch.js"><\/script>');
-  }
+```css
+@supports (display: grid) {
+  .container { display: grid; }
+}
+
+@supports not (display: grid) {
+  .container { display: flex; }
+}
+```
+
+### Targets
+
+The dashboard uses Vite 8 with a modern baseline. Check `vite.config.ts` and the
+project `browserslist`/build target before adding legacy polyfills. Do not add
+`core-js` or a CDN polyfill for a feature the target browsers support.
+
+## Code quality
+
+- Format and lint with **Biome**: `pnpm --filter @dallay/rook-dashboard run lint`.
+  Do not add ESLint, Prettier or a second formatter.
+- Keep TypeScript strict. Avoid `any`; use `unknown` plus narrowing or a schema.
+- Remove `console.log` from production paths. Log through the application's
+  error reporting, with context and without secrets.
+- Handle errors where they can be acted on. Surface a user-readable message and
+  keep the technical detail in logs.
+
+### Vue error handling
+
+```ts
+// main.ts
+app.config.errorHandler = (error, instance, info) => {
+	reportError(error, { component: instance?.$options.name, info });
+};
+```
+
+```vue
+<script setup lang="ts">
+import { onErrorCaptured } from "vue";
+
+onErrorCaptured((error) => {
+	reportError(error);
+	return false; // stop propagation after handling
+});
 </script>
-
-<!-- Or use polyfill.io -->
-<script src="https://polyfill.io/v3/polyfill.min.js?features=fetch,IntersectionObserver"></script>
 ```
 
----
+- Every view needs loading, empty, error and success states (`LoadingState`,
+  `EmptyState`, `ErrorBanner`).
+- Clean up listeners, intervals and observers in `onUnmounted`; prefer
+  `AbortController` when a request can outlive the component.
 
-## Deprecated APIs
+## Performance
 
-### Avoid these
+### Loading
+
+- Use `defer` for scripts that do not need to block parsing; use `type="module"`
+  in modern builds.
+- Preload the critical font or hero image; lazy-load below-the-fold images with
+  `loading="lazy"` and explicit `width`/`height` to avoid layout shift.
+- Import above-the-fold components eagerly and route-level views lazily.
+- Do not ship a large dependency for a small utility.
+
+### Runtime
 
 ```javascript
-// ❌ document.write (blocks parsing)
-document.write('<script src="..."></script>');
-
-// ✅ Dynamic script loading
-const script = document.createElement('script');
-script.src = '...';
-document.head.appendChild(script);
-
-// ❌ Synchronous XHR (blocks main thread)
-const xhr = new XMLHttpRequest();
-xhr.open('GET', url, false); // false = synchronous
-
-// ✅ Async fetch
-const response = await fetch(url);
-
-// ❌ Application Cache (deprecated)
-<html manifest="cache.manifest">
-
-// ✅ Service Workers
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
-}
-```
-
-### Event listener passive
-
-```javascript
-// ❌ Non-passive touch/wheel (may block scrolling)
-element.addEventListener('touchstart', handler);
-element.addEventListener('wheel', handler);
-
-// ✅ Passive listeners (allows smooth scrolling)
-element.addEventListener('touchstart', handler, {passive: true});
-element.addEventListener('wheel', handler, {passive: true});
-
-// ✅ If you need preventDefault, be explicit
-element.addEventListener('touchstart', handler, {passive: false});
-```
-
----
-
-## Console & errors
-
-### No console errors
-
-```javascript
-// ❌ Errors in production
-console.log('Debug info'); // Remove in production
-throw new Error('Unhandled'); // Catch all errors
-
-// ✅ Proper error handling
-try {
-  riskyOperation();
-} catch (error) {
-  // Log to error tracking service
-  errorTracker.captureException(error);
-  // Show user-friendly message
-  showErrorMessage('Something went wrong. Please try again.');
-}
-```
-
-### Error boundaries (React)
-
-```jsx
-class ErrorBoundary extends React.Component {
-  state = {hasError: false};
-
-  static getDerivedStateFromError(error) {
-    return {hasError: true};
-  }
-
-  componentDidCatch(error, info) {
-    errorTracker.captureException(error, {extra: info});
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <FallbackUI/>;
-    }
-    return this.props.children;
-  }
-}
-
-// Usage
-<ErrorBoundary>
-  <App/>
-</ErrorBoundary>
-```
-
-### Global error handler
-
-```javascript
-// Catch unhandled errors
-window.addEventListener('error', (event) => {
-  errorTracker.captureException(event.error);
-});
-
-// Catch unhandled promise rejections
-window.addEventListener('unhandledrejection', (event) => {
-  errorTracker.captureException(event.reason);
-});
-```
-
----
-
-## Source maps
-
-### Production configuration
-
-```javascript
-// ❌ Source maps exposed in production
-// webpack.config.js
-module.exports = {
-  devtool: 'source-map', // Exposes source code
-};
-
-// ✅ Hidden source maps (uploaded to error tracker)
-module.exports = {
-  devtool: 'hidden-source-map',
-};
-
-// ✅ Or no source maps in production
-module.exports = {
-  devtool: process.env.NODE_ENV === 'production' ? false : 'source-map',
-};
-```
-
----
-
-## Performance best practices
-
-### Avoid blocking patterns
-
-```javascript
-// ❌ Blocking script
-<script src="heavy-library.js"></script>
-
-// ✅ Deferred script
-<script defer src="heavy-library.js"></script>
-
-// ❌ Blocking CSS import
-@
-import url
-
-('other-styles.css');
-
-// ✅ Link tags (parallel loading)
-<link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="other-styles.css">
-```
-
-### Efficient event handlers
-
-```javascript
-// ❌ Handler on every element
-items.forEach(item => {
-  item.addEventListener('click', handleClick);
-});
+// ❌ One listener per item
+items.forEach((item) => item.addEventListener("click", handleClick));
 
 // ✅ Event delegation
-container.addEventListener('click', (e) => {
-  if (e.target.matches('.item')) {
-    handleClick(e);
-  }
+container.addEventListener("click", (event) => {
+	const target = event.target.closest(".item");
+	if (target) handleClick(target);
 });
 ```
 
-### Memory management
-
 ```javascript
-// ❌ Memory leak (never removed)
-const handler = () => { /* ... */
-};
-window.addEventListener('resize', handler);
+// ❌ Listener that outlives the component
+window.addEventListener("resize", handler);
 
-// ✅ Cleanup when done
-const handler = () => { /* ... */
-};
-window.addEventListener('resize', handler);
-
-// Later, when component unmounts:
-window.removeEventListener('resize', handler);
-
-// ✅ Using AbortController
+// ✅ Remove it, or tie it to an AbortSignal
 const controller = new AbortController();
-window.addEventListener('resize', handler, {signal: controller.signal});
-
-// Cleanup:
+window.addEventListener("resize", handler, { signal: controller.signal });
+// later
 controller.abort();
 ```
 
----
+- Use `computed` for derived state instead of recalculating in templates.
+- Keep reactivity shallow for large lists (`shallowRef`, `markRaw` where apt).
+- Batch DOM reads and writes; avoid layout thrash in loops.
+- Do not add `waitForTimeout` or polling sleeps to fix a race. Fix the race.
 
-## Additional References
+## Tooling
 
-- Read [references/REFERENCE.md](references/REFERENCE.md) when you need code quality checks,
-  permissions and privacy guidance, the audit checklist, or supporting tools.
+| Task | Command |
+|---|---|
+| Lint/format | `pnpm --filter @dallay/rook-dashboard run lint` |
+| Typecheck | `pnpm --filter @dallay/rook-dashboard run typecheck` |
+| Unit tests | `pnpm --filter @dallay/rook-dashboard exec vitest run` |
+| E2E | `just test-e2e` (Docker) |
+| Rust audit | `just ci-audit` |
+| Skills/Markdown | `just ci-lint` |
+
+Use `just --list` for the canonical recipes. Do not add npm, yarn or Makefile
+instructions to documentation or CI.
+
+## Audit checklist
+
+### Security
+
+- [ ] HTTPS only; no mixed content
+- [ ] CSP sent as a header; no `'unsafe-inline'`/`'unsafe-eval'` without a reason
+- [ ] `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` present
+- [ ] No `X-XSS-Protection`
+- [ ] Cookies use `Secure`, `HttpOnly`, `SameSite`
+- [ ] CSRF token enforced on state-changing requests
+- [ ] No secrets in source, logs, traces or fixtures
+- [ ] `pnpm audit` and `cargo audit` clean; no `polyfill.io`
+- [ ] Untrusted input validated; no raw `v-html` without sanitization
+
+### Compatibility
+
+- [ ] HTML5 doctype, charset first, viewport present, `lang` set
+- [ ] Feature detection instead of user-agent branching
+- [ ] No deprecated APIs (`document.write`, sync XHR, AppCache)
+- [ ] Passive listeners for scroll/touch where they do not call `preventDefault`
+
+### Quality and performance
+
+- [ ] Biome passes; TypeScript strict; no `any` escapes
+- [ ] No console noise; errors handled and reported
+- [ ] Listeners, timers and observers cleaned up
+- [ ] Images have dimensions and lazy loading where appropriate
+- [ ] Loading, empty, error and success states covered
+- [ ] No artificial sleeps, retries or `force: true` hiding a defect
+
+## References
+
+- [MDN Web Security](https://developer.mozilla.org/en-US/docs/Web/Security)
+- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [OWASP Secure Headers](https://owasp.org/www-project-secure-headers/)
+- [Vite build options](https://vite.dev/config/build-options)
+- [Vue security](https://vuejs.org/guide/best-practices/security)
+- [references/REFERENCE.md](references/REFERENCE.md) for HTML, privacy and
+  permission details.

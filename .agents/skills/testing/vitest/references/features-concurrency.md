@@ -52,17 +52,20 @@ describe.concurrent('parallel suite', () => {
 
 Force sequential execution:
 
+Vitest 5 removed `test.sequential` and `describe.sequential`. Use
+`{ concurrent: false }` to opt out of inherited concurrency:
+
 ```ts
 describe.concurrent('mostly parallel', () => {
   test('parallel 1', async () => {})
   test('parallel 2', async () => {})
-  
-  test.sequential('must run alone 1', async () => {})
-  test.sequential('must run alone 2', async () => {})
+
+  test('must run alone 1', { concurrent: false }, async () => {})
+  test('must run alone 2', { concurrent: false }, async () => {})
 })
 
 // Or entire suite
-describe.sequential('sequential suite', () => {
+describe('sequential suite', { concurrent: false }, () => {
   test('first', () => {})
   test('second', () => {})
 })

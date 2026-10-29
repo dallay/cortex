@@ -117,7 +117,7 @@ app.use((_req, res, next) => {
 ### Security (critical)
 
 - [ ] HTTPS enabled, no mixed content
-- [ ] No vulnerable dependencies (`npm audit`)
+- [ ] No vulnerable dependencies (`pnpm audit`, `cargo audit`)
 - [ ] CSP headers configured
 - [ ] Security headers present
 - [ ] No exposed source maps
@@ -149,7 +149,8 @@ app.use((_req, res, next) => {
 
 | Tool                                               | Purpose                    |
 |----------------------------------------------------|----------------------------|
-| `npm audit`                                        | Dependency vulnerabilities |
+| `pnpm audit`                                       | JS dependency vulnerabilities |
+| `cargo audit` / `just ci-audit`                    | Rust dependency vulnerabilities |
 | [SecurityHeaders.com](https://securityheaders.com) | Header analysis            |
 | [W3C Validator](https://validator.w3.org)          | HTML validation            |
 | Lighthouse                                         | Best practices audit       |

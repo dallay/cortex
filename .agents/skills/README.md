@@ -1,185 +1,134 @@
-# Rust Skills — Cortex Edition
+# Agent Skills — Cortex
 
-Colección de skills de Rust para el monorepo Cortex, basada en
-[rust-skills](https://github.com/leonardomso/rust-skills) con adaptaciones
-para arquitectura hexagonal y patrones del proyecto.
+Catálogo de skills de ingeniería y de producto del monorepo. Cada skill vive en
+su propio directorio con un `SKILL.md`; las guías Rust heredadas son documentos
+sueltos bajo `languages-typing/rust/`.
 
-## Skills Disponibles
+La validación estructural es obligatoria en CI:
 
-### [rust-anti-patterns](rust-anti-patterns.md)
+```bash
+node scripts/validate-skills.mjs
+node --test scripts/validate-skills.test.mjs
+```
 
-Anti-patterns comunes a evitar en Rust.
+El validador comprueba frontmatter, identidad `name`/directorio, duplicados,
+longitud de descripción, tamaño y enlaces locales. **No certifica** afirmaciones
+técnicas, versiones ni comandos: eso se revisa contra manifiestos, código y tests.
 
-- anti-clone-excessive
-- anti-over-abstraction
-- anti-stringly-typed
-- anti-unwrap-abuse
+## Descubrimiento: dos consumidores
 
-### [rust-api-design](rust-api-design.md)
+`.agents/skills/` tiene dos usos distintos y no comparten el mismo mecanismo:
 
-Patrones para diseñar APIs públicas correctas.
+| Consumidor | Qué usa | Alcance |
+|---|---|---|
+| Agentes de ingeniería (OpenCode, Claude Code, Codex) | Catálogo completo, sincronizado con AgentSync | Cualquier profundidad |
+| Huginn (`FilesystemSkillCatalog`) | Solo hijos directos de `.agents/skills/` | Un nivel |
 
-- api-sealed-trait
-- api-newtype-safety
-- api-must-use
-- api-common-traits
-- api-default-impl
-- api-non-exhaustive
-- api-parse-dont-validate
+Consecuencias:
 
-### [rust-async-patterns](rust-async-patterns.md)
+- `pinned-tag/SKILL.md` es **descubrible** por Huginn.
+- `tui/ratatui-tui/SKILL.md` es una skill de ingeniería y **no** es descubrible
+  por el catálogo actual. Es intencional; cambiar el contrato de descubrimiento
+  requiere una decisión de producto y pruebas de profundidad, duplicados y
+  enlaces simbólicos.
+- Huginn valida hasta 65.536 bytes por archivo, pero `load_skill` tiene un
+  presupuesto de 16 KiB para la respuesta JSON. Una skill puede ser **válida** y
+  no ser **cargable**; revisa el tamaño antes de añadir material extenso.
 
-Patrones async para Tokio, incluyendo errores críticos encontrados.
+## Skills de producto
 
-- async-no-lock-await ⚠️ CRÍTICO
-- async-clone-before-await
-- async-join-parallel
-- async-spawn-blocking
-- async-cancellation-token
-- async-bounded-channel
+### [pinned-tag](pinned-tag/SKILL.md)
 
-### [rust-error-handling](rust-error-handling.md)
+Fija GitHub Actions a SHAs inmutables y resuelve la referencia correcta
+(`v4`, `v4.2.2`, tags anotados) con `scripts/resolve-action-sha.sh`.
 
-Patrones de manejo de errores alineados con CortexError.
+### [tui/ratatui-tui](tui/ratatui-tui/SKILL.md)
 
-- err-thiserror-lib
-- err-from-impl
-- err-no-unwrap-prod ⚠️
-- err-question-mark
-- err-result-over-panic
-- err-source-chain
+Contratos operativos para la TUI de Huginn: propietario único del terminal,
+renderizado inline con Ratatui, layout, Unicode, foco/overlays, ciclo de vida y
+pruebas PTY.
 
-### [rust-linting](rust-linting.md)
+## Frontend
 
-Configuración de lints y enforcement.
+Ruta base: `frontend-platform/`.
 
-- lint-deny-correctness ⚠️ CRÍTICO
-- lint-missing-docs
-- lint-unsafe-doc
-- lint-rustfmt-check
+| Skill | Uso |
+|---|---|
+| [vue](frontend-platform/vue/SKILL.md) | Componentes, composables, stores Pinia, formularios del dashboard |
+| [shadcn-vue](frontend-platform/shadcn-vue/SKILL.md) | Componentes y registro de shadcn-vue |
+| [best-practices](frontend-platform/best-practices/SKILL.md) | Seguridad, compatibilidad, calidad y rendimiento web |
+| [accessibility](frontend-platform/accessibility/SKILL.md) | WCAG, navegación por teclado, lectores de pantalla |
+| [core-web-vitals](frontend-platform/core-web-vitals/SKILL.md) | LCP, CLS e INP |
+| [performance](frontend-platform/performance/SKILL.md) | Optimización de carga y runtime |
+| [seo](frontend-platform/seo/SKILL.md) | Metadatos, datos estructurados, sitemap |
+| [astro](frontend-platform/astro/SKILL.md) | Astro, SSG e islas |
+| [frontend-design](frontend-platform/frontend-design/SKILL.md) | Diseño de componentes y páginas |
+| [animate-text](frontend-platform/animate-text/SKILL.md) | Efectos de texto con nombre |
+| [nothing-design](frontend-platform/nothing-design/SKILL.md) | Estilo Nothing |
+| [modern-web-guidance](frontend-platform/modern-web-guidance/SKILL.md) | Búsqueda de APIs y patrones web actuales |
+| [chrome-extensions](frontend-platform/chrome-extensions/SKILL.md) | Extensiones Manifest V3 y Chrome Web Store |
 
-### [rust-documentation](rust-documentation.md)
+## Testing
 
-Patrones de documentación para código Rust.
+Ruta base: `testing/`.
 
-- doc-all-public
-- doc-module-inner
-- doc-examples-section
-- doc-errors-section
-- doc-panics-section
-- doc-safety-section
-- doc-intra-links
-- doc-hidden-setup
+| Skill | Uso |
+|---|---|
+| [vitest](testing/vitest/SKILL.md) | Tests unitarios y de componentes; Vitest 5.0.5 |
+| [playwright](testing/playwright/SKILL.md) | E2E del dashboard; `apps/rook/dashboard/e2e` |
+| [playwright-best-practices](testing/playwright-best-practices/SKILL.md) | Patrones avanzados de Playwright |
 
-### [rust-naming](rust-naming.md)
+## Lenguajes y tipado
 
-Convenciones de nomenclatura para Rust.
+| Skill | Uso |
+|---|---|
+| [typescript](languages-typing/typescript/SKILL.md) | Tipos, interfaces y genéricos |
+| [rust-anti-patterns](languages-typing/rust/rust-anti-patterns.md) | Anti-patterns comunes |
+| [rust-api-design](languages-typing/rust/rust-api-design.md) | Diseño de APIs públicas |
+| [rust-async-patterns](languages-typing/rust/rust-async-patterns.md) | Tokio y concurrencia |
+| [rust-error-handling](languages-typing/rust/rust-error-handling.md) | `CortexError`, `thiserror`, propagación |
+| [rust-linting](languages-typing/rust/rust-linting.md) | Lints y enforcement |
+| [rust-documentation](languages-typing/rust/rust-documentation.md) | Docs públicas, ejemplos y safety |
+| [rust-naming](languages-typing/rust/rust-naming.md) | Convenciones de nombres |
+| [rust-memory](languages-typing/rust/rust-memory.md) | Asignación, clonado y zero-copy |
+| [rust-testing](languages-typing/rust/rust-testing.md) | Tests, doc-tests y benchmarks |
+| [rust-tooling](languages-typing/rust/rust-tooling.md) | `just`, cobertura, auditoría y debugging |
 
-- name-funcs-snake
-- name-consts-screaming
-- name-acronym-word
-- name-into-ownership
-- name-as-free
-- name-conversion-prefixes
+## Arquitectura del monorepo
 
-### [rust-memory](rust-memory.md)
+```text
+crates/
+├── domain/
+│   ├── shared-kernel/     # CortexError, IDs, sin dependencias de infraestructura
+│   └── rook-core/         # Puertos y modelo de dominio
+├── application/
+│   └── rook-usecases/     # Casos de uso, routing, fallback
+├── infrastructure/
+│   ├── providers-*/       # Adaptadores de proveedores
+│   ├── transport-axum/    # Adaptador HTTP
+│   └── …                  # Cache, auditoría, persistencia
+├── huginn/                # Agente local: dominio, aplicación, runtime, presentación
+└── test-support/          # Utilidades compartidas de test
+```
 
-Patrones de gestión de memoria.
+Las skills respetan esta estructura y la dirección de dependencias.
 
-- mem-with-capacity
-- mem-avoid-format
-- mem-clone-from
-- mem-compact-string
-- mem-zero-copy
-- mem-boxed-slice
-- mem-smallvec
-- mem-reuse-collections
+## Reglas de aplicación
 
-### [rust-testing](rust-testing.md)
-
-Patrones de testing para el monorepo.
-
-- test-descriptive-names
-- test-one-assertion
-- test-doc-tests
-- test-setup-teardown
-- test-error-paths
-- test-mocking
-- test-property-based
-- test-benchmarks
-
-### [rust-tooling](rust-tooling.md)
-
-Herramientas del ecosistema Rust.
-
-- cargo-make (just)
-- cargo-watch
-- cargo-expand
-- cargo-flamegraph
-- tarpaulin
-- cargo-audit
-- cargo-outdated
-- rust-analyzer
-
-## ⚠️ Errores Críticos Detectados
-
-Durante el análisis se encontraron errores activos en el codebase:
-
-### 1. async-no-lock-await en router_impl.rs
-
-El código usa `parking_lot::RwLock` pero llama `.read().await` como si fuera
-`tokio::sync::RwLock`. Esto causa errores de compilación.
-
-**Archivos afectados:**
-
-- `crates/application/rook-usecases/src/router_impl.rs`
-
-**Fix requerido:** Usar `tokio::sync::RwLock` O hacer las operaciones sync.
-
-### 2. missing field base_url en provider-sqlite
-
-Error de compilación: falta campo `base_url` en initializer.
-
-**Archivo afectado:**
-
-- `crates/infrastructure/provider-sqlite/src/repository.rs:342`
-
-## Arquitectura del Monorepo
-
- ```
- crates/
- ├── domain/
- │   ├── shared-kernel/     # CortexError, IDs, sin deps
- │   └── rook-core/          # Ports, domain model
- ├── application/
- │   └── rook-usecases/     # RouteRequest, FallbackRouter
- └── infrastructure/
-     ├── providers-*/        # Provider implementations
-     ├── transport-axum/     # HTTP adapters
-     └── ...                # Cache, audit, etc.
- ```
-
-Las skills respetan esta estructura y layering.
-
-## Reglas de Aplicación
-
-1. **Domain layer (shared-kernel, rook-core)** — NO usar anyhow
-    - Usar CortexError y tipos domain-specific
-    - thiserror para definiciones de error
-
-2. **Application layer (rook-usecases)** — Errores tipados
-    - Propagar errores de providers
-    - No capturar y ocultar errores
-
-3. **Infrastructure (providers, transport)** — Adaptar errores
-    - Convertir errores externos a CortexError
-    - Documentar errores de API externos
-
-4. **Binary (apps/rook)** — Puede usar anyhow
-    - Contexto adicional para errores
-    - Logging y response HTTP
+1. **Domain (`shared-kernel`, `rook-core`)** — no usar `anyhow`.
+   - `CortexError` y errores específicos de dominio.
+   - `thiserror` para definiciones.
+2. **Application (`rook-usecases`)** — errores tipados.
+   - Propagar errores de proveedores.
+   - No capturar y ocultar fallos.
+3. **Infrastructure (`providers-*`, `transport-axum`)** — adaptar errores.
+   - Convertir errores externos a `CortexError`.
+   - Documentar errores de APIs externas.
+4. **Binarios (`apps/rook`)** — pueden usar `anyhow` en el borde.
+   - Contexto adicional, logging y respuesta HTTP.
 
 ## Fuentes
 
-- [rust-skills](https://github.com/leonardomso/rust-skills) — Original collection
-- [Our Rust code quality guide](docs/rook/architecture.md) — Arquitectura Cortex
+- [rust-skills](https://github.com/leonardomso/rust-skills) — colección original
+- [Arquitectura Cortex](../../docs/rook/architecture.md)
+- [Guía de desarrollo](../../docs/development.md)
