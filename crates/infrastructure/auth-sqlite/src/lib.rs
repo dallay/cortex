@@ -190,27 +190,25 @@ impl SpendingBudgetLedgerPort for SqliteApiKeyRepository {
             return Err(SpendingBudgetReservationError::IdempotencyConflict);
         }
 
-        let (committed, existing_budget): (i64, Option<i64>) = tx
+        let committed: i64 = tx
             .query_row(
                 "SELECT
                     COALESCE(SUM(CASE
                         WHEN state IN ('reserved', 'unresolved') THEN reserved_micros_usd
                         WHEN state = 'settled' THEN settled_micros_usd
-                        ELSE 0 END), 0),
-                    MIN(CASE WHEN state != 'released' THEN budget_micros_usd END)
+                        ELSE 0 END), 0)
                  FROM api_key_spending_reservations
                  WHERE api_key_id = ?1 AND window_start = ?2 AND window_end = ?3",
                 params![reservation.api_key_id.to_string(), window_start, window_end],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .map_err(spending_reservation_db_error)?;
         let next = committed
             .checked_add(reservation.reserved_micros_usd as i64)
             .ok_or(SpendingBudgetReservationError::BudgetExceeded)?;
-        let effective_budget = existing_budget
-            .unwrap_or(reservation.budget_micros_usd as i64)
-            .min(reservation.budget_micros_usd as i64);
-        if next > effective_budget {
+        // The accepted budget governs new admission. Earlier reservations keep
+        // their original bounds and remain charged until settled or released.
+        if next > reservation.budget_micros_usd as i64 {
             return Err(SpendingBudgetReservationError::BudgetExceeded);
         }
 
@@ -1071,6 +1069,77 @@ mod tests {
                 result,
                 Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
             ));
+        });
+    }
+
+    #[test]
+    fn spending_reservations_use_changed_budget_and_preserve_prior_commitments() {
+        runtime().block_on(async {
+            for state in ["reserved", "unresolved", "settled"] {
+                let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+                let first = rook_core::SpendingBudgetReservation {
+                    api_key_id: ApiKeyId::new("budget-key"),
+                    request_id: shared_kernel::RequestId::new(),
+                    window_start: Utc
+                        .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                        .single()
+                        .unwrap(),
+                    window_end: Utc
+                        .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                        .single()
+                        .unwrap(),
+                    reserved_micros_usd: 60,
+                    budget_micros_usd: 100,
+                };
+                repo.reserve_spending(&first)
+                    .await
+                    .expect("initial reservation");
+                match state {
+                    "unresolved" => repo
+                        .settle_spending(&first.api_key_id, &first.request_id, None)
+                        .await
+                        .unwrap(),
+                    "settled" => repo
+                        .settle_spending(&first.api_key_id, &first.request_id, Some(60))
+                        .await
+                        .unwrap(),
+                    _ => {}
+                }
+                let raised = rook_core::SpendingBudgetReservation {
+                    request_id: shared_kernel::RequestId::new(),
+                    reserved_micros_usd: 100,
+                    budget_micros_usd: 200,
+                    ..first.clone()
+                };
+                repo.reserve_spending(&raised)
+                    .await
+                    .expect("raised budget admits beyond old limit");
+                let lowered = rook_core::SpendingBudgetReservation {
+                    request_id: shared_kernel::RequestId::new(),
+                    reserved_micros_usd: 1,
+                    budget_micros_usd: 150,
+                    ..first.clone()
+                };
+                assert!(
+                    matches!(
+                        repo.reserve_spending(&lowered).await,
+                        Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
+                    ),
+                    "{state}"
+                );
+                // Lowering the budget does not revoke previously admitted work.
+                repo.settle_spending(&raised.api_key_id, &raised.request_id, Some(100))
+                    .await
+                    .expect("prior reservation may settle");
+                if state == "reserved" {
+                    repo.settle_spending(&first.api_key_id, &first.request_id, Some(20))
+                        .await
+                        .expect("settle original bound");
+                    repo.reserve_spending(&lowered)
+                        .await
+                        .expect("settlement frees capacity under current budget");
+                }
+            }
         });
     }
 

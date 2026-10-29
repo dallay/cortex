@@ -396,12 +396,12 @@ impl RouteRequest {
         client_format: ApiFormat,
     ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
         self.apply_default_combo(&mut req);
-        self.ensure_combo_has_no_budget(&req)?;
         // Resolve aliases before combo dispatch and restrictions checks so combo
         // execution also uses the canonical model. Virtual models are combo aliases.
         if !is_virtual_model(&req.model) {
             self.resolve_model_alias(&mut req).await;
         }
+        self.ensure_combo_has_no_budget(&req)?;
 
         let combo_response = if is_virtual_model(&req.model) {
             Some(
@@ -949,13 +949,13 @@ impl RouteRequest {
 
         // 0. Resolve model alias if enabled (BEFORE restrictions check).
         self.apply_default_combo(&mut req);
-        self.ensure_combo_has_no_budget(&req)?;
         // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
         // they are combo aliases handled below. Shared helper with the
         // non-streaming path so both enforce the same invariant.
         if !is_virtual_model(&req.model) {
             self.resolve_model_alias(&mut req).await;
         }
+        self.ensure_combo_has_no_budget(&req)?;
 
         // 0a. Select a combo step before the first event, then forward its
         // native deltas. No transparent provider switch is allowed afterward.
@@ -1496,6 +1496,11 @@ impl RouteRequest {
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
+        if req.restrictions.spending_budget.is_some() {
+            return Err(CortexError::cost_unavailable(
+                "strict spending budgets do not support combo requests",
+            ));
+        }
         let combo_id = &combo.id;
 
         tracing::info!(

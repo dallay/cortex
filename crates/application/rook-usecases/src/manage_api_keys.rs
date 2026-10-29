@@ -301,6 +301,11 @@ fn validate_spending_budget(
             "spending budget and per-request limit must be greater than zero".into(),
         ));
     }
+    if budget.amount_micros_usd > i64::MAX as u64 {
+        return Err(ManageApiKeysError::Validation(
+            "spending budget exceeds the maximum supported amount".into(),
+        ));
+    }
     if budget.request_limit_micros_usd > budget.amount_micros_usd {
         return Err(ManageApiKeysError::Validation(
             "per-request limit must not exceed the spending budget".into(),
@@ -544,6 +549,59 @@ mod tests {
 
         assert!(matches!(result, Err(ManageApiKeysError::Validation(_))));
         assert!(repo.records.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_rejects_out_of_range_spending_budget() {
+        let repo = Arc::new(FakeApiKeyRepository::default());
+        let usecase = ManageApiKeys::new(repo.clone(), "test-secret", fake_registry());
+        let result = usecase
+            .create(CreateApiKeyRequest {
+                label: "Budgeted".to_string(),
+                scopes: vec![ApiKeyScope::parse("chat:read").unwrap()],
+                tier: ApiKeyTier::Free,
+                expires_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+                spending_budget: Some(rook_core::SpendingBudget {
+                    api_key_id: ApiKeyId::new("untrusted-client-id"),
+                    amount_micros_usd: i64::MAX as u64 + 1,
+                    request_limit_micros_usd: 1,
+                    window: rook_core::SpendingBudgetWindow::Daily,
+                }),
+            })
+            .await;
+
+        assert!(matches!(result, Err(ManageApiKeysError::Validation(_))));
+        assert!(repo.records.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn spending_budget_validation_preserves_limits_and_accepts_sqlite_boundary() {
+        let mut budget = rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("key"),
+            amount_micros_usd: i64::MAX as u64,
+            request_limit_micros_usd: i64::MAX as u64,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        };
+        assert!(validate_spending_budget(Some(&budget), None).is_ok());
+        for (amount, per_request) in [
+            (0, 1),
+            (1, 0),
+            (1, 2),
+            (i64::MAX as u64 + 1, 1),
+            (u64::MAX, 1),
+        ] {
+            budget.amount_micros_usd = amount;
+            budget.request_limit_micros_usd = per_request;
+            assert!(
+                matches!(
+                    validate_spending_budget(Some(&budget), None),
+                    Err(ManageApiKeysError::Validation(_))
+                ),
+                "amount={amount}, per_request={per_request}"
+            );
+        }
     }
 
     #[tokio::test]

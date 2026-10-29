@@ -418,6 +418,100 @@ async fn a_budgeted_combo_request_is_rejected_before_any_upstream_call() {
 }
 
 #[tokio::test]
+async fn direct_and_virtual_combo_calls_reject_budgets_before_upstream() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let provider =
+        Arc::new(BoundedProvider::new("bounded-provider", events.clone()).with_bound(500_000));
+    let mut usecase = make_usecase_with_provider(provider);
+    let combo = Combo::new(
+        "budget-combo".into(),
+        ComboStrategy::Priority,
+        vec![ComboStep {
+            provider_id: ProviderId::new("bounded-provider"),
+            model: TEST_MODEL.clone(),
+            connection_id: None,
+            priority: 1,
+        }],
+    );
+    usecase.combo_repository = Some(Arc::new(MapComboRepository {
+        combos: HashMap::from([(combo.id, combo.clone())]),
+    }));
+    usecase.combo_alias_repository = Some(Arc::new(MapComboAliasRepository {
+        aliases: HashMap::from([(
+            "rook/budget".into(),
+            ComboAlias::new(ModelId::new("rook/budget"), combo.id),
+        )]),
+    }));
+    let error = usecase
+        .execute_combo(&combo, budgeted_request(), ApiFormat::OpenAI)
+        .await
+        .unwrap_err();
+    assert!(error.is_cost_unavailable());
+    let mut req = budgeted_request();
+    req.model = ModelId::new("rook/budget");
+    let error = usecase
+        .execute_virtual_combo(req, ApiFormat::OpenAI)
+        .await
+        .unwrap_err();
+    assert!(error.is_cost_unavailable());
+    assert!(events.lock().unwrap().is_empty());
+}
+
+struct ComboTargetAliasRepository;
+
+#[async_trait]
+impl ModelAliasRepositoryPort for ComboTargetAliasRepository {
+    async fn find_by_alias(
+        &self,
+        alias: &ModelId,
+        _: Option<&ProviderId>,
+    ) -> Result<Option<ModelAlias>, ModelAliasRepositoryError> {
+        Ok(Some(ModelAlias {
+            alias: alias.clone(),
+            canonical: ModelId::new("rook/budget"),
+            provider_id: None,
+            created_at: Utc::now(),
+        }))
+    }
+    async fn list(&self) -> Result<Vec<ModelAlias>, ModelAliasRepositoryError> {
+        Ok(vec![])
+    }
+    async fn create(&self, _: ModelAlias) -> Result<(), ModelAliasRepositoryError> {
+        Ok(())
+    }
+    async fn delete(&self, _: &ModelId) -> Result<bool, ModelAliasRepositoryError> {
+        Ok(false)
+    }
+    async fn seed(&self, _: Vec<ModelAlias>) -> Result<usize, ModelAliasRepositoryError> {
+        Ok(0)
+    }
+}
+
+#[tokio::test]
+async fn aliases_resolving_to_combos_reject_budgets_for_both_execution_modes() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let provider =
+        Arc::new(BoundedProvider::new("bounded-provider", events.clone()).with_bound(500_000));
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let mut usecase = usecase_with_budget(provider, ledger);
+    usecase.alias_config.enabled = true;
+    usecase.alias_repository = Arc::new(ComboTargetAliasRepository);
+    let mut req = budgeted_request();
+    // This repository maps any ordinary model to a virtual combo model.
+    req.model = ModelId::new("ordinary-alias");
+    let error = usecase.execute(req.clone()).await.unwrap_err();
+    assert!(error.is_cost_unavailable(), "{error}");
+    req.stream = true;
+    let error = usecase
+        .execute_stream(req)
+        .await
+        .err()
+        .expect("combo stream rejected");
+    assert!(error.is_cost_unavailable(), "{error}");
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_budgeted_stream_reserves_before_the_stream_and_settles_as_unresolved() {
     let events: EventLog = Arc::new(Mutex::new(Vec::new()));
     let provider =

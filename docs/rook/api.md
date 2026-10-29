@@ -44,7 +44,12 @@ also require the CSRF token described above. Create and update payloads may set
 `requestLimitMicrosUsd`, and `window` (`daily` or `monthly`). Monetary values are
 positive integer micro-USD. The per-request limit must not exceed the total
 budget. Omit `spendingBudget` during an update to preserve the existing policy;
-set it to `null` to remove the policy.
+set it to `null` to remove the policy. A changed budget applies to new
+reservations. Pending reservations keep their original bounds and existing
+settlement rules; unresolved reservations remain charged. All non-released
+reservations and settled charges in the same window still
+count against the new budget. Lowering the budget below existing commitments
+blocks new reservations until sufficient capacity is available.
 
 Budgeted gateway requests require a provider adapter to expose a verifiable,
 enforceable strict cost bound. Rook rejects requests before provider I/O when

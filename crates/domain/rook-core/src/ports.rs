@@ -400,7 +400,11 @@ pub trait ProviderRepositoryPort: Send + Sync {
 #[async_trait]
 pub trait SpendingBudgetLedgerPort: Send + Sync {
     /// Atomically admit one reservation, accounting for all non-released reservations
-    /// and settled charges in the same key/window. Replays with identical parameters
+    /// and settled charges in the same key/window against the supplied accepted budget.
+    /// A budget change affects new admission only: pending reservations retain their
+    /// bounds and may settle under existing rules; unresolved and settled charges
+    /// still count against the new budget.
+    /// Replays with identical parameters
     /// are idempotent; reuse of the request ID with different parameters is rejected.
     async fn reserve_spending(
         &self,

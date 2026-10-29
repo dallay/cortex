@@ -709,11 +709,15 @@ async fn chat_completions_stream(
         Err(error) if error.is_forbidden() => return Err(map_forbidden_openai(&error)),
         Err(error) if error.is_not_found() => return Err(map_not_found_openai(&error)),
         Err(error) if error.is_spending_budget_exceeded() => {
-            return Err(HttpError {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                code: "spending_budget_exceeded",
-                message: error.to_string(),
-            });
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "rate_limit_exceeded".to_string(),
+                    code: Some("spending_budget_exceeded".to_string()),
+                    message: error.to_string(),
+                    param: None,
+                },
+            };
+            return Ok((StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response());
         }
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
         Err(error) if error.is_cost_unavailable() => {

@@ -22,7 +22,7 @@ use rook_core::{
     ApiFormat, ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
     ApiKeyTier, AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias,
     ComboAliasRepositoryError, ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort,
-    ComboStep, ComboStrategy, CompletionResponse, CortexResult, ModelAlias,
+    ComboStep, ComboStrategy, CompletionRequest, CompletionResponse, CortexResult, ModelAlias,
     ModelAliasRepositoryError, ModelAliasRepositoryPort, NewSession, NewUser, PasswordHash,
     PasswordHashError, PasswordHasher, ProviderPort, RouterPort, Session, SessionId,
     SessionRepositoryError, SessionRepositoryPort, SignatureEntry, TokenCacheStats, User, UserId,
@@ -504,6 +504,15 @@ async fn build_gateway_planned(
     openai: UpstreamMock,
     anthropic: UpstreamMock,
 ) -> Gateway {
+    build_gateway_with_router(allowed_models, openai, anthropic, None).await
+}
+
+async fn build_gateway_with_router(
+    allowed_models: Vec<&str>,
+    openai: UpstreamMock,
+    anthropic: UpstreamMock,
+    router: Option<Arc<dyn RouterPort>>,
+) -> Gateway {
     let upstreams = start_upstreams_planned(openai, anthropic).await;
 
     let openai_provider: Arc<dyn ProviderPort> = Arc::new(
@@ -612,7 +621,7 @@ async fn build_gateway_planned(
     );
     let accounting = Arc::new(responses_accounting::Records::default());
     let route_request = RouteRequest::new(
-        fallback_router.clone() as Arc<dyn RouterPort>,
+        router.unwrap_or_else(|| fallback_router.clone() as Arc<dyn RouterPort>),
         Arc::new(NoopCache),
         accounting.clone(),
         Some(accounting.clone()),
@@ -1618,4 +1627,77 @@ async fn budgeted_client_key_is_rejected_before_any_upstream_call() {
         0,
         "a budgeted request must be rejected before any upstream call"
     );
+}
+
+/// Inject an admission rejection to exercise both HTTP error paths without
+/// requiring a production provider to implement strict cost bounds.
+struct BudgetExceededRouter;
+
+#[async_trait]
+impl RouterPort for BudgetExceededRouter {
+    async fn select(
+        &self,
+        _: &CompletionRequest,
+    ) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
+        Err(shared_kernel::CortexError::spending_budget_exceeded(
+            "test window exhausted",
+        ))
+    }
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        _: &[ProviderId],
+    ) -> shared_kernel::CortexResult<Arc<dyn ProviderPort>> {
+        self.select(req).await
+    }
+    async fn on_failure(&self, _: &ProviderId, _: &shared_kernel::CortexError) {}
+    fn providers(&self) -> Vec<ProviderId> {
+        vec![ProviderId::new("openai-e2e")]
+    }
+}
+
+#[tokio::test]
+async fn spending_budget_exhaustion_has_identical_openai_envelopes_for_streaming_and_non_streaming()
+{
+    let gw = build_gateway_with_router(
+        vec![],
+        UpstreamMock::Json(openai_ok_body()),
+        UpstreamMock::Fail500,
+        Some(Arc::new(BudgetExceededRouter)),
+    )
+    .await;
+    let mut bodies = Vec::new();
+    for stream in [false, true] {
+        let (status, body) = post_json(
+            gw.app.clone(),
+            "/v1/chat/completions",
+            openai_body("gpt-4o", stream),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        assert_eq!(body["error"]["code"], "spending_budget_exceeded");
+        assert_eq!(body["error"]["type"], "rate_limit_exceeded");
+        assert_eq!(
+            body["error"]["message"],
+            shared_kernel::CortexError::spending_budget_exceeded("test window exhausted")
+                .to_string()
+        );
+        bodies.push(body);
+    }
+    assert_eq!(bodies[0], bodies[1]);
+    assert!(gw
+        .upstreams
+        .openai
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(gw
+        .upstreams
+        .anthropic
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
 }

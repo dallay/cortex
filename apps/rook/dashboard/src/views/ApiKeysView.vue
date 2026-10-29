@@ -98,6 +98,7 @@ const showEditModal = ref(false);
 const editingKey = ref<string | null>(null);
 const editForm = ref<ApiKeyFormState>(buildDefaultFormState());
 const editError = ref<string | null>(null);
+const originalEditForm = ref<ApiKeyFormState>(buildDefaultFormState());
 
 // Revoke confirmation
 const showRevokeConfirm = ref(false);
@@ -203,23 +204,18 @@ function openEditModal(key: (typeof apiKeys.value)[0]) {
     expiresAt: key.expiresAt,
     allowedModels: [...(key.allowedModels || [])],
     allowedProviders: [...(key.allowedProviders || [])],
-    spendingBudgetEnabled: key.spendingBudget !== null,
+    spendingBudgetEnabled: key.spendingBudget != null,
     spendingBudgetAmountUsd: key.spendingBudget ? microsToUsd(key.spendingBudget.amountMicrosUsd) : "",
     spendingBudgetRequestLimitUsd: key.spendingBudget ? microsToUsd(key.spendingBudget.requestLimitMicrosUsd) : "",
     spendingBudgetWindow: key.spendingBudget?.window ?? "daily",
   };
+  originalEditForm.value = {...editForm.value};
   showEditModal.value = true;
 }
 
 async function handleUpdate() {
   if (!editingKey.value) return;
   editError.value = null;
-  const spendingBudget = budgetFromForm(editForm.value);
-  if (spendingBudget === undefined) {
-    editError.value = t("apiKeys.budgetValidation");
-    return;
-  }
-
   const submissionData: UpdateApiKeyRequest = {
     label: editForm.value.label,
     scopes: editForm.value.scopes,
@@ -228,8 +224,21 @@ async function handleUpdate() {
     expiresAt: editForm.value.expiresAt,
     allowedModels: editForm.value.allowedModels,
     allowedProviders: editForm.value.allowedProviders,
-    spendingBudget,
   };
+  const original = originalEditForm.value;
+  if (
+    editForm.value.spendingBudgetEnabled !== original.spendingBudgetEnabled ||
+    editForm.value.spendingBudgetAmountUsd !== original.spendingBudgetAmountUsd ||
+    editForm.value.spendingBudgetRequestLimitUsd !== original.spendingBudgetRequestLimitUsd ||
+    editForm.value.spendingBudgetWindow !== original.spendingBudgetWindow
+  ) {
+    const spendingBudget = budgetFromForm(editForm.value);
+    if (spendingBudget === undefined) {
+      editError.value = t("apiKeys.budgetValidation");
+      return;
+    }
+    submissionData.spendingBudget = spendingBudget;
+  }
 
   const result = await update(editingKey.value, submissionData);
   if (result) {

@@ -295,6 +295,7 @@ function createApiKey(overrides = {}) {
 }
 
 beforeEach(() => {
+	vi.clearAllMocks();
 	mockApiKeys.value = [];
 	mockTotal.value = 0;
 	mockLoading.value = false;
@@ -422,6 +423,7 @@ describe("ApiKeysView", () => {
 				spendingBudgetWindow: "daily" | "monthly";
 			};
 			editForm: {
+				label: string;
 				spendingBudgetEnabled: boolean;
 				spendingBudgetAmountUsd: string;
 				spendingBudgetRequestLimitUsd: string;
@@ -475,6 +477,113 @@ describe("ApiKeysView", () => {
 			await flushPromises();
 
 			expect(mockCreate).not.toHaveBeenCalled();
+			expect(wrapper.text()).toContain(
+				"The per-request limit must not exceed the total budget",
+			);
+		});
+
+		it.each([null, undefined])(
+			"keeps an absent budget disabled (%s)",
+			async (spendingBudget) => {
+				const wrapper = makeWrapper();
+				const vm = wrapper.vm as unknown as BudgetVm;
+				vm.openEditModal(createApiKey({ spendingBudget }));
+				expect(vm.editForm.spendingBudgetEnabled).toBe(false);
+				vm.editForm.label = "renamed";
+				await wrapper.vm.$nextTick();
+				await wrapper.findAll("form").at(-1)?.trigger("submit");
+				await flushPromises();
+				expect(mockUpdate).toHaveBeenCalledWith(
+					"key-1",
+					expect.objectContaining({ label: "renamed" }),
+				);
+				expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty(
+					"spendingBudget",
+				);
+			},
+		);
+
+		it("omits an untouched budget even when the server amount exceeds JS safe integers", async () => {
+			const wrapper = makeWrapper();
+			const vm = wrapper.vm as unknown as BudgetVm;
+			vm.openEditModal(
+				createApiKey({
+					spendingBudget: {
+						amountMicrosUsd: Number.MAX_SAFE_INTEGER + 2,
+						requestLimitMicrosUsd: 500_000,
+						window: "daily",
+					},
+				}),
+			);
+			vm.editForm.label = "renamed";
+			await wrapper.vm.$nextTick();
+			await wrapper.findAll("form").at(-1)?.trigger("submit");
+			await flushPromises();
+			expect(mockUpdate).toHaveBeenCalledWith(
+				"key-1",
+				expect.objectContaining({ label: "renamed" }),
+			);
+			expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty("spendingBudget");
+		});
+
+		it.each([
+			{ spendingBudgetEnabled: true },
+			{ spendingBudgetAmountUsd: "10.000001" },
+			{ spendingBudgetRequestLimitUsd: "0.250001" },
+			{ spendingBudgetWindow: "monthly" as const },
+		])("sends an intentionally edited budget: %o", async (change) => {
+			const wrapper = makeWrapper();
+			const vm = wrapper.vm as unknown as BudgetVm;
+			vm.openEditModal(
+				createApiKey({
+					spendingBudget: {
+						amountMicrosUsd: 5_000_000,
+						requestLimitMicrosUsd: 500_000,
+						window: "daily",
+					},
+				}),
+			);
+			// Start disabled for the enable case.
+			if ("spendingBudgetEnabled" in change) {
+				vm.openEditModal(createApiKey());
+				Object.assign(vm.editForm, {
+					spendingBudgetAmountUsd: "5",
+					spendingBudgetRequestLimitUsd: "0.5",
+				});
+			}
+			Object.assign(vm.editForm, change);
+			await wrapper.vm.$nextTick();
+			await wrapper.findAll("form").at(-1)?.trigger("submit");
+			await flushPromises();
+			expect(mockUpdate.mock.calls[0][1].spendingBudget).toEqual({
+				amountMicrosUsd:
+					"spendingBudgetAmountUsd" in change ? 10_000_001 : 5_000_000,
+				requestLimitMicrosUsd:
+					"spendingBudgetRequestLimitUsd" in change ? 250_001 : 500_000,
+				window: "spendingBudgetWindow" in change ? "monthly" : "daily",
+			});
+		});
+
+		it.each([
+			{ spendingBudgetAmountUsd: "invalid" },
+			{ spendingBudgetRequestLimitUsd: "6" },
+		])("validates an intentionally edited budget: %o", async (change) => {
+			const wrapper = makeWrapper();
+			const vm = wrapper.vm as unknown as BudgetVm;
+			vm.openEditModal(
+				createApiKey({
+					spendingBudget: {
+						amountMicrosUsd: 5_000_000,
+						requestLimitMicrosUsd: 500_000,
+						window: "daily",
+					},
+				}),
+			);
+			Object.assign(vm.editForm, change);
+			await wrapper.vm.$nextTick();
+			await wrapper.findAll("form").at(-1)?.trigger("submit");
+			await flushPromises();
+			expect(mockUpdate).not.toHaveBeenCalled();
 			expect(wrapper.text()).toContain(
 				"The per-request limit must not exceed the total budget",
 			);
