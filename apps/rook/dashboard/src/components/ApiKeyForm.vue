@@ -15,6 +15,7 @@
 
 import {AlertTriangle, ChevronDown, Key, ShieldAlert} from "@lucide/vue";
 import {computed} from "vue";
+import {useI18n} from "vue-i18n";
 import {
   Accordion,
   AccordionContent,
@@ -42,6 +43,10 @@ export interface ApiKeyFormState {
   allowedModels: string[];
   allowedProviders: string[];
   isActive?: boolean;
+  spendingBudgetEnabled: boolean;
+  spendingBudgetAmountUsd: string;
+  spendingBudgetRequestLimitUsd: string;
+  spendingBudgetWindow: "daily" | "monthly";
 }
 
 interface Props {
@@ -58,6 +63,8 @@ interface Props {
   isEdit?: boolean;
 }
 
+const {t} = useI18n();
+
 const props = withDefaults(defineProps<Props>(), {
   groupOrder: () => ["chat", "providers", "admin"] as const,
   error: null,
@@ -71,6 +78,19 @@ const emit = defineEmits<{
   submit: [];
   cancel: [];
 }>();
+
+const spendingLimitExceedsBudget = computed(() => {
+  const amount = Number(props.modelValue.spendingBudgetAmountUsd);
+  const requestLimit = Number(props.modelValue.spendingBudgetRequestLimitUsd);
+  return props.modelValue.spendingBudgetEnabled
+    && amount > 0
+    && requestLimit > 0
+    && requestLimit > amount;
+});
+
+function setBudgetEnabled(enabled: boolean) {
+  update("spendingBudgetEnabled", enabled);
+}
 
 function update<K extends keyof ApiKeyFormState>(
   key: K,
@@ -389,6 +409,69 @@ function scopeSlug(value: string): string {
         </div>
       </div>
     </div>
+
+    <!-- Strict spending budget -->
+    <fieldset class="space-y-3 rounded-md border border-border p-4" data-testid="spending-budget-controls">
+      <legend class="px-1 text-sm font-medium">{{ t('apiKeys.budgetTitle') }}</legend>
+      <p class="text-xs text-muted-foreground">{{ t('apiKeys.budgetExplanation') }}</p>
+      <label class="flex items-center gap-2 text-sm" for="spending-budget-enabled">
+        <Checkbox
+          id="spending-budget-enabled"
+          data-testid="checkbox-spending-budget-enabled"
+          :aria-label="t('apiKeys.budgetEnabled')"
+          :model-value="modelValue.spendingBudgetEnabled"
+          @update:model-value="(v) => setBudgetEnabled(v === true)"
+        />
+        {{ t('apiKeys.budgetEnabled') }}
+      </label>
+      <div class="grid gap-3 sm:grid-cols-2" :aria-disabled="!modelValue.spendingBudgetEnabled">
+        <div class="space-y-2">
+          <label for="spending-budget-amount" class="text-sm font-medium">{{ t('apiKeys.budgetAmount') }}</label>
+          <Input
+            id="spending-budget-amount"
+            data-testid="input-spending-budget-amount"
+            type="number"
+            min="0.000001"
+            step="0.000001"
+            inputmode="decimal"
+            :disabled="!modelValue.spendingBudgetEnabled"
+            :model-value="modelValue.spendingBudgetAmountUsd"
+            @update:model-value="(v) => update('spendingBudgetAmountUsd', String(v ?? ''))"
+          />
+        </div>
+        <div class="space-y-2">
+          <label for="spending-budget-request-limit" class="text-sm font-medium">{{ t('apiKeys.budgetRequestLimit') }}</label>
+          <Input
+            id="spending-budget-request-limit"
+            data-testid="input-spending-budget-request-limit"
+            type="number"
+            min="0.000001"
+            step="0.000001"
+            inputmode="decimal"
+            :disabled="!modelValue.spendingBudgetEnabled"
+            :model-value="modelValue.spendingBudgetRequestLimitUsd"
+            @update:model-value="(v) => update('spendingBudgetRequestLimitUsd', String(v ?? ''))"
+          />
+        </div>
+        <div class="space-y-2 sm:col-span-2">
+          <label for="spending-budget-window" class="text-sm font-medium">{{ t('apiKeys.budgetWindow') }}</label>
+          <NativeSelect
+            id="spending-budget-window"
+            data-testid="select-spending-budget-window"
+            :aria-label="t('apiKeys.budgetWindow')"
+            :disabled="!modelValue.spendingBudgetEnabled"
+            :model-value="modelValue.spendingBudgetWindow"
+            @update:model-value="(v) => update('spendingBudgetWindow', v === 'monthly' ? 'monthly' : 'daily')"
+          >
+            <NativeSelectOption value="daily">{{ t('apiKeys.budgetDaily') }}</NativeSelectOption>
+            <NativeSelectOption value="monthly">{{ t('apiKeys.budgetMonthly') }}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+      </div>
+      <p v-if="spendingLimitExceedsBudget" role="alert" class="text-sm text-destructive">
+        {{ t('apiKeys.budgetValidation') }}
+      </p>
+    </fieldset>
 
     <!-- Expires at -->
     <div class="space-y-2">

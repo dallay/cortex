@@ -83,6 +83,31 @@ impl CortexError {
         }
     }
 
+    /// The request has a spending budget, but Rook cannot prove a strict cost bound.
+    pub fn cost_unavailable(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(CostUnavailableError(msg.into())),
+        }
+    }
+
+    pub fn is_cost_unavailable(&self) -> bool {
+        self.source.is::<CostUnavailableError>()
+    }
+
+    /// The request exceeded the strict spending budget of its UTC window.
+    ///
+    /// It is a quota rejection, not a malformed request: the request itself is
+    /// valid but Rook refuses to spend more than the configured budget.
+    pub fn spending_budget_exceeded(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(SpendingBudgetExceededError(msg.into())),
+        }
+    }
+
+    pub fn is_spending_budget_exceeded(&self) -> bool {
+        self.source.is::<SpendingBudgetExceededError>()
+    }
+
     pub fn is_auth_failed(&self) -> bool {
         self.source.is::<AuthFailedError>()
     }
@@ -205,6 +230,7 @@ impl CortexError {
     pub fn is_4xx(&self) -> bool {
         // Check for structured errors that map to 4xx
         self.is_invalid_request()
+            || self.is_cost_unavailable()
             || self.is_auth_failed()
             || self.is_forbidden()
             || self.is_not_found()
@@ -314,6 +340,30 @@ impl fmt::Display for InvalidRequestError {
         write!(f, "invalid request: {}", self.0)
     }
 }
+
+/// Rook cannot establish a strict cost bound for a budgeted request.
+#[derive(Debug)]
+pub struct CostUnavailableError(pub String);
+
+impl fmt::Display for CostUnavailableError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cost unavailable: {}", self.0)
+    }
+}
+
+impl std::error::Error for CostUnavailableError {}
+
+/// The strict spending budget of the current UTC window is exhausted.
+#[derive(Debug)]
+pub struct SpendingBudgetExceededError(pub String);
+
+impl fmt::Display for SpendingBudgetExceededError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "spending budget exceeded: {}", self.0)
+    }
+}
+
+impl std::error::Error for SpendingBudgetExceededError {}
 
 impl std::error::Error for InvalidRequestError {}
 

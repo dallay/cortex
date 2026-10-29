@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ModelId, ProviderId};
 use smol_str::SmolStr;
@@ -136,6 +136,7 @@ pub struct ApiKeySubject {
     pub allowed_models: Vec<ModelId>,
     /// Empty vec means unrestricted (all providers allowed).
     pub allowed_providers: Vec<ProviderId>,
+    pub spending_budget: Option<SpendingBudget>,
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -158,6 +159,113 @@ pub enum ApiKeyRepositoryError {
     Database(String),
 }
 
+/// Calendar window for a per-key spending budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpendingBudgetWindow {
+    Daily,
+    Monthly,
+}
+
+impl SpendingBudgetWindow {
+    /// UTC calendar bounds of the window that contains `at`.
+    ///
+    /// The window starts at the beginning of the period and ends at the start of
+    /// the next period, so consecutive windows never overlap.
+    pub fn utc_bounds(&self, at: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+        match self {
+            SpendingBudgetWindow::Daily => {
+                let start = at
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is a valid time")
+                    .and_utc();
+                let end = start
+                    .checked_add_signed(chrono::Duration::days(1))
+                    .expect("adding one day does not overflow");
+                (start, end)
+            }
+            SpendingBudgetWindow::Monthly => {
+                let date = at.date_naive();
+                let year = date.year();
+                let month = date.month();
+                let start = date
+                    .with_day(1)
+                    .expect("day 1 always exists")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is a valid time")
+                    .and_utc();
+                let (next_year, next_month) = if month == 12 {
+                    (year + 1, 1)
+                } else {
+                    (year, month + 1)
+                };
+                let end = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+                    .expect("first day of the next month always exists")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is a valid time")
+                    .and_utc();
+                (start, end)
+            }
+        }
+    }
+}
+
+/// Requested spending policy for API-key management. Monetary values are integer micro-USD.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpendingBudgetRequest {
+    pub amount_micros_usd: u64,
+    pub request_limit_micros_usd: u64,
+    pub window: SpendingBudgetWindow,
+}
+
+/// Strict per-key spending policy. Monetary values are integer micro-USD.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpendingBudget {
+    pub api_key_id: ApiKeyId,
+    pub amount_micros_usd: u64,
+    pub request_limit_micros_usd: u64,
+    pub window: SpendingBudgetWindow,
+}
+
+/// Durable budget reservation for one request and one UTC calendar window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpendingBudgetReservation {
+    pub api_key_id: ApiKeyId,
+    pub request_id: shared_kernel::RequestId,
+    pub window_start: DateTime<Utc>,
+    pub window_end: DateTime<Utc>,
+    pub reserved_micros_usd: u64,
+    pub budget_micros_usd: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendingReservationOutcome {
+    /// This call created a new reservation and is the only outcome that grants admission.
+    Reserved,
+    /// The request ID already exists. A caller must not repeat upstream I/O.
+    Existing,
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum SpendingBudgetReservationError {
+    #[error("spending budget exceeded")]
+    BudgetExceeded,
+    #[error("request ID already belongs to a different reservation")]
+    IdempotencyConflict,
+    #[error("invalid spending reservation")]
+    InvalidReservation,
+    #[error("spending reservation was not found")]
+    NotFound,
+    #[error("settled cost exceeds the reserved maximum")]
+    CostExceedsReservation,
+    #[error("invalid spending reservation state transition")]
+    InvalidTransition,
+    #[error("spending reservation database error: {0}")]
+    Database(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiKeyRecord {
     pub id: ApiKeyId,
@@ -175,6 +283,7 @@ pub struct ApiKeyRecord {
     pub allowed_models: Vec<ModelId>,
     /// Empty vec means unrestricted (all providers allowed).
     pub allowed_providers: Vec<ProviderId>,
+    pub spending_budget: Option<SpendingBudget>,
 }
 
 #[cfg(test)]
@@ -249,9 +358,70 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
             allowed_providers: vec![ProviderId::new("openai")],
+            spending_budget: None,
         };
         assert_eq!(record.allowed_models.len(), 2);
         assert_eq!(record.allowed_providers.len(), 1);
+    }
+
+    #[test]
+    fn daily_window_covers_the_utc_calendar_day() {
+        let at = DateTime::parse_from_rfc3339("2026-10-28T13:45:12Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let (start, end) = SpendingBudgetWindow::Daily.utc_bounds(at);
+        assert_eq!(
+            start,
+            DateTime::parse_from_rfc3339("2026-10-28T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            end,
+            DateTime::parse_from_rfc3339("2026-10-29T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn monthly_window_covers_the_utc_calendar_month() {
+        let at = DateTime::parse_from_rfc3339("2026-10-28T13:45:12Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let (start, end) = SpendingBudgetWindow::Monthly.utc_bounds(at);
+        assert_eq!(
+            start,
+            DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            end,
+            DateTime::parse_from_rfc3339("2026-11-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn monthly_window_rolls_over_the_year_boundary() {
+        let at = DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let (start, end) = SpendingBudgetWindow::Monthly.utc_bounds(at);
+        assert_eq!(
+            start,
+            DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            end,
+            DateTime::parse_from_rfc3339("2027-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
@@ -270,6 +440,7 @@ mod tests {
             last_used_at: None,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         };
         // Empty means unrestricted — both fields are present and empty
         assert!(record.allowed_models.is_empty());

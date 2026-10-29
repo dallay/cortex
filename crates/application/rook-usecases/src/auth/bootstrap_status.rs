@@ -76,6 +76,7 @@ impl BootstrapStatus {
                 expires_at: None,
                 allowed_models: vec![],
                 allowed_providers: vec![],
+                spending_budget: None,
             })
             .await?;
 

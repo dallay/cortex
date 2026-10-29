@@ -183,6 +183,9 @@ pub struct RouteRequest {
     /// Policy that decides when quota evidence is trustworthy.
     quota_policy: QuotaEligibilityPolicy,
     output_validation: Option<Arc<dyn OutputValidation>>,
+    /// Strict per-key spending budget enforcement. Absent means a budgeted
+    /// request cannot be admitted and is rejected before any upstream I/O.
+    spending_guard: Option<Arc<crate::spending_budget::SpendingBudgetGuard>>,
 }
 
 /// Configuration for model alias resolution
@@ -224,7 +227,22 @@ impl RouteRequest {
             quota_reader: None,
             quota_policy: QuotaEligibilityPolicy::default(),
             output_validation: None,
+            spending_guard: None,
         }
+    }
+
+    /// Wire the durable ledger used to enforce strict per-key spending budgets.
+    ///
+    /// Without a ledger, budgeted requests are rejected before any upstream
+    /// I/O: Rook never spends money it cannot bound and account for.
+    pub fn with_spending_budget_ledger(
+        mut self,
+        ledger: Arc<dyn rook_core::SpendingBudgetLedgerPort>,
+    ) -> Self {
+        self.spending_guard = Some(Arc::new(crate::spending_budget::SpendingBudgetGuard::new(
+            ledger,
+        )));
+        self
     }
 
     /// Opt in to local output validation; the default execution paths are unchanged.
@@ -305,6 +323,7 @@ impl RouteRequest {
         req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
+        self.ensure_budget_enforcement_is_configured(&req)?;
         let (req, combo_response) = self
             .resolve_alias_and_dispatch_combo(req, client_format)
             .await?;
@@ -314,12 +333,70 @@ impl RouteRequest {
         self.execute_standard_request(req, client_format).await
     }
 
+    /// Fail closed when a budgeted request cannot be admitted.
+    ///
+    /// A budgeted request needs the durable ledger to account for its spend.
+    /// Without it, Rook cannot prove or enforce the configured limit, so the
+    /// request is rejected before any upstream I/O.
+    fn ensure_budget_enforcement_is_configured(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<(), CortexError> {
+        if req.restrictions.spending_budget.is_some() && self.spending_guard.is_none() {
+            return Err(CortexError::cost_unavailable(
+                "spending budget enforcement is not configured",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reject budgeted combo requests.
+    ///
+    /// A combo fans out to several upstream steps, so Rook cannot demonstrate a
+    /// single strict cost bound for the whole request. It refuses the request
+    /// instead of spending an unbounded amount.
+    fn ensure_combo_has_no_budget(&self, req: &CompletionRequest) -> Result<(), CortexError> {
+        let is_combo = is_virtual_model(&req.model) || req.metadata.combo_id.is_some();
+        if is_combo && req.restrictions.spending_budget.is_some() {
+            return Err(CortexError::cost_unavailable(
+                "strict spending budgets do not support combo requests",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Admit a request to the provider under its strict spending budget.
+    ///
+    /// Returns `Ok(None)` when the request has no budget. A budgeted request is
+    /// admitted only when the adapter demonstrates a verifiable cost bound and
+    /// the durable ledger accepts the reservation.
+    async fn admit_spending_budget(
+        &self,
+        provider: &dyn rook_core::ProviderPort,
+        provider_req: &CompletionRequest,
+        req: &CompletionRequest,
+    ) -> Result<Option<crate::spending_budget::SpendingAdmission>, CortexError> {
+        let Some(budget) = req.restrictions.spending_budget.as_ref() else {
+            return Ok(None);
+        };
+        let Some(guard) = self.spending_guard.as_ref() else {
+            return Err(CortexError::cost_unavailable(
+                "spending budget enforcement is not configured",
+            ));
+        };
+        let admission = guard
+            .admit(provider, provider_req, budget, Utc::now())
+            .await?;
+        Ok(Some(admission))
+    }
+
     async fn resolve_alias_and_dispatch_combo(
         &self,
         mut req: CompletionRequest,
         client_format: ApiFormat,
     ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
         self.apply_default_combo(&mut req);
+        self.ensure_combo_has_no_budget(&req)?;
         // Resolve aliases before combo dispatch and restrictions checks so combo
         // execution also uses the canonical model. Virtual models are combo aliases.
         if !is_virtual_model(&req.model) {
@@ -367,7 +444,11 @@ impl RouteRequest {
         let provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
         let selection_budget = total_providers.max(1);
-        let max_attempts = MAX_RETRY_ATTEMPTS.min(selection_budget);
+        let max_attempts = if req.restrictions.spending_budget.is_some() {
+            1
+        } else {
+            MAX_RETRY_ATTEMPTS.min(selection_budget)
+        };
         let provider_attempts = 0;
 
         self.execute_provider_attempts(
@@ -487,9 +568,52 @@ impl RouteRequest {
                 excluded.push(provider_id);
                 continue;
             };
+
+            // Strict spending budget admission. The reservation must exist
+            // before any upstream I/O, and a budgeted request is never retried
+            // on another provider: a second attempt could spend more than the
+            // configured per-request limit.
+            let admission = match self
+                .admit_spending_budget(provider.as_ref(), &provider_req, &req)
+                .await
+            {
+                Ok(admission) => admission,
+                Err(error) => {
+                    // No upstream I/O happened for this attempt.
+                    drop(_trial_permit);
+                    return Err(error);
+                }
+            };
+
             provider_attempts += 1;
             let result = provider.complete(&provider_req).await;
             let latency_ms = start.elapsed().as_millis() as u64;
+
+            // Settle the reservation with the final cost when the adapter
+            // reports it. An unknown cost keeps the reservation charged as
+            // unresolved spend.
+            if let Some(admission) = &admission {
+                let guard = self
+                    .spending_guard
+                    .as_ref()
+                    .expect("admission implies a configured guard");
+                match &result {
+                    Ok(provider_resp) => {
+                        guard
+                            .settle(
+                                admission,
+                                provider
+                                    .strict_realized_cost_micros_usd(&provider_req, provider_resp),
+                            )
+                            .await;
+                    }
+                    Err(error) if error.is_local_backpressure() => {
+                        // The concurrency adapter rejects before upstream I/O.
+                        guard.release(admission).await;
+                    }
+                    Err(_) => guard.settle(admission, None).await,
+                }
+            }
 
             let e = match classify_attempt_result(AttemptResult::Provider(result)) {
                 AttemptOutcome::Success(provider_resp) => {
@@ -560,7 +684,29 @@ impl RouteRequest {
                     return Err(e);
                 }
 
-                // Log retry attempt
+                // A budgeted request never retries on another provider: a
+                // second attempt could spend more than the configured
+                // per-request limit.
+                if req.restrictions.spending_budget.is_some() {
+                    self.record_failure_audit_usage(
+                        &req,
+                        &provider_id,
+                        connection_id,
+                        final_latency,
+                        &e,
+                    )
+                    .await;
+                    if let Some(telemetry) = &self.telemetry {
+                        telemetry.record_observation(
+                            provider_id,
+                            final_latency,
+                            None,
+                            ObservationStatus::Failure,
+                        );
+                    }
+                    return Err(e);
+                }
+
                 tracing::warn!(
                     provider = %provider_id,
                     attempt = provider_attempts,
@@ -798,10 +944,12 @@ impl RouteRequest {
         client_format: ApiFormat,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
+        self.ensure_budget_enforcement_is_configured(&req)?;
         let start = Instant::now();
 
         // 0. Resolve model alias if enabled (BEFORE restrictions check).
         self.apply_default_combo(&mut req);
+        self.ensure_combo_has_no_budget(&req)?;
         // NOTE: `rook/*` virtual models never enter ModelAlias resolution;
         // they are combo aliases handled below. Shared helper with the
         // non-streaming path so both enforce the same invariant.
@@ -828,7 +976,11 @@ impl RouteRequest {
         // are exposed to the caller. Bound attempts by registered providers.
         let total_providers = self.router.providers().len();
         let selection_budget = total_providers.max(1);
-        let max_attempts = selection_budget.min(MAX_RETRY_ATTEMPTS);
+        let max_attempts = if req.restrictions.spending_budget.is_some() {
+            1
+        } else {
+            selection_budget.min(MAX_RETRY_ATTEMPTS)
+        };
         let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
@@ -898,21 +1050,46 @@ impl RouteRequest {
                     excluded.push(provider_id);
                     continue;
                 };
+                let admission = match self
+                    .admit_spending_budget(provider.as_ref(), &provider_req, &req)
+                    .await
+                {
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        drop(trial_permit);
+                        return Err(error);
+                    }
+                };
                 provider_attempts += 1;
                 match classify_attempt_result(AttemptResult::Provider(
                     provider.stream(&provider_req).await,
                 )) {
                     AttemptOutcome::Success(upstream) => {
-                        // The half-open reservation stays held until the stream
-                        // reaches EOF, fails, or the consumer abandons it.
+                        // Streaming cannot currently report an adapter-verified
+                        // exact final cost. Mark the reservation unresolved
+                        // before exposing the stream so EOF, errors, validation
+                        // wrappers, and client cancellation retain the charge.
+                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                            guard.settle(admission, None).await;
+                        }
+                        // The reservation stays charged as unresolved for the
+                        // whole lifetime of the stream.
                         break 'select (provider_id, connection_id, upstream, trial_permit);
                     }
                     AttemptOutcome::LocalBackpressure(error) => {
+                        // The provider reports local backpressure before an
+                        // upstream request can start, so release the budget.
+                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                            guard.release(admission).await;
+                        }
                         drop(trial_permit);
                         excluded.push(provider_id);
                         local_backpressure = Some(error);
                     }
                     AttemptOutcome::UpstreamFailure(error) => {
+                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                            guard.settle(admission, None).await;
+                        }
                         notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
                         trial_permit.complete();
                         return Err(error);
@@ -924,6 +1101,7 @@ impl RouteRequest {
             }
             return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
         };
+
         if let Some(policy) = &self.output_validation {
             return Ok(self.forward_validated_stream(
                 upstream,
@@ -1017,6 +1195,9 @@ impl RouteRequest {
                             }
                         }
 
+                        // The reservation was marked unresolved before this stream
+                        // was returned to the client. Keep it unresolved on error.
+
                         // Record telemetry failure
                         if let Some(tracker) = telemetry.as_ref() {
                             let obs_status = if status == RequestStatus::RateLimited {
@@ -1037,6 +1218,8 @@ impl RouteRequest {
                 }
             }
 
+            // The reservation was marked unresolved before this stream was
+            // returned to the client and remains charged at EOF.
             notify_provider_success(router_for_stream.as_ref(), &provider_id).await;
             if let Some(permit) = trial_permit.take() {
                 permit.complete();

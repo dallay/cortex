@@ -93,6 +93,7 @@ async fn default_combo_preflights_all_step_restrictions_before_any_upstream() {
                 } else {
                     vec![ProviderId::new("openai")]
                 },
+                spending_budget: None,
             };
             let error = run(
                 &harness.usecase,

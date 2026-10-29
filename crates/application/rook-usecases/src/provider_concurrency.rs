@@ -102,6 +102,16 @@ impl ProviderPort for ConcurrencyLimitedProvider {
     fn model_capabilities(&self, model: &ModelId) -> rook_core::ModelCapabilities {
         self.inner.model_capabilities(model)
     }
+    fn strict_max_cost_micros_usd(&self, req: &CompletionRequest) -> Option<u64> {
+        self.inner.strict_max_cost_micros_usd(req)
+    }
+    fn strict_realized_cost_micros_usd(
+        &self,
+        req: &CompletionRequest,
+        resp: &CompletionResponse,
+    ) -> Option<u64> {
+        self.inner.strict_realized_cost_micros_usd(req, resp)
+    }
     fn is_available(&self) -> bool {
         self.inner.is_available()
     }

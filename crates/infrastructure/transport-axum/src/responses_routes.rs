@@ -164,8 +164,12 @@ fn route_failure(error: &shared_kernel::CortexError) -> Response {
         (StatusCode::FORBIDDEN, "permission_denied")
     } else if error.is_not_found() {
         (StatusCode::NOT_FOUND, "model_not_found")
+    } else if error.is_spending_budget_exceeded() {
+        (StatusCode::TOO_MANY_REQUESTS, "spending_budget_exceeded")
     } else if error.is_rate_limited() {
         (StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded")
+    } else if error.is_cost_unavailable() {
+        (StatusCode::BAD_REQUEST, "COST_UNAVAILABLE")
     } else if error.is_invalid_request() {
         (StatusCode::BAD_REQUEST, "invalid_request_error")
     } else {

@@ -9,24 +9,30 @@ import type { ApiKeyRecordResponse } from "@/lib/api";
 import en from "@/locales/en.json";
 import ApiKeysView from "./ApiKeysView.vue";
 
-// Mock API client methods to prevent real HTTP calls
-vi.mock("@/lib/api", () => ({
-	useApi: () => ({
-		getApiKeys: vi.fn().mockResolvedValue({
-			keys: [],
-			pagination: { total: 0, limit: 20, offset: 0 },
+// Mock API client methods to prevent real HTTP calls.
+// The real module is kept for the pure spending-budget conversion helpers so
+// the view exercises the same USD → micro-USD conversion as production.
+vi.mock("@/lib/api", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/api")>();
+	return {
+		...actual,
+		useApi: () => ({
+			getApiKeys: vi.fn().mockResolvedValue({
+				keys: [],
+				pagination: { total: 0, limit: 20, offset: 0 },
+			}),
+			createApiKey: vi
+				.fn()
+				.mockResolvedValue({ key: {}, plaintextKey: "test-key" }),
+			updateApiKey: vi.fn().mockResolvedValue({}),
+			revokeApiKey: vi.fn().mockResolvedValue(undefined),
+			rotateApiKey: vi.fn().mockResolvedValue({
+				key: { id: "rotated", keyPrefix: "new_key" },
+				plaintextKey: "new_raw_key",
+			}),
 		}),
-		createApiKey: vi
-			.fn()
-			.mockResolvedValue({ key: {}, plaintextKey: "test-key" }),
-		updateApiKey: vi.fn().mockResolvedValue({}),
-		revokeApiKey: vi.fn().mockResolvedValue(undefined),
-		rotateApiKey: vi.fn().mockResolvedValue({
-			key: { id: "rotated", keyPrefix: "new_key" },
-			plaintextKey: "new_raw_key",
-		}),
-	}),
-}));
+	};
+});
 
 // Stub UI primitives
 vi.mock("@/components/ui/button", () => ({
@@ -283,6 +289,7 @@ function createApiKey(overrides = {}) {
 		lastUsedAt: null,
 		allowedModels: [],
 		allowedProviders: [],
+		spendingBudget: null,
 		...overrides,
 	};
 }
@@ -382,7 +389,13 @@ describe("ApiKeysView", () => {
 			// Open the edit modal by calling openEditModal directly.
 			const vm = wrapper.vm as unknown as {
 				openEditModal: (key: unknown) => void;
-				editForm: { label: string; scopes: string[]; tier: string };
+				editForm: {
+					label: string;
+					scopes: string[];
+					tier: string;
+					spendingBudgetEnabled: boolean;
+					spendingBudgetAmountUsd: string;
+				};
 			};
 			vm.openEditModal(mockApiKeys.value[0]);
 			await wrapper.vm.$nextTick();
@@ -394,6 +407,112 @@ describe("ApiKeysView", () => {
 			expect(vm.editForm.scopes).toEqual(["chat:read", "providers:read"]);
 			expect(vm.editForm.tier).toBe("pro");
 			expect(vm.editForm.label).toBe("test-key");
+			expect(vm.editForm.spendingBudgetEnabled).toBe(false);
+			expect(vm.editForm.spendingBudgetAmountUsd).toBe("");
+		});
+	});
+
+	describe("Spending budget", () => {
+		type BudgetVm = {
+			createForm: {
+				label: string;
+				spendingBudgetEnabled: boolean;
+				spendingBudgetAmountUsd: string;
+				spendingBudgetRequestLimitUsd: string;
+				spendingBudgetWindow: "daily" | "monthly";
+			};
+			editForm: {
+				spendingBudgetEnabled: boolean;
+				spendingBudgetAmountUsd: string;
+				spendingBudgetRequestLimitUsd: string;
+				spendingBudgetWindow: "daily" | "monthly";
+			};
+			openEditModal: (key: unknown) => void;
+		};
+
+		it("sends the configured budget as exact micro-USD", async () => {
+			const wrapper = makeWrapper();
+			const vm = wrapper.vm as unknown as BudgetVm;
+
+			vm.createForm = {
+				...vm.createForm,
+				label: "budget-key",
+				spendingBudgetEnabled: true,
+				spendingBudgetAmountUsd: "12.340001",
+				spendingBudgetRequestLimitUsd: "0.5",
+				spendingBudgetWindow: "monthly",
+			};
+			await wrapper.vm.$nextTick();
+
+			await wrapper.find("form").trigger("submit");
+			await flushPromises();
+
+			expect(mockCreate).toHaveBeenCalledTimes(1);
+			expect(mockCreate.mock.calls[0][0]).toMatchObject({
+				label: "budget-key",
+				spendingBudget: {
+					amountMicrosUsd: 12_340_001,
+					requestLimitMicrosUsd: 500_000,
+					window: "monthly",
+				},
+			});
+		});
+
+		it("blocks creation when the per-request limit exceeds the total budget", async () => {
+			const wrapper = makeWrapper();
+			const vm = wrapper.vm as unknown as BudgetVm;
+
+			vm.createForm = {
+				...vm.createForm,
+				label: "budget-key",
+				spendingBudgetEnabled: true,
+				spendingBudgetAmountUsd: "10",
+				spendingBudgetRequestLimitUsd: "20",
+			};
+			await wrapper.vm.$nextTick();
+
+			await wrapper.find("form").trigger("submit");
+			await flushPromises();
+
+			expect(mockCreate).not.toHaveBeenCalled();
+			expect(wrapper.text()).toContain(
+				"The per-request limit must not exceed the total budget",
+			);
+		});
+
+		it("clears the budget when the operator disables it on an existing key", async () => {
+			mockApiKeys.value = [
+				createApiKey({
+					spendingBudget: {
+						amountMicrosUsd: 5_000_000,
+						requestLimitMicrosUsd: 500_000,
+						window: "daily",
+					},
+				}),
+			];
+			mockTotal.value = 1;
+
+			const wrapper = makeWrapper();
+			await wrapper.vm.$nextTick();
+
+			const vm = wrapper.vm as unknown as BudgetVm;
+			vm.openEditModal(mockApiKeys.value[0]);
+			await wrapper.vm.$nextTick();
+
+			expect(vm.editForm.spendingBudgetEnabled).toBe(true);
+			expect(vm.editForm.spendingBudgetAmountUsd).toBe("5");
+
+			vm.editForm.spendingBudgetEnabled = false;
+			await wrapper.vm.$nextTick();
+
+			const forms = wrapper.findAll("form");
+			await forms[forms.length - 1].trigger("submit");
+			await flushPromises();
+
+			expect(mockUpdate).toHaveBeenCalledTimes(1);
+			expect(mockUpdate.mock.calls[0][1]).toMatchObject({
+				spendingBudget: null,
+			});
 		});
 	});
 

@@ -31,7 +31,7 @@ import {useApiKeys} from "@/composables/useApiKeys";
 import {useAvailableModels} from "@/composables/useAvailableModels";
 import {useProviders} from "@/composables/useProviders";
 import {DEFAULT_SCOPES, SCOPES} from "@/config/scopes";
-import type {CreateApiKeyRequest, UpdateApiKeyRequest} from "@/lib/api";
+import {type CreateApiKeyRequest, microsToUsd, type SpendingBudgetRequest, type UpdateApiKeyRequest, usdToMicros } from "@/lib/api";
 
 const {t} = useI18n();
 
@@ -70,7 +70,21 @@ function buildDefaultFormState(): ApiKeyFormState {
     expiresAt: null,
     allowedModels: [],
     allowedProviders: [],
+    spendingBudgetEnabled: false,
+    spendingBudgetAmountUsd: "",
+    spendingBudgetRequestLimitUsd: "",
+    spendingBudgetWindow: "daily",
   };
+}
+
+function budgetFromForm(state: ApiKeyFormState): SpendingBudgetRequest | null | undefined {
+  if (!state.spendingBudgetEnabled) return null;
+  const amountMicrosUsd = usdToMicros(state.spendingBudgetAmountUsd);
+  const requestLimitMicrosUsd = usdToMicros(state.spendingBudgetRequestLimitUsd);
+  if (amountMicrosUsd === null || requestLimitMicrosUsd === null || requestLimitMicrosUsd > amountMicrosUsd) {
+    return undefined;
+  }
+  return {amountMicrosUsd, requestLimitMicrosUsd, window: state.spendingBudgetWindow};
 }
 
 // Create modal state
@@ -147,6 +161,11 @@ async function handleCreate() {
     createError.value = "At least one scope is required";
     return;
   }
+  const spendingBudget = budgetFromForm(createForm.value);
+  if (spendingBudget === undefined) {
+    createError.value = t("apiKeys.budgetValidation");
+    return;
+  }
 
   const submissionData: CreateApiKeyRequest = {
     label: createForm.value.label,
@@ -155,6 +174,7 @@ async function handleCreate() {
     expiresAt: createForm.value.expiresAt,
     allowedModels: createForm.value.allowedModels,
     allowedProviders: createForm.value.allowedProviders,
+    spendingBudget,
   };
 
   const result = await create(submissionData);
@@ -183,6 +203,10 @@ function openEditModal(key: (typeof apiKeys.value)[0]) {
     expiresAt: key.expiresAt,
     allowedModels: [...(key.allowedModels || [])],
     allowedProviders: [...(key.allowedProviders || [])],
+    spendingBudgetEnabled: key.spendingBudget !== null,
+    spendingBudgetAmountUsd: key.spendingBudget ? microsToUsd(key.spendingBudget.amountMicrosUsd) : "",
+    spendingBudgetRequestLimitUsd: key.spendingBudget ? microsToUsd(key.spendingBudget.requestLimitMicrosUsd) : "",
+    spendingBudgetWindow: key.spendingBudget?.window ?? "daily",
   };
   showEditModal.value = true;
 }
@@ -190,6 +214,11 @@ function openEditModal(key: (typeof apiKeys.value)[0]) {
 async function handleUpdate() {
   if (!editingKey.value) return;
   editError.value = null;
+  const spendingBudget = budgetFromForm(editForm.value);
+  if (spendingBudget === undefined) {
+    editError.value = t("apiKeys.budgetValidation");
+    return;
+  }
 
   const submissionData: UpdateApiKeyRequest = {
     label: editForm.value.label,
@@ -199,6 +228,7 @@ async function handleUpdate() {
     expiresAt: editForm.value.expiresAt,
     allowedModels: editForm.value.allowedModels,
     allowedProviders: editForm.value.allowedProviders,
+    spendingBudget,
   };
 
   const result = await update(editingKey.value, submissionData);

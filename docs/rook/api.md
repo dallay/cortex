@@ -18,6 +18,9 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 | `GET` | `/api/models` | Admin session | Always |
 | `GET`, `POST` | `/api/models/aliases` | Admin session | Always |
 | `DELETE` | `/api/models/aliases/{alias}` | Admin session | Always |
+| `GET`, `POST` | `/api/api-keys` | Admin session | API-key management enabled |
+| `GET`, `PUT`, `DELETE` | `/api/api-keys/{id}` | Admin session | API-key management enabled |
+| `POST` | `/api/api-keys/{id}/rotate` | Admin session | API-key management enabled |
 | `GET`, `POST` | `/api/combos` | Admin session | Combo repository enabled |
 | `GET`, `PUT`, `DELETE` | `/api/combos/{id}` | Admin session | Combo repository enabled |
 | `GET`, `POST` | `/api/combos/{id}/aliases` | Admin session | Combo and combo-alias repositories enabled |
@@ -32,6 +35,27 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 | `DELETE` | `/api/oauth/{provider}` | Admin session + CSRF | Connection management enabled |
 
 The `/api/models/aliases` prefix stores ordinary aliases from an alias to a canonical model. The `rook/` prefix is reserved for virtual combo aliases and cannot be created as a model alias.
+
+## API key management
+
+The `/api/api-keys` endpoints require an admin session. State-changing requests
+also require the CSRF token described above. Create and update payloads may set
+`spendingBudget` to `null` or to an object with `amountMicrosUsd`,
+`requestLimitMicrosUsd`, and `window` (`daily` or `monthly`). Monetary values are
+positive integer micro-USD. The per-request limit must not exceed the total
+budget. Omit `spendingBudget` during an update to preserve the existing policy;
+set it to `null` to remove the policy.
+
+Budgeted gateway requests require a provider adapter to expose a verifiable,
+enforceable strict cost bound. Rook rejects requests before provider I/O when
+that capability is unavailable, with HTTP `400` and error code
+`COST_UNAVAILABLE`. No current production provider adapter exposes
+this capability, so budgeted requests are currently rejected fail-closed. A
+budgeted request does not retry on another provider. Streaming reservations are
+marked unresolved before the stream is exposed and remain charged after EOF,
+upstream failure, or client cancellation. Combos with a budget are rejected
+because Rook cannot prove a strict bound for the complete combo request.
+Budget exhaustion returns HTTP `429` with code `spending_budget_exceeded`.
 
 ## `POST /v1/responses`
 

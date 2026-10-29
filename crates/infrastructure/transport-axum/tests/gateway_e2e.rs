@@ -192,6 +192,47 @@ struct RevocableKeyRepo {
     read_only: Mutex<bool>,
     allowed_models: Vec<ModelId>,
     allowed_providers: Mutex<Vec<ProviderId>>,
+    spending_budget: Mutex<Option<rook_core::SpendingBudget>>,
+}
+
+impl RevocableKeyRepo {
+    fn set_spending_budget(&self, budget: Option<rook_core::SpendingBudget>) {
+        *self.spending_budget.lock().unwrap() = budget;
+    }
+}
+
+/// In-memory spending ledger for the gateway harness.
+///
+/// It admits reservations without enforcing a window budget, so the harness
+/// exercises the routing contract instead of the ledger accounting rules.
+struct HarnessLedger;
+
+#[async_trait]
+impl rook_core::SpendingBudgetLedgerPort for HarnessLedger {
+    async fn reserve_spending(
+        &self,
+        _reservation: &rook_core::SpendingBudgetReservation,
+    ) -> Result<rook_core::SpendingReservationOutcome, rook_core::SpendingBudgetReservationError>
+    {
+        Ok(rook_core::SpendingReservationOutcome::Reserved)
+    }
+
+    async fn settle_spending(
+        &self,
+        _api_key_id: &ApiKeyId,
+        _request_id: &shared_kernel::RequestId,
+        _cost_micros_usd: Option<u64>,
+    ) -> Result<(), rook_core::SpendingBudgetReservationError> {
+        Ok(())
+    }
+
+    async fn release_spending_before_upstream(
+        &self,
+        _api_key_id: &ApiKeyId,
+        _request_id: &shared_kernel::RequestId,
+    ) -> Result<(), rook_core::SpendingBudgetReservationError> {
+        Ok(())
+    }
 }
 #[async_trait]
 impl ApiKeyRepositoryPort for RevocableKeyRepo {
@@ -216,6 +257,7 @@ impl ApiKeyRepositoryPort for RevocableKeyRepo {
             tier: ApiKeyTier::Free,
             allowed_models: self.allowed_models.clone(),
             allowed_providers: self.allowed_providers.lock().unwrap().clone(),
+            spending_budget: self.spending_budget.lock().unwrap().clone(),
         }))
     }
     async fn record_last_used(
@@ -589,7 +631,8 @@ async fn build_gateway_planned(
     )
     .with_combo_alias_repository(Arc::new(MapComboAliasRepo {
         aliases: Mutex::new(aliases),
-    }));
+    }))
+    .with_spending_budget_ledger(Arc::new(HarnessLedger));
 
     let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepo);
     let hasher: Arc<dyn PasswordHasher> = Arc::new(FakeHasher);
@@ -599,6 +642,7 @@ async fn build_gateway_planned(
         read_only: Mutex::new(false),
         allowed_models: allowed_models.into_iter().map(ModelId::new).collect(),
         allowed_providers: Mutex::new(vec![]),
+        spending_budget: Mutex::new(None),
     });
     let auth = AuthenticateClientApi::new(
         key_repo.clone() as Arc<dyn ApiKeyRepositoryPort>,
@@ -1539,4 +1583,39 @@ async fn anthropic_tool_use_e2e() {
     assert_eq!(tool["id"], "toolu_e2e");
     assert_eq!(tool["name"], "get_weather");
     assert_eq!(tool["input"]["city"], "Paris");
+}
+
+#[tokio::test]
+async fn budgeted_client_key_is_rejected_before_any_upstream_call() {
+    let gw = build_gateway(vec![], false).await;
+    gw.key_repo
+        .set_spending_budget(Some(rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("e2e-key-1"),
+            amount_micros_usd: 10_000_000,
+            request_limit_micros_usd: 1_000_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        }));
+
+    let (status, body) = post_json(
+        gw.app.clone(),
+        "/v1/chat/completions",
+        openai_body("gpt-4o", false),
+        &[],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "COST_UNAVAILABLE");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cost unavailable"),
+        "{body}"
+    );
+    assert_eq!(
+        gw.upstreams.openai.received_requests().await.unwrap().len(),
+        0,
+        "a budgeted request must be rejected before any upstream call"
+    );
 }

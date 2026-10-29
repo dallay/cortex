@@ -136,6 +136,9 @@ pub struct ApiKeyRestrictions {
     pub allowed_models: Vec<ModelId>,
     /// If non-empty, only these provider IDs are allowed.
     pub allowed_providers: Vec<ProviderId>,
+    /// Authenticated per-key budget copied from trusted authorization context.
+    #[serde(default)]
+    pub spending_budget: Option<crate::SpendingBudget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

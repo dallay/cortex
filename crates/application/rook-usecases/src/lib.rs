@@ -14,6 +14,7 @@ pub mod cost_estimation;
 pub mod route_request;
 pub mod route_selection;
 pub mod router_impl;
+pub mod spending_budget;
 
 pub use auth::{
     BootstrapSetupError, BootstrapSetupInput, BootstrapSetupOutput, BootstrapState,

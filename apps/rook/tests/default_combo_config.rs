@@ -68,6 +68,7 @@ fn request() -> CompletionRequest {
         restrictions: ApiKeyRestrictions {
             allowed_models: vec![ModelId::new("requested-model")],
             allowed_providers: vec![],
+            spending_budget: None,
         },
     }
 }

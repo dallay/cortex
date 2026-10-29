@@ -165,6 +165,7 @@ mod tests {
             tier: ApiKeyTier::Pro,
             allowed_models: vec![],
             allowed_providers: vec![],
+            spending_budget: None,
         }
     }
 

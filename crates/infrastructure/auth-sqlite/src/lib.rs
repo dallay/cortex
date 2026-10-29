@@ -7,10 +7,11 @@ use chrono::{DateTime, Utc};
 use rook_core::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope,
     ApiKeySubject, ApiKeyTier, ModelId, NewSession, NewUser, PasswordHash, ProviderId, Session,
-    SessionId, SessionRepositoryError, SessionRepositoryPort, User, UserId, UserRepositoryError,
-    UserRepositoryPort,
+    SessionId, SessionRepositoryError, SessionRepositoryPort, SpendingBudgetLedgerPort,
+    SpendingBudgetReservation, SpendingBudgetReservationError, SpendingReservationOutcome, User,
+    UserId, UserRepositoryError, UserRepositoryPort,
 };
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 
 pub struct SqliteApiKeyRepository {
     conn: Mutex<Connection>,
@@ -134,6 +135,203 @@ impl TestApiKeyRecord {
 }
 
 #[async_trait]
+impl SpendingBudgetLedgerPort for SqliteApiKeyRepository {
+    async fn reserve_spending(
+        &self,
+        reservation: &SpendingBudgetReservation,
+    ) -> Result<SpendingReservationOutcome, SpendingBudgetReservationError> {
+        if reservation.window_start >= reservation.window_end
+            || reservation.reserved_micros_usd == 0
+            || reservation.budget_micros_usd == 0
+            || reservation.reserved_micros_usd > reservation.budget_micros_usd
+            || reservation.reserved_micros_usd > i64::MAX as u64
+            || reservation.budget_micros_usd > i64::MAX as u64
+        {
+            return Err(SpendingBudgetReservationError::InvalidReservation);
+        }
+
+        let mut conn = self.conn.lock().map_err(|_| {
+            SpendingBudgetReservationError::Database("sqlite mutex poisoned".to_string())
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(spending_reservation_db_error)?;
+        let existing = tx
+            .query_row(
+                "SELECT window_start, window_end, reserved_micros_usd, budget_micros_usd
+                 FROM api_key_spending_reservations
+                 WHERE api_key_id = ?1 AND request_id = ?2",
+                params![
+                    reservation.api_key_id.to_string(),
+                    reservation.request_id.to_string()
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(spending_reservation_db_error)?;
+
+        let window_start = reservation.window_start.to_rfc3339();
+        let window_end = reservation.window_end.to_rfc3339();
+        if let Some((existing_start, existing_end, reserved, budget)) = existing {
+            let identical = existing_start == window_start
+                && existing_end == window_end
+                && reserved == reservation.reserved_micros_usd as i64
+                && budget == reservation.budget_micros_usd as i64;
+            if identical {
+                return Ok(SpendingReservationOutcome::Existing);
+            }
+            return Err(SpendingBudgetReservationError::IdempotencyConflict);
+        }
+
+        let (committed, existing_budget): (i64, Option<i64>) = tx
+            .query_row(
+                "SELECT
+                    COALESCE(SUM(CASE
+                        WHEN state IN ('reserved', 'unresolved') THEN reserved_micros_usd
+                        WHEN state = 'settled' THEN settled_micros_usd
+                        ELSE 0 END), 0),
+                    MIN(CASE WHEN state != 'released' THEN budget_micros_usd END)
+                 FROM api_key_spending_reservations
+                 WHERE api_key_id = ?1 AND window_start = ?2 AND window_end = ?3",
+                params![reservation.api_key_id.to_string(), window_start, window_end],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(spending_reservation_db_error)?;
+        let next = committed
+            .checked_add(reservation.reserved_micros_usd as i64)
+            .ok_or(SpendingBudgetReservationError::BudgetExceeded)?;
+        let effective_budget = existing_budget
+            .unwrap_or(reservation.budget_micros_usd as i64)
+            .min(reservation.budget_micros_usd as i64);
+        if next > effective_budget {
+            return Err(SpendingBudgetReservationError::BudgetExceeded);
+        }
+
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "INSERT INTO api_key_spending_reservations (
+                api_key_id, request_id, window_start, window_end,
+                reserved_micros_usd, budget_micros_usd, state,
+                settled_micros_usd, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'reserved', NULL, ?7, ?7)",
+            params![
+                reservation.api_key_id.to_string(),
+                reservation.request_id.to_string(),
+                window_start,
+                window_end,
+                reservation.reserved_micros_usd as i64,
+                reservation.budget_micros_usd as i64,
+                now,
+            ],
+        )
+        .map_err(spending_reservation_db_error)?;
+        tx.commit().map_err(spending_reservation_db_error)?;
+        Ok(SpendingReservationOutcome::Reserved)
+    }
+
+    async fn settle_spending(
+        &self,
+        api_key_id: &rook_core::ApiKeyId,
+        request_id: &shared_kernel::RequestId,
+        cost_micros_usd: Option<u64>,
+    ) -> Result<(), SpendingBudgetReservationError> {
+        let cost = cost_micros_usd
+            .map(|value| {
+                i64::try_from(value)
+                    .map_err(|_| SpendingBudgetReservationError::CostExceedsReservation)
+            })
+            .transpose()?;
+        let mut conn = self.conn.lock().map_err(|_| {
+            SpendingBudgetReservationError::Database("sqlite mutex poisoned".to_string())
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(spending_reservation_db_error)?;
+        let row = tx
+            .query_row(
+                "SELECT state, reserved_micros_usd, settled_micros_usd
+                 FROM api_key_spending_reservations WHERE api_key_id = ?1 AND request_id = ?2",
+                params![api_key_id.to_string(), request_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(spending_reservation_db_error)?
+            .ok_or(SpendingBudgetReservationError::NotFound)?;
+
+        let (state, reserved, settled) = row;
+        let (next_state, next_cost) = match (state.as_str(), cost) {
+            ("reserved", Some(cost)) if cost <= reserved => ("settled", Some(cost)),
+            ("reserved", Some(_)) => {
+                return Err(SpendingBudgetReservationError::CostExceedsReservation)
+            }
+            ("reserved", None) => ("unresolved", None),
+            ("settled", Some(cost)) if settled == Some(cost) => return Ok(()),
+            ("unresolved", None) => return Ok(()),
+            _ => return Err(SpendingBudgetReservationError::InvalidTransition),
+        };
+        tx.execute(
+            "UPDATE api_key_spending_reservations SET state = ?1, settled_micros_usd = ?2, updated_at = ?3
+             WHERE api_key_id = ?4 AND request_id = ?5",
+            params![next_state, next_cost, Utc::now().to_rfc3339(), api_key_id.to_string(), request_id.to_string()],
+        )
+        .map_err(spending_reservation_db_error)?;
+        tx.commit().map_err(spending_reservation_db_error)?;
+        Ok(())
+    }
+
+    async fn release_spending_before_upstream(
+        &self,
+        api_key_id: &rook_core::ApiKeyId,
+        request_id: &shared_kernel::RequestId,
+    ) -> Result<(), SpendingBudgetReservationError> {
+        let conn = self.conn.lock().map_err(|_| {
+            SpendingBudgetReservationError::Database("sqlite mutex poisoned".to_string())
+        })?;
+        let changed = conn
+            .execute(
+                "UPDATE api_key_spending_reservations SET state = 'released', updated_at = ?1
+                 WHERE api_key_id = ?2 AND request_id = ?3 AND state = 'reserved'",
+                params![
+                    Utc::now().to_rfc3339(),
+                    api_key_id.to_string(),
+                    request_id.to_string()
+                ],
+            )
+            .map_err(spending_reservation_db_error)?;
+        if changed == 1 {
+            return Ok(());
+        }
+        let state = conn
+            .query_row(
+                "SELECT state FROM api_key_spending_reservations WHERE api_key_id = ?1 AND request_id = ?2",
+                params![api_key_id.to_string(), request_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(spending_reservation_db_error)?
+            .ok_or(SpendingBudgetReservationError::NotFound)?;
+        if state == "released" {
+            Ok(())
+        } else {
+            Err(SpendingBudgetReservationError::InvalidTransition)
+        }
+    }
+}
+
+#[async_trait]
 impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
     async fn find_active_by_hash(
         &self,
@@ -142,7 +340,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         let conn = self.lock()?;
         let now = Utc::now().to_rfc3339();
         conn.query_row(
-            "SELECT id, label, scopes_json, tier, allowed_models_json, allowed_providers_json
+            "SELECT id, label, scopes_json, tier, allowed_models_json, allowed_providers_json, spending_budget_json
              FROM api_keys
              WHERE key_hash = ?1
                AND is_active = 1
@@ -179,7 +377,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
             .prepare(
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                         revoked_at, expires_at, created_at, last_used_at,
-                        allowed_models_json, allowed_providers_json
+                        allowed_models_json, allowed_providers_json, spending_budget_json
                  FROM api_keys
                  ORDER BY created_at DESC",
             )
@@ -197,7 +395,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
         conn.query_row(
             "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                     revoked_at, expires_at, created_at, last_used_at,
-                    allowed_models_json, allowed_providers_json
+                    allowed_models_json, allowed_providers_json, spending_budget_json
              FROM api_keys
              WHERE id = ?1",
             params![id.to_string()],
@@ -213,8 +411,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
             "INSERT INTO api_keys (
                 id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                 revoked_at, expires_at, created_at, last_used_at,
-                allowed_models_json, allowed_providers_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                allowed_models_json, allowed_providers_json, spending_budget_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.id.to_string(),
                 record.label,
@@ -229,6 +427,12 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                 optional_datetime(record.last_used_at),
                 models_to_json(&record.allowed_models)?,
                 providers_to_json(&record.allowed_providers)?,
+                record
+                    .spending_budget
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|error| ApiKeyRepositoryError::Database(error.to_string()))?,
             ],
         )
         .map_err(db_error)?;
@@ -248,8 +452,9 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                     expires_at = ?6,
                     last_used_at = ?7,
                     allowed_models_json = ?8,
-                    allowed_providers_json = ?9
-                 WHERE id = ?10",
+                    allowed_providers_json = ?9,
+                    spending_budget_json = ?10
+                 WHERE id = ?11",
                 params![
                     record.label,
                     scopes_to_json(&record.scopes)?,
@@ -260,6 +465,12 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
                     optional_datetime(record.last_used_at),
                     models_to_json(&record.allowed_models)?,
                     providers_to_json(&record.allowed_providers)?,
+                    record
+                        .spending_budget
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()
+                        .map_err(|error| ApiKeyRepositoryError::Database(error.to_string()))?,
                     record.id.to_string(),
                 ],
             )
@@ -343,7 +554,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
             .prepare(
                 "SELECT id, label, key_hash, key_prefix, scopes_json, tier, is_active,
                     revoked_at, expires_at, created_at, last_used_at,
-                    allowed_models_json, allowed_providers_json
+                    allowed_models_json, allowed_providers_json, spending_budget_json
              FROM api_keys
              WHERE is_active = 1
              ORDER BY created_at DESC
@@ -376,13 +587,21 @@ fn row_to_subject(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeySubject> {
     let tier: String = row.get("tier")?;
     let allowed_models_json: String = row.get("allowed_models_json")?;
     let allowed_providers_json: String = row.get("allowed_providers_json")?;
+    let spending_budget_json: Option<String> = row.get("spending_budget_json")?;
     Ok(ApiKeySubject {
         id: ApiKeyId::new(id),
         label,
-        scopes: scopes_from_json(&scopes_json).map_err(invalid_data)?,
+        scopes: scopes_from_json(&scopes_json).map_err(|error| invalid_data(error.to_string()))?,
         tier: ApiKeyTier::from_str(&tier).map_err(|error| invalid_data(error.to_string()))?,
-        allowed_models: models_from_json(&allowed_models_json).map_err(invalid_data)?,
-        allowed_providers: providers_from_json(&allowed_providers_json).map_err(invalid_data)?,
+        allowed_models: models_from_json(&allowed_models_json)
+            .map_err(|error| invalid_data(error.to_string()))?,
+        allowed_providers: providers_from_json(&allowed_providers_json)
+            .map_err(|error| invalid_data(error.to_string()))?,
+        spending_budget: spending_budget_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|error| invalid_data(error.to_string()))?,
     })
 }
 
@@ -400,6 +619,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
     let last_used_at_str: Option<String> = row.get("last_used_at")?;
     let allowed_models_json: String = row.get("allowed_models_json")?;
     let allowed_providers_json: String = row.get("allowed_providers_json")?;
+    let spending_budget_json: Option<String> = row.get("spending_budget_json")?;
 
     let revoked_at = revoked_at_str.map(|s| parse_datetime(&s)).transpose()?;
     let expires_at = expires_at_str.map(|s| parse_datetime(&s)).transpose()?;
@@ -411,15 +631,22 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
         label,
         key_hash,
         key_prefix,
-        scopes: scopes_from_json(&scopes_json).map_err(invalid_data)?,
+        scopes: scopes_from_json(&scopes_json).map_err(|error| invalid_data(error.to_string()))?,
         tier: ApiKeyTier::from_str(&tier).map_err(|error| invalid_data(error.to_string()))?,
         is_active: is_active != 0,
         revoked_at,
         expires_at,
         created_at,
         last_used_at,
-        allowed_models: models_from_json(&allowed_models_json).map_err(invalid_data)?,
-        allowed_providers: providers_from_json(&allowed_providers_json).map_err(invalid_data)?,
+        allowed_models: models_from_json(&allowed_models_json)
+            .map_err(|error| invalid_data(error.to_string()))?,
+        allowed_providers: providers_from_json(&allowed_providers_json)
+            .map_err(|error| invalid_data(error.to_string()))?,
+        spending_budget: spending_budget_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|error| invalid_data(error.to_string()))?,
     })
 }
 
@@ -763,6 +990,10 @@ fn session_db_error(error: rusqlite::Error) -> SessionRepositoryError {
     SessionRepositoryError::Database(error.to_string())
 }
 
+fn spending_reservation_db_error(error: rusqlite::Error) -> SpendingBudgetReservationError {
+    SpendingBudgetReservationError::Database(error.to_string())
+}
+
 fn db_error(error: rusqlite::Error) -> ApiKeyRepositoryError {
     match error {
         rusqlite::Error::SqliteFailure(sqlite_error, _)
@@ -776,11 +1007,11 @@ fn db_error(error: rusqlite::Error) -> ApiKeyRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use chrono::{Duration, TimeZone, Utc};
     use rook_core::{
         ApiKeyId, ApiKeyRepositoryPort, ApiKeyScope, ApiKeyTier, NewSession as CoreNewSession,
         NewUser as CoreNewUser, PasswordHash as CorePasswordHash, SessionRepositoryPort,
-        UserRepositoryPort,
+        SpendingBudgetLedgerPort, UserRepositoryPort,
     };
     use rusqlite::params;
     use std::path::PathBuf;
@@ -803,6 +1034,312 @@ mod tests {
         let path = directory.path().join("auth.db");
         db_migration::run_migrations(&path.to_string_lossy()).expect("migrations");
         (directory, path)
+    }
+
+    #[test]
+    fn spending_reservation_rejects_total_budget_overrun() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let api_key_id = ApiKeyId::new("budget-key");
+            let window_start = Utc::with_ymd_and_hms(&Utc, 2026, 10, 28, 0, 0, 0)
+                .single()
+                .expect("window start");
+            let window_end = Utc
+                .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                .single()
+                .expect("window end");
+            let first = rook_core::SpendingBudgetReservation {
+                api_key_id: api_key_id.clone(),
+                request_id: shared_kernel::RequestId::new(),
+                window_start,
+                window_end,
+                reserved_micros_usd: 60,
+                budget_micros_usd: 100,
+            };
+            repo.reserve_spending(&first)
+                .await
+                .expect("first reservation");
+
+            let second = rook_core::SpendingBudgetReservation {
+                request_id: shared_kernel::RequestId::new(),
+                reserved_micros_usd: 41,
+                ..first
+            };
+            let result = repo.reserve_spending(&second).await;
+
+            assert!(matches!(
+                result,
+                Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
+            ));
+        });
+    }
+
+    #[test]
+    fn spending_reservation_is_idempotent_and_rejects_changed_parameters() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let reservation = rook_core::SpendingBudgetReservation {
+                api_key_id: ApiKeyId::new("budget-key"),
+                request_id: shared_kernel::RequestId::new(),
+                window_start: Utc
+                    .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                window_end: Utc
+                    .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                reserved_micros_usd: 60,
+                budget_micros_usd: 100,
+            };
+            assert_eq!(
+                repo.reserve_spending(&reservation).await.expect("reserve"),
+                rook_core::SpendingReservationOutcome::Reserved
+            );
+            assert_eq!(
+                repo.reserve_spending(&reservation)
+                    .await
+                    .expect("idempotent replay"),
+                rook_core::SpendingReservationOutcome::Existing
+            );
+
+            let conflicting = rook_core::SpendingBudgetReservation {
+                reserved_micros_usd: 61,
+                ..reservation
+            };
+            assert!(matches!(
+                repo.reserve_spending(&conflicting).await,
+                Err(rook_core::SpendingBudgetReservationError::IdempotencyConflict)
+            ));
+        });
+    }
+
+    #[test]
+    fn unknown_cost_keeps_reservation_and_release_only_works_before_settlement() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let api_key_id = ApiKeyId::new("budget-key");
+            let request_id = shared_kernel::RequestId::new();
+            let reservation = rook_core::SpendingBudgetReservation {
+                api_key_id: api_key_id.clone(),
+                request_id: request_id.clone(),
+                window_start: Utc
+                    .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                window_end: Utc
+                    .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                reserved_micros_usd: 60,
+                budget_micros_usd: 100,
+            };
+            repo.reserve_spending(&reservation).await.expect("reserve");
+            repo.settle_spending(&api_key_id, &request_id, None)
+                .await
+                .expect("unknown cost");
+            repo.settle_spending(&api_key_id, &request_id, None)
+                .await
+                .expect("unknown cost replay");
+            assert!(matches!(
+                repo.release_spending_before_upstream(&api_key_id, &request_id)
+                    .await,
+                Err(rook_core::SpendingBudgetReservationError::InvalidTransition)
+            ));
+
+            let second = rook_core::SpendingBudgetReservation {
+                request_id: shared_kernel::RequestId::new(),
+                ..reservation
+            };
+            assert!(matches!(
+                repo.reserve_spending(&second).await,
+                Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
+            ));
+        });
+    }
+
+    #[test]
+    fn concurrent_reservations_cannot_exceed_window_budget() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let db_path = directory.path().join("budget.db");
+        db_migration::run_migrations(&db_path.to_string_lossy()).expect("migrations");
+        let window_start = Utc
+            .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+            .single()
+            .unwrap();
+        let window_end = Utc
+            .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+            .single()
+            .unwrap();
+        let api_key_id = ApiKeyId::new("budget-key");
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let db_path = db_path.clone();
+                let api_key_id = api_key_id.clone();
+                std::thread::spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .expect("runtime");
+                    runtime.block_on(async move {
+                        let repo = SqliteApiKeyRepository::new(db_path).expect("repo");
+                        let reservation = rook_core::SpendingBudgetReservation {
+                            api_key_id,
+                            request_id: shared_kernel::RequestId::new(),
+                            window_start,
+                            window_end,
+                            reserved_micros_usd: 60,
+                            budget_micros_usd: 100,
+                        };
+                        repo.reserve_spending(&reservation).await
+                    })
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread"))
+            .collect();
+        let admitted = results.iter().filter(|result| result.is_ok()).count();
+        let rejected = results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result,
+                    Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
+                )
+            })
+            .count();
+        assert_eq!(admitted, 1);
+        assert_eq!(rejected, 7);
+    }
+
+    #[test]
+    fn settled_cost_releases_unused_reservation_but_rejects_cost_above_cap() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let api_key_id = ApiKeyId::new("budget-key");
+            let reservation = rook_core::SpendingBudgetReservation {
+                api_key_id: api_key_id.clone(),
+                request_id: shared_kernel::RequestId::new(),
+                window_start: Utc
+                    .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                window_end: Utc
+                    .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                reserved_micros_usd: 60,
+                budget_micros_usd: 100,
+            };
+            repo.reserve_spending(&reservation).await.expect("reserve");
+            assert!(matches!(
+                repo.settle_spending(&api_key_id, &reservation.request_id, Some(61))
+                    .await,
+                Err(rook_core::SpendingBudgetReservationError::CostExceedsReservation)
+            ));
+            repo.settle_spending(&api_key_id, &reservation.request_id, Some(40))
+                .await
+                .expect("settle");
+
+            let second = rook_core::SpendingBudgetReservation {
+                request_id: shared_kernel::RequestId::new(),
+                reserved_micros_usd: 60,
+                ..reservation.clone()
+            };
+            assert_eq!(
+                repo.reserve_spending(&second)
+                    .await
+                    .expect("reused headroom"),
+                rook_core::SpendingReservationOutcome::Reserved
+            );
+            assert!(matches!(
+                repo.release_spending_before_upstream(&api_key_id, &reservation.request_id)
+                    .await,
+                Err(rook_core::SpendingBudgetReservationError::InvalidTransition)
+            ));
+        });
+    }
+
+    #[test]
+    fn release_before_upstream_is_idempotent_and_frees_headroom() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let api_key_id = ApiKeyId::new("budget-key");
+            let reservation = rook_core::SpendingBudgetReservation {
+                api_key_id: api_key_id.clone(),
+                request_id: shared_kernel::RequestId::new(),
+                window_start: Utc
+                    .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                window_end: Utc
+                    .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                    .single()
+                    .unwrap(),
+                reserved_micros_usd: 60,
+                budget_micros_usd: 100,
+            };
+            repo.reserve_spending(&reservation).await.expect("reserve");
+            repo.release_spending_before_upstream(&api_key_id, &reservation.request_id)
+                .await
+                .expect("release");
+            repo.release_spending_before_upstream(&api_key_id, &reservation.request_id)
+                .await
+                .expect("release replay");
+            let next = rook_core::SpendingBudgetReservation {
+                request_id: shared_kernel::RequestId::new(),
+                ..reservation
+            };
+            assert_eq!(
+                repo.reserve_spending(&next)
+                    .await
+                    .expect("reserve freed amount"),
+                rook_core::SpendingReservationOutcome::Reserved
+            );
+        });
+    }
+
+    #[test]
+    fn spending_reservation_survives_repository_reopen() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let db_path = directory.path().join("budget.db");
+        db_migration::run_migrations(&db_path.to_string_lossy()).expect("migrations");
+        let reservation = rook_core::SpendingBudgetReservation {
+            api_key_id: ApiKeyId::new("budget-key"),
+            request_id: shared_kernel::RequestId::new(),
+            window_start: Utc
+                .with_ymd_and_hms(2026, 10, 28, 0, 0, 0)
+                .single()
+                .unwrap(),
+            window_end: Utc
+                .with_ymd_and_hms(2026, 10, 29, 0, 0, 0)
+                .single()
+                .unwrap(),
+            reserved_micros_usd: 60,
+            budget_micros_usd: 100,
+        };
+        runtime().block_on(async {
+            let first_repo = SqliteApiKeyRepository::new(&db_path).expect("first repo");
+            first_repo
+                .reserve_spending(&reservation)
+                .await
+                .expect("reserve");
+            drop(first_repo);
+
+            let reopened_repo = SqliteApiKeyRepository::new(&db_path).expect("reopened repo");
+            let second = rook_core::SpendingBudgetReservation {
+                request_id: shared_kernel::RequestId::new(),
+                reserved_micros_usd: 41,
+                ..reservation
+            };
+            assert!(matches!(
+                reopened_repo.reserve_spending(&second).await,
+                Err(rook_core::SpendingBudgetReservationError::BudgetExceeded)
+            ));
+        });
     }
 
     #[test]
@@ -882,6 +1419,12 @@ mod tests {
                 last_used_at: None,
                 allowed_models: vec![],
                 allowed_providers: vec![],
+                spending_budget: Some(rook_core::SpendingBudget {
+                    api_key_id: ApiKeyId::new("key-123"),
+                    amount_micros_usd: 25_000_000,
+                    request_limit_micros_usd: 2_000_000,
+                    window: rook_core::SpendingBudgetWindow::Monthly,
+                }),
             };
             repo.create(&record).await.expect("create");
 
@@ -892,6 +1435,13 @@ mod tests {
                 .expect("find")
                 .expect("some");
             assert_eq!(found.label, "Development Key");
+            assert_eq!(found.spending_budget, record.spending_budget);
+            let authenticated = repo
+                .find_active_by_hash("hash-123")
+                .await
+                .expect("find active by hash")
+                .expect("active subject");
+            assert_eq!(authenticated.spending_budget, record.spending_budget);
             assert_eq!(found.key_hash, "hash-123");
             assert!(found.is_active);
 
@@ -985,6 +1535,7 @@ mod tests {
                     last_used_at: None,
                     allowed_models: vec![],
                     allowed_providers: vec![],
+                    spending_budget: None,
                 };
                 repo.create(&record).await.expect("create");
             }
@@ -1249,6 +1800,7 @@ mod tests {
                 last_used_at: None,
                 allowed_models: vec![ModelId::new("gpt-4"), ModelId::new("claude-3")],
                 allowed_providers: vec![ProviderId::new("openai")],
+                spending_budget: None,
             };
             repo.create(&record).await.expect("create");
 
@@ -1287,6 +1839,7 @@ mod tests {
                 last_used_at: None,
                 allowed_models: vec![],
                 allowed_providers: vec![],
+                spending_budget: None,
             };
             repo.create(&record).await.expect("create");
 
@@ -1340,6 +1893,7 @@ mod tests {
                 last_used_at: None,
                 allowed_models: vec![],
                 allowed_providers: vec![],
+                spending_budget: None,
             };
             repo.create(&record).await.expect("create");
 
