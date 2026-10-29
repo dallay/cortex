@@ -14,6 +14,10 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub mod test_support;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct ServiceId(pub String);
 impl ServiceId {
