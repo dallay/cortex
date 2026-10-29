@@ -14,6 +14,10 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub mod test_support;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct ServiceId(pub String);
 impl ServiceId {
@@ -667,6 +671,20 @@ impl Supervisor {
     pub fn resolve_lease<T: Any + Send + Sync>(&self, id: &ServiceId) -> Result<ServiceLease<T>> {
         self.service_handle::<T>(id)?.acquire()
     }
+    /// Replaces an active provider and then finalizes the retired provider and dependents.
+    ///
+    /// An error can be returned after publication when retired-provider deactivation or
+    /// dependent resumption fails. The alternative remains active in that case. Inspect
+    /// `provider_of` and `substitution_diagnostics`; do not treat a post-commit error as
+    /// a rollback.
+    ///
+    /// # Cancellation
+    ///
+    /// Dropping this future before publication starts rollback. After publication,
+    /// finalization runs inline. Dropping the future then leaves the alternative active,
+    /// can interrupt retired-plugin cleanup or dependent resumption, and prevents the
+    /// substitution diagnostic from being recorded. No background task completes this
+    /// post-commit finalization.
     pub async fn substitute(
         &mut self,
         service: &ServiceId,
@@ -781,6 +799,24 @@ impl Supervisor {
                 })
                 .await);
         }
+        let replacement_position =
+            match self.replacement_order_index(&previous_owner, &manifest.requires, &dependents) {
+                Ok(position) => position,
+                Err(error) => {
+                    return Err(self
+                        .abort_substitution(SubstitutionAbort {
+                            service,
+                            previous_owner: &previous_owner,
+                            alternative_id: &alternative_id,
+                            gates: &[],
+                            resume_ids: Vec::new(),
+                            drained: Vec::new(),
+                            undrained,
+                            error,
+                        })
+                        .await)
+                }
+            };
         let mut old_gates: Vec<Arc<LeaseGate>> = Vec::new();
         let mut missing_gates = Vec::new();
         for id in &previous_provides {
@@ -883,7 +919,7 @@ impl Supervisor {
         let undrained = completed.undrained;
         drop(rollback);
 
-        if let Some(mut old) = self.plugins.remove(&previous_owner) {
+        let retired_cleanup_errors = if let Some(mut old) = self.plugins.remove(&previous_owner) {
             self.order.retain(|id| id != &previous_owner);
             for owners in self.dependents.values_mut() {
                 owners.remove(&previous_owner);
@@ -892,16 +928,34 @@ impl Supervisor {
             if let Some(mut ctx) = old.context.take() {
                 ctx.cleanup().await;
             }
-            let _ =
-                tokio::time::timeout(Duration::from_secs(5), old.plugin_mut().deactivate()).await;
-        }
+            match tokio::time::timeout(Duration::from_secs(5), old.plugin_mut().deactivate()).await
+            {
+                Ok(Ok(())) => Vec::new(),
+                Ok(Err(error)) => {
+                    vec![format!("{previous_owner}: deactivation failed: {error}")]
+                }
+                Err(_) => vec![format!("{previous_owner}: deactivation timed out")],
+            }
+        } else {
+            Vec::new()
+        };
+        self.order.retain(|id| id != &alternative_id);
+        self.order
+            .insert(replacement_position, alternative_id.clone());
         let resume_errors = self.resume_dependents(&drained).await;
-        let outcome = if resume_errors.is_empty() {
+        let mut finalization_errors = retired_cleanup_errors;
+        if !resume_errors.is_empty() {
+            finalization_errors.push(format!(
+                "dependents failed to resume: {}",
+                resume_errors.join(", ")
+            ));
+        }
+        let outcome = if finalization_errors.is_empty() {
             Ok(())
         } else {
             Err(format!(
-                "substitution committed but dependents failed to resume: {}",
-                resume_errors.join(", ")
+                "substitution committed but finalization failed: {}",
+                finalization_errors.join("; ")
             ))
         };
         self.substitutions.push(SubstitutionDiagnostic {
@@ -925,6 +979,63 @@ impl Supervisor {
             })
             .cloned()
             .collect()
+    }
+
+    fn replacement_order_index(
+        &self,
+        previous_owner: &str,
+        required_services: &[ServiceId],
+        dependents: &[String],
+    ) -> Result<usize> {
+        let previous_position = self
+            .order
+            .iter()
+            .position(|id| id == previous_owner)
+            .ok_or_else(|| {
+                AgentError::Composition(format!(
+                    "active provider {previous_owner} is missing from lifecycle order"
+                ))
+            })?;
+        let order_without_previous: Vec<_> = self
+            .order
+            .iter()
+            .filter(|id| id.as_str() != previous_owner)
+            .map(String::as_str)
+            .collect();
+        let mut insertion = previous_position;
+        for required in required_services {
+            let provider = self.providers.get(required).ok_or_else(|| {
+                AgentError::Composition(format!(
+                    "required service {} has no active provider",
+                    required.0
+                ))
+            })?;
+            let provider_position = order_without_previous
+                .iter()
+                .position(|id| *id == provider.plugin_id)
+                .ok_or_else(|| {
+                    AgentError::Composition(format!(
+                        "provider {} is missing from lifecycle order",
+                        provider.plugin_id
+                    ))
+                })?;
+            insertion = insertion.max(provider_position + 1);
+        }
+
+        let first_dependent = dependents
+            .iter()
+            .filter_map(|dependent| {
+                order_without_previous
+                    .iter()
+                    .position(|id| *id == dependent)
+            })
+            .min();
+        if first_dependent.is_some_and(|position| insertion > position) {
+            return Err(AgentError::Composition(format!(
+                "alternative dependencies cannot be ordered before current dependents of {previous_owner}"
+            )));
+        }
+        Ok(insertion)
     }
 
     fn begin_substitution_abort(&mut self, abort: SubstitutionAbort<'_>) -> usize {
@@ -1422,310 +1533,5 @@ impl Supervisor {
         for id in std::mem::take(&mut self.order).into_iter().rev() {
             self.stop_entry(&id, State::Unloaded).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod staged_abort_tests {
-    use super::*;
-    use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct DropSignal(Arc<AtomicUsize>);
-
-    impl Drop for DropSignal {
-        fn drop(&mut self) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    struct ResourcePlugin {
-        id: &'static str,
-        service: ServiceId,
-        value: u64,
-        dropped: Option<Arc<AtomicUsize>>,
-    }
-
-    #[async_trait]
-    impl Plugin for ResourcePlugin {
-        fn manifest(&self) -> Manifest {
-            Manifest {
-                id: self.id.into(),
-                provides: vec![self.service.clone()],
-                requires: vec![],
-            }
-        }
-
-        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
-            ctx.provide(self.service.clone(), self.value)?;
-            if let Some(dropped) = &self.dropped {
-                ctx.own_resource(DropSignal(dropped.clone()));
-            }
-            Ok(())
-        }
-    }
-
-    fn provider(service: &ServiceId) -> ResourcePlugin {
-        ResourcePlugin {
-            id: "original",
-            service: service.clone(),
-            value: 1,
-            dropped: None,
-        }
-    }
-
-    fn alternative(service: &ServiceId, dropped: Arc<AtomicUsize>) -> ResourcePlugin {
-        ResourcePlugin {
-            id: "alternative",
-            service: service.clone(),
-            value: 2,
-            dropped: Some(dropped),
-        }
-    }
-
-    struct CommitCallbackPlugin {
-        service: ServiceId,
-        published: Arc<AtomicUsize>,
-        dropped: Arc<AtomicUsize>,
-    }
-
-    #[async_trait]
-    impl Plugin for CommitCallbackPlugin {
-        fn manifest(&self) -> Manifest {
-            Manifest {
-                id: "commit-callback".into(),
-                provides: vec![self.service.clone()],
-                requires: vec![],
-            }
-        }
-
-        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
-            ctx.provide(self.service.clone(), 42_u64)?;
-            ctx.own_resource(DropSignal(self.dropped.clone()));
-            let published = self.published.clone();
-            ctx.on_commit(move || {
-                published.fetch_add(1, Ordering::SeqCst);
-            });
-            Ok(())
-        }
-    }
-
-    struct RequiringAlternative {
-        service: ServiceId,
-        requires: Vec<ServiceId>,
-        activated: Arc<AtomicBool>,
-        dropped: Arc<AtomicUsize>,
-        committed: Arc<AtomicBool>,
-    }
-
-    #[async_trait]
-    impl Plugin for RequiringAlternative {
-        fn manifest(&self) -> Manifest {
-            Manifest {
-                id: "requiring-alternative".into(),
-                provides: vec![self.service.clone()],
-                requires: self.requires.clone(),
-            }
-        }
-
-        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
-            self.activated.store(true, Ordering::SeqCst);
-            ctx.own_resource(DropSignal(self.dropped.clone()));
-            ctx.provide(self.service.clone(), 2_u64)?;
-            let committed = self.committed.clone();
-            ctx.on_commit(move || committed.store(true, Ordering::SeqCst));
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn staging_validates_requirements_and_cleans_up_invalid_alternatives() {
-        for requirement in ["missing", "self", "available"] {
-            let service = ServiceId::new("test:value", 1);
-            let dependency = ServiceId::new("test:dependency", 1);
-            let mut supervisor = Supervisor::default();
-            supervisor.register(Box::new(provider(&service))).unwrap();
-            if requirement == "available" {
-                supervisor
-                    .register(Box::new(ResourcePlugin {
-                        id: "dependency",
-                        service: dependency.clone(),
-                        value: 10,
-                        dropped: None,
-                    }))
-                    .unwrap();
-            }
-            supervisor.start().await.unwrap();
-            let activated = Arc::new(AtomicBool::new(false));
-            let dropped = Arc::new(AtomicUsize::new(0));
-            let committed = Arc::new(AtomicBool::new(false));
-            let result = supervisor
-                .substitute(
-                    &service,
-                    Box::new(RequiringAlternative {
-                        service: service.clone(),
-                        requires: vec![if requirement == "self" {
-                            service.clone()
-                        } else {
-                            dependency.clone()
-                        }],
-                        activated: activated.clone(),
-                        dropped: dropped.clone(),
-                        committed: committed.clone(),
-                    }),
-                    SubstitutionPolicy::ReportUndrained,
-                    Duration::from_secs(1),
-                )
-                .await;
-            if requirement == "available" {
-                result.unwrap();
-                assert!(activated.load(Ordering::SeqCst));
-                assert!(committed.load(Ordering::SeqCst));
-                assert_eq!(*supervisor.resolve_lease::<u64>(&service).unwrap(), 2);
-                assert_eq!(
-                    supervisor.dependents_of(&dependency),
-                    ["requiring-alternative"]
-                );
-            } else {
-                let error = result.unwrap_err().to_string();
-                if requirement == "missing" {
-                    assert!(error.contains(&dependency.0), "{error}");
-                    assert!(!activated.load(Ordering::SeqCst));
-                    assert_eq!(dropped.load(Ordering::SeqCst), 0);
-                } else {
-                    assert!(error.contains("requires a service it provides"), "{error}");
-                    assert!(activated.load(Ordering::SeqCst));
-                    assert_eq!(dropped.load(Ordering::SeqCst), 1);
-                }
-                assert!(!committed.load(Ordering::SeqCst));
-                assert!(!supervisor.plugins.contains_key("requiring-alternative"));
-                assert_eq!(*supervisor.resolve_lease::<u64>(&service).unwrap(), 1);
-                assert_eq!(
-                    supervisor.provider_of(&service).unwrap().plugin_id,
-                    "original"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn lease_counter_overflow_returns_an_error_without_poisoning_the_gate() {
-        let service = ServiceId::new("test:overflow", 1);
-        let gate = Arc::new(LeaseGate::new(1));
-        gate.state.lock().unwrap().active = usize::MAX;
-        let service_slots = Arc::new(Mutex::new(ServiceSlots {
-            entries: BTreeMap::from([(
-                service.clone(),
-                ServiceSlot {
-                    value: Arc::new(42_u64),
-                    gate: gate.clone(),
-                },
-            )]),
-        }));
-        let slot = ServiceSlotHandle::<u64> {
-            service_slots: service_slots.clone(),
-            service,
-            marker: std::marker::PhantomData,
-        };
-
-        let result = slot.acquire();
-
-        assert!(result.is_err());
-        assert!(!gate.state.is_poisoned());
-        assert!(!service_slots.is_poisoned());
-    }
-
-    #[tokio::test]
-    async fn missing_gate_after_staging_discards_alternative_and_records_abort() {
-        let service = ServiceId::new("test:value", 1);
-        let mut supervisor = Supervisor::default();
-        supervisor.register(Box::new(provider(&service))).unwrap();
-        supervisor.start().await.unwrap();
-        supervisor.lease_gates.remove(&service);
-        let dropped = Arc::new(AtomicUsize::new(0));
-
-        let result = supervisor
-            .substitute(
-                &service,
-                Box::new(alternative(&service, dropped.clone())),
-                SubstitutionPolicy::ReportUndrained,
-                Duration::from_secs(1),
-            )
-            .await;
-
-        assert!(result.is_err());
-        assert_eq!(dropped.load(Ordering::SeqCst), 1);
-        assert!(!supervisor.plugins.contains_key("alternative"));
-        assert_eq!(
-            supervisor.provider_of(&service).unwrap().plugin_id,
-            "original"
-        );
-        let diagnostic = supervisor.substitution_diagnostics().last().unwrap();
-        assert_eq!(diagnostic.alternative_owner, "alternative");
-        assert!(diagnostic.outcome.is_err());
-    }
-
-    #[tokio::test]
-    async fn gate_close_failure_discards_staged_alternative_and_preserves_owner() {
-        let service = ServiceId::new("test:value", 1);
-        let mut supervisor = Supervisor::default();
-        supervisor.register(Box::new(provider(&service))).unwrap();
-        supervisor.start().await.unwrap();
-        let gate = supervisor.lease_gates.get(&service).unwrap().clone();
-        let poison = std::thread::spawn(move || {
-            let _state = gate.state.lock().unwrap();
-            panic!("poison gate mutex for test");
-        });
-        assert!(poison.join().is_err());
-        let dropped = Arc::new(AtomicUsize::new(0));
-
-        let result = supervisor
-            .substitute(
-                &service,
-                Box::new(alternative(&service, dropped.clone())),
-                SubstitutionPolicy::ReportUndrained,
-                Duration::from_secs(1),
-            )
-            .await;
-
-        assert!(result.is_err());
-        assert_eq!(dropped.load(Ordering::SeqCst), 1);
-        assert!(!supervisor.plugins.contains_key("alternative"));
-        assert_eq!(
-            supervisor.provider_of(&service).unwrap().plugin_id,
-            "original"
-        );
-        let diagnostic = supervisor.substitution_diagnostics().last().unwrap();
-        assert_eq!(diagnostic.alternative_owner, "alternative");
-        assert!(diagnostic.outcome.is_err());
-    }
-
-    #[tokio::test]
-    async fn failed_slot_publication_does_not_run_commit_callbacks() {
-        let service = ServiceId::new("test:commit-callback", 1);
-        let mut supervisor = Supervisor::default();
-        let published = Arc::new(AtomicUsize::new(0));
-        let dropped = Arc::new(AtomicUsize::new(0));
-        supervisor
-            .register(Box::new(CommitCallbackPlugin {
-                service: service.clone(),
-                published: published.clone(),
-                dropped: dropped.clone(),
-            }))
-            .unwrap();
-
-        let service_slots = supervisor.service_slots.clone();
-        let poison = std::thread::spawn(move || {
-            let _slots = service_slots.lock().unwrap();
-            panic!("poison service slot table for test");
-        });
-        assert!(poison.join().is_err());
-
-        let result = supervisor.start().await;
-
-        assert!(result.is_err());
-        assert_eq!(published.load(Ordering::SeqCst), 0);
-        assert_eq!(dropped.load(Ordering::SeqCst), 1);
-        assert!(!supervisor.services.contains_key(&service));
     }
 }

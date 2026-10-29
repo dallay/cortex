@@ -135,13 +135,11 @@ impl Plugin for LoopPlugin {
     }
 }
 
-#[derive(Default)]
 struct LoopAdmission {
     state: Mutex<LoopAdmissionState>,
     idle: Notify,
 }
 
-#[derive(Default)]
 struct LoopAdmissionState {
     accepting: bool,
     active: usize,

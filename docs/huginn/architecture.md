@@ -75,14 +75,25 @@ pub trait Plugin: Send + Sync {
     async fn deactivate(&mut self) -> Result<()> {
         Ok(())
     }
+    fn supports_drain(&self) -> bool {
+        false
+    }
+    async fn drain(&mut self) -> Result<()> {
+        Ok(())
+    }
+    async fn resume(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 ```
 
 `deactivate` is optional: it has a default implementation that succeeds, so a
 plugin only implements it when it needs cleanup work.
+`supports_drain` defaults to `false`; `drain` and `resume` default to success.
+Plugins that support drain must override the capability method and coordinate
+their admission hooks with the supervisor.
 
-This is a shortened excerpt of the contract. The implementation also defines
-lifecycle hooks for stopping, task completion and termination; consult
+This is a shortened excerpt of the contract. Consult
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for the complete API.
 
 ### Supervisor
@@ -99,9 +110,10 @@ The `Supervisor` manages plugin lifecycle:
 | `diagnostics()` | Inspect plugin state and activation errors |
 | `provider_of(service)` | Read the owning plugin and generation |
 | `dependents_of(service)` | Read active plugins that require the service |
-| `service_handle::<T>(service)` | Create a handle that can issue cooperative leases |
+| `service_handle::<T>(service)` | Create a generation-bound handle that can issue cooperative leases |
+| `service_slot_handle::<T>(service)` | Create a dynamic handle that resolves the current provider on each `acquire()` |
 | `resolve_lease::<T>(service)` | Resolve and acquire one cooperative lease |
-| `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback |
+| `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback; a post-commit finalization error leaves the alternative active |
 
 The methods are asynchronous where lifecycle work requires it. See
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for exact signatures.
@@ -122,6 +134,22 @@ cerrar admisión si algún dependent no declara soporte de drenaje.
 precommit o el vencimiento del plazo restaura los slots anteriores, reabre sus
 gates y reanuda los dependientes cuyo drenaje se intentó. El timeout no cancela
 operaciones válidas representadas por leases.
+
+If the substitution future is cancelled before commit, the supervisor reopens the
+previous gates and schedules cleanup of the alternative and resumption of attempted
+dependents in the current runtime. After commit, finalization runs inline, not in a
+background task. Dropping the future at that point leaves the alternative active,
+can interrupt retired-plugin cleanup or dependent resumption, and prevents recording
+the substitution diagnostic. Do not cancel the future after publication.
+
+`Supervisor::substitute` can return `Err` after commit when retired-provider
+deactivation or dependent resumption fails. The alternative remains active. Check
+`provider_of(service)` and the corresponding entry in `substitution_diagnostics()`;
+do not treat this error as a rollback. When the `Supervisor` is dropped, the kernel
+revokes its gates and clears its slots, so retained handles cannot acquire new leases.
+The lifecycle order places the alternative after its required providers and before
+its existing dependents. The supervisor rejects a substitution when no position
+satisfies both constraints.
 
 ### Rebind del loop de producción
 
@@ -179,6 +207,9 @@ ctx.provide::<MyService>(service_id, value)?;
 
 // Resolve a dependency
 let dep = ctx.resolve::<OtherService>(&required_id)?;
+
+// Create a dynamic handle for a service declared in `requires`
+let current_provider = ctx.service_slot_handle::<MyService>(&my_service_required_id)?;
 
 // Track async tasks for cleanup
 ctx.own_task(task_handle);

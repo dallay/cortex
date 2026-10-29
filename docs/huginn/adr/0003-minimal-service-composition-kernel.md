@@ -52,6 +52,22 @@ falla la activación alternativa, se reabre la generación anterior y se reanuda
 los dependientes cuyo drenaje se intentó. El kernel registra el resultado de la
 sustitución y los IDs de dependientes drenados y no drenados.
 
+If the substitution future is cancelled before commit, the supervisor reopens the
+previous gates and schedules cleanup of the alternative and resumption of attempted
+dependents in the current runtime. After commit, finalization runs inline, not in a
+background task. Dropping the future at that point leaves the alternative active,
+can interrupt retired-plugin cleanup or dependent resumption, and prevents recording
+the substitution diagnostic.
+
+`Supervisor::substitute` can return `Err` after commit when retired-provider
+deactivation or dependent resumption fails. The alternative remains active. Callers
+must inspect `provider_of(service)` and the corresponding entry in
+`substitution_diagnostics()` instead of treating this error as a rollback. When the
+`Supervisor` is dropped, the kernel revokes its gates and clears its slots, so
+retained handles cannot acquire new leases. The lifecycle order places the
+alternative after its required providers and before its existing dependents. The
+supervisor rejects a substitution when no position satisfies both constraints.
+
 Las leases son un contrato cooperativo de API, no una revocación fuerte. El
 consumidor debe mantener la lease durante toda la operación y no debe conservar
 una referencia interna al proveedor después de liberar la lease. El método

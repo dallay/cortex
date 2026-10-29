@@ -862,6 +862,7 @@ async fn retained_loop_service_uses_replaced_model_and_store_for_run_and_compact
         .await
         .unwrap();
     assert_eq!(session.messages.last().unwrap().content, "model-A");
+    let saves_before_rebind = store_a.0.lock().unwrap().len();
 
     supervisor
         .substitute(
@@ -908,6 +909,18 @@ async fn retained_loop_service_uses_replaced_model_and_store_for_run_and_compact
     assert_eq!(session.summary.as_deref(), Some("model-B"));
     assert!(!calls_b.0.lock().unwrap().is_empty());
     assert!(!store_a.0.lock().unwrap().is_empty());
-    assert!(!store_b.0.lock().unwrap().is_empty());
+    assert_eq!(store_a.0.lock().unwrap().len(), saves_before_rebind);
+    assert!(store_a
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|saved| saved.summary.is_none()));
+    assert!(store_b
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|saved| { saved.summary.as_deref() == Some("model-B") }));
     supervisor.shutdown().await;
 }

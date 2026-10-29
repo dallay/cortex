@@ -43,6 +43,50 @@ impl Plugin for ValuePlugin {
     }
 }
 
+struct DeactivationFailurePlugin(ServiceId);
+
+#[async_trait]
+impl Plugin for DeactivationFailurePlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "original".into(),
+            provides: vec![self.0.clone()],
+            requires: Vec::new(),
+        }
+    }
+
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(self.0.clone(), 1_u64)
+    }
+
+    async fn deactivate(&mut self) -> Result<()> {
+        Err(AgentError::Composition(
+            "injected deactivation failure".into(),
+        ))
+    }
+}
+
+struct DeactivationTimeoutPlugin(ServiceId);
+
+#[async_trait]
+impl Plugin for DeactivationTimeoutPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "original-timeout".into(),
+            provides: vec![self.0.clone()],
+            requires: Vec::new(),
+        }
+    }
+
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(self.0.clone(), 1_u64)
+    }
+
+    async fn deactivate(&mut self) -> Result<()> {
+        std::future::pending::<Result<()>>().await
+    }
+}
+
 struct DependentPlugin {
     id: &'static str,
     requires: ServiceId,
@@ -408,6 +452,87 @@ async fn failed_alternative_activation_keeps_previous_provider_available() {
     assert_eq!(*supervisor.resolve_lease::<u64>(&service).unwrap(), 11);
 }
 
+#[tokio::test]
+async fn substitution_reports_retired_provider_deactivation_failure_after_commit() {
+    let service = ServiceId::new("test:deactivation-failure", 1);
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(DeactivationFailurePlugin(service.clone())))
+        .unwrap();
+    supervisor.start().await.unwrap();
+
+    let error = supervisor
+        .substitute(
+            &service,
+            Box::new(ValuePlugin {
+                id: "replacement",
+                service: service.clone(),
+                value: 2,
+                fail: false,
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("original: deactivation failed"));
+    assert!(error.contains("injected deactivation failure"));
+    assert_eq!(
+        supervisor.provider_of(&service).unwrap().plugin_id,
+        "replacement"
+    );
+    assert!(supervisor
+        .substitution_diagnostics()
+        .last()
+        .unwrap()
+        .outcome
+        .as_ref()
+        .unwrap_err()
+        .contains("injected deactivation failure"));
+}
+
+#[tokio::test]
+async fn retired_provider_deactivation_timeout_reports_committed_substitution() {
+    let service = ServiceId::new("test:deactivation-timeout", 1);
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(DeactivationTimeoutPlugin(service.clone())))
+        .unwrap();
+    supervisor.start().await.unwrap();
+
+    let error = supervisor
+        .substitute(
+            &service,
+            Box::new(ValuePlugin {
+                id: "replacement-after-timeout",
+                service: service.clone(),
+                value: 2,
+                fail: false,
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("substitution committed but finalization failed"));
+    assert!(error.contains("original-timeout: deactivation timed out"));
+    assert_eq!(
+        supervisor.provider_of(&service).unwrap().plugin_id,
+        "replacement-after-timeout"
+    );
+    let diagnostic = supervisor.substitution_diagnostics().last().unwrap();
+    assert_eq!(diagnostic.alternative_owner, "replacement-after-timeout");
+    assert!(diagnostic
+        .outcome
+        .as_ref()
+        .unwrap_err()
+        .contains("original-timeout: deactivation timed out"));
+}
+
 struct MultiServicePlugin {
     id: &'static str,
     services: Vec<(ServiceId, u64)>,
@@ -460,6 +585,43 @@ impl Plugin for MultiServicePlugin {
         for (service, value) in &self.services {
             ctx.provide(service.clone(), *value)?;
         }
+        Ok(())
+    }
+}
+
+struct LifecycleOrderPlugin {
+    id: &'static str,
+    provides: Vec<(ServiceId, u64)>,
+    requires: Vec<ServiceId>,
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl Plugin for LifecycleOrderPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: self.id.into(),
+            provides: self
+                .provides
+                .iter()
+                .map(|(service, _)| service.clone())
+                .collect(),
+            requires: self.requires.clone(),
+        }
+    }
+
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        for (service, value) in &self.provides {
+            ctx.provide(service.clone(), *value)?;
+        }
+        Ok(())
+    }
+
+    async fn deactivate(&mut self) -> Result<()> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("deactivate:{}", self.id));
         Ok(())
     }
 }
@@ -1599,4 +1761,118 @@ async fn resume_attempts_continue_after_timeout_and_error_on_commit_and_rollback
             if fail_drain { 1 } else { 2 }
         );
     }
+}
+
+#[tokio::test]
+async fn shutdown_stops_dependents_before_the_replacement_provider() {
+    let service = ServiceId::new("test:shutdown-order", 1);
+    let later_dependency = ServiceId::new("test:later-dependency", 1);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(LifecycleOrderPlugin {
+            id: "a-original",
+            provides: vec![(service.clone(), 1)],
+            requires: Vec::new(),
+            events: events.clone(),
+        }))
+        .unwrap();
+    supervisor
+        .register(Box::new(LifecycleOrderPlugin {
+            id: "b-later-dependency",
+            provides: vec![(later_dependency.clone(), 3)],
+            requires: Vec::new(),
+            events: events.clone(),
+        }))
+        .unwrap();
+    supervisor
+        .register(Box::new(LifecycleOrderPlugin {
+            id: "c-dependent",
+            provides: Vec::new(),
+            requires: vec![service.clone()],
+            events: events.clone(),
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+
+    supervisor
+        .substitute(
+            &service,
+            Box::new(LifecycleOrderPlugin {
+                id: "replacement",
+                provides: vec![(service.clone(), 2)],
+                requires: vec![later_dependency],
+                events: events.clone(),
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    events.lock().unwrap().clear();
+
+    supervisor.shutdown().await;
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        [
+            "deactivate:c-dependent",
+            "deactivate:replacement",
+            "deactivate:b-later-dependency"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn substitution_rejects_replacement_that_depends_on_its_own_dependent() {
+    let service = ServiceId::new("test:cycle-target", 1);
+    let dependent_service = ServiceId::new("test:dependent-service", 1);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(LifecycleOrderPlugin {
+            id: "a-original",
+            provides: vec![(service.clone(), 1)],
+            requires: Vec::new(),
+            events: events.clone(),
+        }))
+        .unwrap();
+    supervisor
+        .register(Box::new(LifecycleOrderPlugin {
+            id: "b-dependent",
+            provides: vec![(dependent_service.clone(), 3)],
+            requires: vec![service.clone()],
+            events: events.clone(),
+        }))
+        .unwrap();
+    supervisor.start().await.unwrap();
+
+    let error = supervisor
+        .substitute(
+            &service,
+            Box::new(LifecycleOrderPlugin {
+                id: "replacement",
+                provides: vec![(service.clone(), 2)],
+                requires: vec![dependent_service.clone()],
+                events,
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("cannot be ordered"), "{error}");
+    assert_eq!(
+        supervisor.provider_of(&service).unwrap().plugin_id,
+        "a-original"
+    );
+    assert_eq!(
+        supervisor
+            .provider_of(&dependent_service)
+            .unwrap()
+            .plugin_id,
+        "b-dependent"
+    );
 }

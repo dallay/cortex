@@ -9,6 +9,8 @@ use std::{
 };
 use support::Pty;
 
+const TUI_READY_FOOTER: &str = "Huginn — Enter sends / Alt+Enter newline / /help";
+
 fn command(workspace: &Path, db: &Path) -> CommandBuilder {
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
     command.args(["--provider", "mock", "--workspace"]);
@@ -71,8 +73,10 @@ fn rejected_template_expansion_releases_composer_without_starting_a_turn() {
     ] {
         pty.send(&format!("\x1b[200~{input}\x1b[201~\r"));
         pty.wait_for(error);
+        pty.wait_for(TUI_READY_FOOTER);
         pty.send(&format!("\x1b[200~{follow_up}\x1b[201~\r"));
         pty.wait_for(&format!("Offline mock: {follow_up}"));
+        pty.wait_for(TUI_READY_FOOTER);
     }
     pty.send("/quit\r");
     pty.finish(true);
@@ -132,12 +136,14 @@ fn skills_complete_with_description_and_direct_unknown_requests_do_not_infer() {
     pty.send("\t");
     pty.send("\x1b[200~  \"quoted\" \\path  \x1b[201~\r");
     pty.wait_for("Offline mock: Explicit user skill request");
+    pty.wait_for(TUI_READY_FOOTER);
     pty.send("\x1b[200~/skill:unknown task\x1b[201~\r");
     pty.wait_for("unknown or unavailable skill");
+    pty.wait_for(TUI_READY_FOOTER);
     // An unknown command must release the composer for the next direct invocation.
     pty.send("\x1b[200~/skill:review direct\x1b[201~\r");
     pty.wait_for(r#""task":"direct""#);
-    pty.wait_for("Huginn — Enter sends / Alt+Enter newline / /help");
+    pty.wait_for(TUI_READY_FOOTER);
     pty.send("/quit\r");
     pty.finish(true);
     let connection = rusqlite::Connection::open(db).unwrap();
