@@ -111,6 +111,19 @@ cleanup_git_objects() {
         info "    pila de stashes preservada"
     fi
 
+    # If refs/stash holds a stash but its reflog is missing or empty, the stash
+    # content is still in the object store but `git stash list` cannot show it.
+    # Recreate one reflog entry so the stash becomes visible again. The ref is
+    # deleted and recreated because `git update-ref` with an unchanged value
+    # does not write a reflog entry.
+    if git rev-parse --verify --quiet refs/stash >/dev/null && [[ -z "$(git stash list)" ]]; then
+        local stash_commit
+        stash_commit="$(git rev-parse refs/stash)"
+        git update-ref -d refs/stash
+        git update-ref --create-reflog -m "clean-git: restore stash reflog" "refs/stash" "$stash_commit"
+        info "    reflog de refs/stash restaurado"
+    fi
+
     git gc --prune=now --quiet
     info "    gc completado"
 }
