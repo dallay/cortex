@@ -72,7 +72,7 @@ report_unmerged_branches() {
     unmerged="$(git branch --format='%(refname:short)' --no-merged | grep -v '^main$' || true)"
     if [[ -n "$unmerged" ]]; then
         warn "==> Ramas con trabajo sin mergear (NO se tocaron):"
-        echo "$unmerged" | sed 's/^/    /'
+        printf '%s\n' "$unmerged" | sed 's/^/    /'
     fi
 }
 
