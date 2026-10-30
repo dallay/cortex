@@ -845,16 +845,46 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     pty.send("stream\r");
     pty.wait_for("chunk0");
 
-    // Keep resizing active while the fixture emits its deterministic chunks.
-    // Short spacing gives the event loop time to observe transitions instead of
-    // only seeing the final PTY dimensions.
-    for index in 0..100 {
-        let (rows, cols) = if index % 2 == 0 { (8, 20) } else { (40, 120) };
+    // The fixture emits 40 chunks over roughly 800 ms. Keep each resize
+    // transition spaced within that window, and synchronize halfway through on
+    // a later chunk to prove the storm is still overlapping active streaming.
+    for resize_index in 0..50 {
+        let (rows, cols) = if resize_index % 2 == 0 {
+            (8, 20)
+        } else {
+            (40, 120)
+        };
         pty.resize(rows, cols);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    pty.wait_for("chunk20");
+    assert!(
+        !pty.screen_text().contains("STREAM_COMPLETE"),
+        "the first 50 resizes must overlap active streaming:\n{}",
+        pty.screen_text()
+    );
+    for resize_index in 50..100 {
+        let (rows, cols) = if resize_index % 2 == 0 {
+            (8, 20)
+        } else {
+            (40, 120)
+        };
+        pty.resize(rows, cols);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    pty.wait_for("chunk30");
+    assert!(
+        !pty.screen_text().contains("STREAM_COMPLETE"),
+        "all 100 resizes must finish before streaming completes:\n{}",
+        pty.screen_text()
+    );
 
     pty.wait_for("Assistant: STREAM_COMPLETE");
+    let screen = pty.screen_text();
+    assert!(
+        screen.contains("User: stream"),
+        "the committed user transcript must remain visible after 100 streaming resizes:\n{screen}"
+    );
     // Verify the composer still accepts an independent command and a fresh
     // approval code after all resize transitions.
     pty.send("approve\r");

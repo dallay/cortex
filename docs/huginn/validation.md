@@ -18,12 +18,13 @@ Terminal.app, iTerm2, SSH ni tmux.
 Ejecución focal en Linux x86_64 (`uname -a`: Linux 7.0.14-26-pve):
 
 ```sh
-cargo test -p huginn-presentation --features test-driver --test pty committed_transcript_is_not_lost_or_duplicated_during_rapid_streaming_resizes -- --exact --nocapture
+cargo test -p huginn-presentation --features test-driver --test pty composer_and_fresh_approval_work_after_100_streaming_resizes -- --exact --nocapture
 ```
 
-Resultado observado: suite PTY aprobada (41 tests, ejecución serial en 16.47 s).
-También pasó `cargo test -p huginn-presentation --features test-driver` (suite completa
-incluido PTY: 41 tests PTY más las suites unitarias/integración). Toolchain
+Resultado focal observado: 1 test aprobado en 1.04 s. Por separado, la suite PTY
+completa aprobó 41 tests en ejecución serial (16.47 s), y también pasó
+`cargo test -p huginn-presentation --features test-driver` (suite completa, incluido
+PTY: 41 tests más las suites unitarias/integración). Toolchain
 Rust/Cargo 1.99.1. Versiones fijadas en `crates/huginn/presentation/Cargo.toml`:
 Ratatui 0.30.2, Crossterm 0.29.0 y portable-pty 0.9.0. El fixture usa salida
 simulada; no accede a un modelo real. La compilación reporta un warning deprecado
