@@ -108,11 +108,22 @@ describe('validateSkills', () => {
         assert.deepEqual(validateSkills(root), []);
       });
 
-  it('rejects malformed UTF-8 and continues validating later skills', () => {
+  it('rejects missing local links with parenthesized destinations', () => {
+    const root = fixture({
+      'one/SKILL.md': skill('one',
+          {body: '[setup](references/setup(v2).md)\n'}),
+    });
+    assert.match(validateSkills(root).join('\n'),
+        /broken local link "references\/setup\(v2\)\.md"/);
+  });
+
+  it('rejects malformed UTF-8 in a valid skill and continues validating',
+      () => {
     const root = fixture(
         {'bad/SKILL.md': skill('bad'), 'good/SKILL.md': skill('good')});
+        const validSkillBytes = Buffer.from(skill('bad'));
     writeFileSync(join(root, 'bad/SKILL.md'),
-        Buffer.from([0x2d, 0x2d, 0x2d, 0xff]));
+        Buffer.concat([validSkillBytes, Buffer.from([0xff])]));
     const result = analyzeSkills(root);
     assert.match(result.errors.join('\n'), /bad\/SKILL\.md:.*UTF-8/);
     assert.equal(result.skills.some(({name}) => name === 'good'), true);
@@ -125,6 +136,20 @@ describe('validateSkills', () => {
         assert.match(validateSkills(root).join('\n'),
             /linked: symlinked entries are not supported/);
       });
+
+  it('rejects symlinked SKILL.md files', () => {
+    const root = fixture({'one/target.md': skill('one')});
+    symlinkSync(join(root, 'one/target.md'), join(root, 'one/SKILL.md'));
+    assert.match(validateSkills(root).join('\n'),
+        /one\/SKILL\.md: symlinked entries are not supported/);
+  });
+
+  it('rejects broken symlinks under the skills root', () => {
+    const root = fixture({'one/SKILL.md': skill('one')});
+    symlinkSync(join(root, 'missing-target'), join(root, 'broken'));
+    assert.match(validateSkills(root).join('\n'),
+        /broken: symlinked entries are not supported/);
+  });
 
   it('resolves links written from the repository root', () => {
     const root = fixture({
