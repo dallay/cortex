@@ -1,7 +1,7 @@
 ---
 name: vue
 description: Use when working with .vue files, composables, Pinia stores, or form validation in the Rook dashboard.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+allowed-tools: Read Edit Write Glob Grep Bash
 metadata:
   author: cortex
   version: "2.0"
@@ -14,16 +14,16 @@ Conventions for `apps/rook/dashboard`. They extend
 
 ## Stack (verify before assuming)
 
-| Piece | Value | Source |
-|---|---|---|
-| Framework | Vue `^3.6.0-rc` | `apps/rook/dashboard/package.json` |
-| Router / state | `vue-router` 5, Pinia 4 (setup stores) | same |
-| UI | shadcn-vue components in `src/components/ui` | `components.json` |
-| Styling | Tailwind CSS 4 + tokens in `src/style.css` | same |
-| i18n | vue-i18n, `src/locales/en.json` + `es.json` | same |
-| HTTP | native `fetch` behind `useApi()` in `src/lib/api.ts` | same |
-| Forms | vee-validate + `@vee-validate/zod` + Zod | same |
-| Lint/format | Biome (tabs, double quotes) | `biome.json` |
+| Piece          | Value                                                | Source                             |
+|----------------|------------------------------------------------------|------------------------------------|
+| Framework      | Vue `^3.6.0-rc`                                      | `apps/rook/dashboard/package.json` |
+| Router / state | `vue-router` 5, Pinia 4 (setup stores)               | same                               |
+| UI             | shadcn-vue components in `src/components/ui`         | `components.json`                  |
+| Styling        | Tailwind CSS 4 + tokens in `src/style.css`           | same                               |
+| i18n           | vue-i18n, `src/locales/en.json` + `es.json`          | same                               |
+| HTTP           | native `fetch` behind `useApi()` in `src/lib/api.ts` | same                               |
+| Forms          | vee-validate + `@vee-validate/zod` + Zod             | same                               |
+| Lint/format    | Biome (tabs, double quotes)                          | `biome.json`                       |
 
 There is no Axios dependency and no shared `@profiletailors/*` package. Do not
 reintroduce either.
@@ -197,11 +197,11 @@ const onSubmit = handleSubmit(async (values) => {
 
 ## Communication and performance
 
-| Need | Use |
-|---|---|
-| Parent → child | props |
-| Child → parent | typed `emit` |
-| Shared/distant state | Pinia store |
+| Need                       | Use                |
+|----------------------------|--------------------|
+| Parent → child             | props              |
+| Child → parent             | typed `emit`       |
+| Shared/distant state       | Pinia store        |
 | Deeply nested, stable tree | `provide`/`inject` |
 
 - Do not use global event buses.

@@ -4,9 +4,9 @@ The `font-size-adjust` property allows you to normalize the visual size of text 
 
 ### Implementation Steps
 
-1.  **MANDATORY**: Apply `font-size-adjust` to elements where font consistency is critical, such as containers using web fonts or blocks with mixed font families.
-2.  **MANDATORY**: Use the `from-font` keyword on elements to automatically match font size in nested elements to the proportions of the primary font.
-3.  **MANDATORY**: Use a specific numeric aspect-ratio override value for `font-size-adjust` (e.g., `font-size-adjust: 0.5`) to normalize proportions independently when the font proportions to base on are from different themes.
+1. **MANDATORY**: Apply `font-size-adjust` to elements where font consistency is critical, such as containers using web fonts or blocks with mixed font families.
+2. **MANDATORY**: Use the `from-font` keyword on elements to automatically match font size in nested elements to the proportions of the primary font.
+3. **MANDATORY**: Use a specific numeric aspect-ratio override value for `font-size-adjust` (e.g., `font-size-adjust: 0.5`) to normalize proportions independently when the font proportions to base on are from different themes.
 
 ### Example: Normalizing x-height automatically
 

@@ -492,7 +492,7 @@ test("request permissions", async ({ context, extensionId }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                   | Problem               | Solution                                 |
-| ------------------------------ | --------------------- | ---------------------------------------- |
+|--------------------------------|-----------------------|------------------------------------------|
 | Testing in headless mode       | Extensions don't load | Use `headless: false`                    |
 | Not waiting for service worker | Race conditions       | Wait for `serviceworker` event           |
 | Hardcoding extension ID        | ID changes on reload  | Extract ID from service worker URL       |

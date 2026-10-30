@@ -40,8 +40,7 @@ while consumers, authority checks and lifecycle guarantees continue to work."
   #497 (Renovate), #337, #97 (release-please). **No open PR touches EPIC 01.**
 - Recent merged Huginn work: #507, #505, #504, #499, #492, #489 (protected session
   composition), #488 (bounded local restriction snapshots). None implements EPIC 01.
-- Open GitHub issues are the 15 Huginn epics (#442–#457) plus the EPIC 02 slice #506.
-  **No implementation issue exists for EPIC 01.**
+- Open GitHub issues are the 15 Huginn epics (#442–#457) plus the EPIC 02 slice #506. **No implementation issue exists for EPIC 01.**
 
 ### ADRs already accepted
 
@@ -59,28 +58,28 @@ while consumers, authority checks and lifecycle guarantees continue to work."
 
 ### Existing foundation to preserve (must not be recreated)
 
-| Capability | Evidence | State |
-| --- | --- | --- |
-| Versioned service identity | `crates/huginn/core/src/kernel.rs:18-22` (`ServiceId::new(name, major)` → `name@major`) | Present |
-| Transactional activation | `kernel.rs:278-330` — staged registrations, manifest-vs-actual equality check, publish-then-commit | Present |
-| Failure rollback | `kernel.rs:114-127` — cleanup cancels, clears commits/resources, drains owned tasks with a 5s deadline | Present |
-| Generation identity | `kernel.rs:49-76` — `Activation` with generation, published flag, cancellation token | Present |
-| Per-generation revocation | `crates/huginn/core/tests/registration_ownership.rs` — resources drop on failure, remove, shutdown and supervisor drop | Present |
-| Ambiguous provider rejection | `kernel.rs:210-223` — `provider_owners()` fails on duplicate `ServiceId` | Present |
-| Dependency cycle detection | `kernel.rs:225-260` — DFS over manifest `requires` → provider owners | Present |
-| Deterministic activation order | `kernel.rs:191-208`, `kernel.rs:262-276` — `BTreeMap` iteration + readiness filter | Present |
-| Ownership of owned resources | `kernel.rs:103-109` — `own_task`, `own_resource` | Present |
-| Port-only composition | `crates/huginn/application/src/composition.rs` — `ModelPlugin`, `ToolsPlugin`, `SessionsPlugin`, `LoopPlugin` behind `ServiceId` | Present |
-| Loop-scoped typed events | `crates/huginn/core/src/lib.rs:127-190` — `Event`, `EventSink`, `ScopedEventSink` | Present (loop scope) |
+| Capability                     | Evidence                                                                                                                         | State                |
+|--------------------------------|----------------------------------------------------------------------------------------------------------------------------------|----------------------|
+| Versioned service identity     | `crates/huginn/core/src/kernel.rs:18-22` (`ServiceId::new(name, major)` → `name@major`)                                          | Present              |
+| Transactional activation       | `kernel.rs:278-330` — staged registrations, manifest-vs-actual equality check, publish-then-commit                               | Present              |
+| Failure rollback               | `kernel.rs:114-127` — cleanup cancels, clears commits/resources, drains owned tasks with a 5s deadline                           | Present              |
+| Generation identity            | `kernel.rs:49-76` — `Activation` with generation, published flag, cancellation token                                             | Present              |
+| Per-generation revocation      | `crates/huginn/core/tests/registration_ownership.rs` — resources drop on failure, remove, shutdown and supervisor drop           | Present              |
+| Ambiguous provider rejection   | `kernel.rs:210-223` — `provider_owners()` fails on duplicate `ServiceId`                                                         | Present              |
+| Dependency cycle detection     | `kernel.rs:225-260` — DFS over manifest `requires` → provider owners                                                             | Present              |
+| Deterministic activation order | `kernel.rs:191-208`, `kernel.rs:262-276` — `BTreeMap` iteration + readiness filter                                               | Present              |
+| Ownership of owned resources   | `kernel.rs:103-109` — `own_task`, `own_resource`                                                                                 | Present              |
+| Port-only composition          | `crates/huginn/application/src/composition.rs` — `ModelPlugin`, `ToolsPlugin`, `SessionsPlugin`, `LoopPlugin` behind `ServiceId` | Present              |
+| Loop-scoped typed events       | `crates/huginn/core/src/lib.rs:127-190` — `Event`, `EventSink`, `ScopedEventSink`                                                | Present (loop scope) |
 
 ## Gap matrix
 
-| Epic capability | Present | Missing |
-| --- | --- | --- |
-| 1. Versioned contracts, deterministic resolution | `ServiceId` with explicit major version; exact-match resolution; deterministic ordering; ambiguous providers and cycles fail explicitly | No major-version compatibility rule (a consumer requiring `agent:model@2` cannot consume `agent:model@1`); no multiple-candidate selection semantics |
-| 2. Supervisor, dependency graph, lifecycle, reversible registrations | Supervisor with `register`/`start`/`remove`/`shutdown`; dependency graph; transactional publication; rollback; per-generation cleanup | No restart or replacement of an already-active plugin; `remove` marks dependents `Blocked` and never reactivates them when the dependency returns; no mechanism forces in-flight consumers to stop accepting new work after removal |
-| 3. Typed events, ownership, scoped resolution, introspection | Loop-scoped typed events exist; `Diagnostic` exposes manifest, state, generation and last error | No kernel lifecycle event stream; ownership is recomputed locally inside `start()` and never exposed; no dependents map; no service → provider introspection; resolution is a flat global map with no scope concept (`PluginContext.services` is a filtered snapshot taken at activation time) |
-| 4. Explicit replacement with safe rollback | — | **Nothing exists.** There is no `replace` operation on the supervisor or the composition root |
+| Epic capability                                                      | Present                                                                                                                                 | Missing                                                                                                                                                                                                                                                                                        |
+|----------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1. Versioned contracts, deterministic resolution                     | `ServiceId` with explicit major version; exact-match resolution; deterministic ordering; ambiguous providers and cycles fail explicitly | No major-version compatibility rule (a consumer requiring `agent:model@2` cannot consume `agent:model@1`); no multiple-candidate selection semantics                                                                                                                                           |
+| 2. Supervisor, dependency graph, lifecycle, reversible registrations | Supervisor with `register`/`start`/`remove`/`shutdown`; dependency graph; transactional publication; rollback; per-generation cleanup   | No restart or replacement of an already-active plugin; `remove` marks dependents `Blocked` and never reactivates them when the dependency returns; no mechanism forces in-flight consumers to stop accepting new work after removal                                                            |
+| 3. Typed events, ownership, scoped resolution, introspection         | Loop-scoped typed events exist; `Diagnostic` exposes manifest, state, generation and last error                                         | No kernel lifecycle event stream; ownership is recomputed locally inside `start()` and never exposed; no dependents map; no service → provider introspection; resolution is a flat global map with no scope concept (`PluginContext.services` is a filtered snapshot taken at activation time) |
+| 4. Explicit replacement with safe rollback                           | —                                                                                                                                       | **Nothing exists.** There is no `replace` operation on the supervisor or the composition root                                                                                                                                                                                                  |
 
 ## Consequences that matter for the acceptance outcome
 

@@ -75,7 +75,7 @@ Las convenciones de Rust son enforced por el compilador en algunos casos.
 
 ### 5. name-as-free
 
-> Usa `as_` prefix para conversiones libres (O(1), no alloc).
+> Usa `as_` prefix para conversiones libres (O (1), no alloc).
 
  ```rust
  impl ProviderConfig {

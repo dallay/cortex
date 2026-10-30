@@ -52,7 +52,7 @@ Qué captura:
 
 - `approx_constant` — Usar PI de std::f64::consts::PI
 - `invalid_regex` — Regex que no compila
-- `iter_next_loop` — Uso incorrecto de .next() en for loops
+- `iter_next_loop` — Uso incorrecto de .next () en for loops
 - `never_loop` — Loops que nunca iteran
 - `unit_cmp` — Comparación de unit types ()
 

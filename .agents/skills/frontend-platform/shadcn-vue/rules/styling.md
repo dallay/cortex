@@ -11,7 +11,7 @@ See [customization.md](../customization.md) for theming, CSS variables, and addi
 - Prefer size-* over w-* h-* when equal
 - Prefer truncate shorthand
 - No manual dark: color overrides
-- Use cn() for conditional classes
+- Use cn () for conditional classes
 - No manual z-index on overlay components
 
 ---
@@ -99,6 +99,7 @@ Use `class` for layout (e.g. `max-w-md`, `mx-auto`, `mt-4`), **not** for overrid
 ```
 
 To customize a component's appearance, prefer these approaches in order:
+
 1. **Built-in variants** — `variant="outline"`, `variant="destructive"`, etc.
 2. **Semantic color tokens** — `bg-primary`, `text-muted-foreground`.
 3. **CSS variables** — define custom colors in the global CSS file (see [customization.md](../customization.md)).
@@ -137,7 +138,7 @@ Use semantic tokens — they handle light/dark via CSS variables. `bg-background
 
 ---
 
-## Use cn() for conditional classes
+## Use cn () for conditional classes
 
 Use the `cn()` utility from the project for conditional or merged class names. Don't write manual ternaries in class strings.
 

@@ -70,7 +70,7 @@ Esto permite `?` operator automáticamente.
 
 ### 3. err-no-unwrap-prod ⚠️ CRÍTICO
 
-> Evita unwrap() en código de producción.
+> Evita unwrap () en código de producción.
 
 Encontrado en provider implementations y adapters.
 
@@ -135,14 +135,14 @@ Combinar con context para mejores mensajes:
 
 Decision guide:
 
-| Situación                          | Use                                |
- |------------------------------------|------------------------------------|
-| Provider no disponible             | `Result`                           |
+| Situación                          | Use                                  |
+ |------------------------------------|--------------------------------------|
+| Provider no disponible             | `Result`                             |
 | Rate limited                       | `Result` (CortexError::rate_limited) |
-| Index out of bounds (user data)    | `Result`                           |
-| Index out of bounds (internal bug) | `panic!` con expect                |
-| Invariant violated (program bug)   | `panic!`                           |
-| Unreachable code                   | `unreachable!()`                   |
+| Index out of bounds (user data)    | `Result`                             |
+| Index out of bounds (internal bug) | `panic!` con expect                  |
+| Invariant violated (program bug)   | `panic!`                             |
+| Unreachable code                   | `unreachable!()`                     |
 
 ### 6. err-source-chain
 

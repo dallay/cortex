@@ -26,7 +26,7 @@ You can use the `image-set()` function directly within the `content` property of
 
 ### Fallback strategies
 
-Baseline status for image-set(): Widely available. It's been Baseline since 2023-09-18.
+Baseline status for image-set (): Widely available. It's been Baseline since 2023-09-18.
 Supported by: Chrome 113 (May 2023), Edge 113 (May 2023), Firefox 89 (Jun 2021), and Safari 17 (Sep 2023).
 
 For older browsers that do not support the `image-set()` function, you **MUST** provide a standard image declaration *before* the `image-set()` rule. This progressive enhancement strategy relies on CSS's cascading nature: unsupported rules are ignored.

@@ -1,7 +1,7 @@
 ---
 name: pinned-tag
 description: Use when fixing "Unpinned tag for a non-immutable Action" warnings or when pinning dependencies to specific git versions.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+allowed-tools: Read Edit Write Glob Grep Bash
 license: Apache-2.0
 metadata:
   author: yuniel

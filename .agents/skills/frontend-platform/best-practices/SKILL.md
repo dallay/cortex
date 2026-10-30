@@ -284,14 +284,14 @@ controller.abort();
 
 ## Tooling
 
-| Task | Command |
-|---|---|
-| Lint/format | `pnpm --filter @dallay/rook-dashboard run lint` |
-| Typecheck | `pnpm --filter @dallay/rook-dashboard run typecheck` |
-| Unit tests | `pnpm --filter @dallay/rook-dashboard exec vitest run` |
-| E2E | `just test-e2e` (Docker) |
-| Rust audit | `just ci-audit` |
-| Skills/Markdown | `just ci-lint` |
+| Task            | Command                                                |
+|-----------------|--------------------------------------------------------|
+| Lint/format     | `pnpm --filter @dallay/rook-dashboard run lint`        |
+| Typecheck       | `pnpm --filter @dallay/rook-dashboard run typecheck`   |
+| Unit tests      | `pnpm --filter @dallay/rook-dashboard exec vitest run` |
+| E2E             | `just test-e2e` (Docker)                               |
+| Rust audit      | `just ci-audit`                                        |
+| Skills/Markdown | `just ci-lint`                                         |
 
 Use `just --list` for the canonical recipes. Do not add npm, yarn or Makefile
 instructions to documentation or CI.

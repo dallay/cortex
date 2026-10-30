@@ -347,15 +347,15 @@ No new fields on `StandardLoop`; no new ports; no new session shape.
 
 ## Files to Modify
 
-| File                                                | Change                                                                                  |
-|-----------------------------------------------------|------------------------------------------------------------------------------------------|
-| `apps/agent/src/terminal.rs`                        | Add `turn_count` and `reset_turn()`; rewrite `approve()` header; add `effect_line()` helper |
-| `apps/agent/src/main.rs`                            | Reset counter before each new turn; handle `/compact` and `/summarize`; capture `Arc<StandardLoop>` for `compact()` |
-| `crates/agent/runtime/src/loop_engine.rs`           | Add `pub async fn compact()` on `StandardLoop` (no other change)                          |
-| `apps/agent/tests/cli.rs`                           | Add three new tests                                                                       |
-| `docs/agent/implementation-specification.md`        | Document the new approval header and the `/compact` flow                                  |
-| `docs/agent/linux-daily-use.md`                     | Mention `/compact` as a manual trigger                                                    |
-| `docs/agent/validation.md`                          | Note the local Ollama change and that automated tests still pass                          |
+| File                                         | Change                                                                                                              |
+|----------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `apps/agent/src/terminal.rs`                 | Add `turn_count` and `reset_turn()`; rewrite `approve()` header; add `effect_line()` helper                         |
+| `apps/agent/src/main.rs`                     | Reset counter before each new turn; handle `/compact` and `/summarize`; capture `Arc<StandardLoop>` for `compact()` |
+| `crates/agent/runtime/src/loop_engine.rs`    | Add `pub async fn compact()` on `StandardLoop` (no other change)                                                    |
+| `apps/agent/tests/cli.rs`                    | Add three new tests                                                                                                 |
+| `docs/agent/implementation-specification.md` | Document the new approval header and the `/compact` flow                                                            |
+| `docs/agent/linux-daily-use.md`              | Mention `/compact` as a manual trigger                                                                              |
+| `docs/agent/validation.md`                   | Note the local Ollama change and that automated tests still pass                                                    |
 
 ---
 

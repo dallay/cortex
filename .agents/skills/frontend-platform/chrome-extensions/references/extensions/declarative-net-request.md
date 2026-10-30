@@ -20,6 +20,7 @@ Add `"declarativeNetRequestFeedback"` permission to use `onRuleMatchedDebug` (de
 ## Rule Format
 
 `rules/rules.json`:
+
 ```json
 [
   {
@@ -53,12 +54,12 @@ Add `"declarativeNetRequestFeedback"` permission to use `onRuleMatchedDebug` (de
 
 ### URL Filter Patterns
 
-| Pattern | Matches |
-|---------|---------|
-| `"doubleclick.net"` | Any URL containing "doubleclick.net" |
-| `"||doubleclick.net"` | Domain starts with doubleclick.net |
-| `"||example.com/ads/*"` | Specific path pattern |
-| `*://*.tracking.com/*` | Subdomain matching |
+| Pattern                | Matches                              |
+|------------------------|--------------------------------------|
+| `"doubleclick.net"`    | Any URL containing "doubleclick.net" |
+| `"                     |                                      |doubleclick.net"` | Domain starts with doubleclick.net |
+| `"                     |                                      |example.com/ads/*"` | Specific path pattern |
+| `*://*.tracking.com/*` | Subdomain matching                   |
 
 ### Resource Types
 

@@ -14,6 +14,7 @@ To enable light-dismiss:
 - `none`: Only developer mechanisms can close the dialog.
 
 ### Styling the Backdrop
+
 When a dialog is opened as a modal using `showModal()`, the browser generates a `::backdrop` pseudo-element. This backdrop covers the entire viewport and sits directly behind the dialog.
 
 ```css

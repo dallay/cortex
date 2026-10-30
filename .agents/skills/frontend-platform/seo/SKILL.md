@@ -19,10 +19,10 @@ Search ranking factors (approximate influence):
 | Factor                            | Influence | This Skill                                         |
 |-----------------------------------|-----------|----------------------------------------------------|
 | Content quality & relevance       | ~40%      | Partial (structure)                                |
-| Backlinks & authority             | ~25%      | ✗                                                  |
-| Technical SEO                     | ~15%      | ✓                                                  |
+| Backlinks & authority             | ~25%      | ✗                                                 |
+| Technical SEO                     | ~15%      | ✓                                                 |
 | Page experience (Core Web Vitals) | ~10%      | See [Core Web Vitals](../core-web-vitals/SKILL.md) |
-| On-page SEO                       | ~10%      | ✓                                                  |
+| On-page SEO                       | ~10%      | ✓                                                 |
 
 ---
 
@@ -409,28 +409,8 @@ Test structured data at:
 
 ## AI search visibility (emerging)
 
-A class of AI search engines (ChatGPT search, Perplexity, Gemini Overviews) cite web pages from
-their training and retrieval pipelines, not from the classic ranked results. As of 2026 this is an
-unstable area — there are no confirmed ranking signals — but a few things are low-cost and won't
-hurt:
-
-- **Don't block AI crawlers wholesale.** `OAI-SearchBot`, `PerplexityBot`, `GoogleOther`,
-  `Google-Extended`, `ClaudeBot`, etc. each have separate `robots.txt` user-agents. Decide per-bot
-  rather than blanket-blocking — a `Disallow` removes you from that bot's citations.
-- **Lean on schema.org `Article`/`Product`/`FAQPage`.** AI summarizers parse structured data more
-  reliably than they parse prose layouts. The structured-data examples above are the same ones that
-  help here.
-- **Make first-paragraph answers self-contained.** Both featured snippets and AI summaries pull
-  short, coherent passages. A definition or direct answer in the first 1-2 sentences is more
-  extractable than the same content buried under marketing prose.
-
-### `llms.txt` — emerging, unproven
-
-[`llms.txt`](https://llmstxt.org/) is a proposed convention (a Markdown index of your site's
-important pages, served at `/llms.txt`) for LLMs to consume. As of mid-2026 adoption is ~0.015% of
-sites and **no major AI vendor has confirmed they read it**. Treat it as a 5-minute speculative add
-for content sites — not a meaningful ranking or citation factor — and don't reorganize content
-around it.
+See the [AI search visibility guide](./references/ai-search.md) for emerging crawler and `llms.txt`
+considerations; these are not established ranking factors.
 
 ---
 
@@ -505,49 +485,7 @@ body {
 
 ## SEO audit checklist
 
-### Critical
-
-- [ ] HTTPS enabled
-- [ ] robots.txt allows crawling
-- [ ] No `noindex` on important pages
-- [ ] Title tags present and unique
-- [ ] Single `<h1>` per page
-
-### High priority
-
-- [ ] Meta descriptions present
-- [ ] Sitemap submitted
-- [ ] Canonical URLs set
-- [ ] Mobile-responsive
-- [ ] Core Web Vitals passing
-
-### Medium priority
-
-- [ ] Structured data implemented
-- [ ] Internal linking strategy
-- [ ] Image alt text
-- [ ] Descriptive URLs
-- [ ] Breadcrumb navigation
-
-### Ongoing
-
-- [ ] Fix crawl errors in Search Console
-- [ ] Update sitemap when content changes
-- [ ] Monitor ranking changes
-- [ ] Check for broken links
-- [ ] Review Search Console insights
-
----
-
-## Tools
-
-| Tool                      | Use                           |
-|---------------------------|-------------------------------|
-| Google Search Console     | Monitor indexing, fix issues  |
-| Google PageSpeed Insights | Performance + Core Web Vitals |
-| Rich Results Test         | Validate structured data      |
-| Lighthouse                | Full SEO audit                |
-| Screaming Frog            | Crawl analysis                |
+See the [SEO audit checklist and tools](./references/audit-checklist.md) for priorities and recommended validation tools.
 
 ## References
 

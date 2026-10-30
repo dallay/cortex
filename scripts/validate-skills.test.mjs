@@ -57,6 +57,21 @@ describe('validateSkills', () => {
     assert.match(errors, /must be lowercase alphanumeric words separated by hyphens/);
   });
 
+  it('rejects comma-separated allowed-tools', () => {
+    const root = fixture({
+      'one/SKILL.md': '---\nname: one\ndescription: Use when needed.\nallowed-tools: Read, Edit, Bash\n---\n',
+    });
+    assert.match(validateSkills(root).join('\n'),
+        /allowed-tools must be space-separated/);
+  });
+
+  it('accepts space-separated allowed-tools', () => {
+    const root = fixture({
+      'one/SKILL.md': '---\nname: one\ndescription: Use when needed.\nallowed-tools: Read Bash(git:*)\n---\n',
+    });
+    assert.deepEqual(validateSkills(root), []);
+  });
+
   it('rejects duplicate skill names', () => {
     const root = fixture({
       'one/SKILL.md': skill('shared'),

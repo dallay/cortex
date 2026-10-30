@@ -54,7 +54,7 @@ export default defineConfig({
 **`fullyParallel` behavior:**
 
 | Setting                          | Files parallel | Tests in file parallel |
-| -------------------------------- | -------------- | ---------------------- |
+|----------------------------------|----------------|------------------------|
 | `fullyParallel: false` (default) | Yes            | No (serial)            |
 | `fullyParallel: true`            | Yes            | Yes                    |
 
@@ -278,7 +278,7 @@ jobs:
 ## Decision Guide
 
 | Scenario                         | Workers        | Shards | Reason                                  |
-| -------------------------------- | -------------- | ------ | --------------------------------------- |
+|----------------------------------|----------------|--------|-----------------------------------------|
 | < 50 tests, < 5 min              | Auto (default) | None   | No optimization needed                  |
 | 50-200 tests, 5-15 min           | `'50%'` in CI  | 2-4    | Balance speed and cost                  |
 | 200+ tests, > 15 min             | `'50%'` in CI  | 4-8    | Keep feedback under 10 min              |
@@ -287,7 +287,7 @@ jobs:
 | CI has limited resources         | 1 or `'25%'`   | More   | Compensate with more machines           |
 
 | Aspect         | Workers (in-process)      | Shards (across machines)   |
-| -------------- | ------------------------- | -------------------------- |
+|----------------|---------------------------|----------------------------|
 | What it splits | Tests across CPU cores    | Test files across CI jobs  |
 | Controlled by  | Config or `--workers` CLI | `--shard=X/Y` CLI flag     |
 | Shares memory  | Yes                       | No                         |
@@ -297,7 +297,7 @@ jobs:
 ## Anti-Patterns
 
 | Anti-Pattern                            | Problem                                  | Solution                                             |
-| --------------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
+|-----------------------------------------|------------------------------------------|------------------------------------------------------|
 | `fullyParallel: false` without reason   | Tests in files run serially              | Set `fullyParallel: true` unless tests need serial   |
 | `workers: 1` in CI "for safety"         | Negates parallelism                      | Fix isolation issues; use `workers: '50%'`           |
 | Hardcoded shared user account           | Race conditions in parallel runs         | Each test creates unique data                        |

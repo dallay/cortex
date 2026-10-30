@@ -20,9 +20,7 @@ The change is local to the terminal policy in `apps/agent/src/terminal.rs` and t
 
 ### R1: Numbered approval prompts
 
-**Given**: A turn in `chat` that triggers a tool with an `approval` preview.
-**When**: `Policy::approve(request, cancel)` is invoked.
-**Then**: The terminal prints the request number for that turn in the header line, and increments an internal counter that resets at the start of each new turn.
+**Given**: A turn in `chat` that triggers a tool with an `approval` preview. **When**: `Policy::approve(request, cancel)` is invoked. **Then**: The terminal prints the request number for that turn in the header line, and increments an internal counter that resets at the start of each new turn.
 
 **Header shape**:
 
@@ -38,25 +36,19 @@ When `N > 1`, the header suffix becomes `(request #N this turn, different from #
 
 ### R2: Per-turn counter lifecycle
 
-**Given**: A turn has multiple approval requests.
-**When**: The next turn starts (`chat` reads a new line from `Input`, or `Run`/`Resume` is invoked).
-**Then**: The counter resets to 0 *before* the next call to `run(...)`.
+**Given**: A turn has multiple approval requests. **When**: The next turn starts (`chat` reads a new line from `Input`, or `Run`/`Resume` is invoked). **Then**: The counter resets to 0 *before* the next call to `run(...)`.
 
 The counter is held in a `Mutex<u64>` on `Policy`. The CLI calls `Policy::reset_turn()` exactly once before each new turn. `approve()` increments the counter on entry, after the `--allow` short-circuit is taken. `reset_turn()` is the only way to bring the counter back to 0.
 
 ### R3: `Effect:` line derivation
 
-**Given**: An `ApprovalRequest` with a non-empty `preview`.
-**When**: The header is rendered.
-**Then**: A single `Effect:` line is included, drawn from the first non-empty line of `preview` if it starts with a known prefix (`Directory:`, `Trusted local MCP server`, `Server:`, `MCP tool`, or a unified-diff `--- ` line). Otherwise the line is omitted.
+**Given**: An `ApprovalRequest` with a non-empty `preview`. **When**: The header is rendered. **Then**: A single `Effect:` line is included, drawn from the first non-empty line of `preview` if it starts with a known prefix (`Directory:`, `Trusted local MCP server`, `Server:`, `MCP tool`, or a unified-diff `--- ` line). Otherwise the line is omitted.
 
 This avoids parsing the full diff and stays within the existing preview content. The diff itself is still printed in full below the header.
 
 ### R4: `/compact` command in `chat`
 
-**Given**: A user types `/compact` (or `/summarize`) at the `agent>` prompt.
-**When**: The chat loop reads the line.
-**Then**: The CLI prints a confirmation prompt `Compact session now? Older history will be summarized; originals stay in the database. [y/N]`. Only a `y`/`Y`/`yes` line continues.
+**Given**: A user types `/compact` (or `/summarize`) at the `agent>` prompt. **When**: The chat loop reads the line. **Then**: The CLI prints a confirmation prompt `Compact session now? Older history will be summarized; originals stay in the database. [y/N]`. Only a `y`/`Y`/`yes` line continues.
 
 **On yes**: The CLI invokes the loop's real-model summarizer on the same session, persists the result, and emits the same `Event::Compacted` the automatic path emits. The terminal prints `Context compacted; original history retained.`
 
@@ -66,23 +58,17 @@ This avoids parsing the full diff and stays within the existing preview content.
 
 ### R5: Reuse of existing summarization
 
-**Given**: The loop is asked to compact now.
-**When**: It runs.
-**Then**: It must use the same `summary_request` already used by `StandardLoop::context()` (system prompt `Summarize repository work…`, no tools, `max_tokens=1024`, prior summary appended if present). The `Event::Compacted { through }` is recorded, `session.summary` and `session.summary_through` are updated, and the SQLite store is saved.
+**Given**: The loop is asked to compact now. **When**: It runs. **Then**: It must use the same `summary_request` already used by `StandardLoop::context()` (system prompt `Summarize repository work…`, no tools, `max_tokens=1024`, prior summary appended if present). The `Event::Compacted { through }` is recorded, `session.summary` and `session.summary_through` are updated, and the SQLite store is saved.
 
 No new request shape. No new model call surface. No new provider path.
 
 ### R6: Approval state on denial
 
-**Given**: A `Tool` whose `prepare()` returned an `approval` and the user denied.
-**When**: The denial reaches the loop.
-**Then**: The loop returns `AgentError::Tool("action denied by user; do not retry without a new user request")` for that iteration. The terminal does not block subsequent prompts; the next turn starts cleanly with a reset counter.
+**Given**: A `Tool` whose `prepare()` returned an `approval` and the user denied. **When**: The denial reaches the loop. **Then**: The loop returns `AgentError::Tool("action denied by user; do not retry without a new user request")` for that iteration. The terminal does not block subsequent prompts; the next turn starts cleanly with a reset counter.
 
 ### R7: Backwards compatibility
 
-**Given**: Existing callers and tests of the agent runtime and core crates.
-**When**: This change is built.
-**Then**: No public API of `agent-core` or `agent-runtime` changes. The only API change is the addition of `Policy::reset_turn()` and `Policy::turn_count()` on the binary-local `Policy` type. The `CompactNow` trait added to expose manual compaction is `impl`-only for `StandardLoop` and lives in the binary crate.
+**Given**: Existing callers and tests of the agent runtime and core crates. **When**: This change is built. **Then**: No public API of `agent-core` or `agent-runtime` changes. The only API change is the addition of `Policy::reset_turn()` and `Policy::turn_count()` on the binary-local `Policy` type. The `CompactNow` trait added to expose manual compaction is `impl`-only for `StandardLoop` and lives in the binary crate.
 
 ---
 

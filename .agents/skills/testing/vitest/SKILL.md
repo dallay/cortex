@@ -24,8 +24,7 @@ apps/rook/dashboard/
 └── src/**/*.spec.ts   # colocated unit/component tests
 ```
 
-`test.environment` is `jsdom` and coverage uses `v8` with enforced thresholds
-(statements 83, branches 72, functions 80, lines 84). `e2e/**` is excluded because
+`test.environment` is `jsdom` and coverage uses `v8` with enforced thresholds (statements 83, branches 72, functions 80, lines 84). `e2e/**` is excluded because
 Playwright owns it.
 
 Commands, from the repository root:
@@ -44,17 +43,17 @@ focused command while iterating and the recipe before opening a PR.
 
 ## Vitest 5 behavior that changes tests
 
-| Change | Consequence |
-|---|---|
-| `clearMocks` defaults to `true` | Call history is cleared before every test. Mocks configured once in `beforeAll` or at module scope lose their recorded calls; set `clearMocks: false` only with a reason. |
-| Unawaited async assertions fail | `expect(promise).resolves...` must be awaited. The test fails instead of warning. |
-| Hoisted calls must be top level | `vi.mock`, `vi.unmock` and `vi.hoisted` inside a function, block or `describe` throw. Put them at module top level; use `vi.doMock` for conditional mocking. |
-| `test.sequential` and `describe.sequential` removed | Opt out with `test("name", { concurrent: false }, fn)` or `describe("name", { concurrent: false }, fn)`. |
-| `-t` matches the full `' > '` name | `-t "math adds"` no longer matches `describe("math")` + `test("adds")`; use `-t adds` or `-t "math.*adds"`. |
-| No parent-directory config lookup | Run Vitest from the package root or pass `--config`. |
-| `toThrow("")` matches any message | Assert an empty message with `/^$/`. |
-| Coverage `include`/`exclude` are root-relative, no `contains` | Re-check patterns after upgrading; a bare directory pattern matches its contents. |
-| `@vitest/expect` no longer shares state | Import assertions and `expect.extend` from `vitest`. |
+| Change                                                        | Consequence                                                                                                                                                               |
+|---------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `clearMocks` defaults to `true`                               | Call history is cleared before every test. Mocks configured once in `beforeAll` or at module scope lose their recorded calls; set `clearMocks: false` only with a reason. |
+| Unawaited async assertions fail                               | `expect(promise).resolves...` must be awaited. The test fails instead of warning.                                                                                         |
+| Hoisted calls must be top level                               | `vi.mock`, `vi.unmock` and `vi.hoisted` inside a function, block or `describe` throw. Put them at module top level; use `vi.doMock` for conditional mocking.              |
+| `test.sequential` and `describe.sequential` removed           | Opt out with `test("name", { concurrent: false }, fn)` or `describe("name", { concurrent: false }, fn)`.                                                                  |
+| `-t` matches the full `' > '` name                            | `-t "math adds"` no longer matches `describe("math")` + `test("adds")`; use `-t adds` or `-t "math.*adds"`.                                                               |
+| No parent-directory config lookup                             | Run Vitest from the package root or pass `--config`.                                                                                                                      |
+| `toThrow("")` matches any message                             | Assert an empty message with `/^$/`.                                                                                                                                      |
+| Coverage `include`/`exclude` are root-relative, no `contains` | Re-check patterns after upgrading; a bare directory pattern matches its contents.                                                                                         |
+| `@vitest/expect` no longer shares state                       | Import assertions and `expect.extend` from `vitest`.                                                                                                                      |
 
 ## Core
 

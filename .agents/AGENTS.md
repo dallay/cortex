@@ -110,9 +110,9 @@ If documentation and implementation disagree, verify the behavior against code, 
 - Discover recipes using `just --list`. Consult `docs/development.md` and `dev/README.md` for environment details and ports.
 - Use `just setup` for initial setup and `just doctor` for read-only tool diagnostics.
 - Run focused checks during iteration:
-  - Rust: `cargo test -p <package>` and relevant integration targets.
-  - Dashboard: `pnpm --filter @dallay/rook-dashboard exec vitest run [file]`.
-  - Markdown: `pnpm exec markdownlint-cli2 ".agents/AGENTS.md" ".agents/contexts/*.md"` for canonical instructions.
+    - Rust: `cargo test -p <package>` and relevant integration targets.
+    - Dashboard: `pnpm --filter @dallay/rook-dashboard exec vitest run [file]`.
+    - Markdown: `pnpm exec markdownlint-cli2 ".agents/AGENTS.md" ".agents/contexts/*.md"` for canonical instructions.
 - Run `just ci-local` for full pre-PR validation when its documented requirements are available. `just ci-ci` skips E2E and is not equivalent.
 - Check `docs/development.md` and `dev/README.md` for validation prerequisites. E2E requires its documented dependencies and the `just test-e2e-build` image.
 - Keep changes focused. Avoid unrelated refactoring, speculative infrastructure, and unnecessary dependencies.

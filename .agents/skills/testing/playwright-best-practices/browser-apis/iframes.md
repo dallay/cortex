@@ -389,7 +389,7 @@ test("mock iframe response", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                          | Problem                           | Solution                                           |
-| ------------------------------------- | --------------------------------- | -------------------------------------------------- |
+|---------------------------------------|-----------------------------------|----------------------------------------------------|
 | Using `page.frame()` for interactions | Less reliable than frameLocator   | Use `page.frameLocator()` for element interactions |
 | Hardcoding iframe index               | Fragile if DOM order changes      | Use name, id, or src attribute selectors           |
 | Not waiting for iframe load           | Race conditions                   | Wait for element inside iframe to be visible       |

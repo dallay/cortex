@@ -153,6 +153,11 @@ export function analyzeSkills(root = SKILLS_ROOT, repoRoot = REPO_ROOT) {
       if (['license', 'compatibility', 'allowed-tools'].includes(key) && typeof value !== 'string') {
         errors.push(`${where}: "${key}" must be a string`);
       }
+      if (key === 'allowed-tools' && typeof value === 'string'
+          && value.includes(',')) {
+        errors.push(
+            `${where}: allowed-tools must be space-separated, not comma-separated`);
+      }
       if (key === 'compatibility' && typeof value === 'string' && (!value.trim() || [...value].length > 500)) {
         errors.push(`${where}: compatibility must contain 1..500 characters`);
       }

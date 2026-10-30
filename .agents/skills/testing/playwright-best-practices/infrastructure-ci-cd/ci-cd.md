@@ -427,7 +427,7 @@ export default defineConfig({
 ## Best Practices
 
 | Practice                      | Benefit                   |
-| ----------------------------- | ------------------------- |
+|-------------------------------|---------------------------|
 | Use `npm ci`                  | Deterministic installs    |
 | Run headless in CI            | Faster, no display needed |
 | Set retries in CI only        | Handle flakiness          |

@@ -147,14 +147,14 @@ app.use((_req, res, next) => {
 
 ## Tools
 
-| Tool                                               | Purpose                    |
-|----------------------------------------------------|----------------------------|
-| `pnpm audit`                                       | JS dependency vulnerabilities |
+| Tool                                               | Purpose                         |
+|----------------------------------------------------|---------------------------------|
+| `pnpm audit`                                       | JS dependency vulnerabilities   |
 | `cargo audit` / `just ci-audit`                    | Rust dependency vulnerabilities |
-| [SecurityHeaders.com](https://securityheaders.com) | Header analysis            |
-| [W3C Validator](https://validator.w3.org)          | HTML validation            |
-| Lighthouse                                         | Best practices audit       |
-| [Observatory](https://observatory.mozilla.org)     | Security scan              |
+| [SecurityHeaders.com](https://securityheaders.com) | Header analysis                 |
+| [W3C Validator](https://validator.w3.org)          | HTML validation                 |
+| Lighthouse                                         | Best practices audit            |
+| [Observatory](https://observatory.mozilla.org)     | Security scan                   |
 
 ## References
 

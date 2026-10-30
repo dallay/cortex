@@ -32,19 +32,19 @@ The substantial gap is therefore semantic and coverage, not replacing a mock who
 ## Approaches
 
 1. **Local observed usage as the supported baseline (recommended for a narrow first scope)** — keep SQLite request history as the source for usage/trends; correct labels/status semantics, present per-provider capability/availability honestly, use graceful “not reported/not supported” states, and remove/update stale placeholder docs. Add upstream quota observation only where the adapter can reliably surface documented response metadata.
-   - Pros: builds on verified persisted data; works for providers with no account-level quota API; historical data is already available; bounded scope and graceful degradation.
-   - Cons: cannot truthfully show remaining account/workspace quota for providers without a reported limit; changing warning semantics may affect dashboard meaning; local usage can diverge from provider-side usage.
-   - Effort: Medium.
+    - Pros: builds on verified persisted data; works for providers with no account-level quota API; historical data is already available; bounded scope and graceful degradation.
+    - Cons: cannot truthfully show remaining account/workspace quota for providers without a reported limit; changing warning semantics may affect dashboard meaning; local usage can diverge from provider-side usage.
+    - Effort: Medium.
 
 2. **Provider-reported headroom plus separate local usage/history** — introduce a typed quota-observation model (e.g. metric, value/limit/remaining, window, observed time, source/freshness), capture provider response headers/metadata in adapters, persist observations, expose them via the endpoint, and show reported headroom separately from local usage. Providers without a source return an explicit unavailable state.
-   - Pros: preserves semantic distinction; allows genuine headroom/warnings where the provider reports it; persistent observations enable historical quota trends.
-   - Cons: provider- and metric-specific support; successful streaming headers need capture before body consumption; headers may be absent, reset by connection/workspace, or have provider-defined units/windows; migrations, retention, DTO, adapter, and UI changes; no guarantee this provides true account-level quotas for all providers.
-   - Effort: High.
+    - Pros: preserves semantic distinction; allows genuine headroom/warnings where the provider reports it; persistent observations enable historical quota trends.
+    - Cons: provider- and metric-specific support; successful streaming headers need capture before body consumption; headers may be absent, reset by connection/workspace, or have provider-defined units/windows; migrations, retention, DTO, adapter, and UI changes; no guarantee this provides true account-level quotas for all providers.
+    - Effort: High.
 
 3. **Treat local usage as an estimate of provider quota consumption** — aggregate request/token/cost records and configure/derive limits, then calculate utilization and warnings.
-   - Pros: can give a unified utilization UI and historical chart without provider APIs.
-   - Cons: limits are not currently known per provider/account; configured rate-limit warning fractions currently apply to local 429 ratio, not consumption; estimates are liable to mislead and do not equal provider-reported quota.
-   - Effort: Medium, with substantial product/accuracy risk.
+    - Pros: can give a unified utilization UI and historical chart without provider APIs.
+    - Cons: limits are not currently known per provider/account; configured rate-limit warning fractions currently apply to local 429 ratio, not consumption; estimates are liable to mislead and do not equal provider-reported quota.
+    - Effort: Medium, with substantial product/accuracy risk.
 
 ## Recommendation
 

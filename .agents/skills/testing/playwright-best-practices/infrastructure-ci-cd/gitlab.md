@@ -73,8 +73,7 @@ e2e:
 
 ### Sharded Parallel Execution
 
-**Use when**: Test suite exceeds 10 minutes. GitLab's `parallel` keyword splits across jobs automatically.
-**Avoid when**: Suite runs under 5 minutes.
+**Use when**: Test suite exceeds 10 minutes. GitLab's `parallel` keyword splits across jobs automatically. **Avoid when**: Suite runs under 5 minutes.
 
 ```yaml
 image: mcr.microsoft.com/playwright:v1.48.0-noble
@@ -307,7 +306,7 @@ Set up the schedule in **CI/CD > Schedules**: `0 3 * * 1-5` (3 AM UTC, weekdays)
 ## Decision Guide
 
 | Scenario                             | Approach                                               | Why                                                 |
-| ------------------------------------ | ------------------------------------------------------ | --------------------------------------------------- |
+|--------------------------------------|--------------------------------------------------------|-----------------------------------------------------|
 | Simple project, < 5 min suite        | Single `test` job using Playwright Docker image        | No sharding overhead; artifacts capture report      |
 | Suite > 10 min                       | `parallel: N` with `--shard`                           | GitLab auto-assigns `CI_NODE_INDEX`/`CI_NODE_TOTAL` |
 | Merge request fast feedback          | Chromium only on MRs; all browsers on main             | 3x fewer pipeline minutes on MRs                    |
@@ -319,8 +318,8 @@ Set up the schedule in **CI/CD > Schedules**: `0 3 * * 1-5` (3 AM UTC, weekdays)
 ## Anti-Patterns
 
 | Anti-Pattern                                         | Problem                                                            | Do This Instead                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| Not using the Playwright Docker image                | Installing browsers every run adds 1-2 minutes                     | Use `mcr.microsoft.com/playwright:v1.48.0-noble` as base image                   |
+|------------------------------------------------------|--------------------------------------------------------------------|---------------------------------------------------------------------------|
+| Not using the Playwright Docker image                | Installing browsers every run adds 1-2 minutes                     | Use `mcr.microsoft.com/playwright:v1.48.0-noble` as base image            |
 | `artifacts: when: on_failure` only                   | No report when tests pass; can't verify results                    | Use `when: always` to capture reports regardless                          |
 | No `expire_in` on artifacts                          | Artifacts accumulate and consume storage                           | Set `expire_in: 14 days` for reports, `1 hour` for intermediate artifacts |
 | Hardcoding `CI_NODE_TOTAL` in shard flag             | Breaks when you change `parallel:` value                           | Use `--shard=$CI_NODE_INDEX/$CI_NODE_TOTAL`                               |

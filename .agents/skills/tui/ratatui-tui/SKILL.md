@@ -1,7 +1,7 @@
 ---
 name: ratatui-tui
 description: Use when building, reviewing, debugging, or testing Huginn's Ratatui terminal interface (crates/huginn/presentation, inline rendering, PTY tests).
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+allowed-tools: Read Edit Write Glob Grep Bash
 metadata:
   author: cortex
   version: "1.0"
@@ -16,14 +16,14 @@ and `.agents/contexts/huginn.md`; it never overrides them.
 
 ## Stack (verify before assuming)
 
-| Piece | Value | Source of truth |
-|---|---|---|
-| TUI framework | `ratatui = "=0.30.2"` | `crates/huginn/presentation/Cargo.toml` |
-| Terminal backend | `crossterm = "=0.29.0"` | same |
-| Width math | `unicode-width = "0.2"` | same |
-| PTY tests | `portable-pty = "=0.9.0"` (dev) | same |
-| Runtime | Tokio | workspace |
-| Viewport | `Viewport::Inline(height)` | `terminal.rs` |
+| Piece            | Value                           | Source of truth                         |
+|------------------|---------------------------------|-----------------------------------------|
+| TUI framework    | `ratatui = "=0.30.2"`           | `crates/huginn/presentation/Cargo.toml` |
+| Terminal backend | `crossterm = "=0.29.0"`         | same                                    |
+| Width math       | `unicode-width = "0.2"`         | same                                    |
+| PTY tests        | `portable-pty = "=0.9.0"` (dev) | same                                    |
+| Runtime          | Tokio                           | workspace                               |
+| Viewport         | `Viewport::Inline(height)`      | `terminal.rs`                           |
 
 Versions are pinned on purpose. Do not bump them inside a feature change, and do
 not swap the framework: ADR-0010 commits to Ratatui and to stock APIs first.
@@ -54,15 +54,15 @@ These are invariants, not style preferences.
 
 ## Where responsibilities live
 
-| Path | Owns |
-|---|---|
-| `src/terminal.rs` | TTY lifecycle, `TerminalGuard`, `HostBackend`, frame loop, `View` snapshot, layout, wrapping, markdown rendering |
-| `src/state.rs` | `Ui`, `UiState`, projection of core `Event`s, `safe`, composer/editor, approvals, scroll state |
-| `src/overlay.rs` | Overlay/focus stack, tickets and leases |
-| `src/event.rs` | Bounded UI-event buffer, summary sanitization, operation-scoped error deduplication |
-| `src/input.rs` | Unix input reader, paste assembly, revocation |
-| `src/contributions.rs` | Built-in plugin using the public contribution API |
-| `tests/pty.rs`, `tests/support/pty.rs` | End-to-end terminal behavior in a real PTY |
+| Path                                   | Owns                                                                                                             |
+|----------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `src/terminal.rs`                      | TTY lifecycle, `TerminalGuard`, `HostBackend`, frame loop, `View` snapshot, layout, wrapping, markdown rendering |
+| `src/state.rs`                         | `Ui`, `UiState`, projection of core `Event`s, `safe`, composer/editor, approvals, scroll state                   |
+| `src/overlay.rs`                       | Overlay/focus stack, tickets and leases                                                                          |
+| `src/event.rs`                         | Bounded UI-event buffer, summary sanitization, operation-scoped error deduplication                              |
+| `src/input.rs`                         | Unix input reader, paste assembly, revocation                                                                    |
+| `src/contributions.rs`                 | Built-in plugin using the public contribution API                                                                |
+| `tests/pty.rs`, `tests/support/pty.rs` | End-to-end terminal behavior in a real PTY                                                                       |
 
 `terminal.rs` and `state.rs` are large because they concentrate several
 responsibilities. Do not split them by line count; split along the boundaries
@@ -86,15 +86,14 @@ and writes only the changed ones. Therefore:
 ### Known cost: history is rewrapped every frame
 
 `draw_frame` flattens `view.history` through `wrapped(...)` and then extends it
-with the wrapped tail before selecting the visible window
-(`DALLAY-665`). Cost grows with conversation length.
+with the wrapped tail before selecting the visible window (`DALLAY-665`). Cost grows with conversation length.
 
 If you address it:
 
 1. Measure first (frame time with a long transcript, not guesswork).
 2. Cache wrapped lines keyed by content revision **and** width; invalidate on
    `Resize`, config/theme changes and history mutation.
-3. Keep the visible-window selection O(visible), not O(history), or document
+3. Keep the visible-window selection O (visible), not O (history), or document
    why that is not yet possible.
 4. Add a regression test for resize invalidation and for appended messages.
 

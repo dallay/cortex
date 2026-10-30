@@ -12,8 +12,8 @@ By listening to this event, you can pause expensive operations like `<canvas>` a
 
 It is important to understand when to use which API:
 
-*   **Use `IntersectionObserver` for application logic** tied to the exact visual visibility of an element in the viewport (e.g., lazy-loading data, infinite scroll triggers).
-*   **Use `contentvisibilityautostatechange` for rendering-heavy work** (like complex canvas updates or heavy DOM mutations). This event ties directly to the browser's internal rendering lifecycle. The browser often starts rendering an element before it actually appears on screen (the pre-render margin). This event tells you when that happens, ensuring your content is ready to be seen.
+* **Use `IntersectionObserver` for application logic** tied to the exact visual visibility of an element in the viewport (e.g., lazy-loading data, infinite scroll triggers).
+* **Use `contentvisibilityautostatechange` for rendering-heavy work** (like complex canvas updates or heavy DOM mutations). This event ties directly to the browser's internal rendering lifecycle. The browser often starts rendering an element before it actually appears on screen (the pre-render margin). This event tells you when that happens, ensuring your content is ready to be seen.
 
 ## Implementation
 
@@ -84,8 +84,9 @@ Baseline status for content-visibility: Newly available. It's been Baseline sinc
 Supported by: Chrome 108 (Nov 2022), Edge 108 (Dec 2022), Firefox 130 (Sep 2024), and Safari 26 (Sep 2025).
 
 The `content-visibility` property and the associated `contentvisibilityautostatechange` event are progressive enhancements. In browsers that do not support them:
-*   The CSS property is ignored, and the content is rendered normally.
-*   The event never fires, so background tasks will continue to run as they normally would without optimization.
+
+* The CSS property is ignored, and the content is rendered normally.
+* The event never fires, so background tasks will continue to run as they normally would without optimization.
 
 If you must support pausing tasks on older browsers, you can fallback to using `IntersectionObserver` as a rough approximation. This helps save battery and CPU on older devices too.
 

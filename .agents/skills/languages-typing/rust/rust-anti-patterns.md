@@ -72,10 +72,9 @@ Mantener este padrão.
 
 ### 4. anti-unwrap-abuse
 
-> No uses .unwrap() en código de producción.
+> No uses .unwrap () en código de producción.
 
-Especialmente crítico en providers y use cases. El código de transporte
-(transport-axum) es donde más вероятно encontrar unwrap.
+Especialmente crítico en providers y use cases. El código de transporte (transport-axum) es donde más вероятно encontrar unwrap.
 
  ```rust
  // BAD

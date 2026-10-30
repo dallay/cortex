@@ -11,11 +11,11 @@
 
 ## Completeness
 
-| Metric           | Value                                                              |
-|------------------|--------------------------------------------------------------------|
-| Tasks total      | 23 across 5 phases (see tasks.md)                                  |
+| Metric           | Value                                                                                                                                                                          |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tasks total      | 23 across 5 phases (see tasks.md)                                                                                                                                              |
 | Tasks complete   | 23 — Phase 1 (terminal counter/header/effect_line/reset), Phase 2 (`StandardLoop::compact`), Phase 3 (`/compact` & `/summarize` interception), Phase 4 (tests), Phase 5 (docs) |
-| Tasks incomplete | None                                                               |
+| Tasks incomplete | None                                                                                                                                                                           |
 
 ---
 
@@ -58,16 +58,16 @@ per-turn counter lifecycle.
 
 ## Spec Compliance Matrix
 
-| Requirement                        | Scenario                                                                 | Test                                                                    | Result       |
-|------------------------------------|--------------------------------------------------------------------------|-------------------------------------------------------------------------|--------------|
-| R1 numbered approval prompts | Scenario 1 — single approval | `approval_header_numbers_repeated_identical_requests_without_claiming_difference` | ✅ COMPLIANT |
-| R1 numbered approval prompts | Scenario 2 — repeated approval | `policy_approval_counter_increments_within_a_turn_and_resets` | ✅ COMPLIANT |
-| R2 per-turn counter lifecycle | Counter resets at the start of each turn | `policy_approval_counter_increments_within_a_turn_and_resets` plus `policy.reset_turn()` call sites in `main.rs` | ✅ COMPLIANT |
-| R3 `Effect:` line derivation | Shell, edit, create, MCP start, MCP call | `effect_line_for_*` unit tests | ✅ COMPLIANT |
-| R4 `/compact` command in chat | Accepted / declined | `chat_compact_emits_ndjson_event_after_confirmation` and `chat_compact_decline_emits_no_compacted_event` drive the chat subcommand through a Rust PTY harness (`portable-pty`) and assert both branches. Real terminal with a real model remains a separate manual step recorded in `docs/agent/validation.md`. | ✅ COMPLIANT |
-| R5 shared summarization | Manual and automatic compaction share summary helper | Runtime compaction + automatic flow tests | ✅ COMPLIANT |
-| R6 approval state on denial | Existing denied-edit and denied-shell tests | Existing `coding_workflow` regression cases | ✅ COMPLIANT |
-| R7 backwards compatibility | Additive trait method with default unsupported result | Existing implementors compile in workspace checks | ✅ COMPLIANT |
+| Requirement                   | Scenario                                              | Test                                                                                                                                                                                                                                                                                                            | Result       |
+|-------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| R1 numbered approval prompts  | Scenario 1 — single approval                          | `approval_header_numbers_repeated_identical_requests_without_claiming_difference`                                                                                                                                                                                                                               | ✅ COMPLIANT |
+| R1 numbered approval prompts  | Scenario 2 — repeated approval                        | `policy_approval_counter_increments_within_a_turn_and_resets`                                                                                                                                                                                                                                                   | ✅ COMPLIANT |
+| R2 per-turn counter lifecycle | Counter resets at the start of each turn              | `policy_approval_counter_increments_within_a_turn_and_resets` plus `policy.reset_turn()` call sites in `main.rs`                                                                                                                                                                                                | ✅ COMPLIANT |
+| R3 `Effect:` line derivation  | Shell, edit, create, MCP start, MCP call              | `effect_line_for_*` unit tests                                                                                                                                                                                                                                                                                  | ✅ COMPLIANT |
+| R4 `/compact` command in chat | Accepted / declined                                   | `chat_compact_emits_ndjson_event_after_confirmation` and `chat_compact_decline_emits_no_compacted_event` drive the chat subcommand through a Rust PTY harness (`portable-pty`) and assert both branches. Real terminal with a real model remains a separate manual step recorded in `docs/agent/validation.md`. | ✅ COMPLIANT |
+| R5 shared summarization       | Manual and automatic compaction share summary helper  | Runtime compaction + automatic flow tests                                                                                                                                                                                                                                                                       | ✅ COMPLIANT |
+| R6 approval state on denial   | Existing denied-edit and denied-shell tests           | Existing `coding_workflow` regression cases                                                                                                                                                                                                                                                                     | ✅ COMPLIANT |
+| R7 backwards compatibility    | Additive trait method with default unsupported result | Existing implementors compile in workspace checks                                                                                                                                                                                                                                                               | ✅ COMPLIANT |
 
 **Compliance summary**: After the second review cycle the report demonstrates
 approval numbering, the per-turn counter lifecycle, the `/compact` accept/decline
@@ -79,27 +79,27 @@ cancellation test with a real model, recorded in `docs/agent/validation.md`.
 
 ## Correctness (Static — Structural Evidence)
 
-| Requirement                                | Status         | Notes                                                                                                       |
-|--------------------------------------------|----------------|--------------------------------------------------------------------------------------------------------------|
-| R1 numbered header                          | ✅ Implemented | `Policy::approve` increments `turn_count` and renders `(request #N this turn)` without unverified difference claims |
-| R2 per-turn reset                           | ✅ Implemented | `apps/agent/src/main.rs` calls `policy.reset_turn()` in `Run` and at the top of each `chat` iteration        |
-| R3 `Effect:` derivation                     | ✅ Implemented | `effect_line()` helper in `apps/agent/src/terminal.rs`; six unit tests cover prefixes                       |
-| R4 `/compact` command                       | ✅ Implemented | `chat` loop intercepts `/compact` and `/summarize`; `run_compact` reads confirmation, calls `StandardLoop::compact` |
-| R5 manual summarization                     | ✅ Implemented | `crates/agent/runtime/src/loop_engine.rs` adds `pub async fn compact` mirroring the summary branch          |
-| R6 denial integrity                         | ✅ Implemented | No change to the loop; existing denied-edit/denied-shell tests continue to pass                              |
-| R7 backwards compatibility                  | ✅ Implemented | No public API change in `agent-core` or `agent-runtime`; new method is additive                              |
+| Requirement                | Status         | Notes                                                                                                               |
+|----------------------------|----------------|---------------------------------------------------------------------------------------------------------------------|
+| R1 numbered header         | ✅ Implemented | `Policy::approve` increments `turn_count` and renders `(request #N this turn)` without unverified difference claims |
+| R2 per-turn reset          | ✅ Implemented | `apps/agent/src/main.rs` calls `policy.reset_turn()` in `Run` and at the top of each `chat` iteration               |
+| R3 `Effect:` derivation    | ✅ Implemented | `effect_line()` helper in `apps/agent/src/terminal.rs`; six unit tests cover prefixes                               |
+| R4 `/compact` command      | ✅ Implemented | `chat` loop intercepts `/compact` and `/summarize`; `run_compact` reads confirmation, calls `StandardLoop::compact` |
+| R5 manual summarization    | ✅ Implemented | `crates/agent/runtime/src/loop_engine.rs` adds `pub async fn compact` mirroring the summary branch                  |
+| R6 denial integrity        | ✅ Implemented | No change to the loop; existing denied-edit/denied-shell tests continue to pass                                     |
+| R7 backwards compatibility | ✅ Implemented | No public API change in `agent-core` or `agent-runtime`; new method is additive                                     |
 
 ---
 
 ## Coherence (Design)
 
-| Decision                                                | Followed?   | Notes                                                                                          |
-|---------------------------------------------------------|-------------|-------------------------------------------------------------------------------------------------|
-| Header shape: `Approval for <action> (request #N this turn):` | ✅ Yes | Single `Action:` line and a conditional `Effect:` line above the preview; prompt reworded     |
-| Counter held in `Mutex<u64>`                              | ✅ Yes       | Brief critical section, no async lock needed                                                   |
-| `/compact` intercept before `run(...)`                     | ✅ Yes       | `chat` only; `Run` forwards the literal as a regular prompt                                     |
-| `StandardLoop::compact` reuses the summary branch prompt | ✅ Yes       | String literal lives once; both call sites use the same prompt                                  |
-| Approval previews and headers reworded without changing `ApprovalRequest` | ✅ Yes | `ApprovalRequest` and `ApprovalPolicy` are unchanged                                          |
+| Decision                                                                  | Followed? | Notes                                                                                     |
+|---------------------------------------------------------------------------|-----------|-------------------------------------------------------------------------------------------|
+| Header shape: `Approval for <action> (request #N this turn):`             | ✅ Yes    | Single `Action:` line and a conditional `Effect:` line above the preview; prompt reworded |
+| Counter held in `Mutex<u64>`                                              | ✅ Yes    | Brief critical section, no async lock needed                                              |
+| `/compact` intercept before `run(...)`                                    | ✅ Yes    | `chat` only; `Run` forwards the literal as a regular prompt                               |
+| `StandardLoop::compact` reuses the summary branch prompt                  | ✅ Yes    | String literal lives once; both call sites use the same prompt                            |
+| Approval previews and headers reworded without changing `ApprovalRequest` | ✅ Yes    | `ApprovalRequest` and `ApprovalPolicy` are unchanged                                      |
 
 ---
 
@@ -124,7 +124,7 @@ cancellation test with a real model, recorded in `docs/agent/validation.md`.
   once the turn completes; deferred.
 - Consider exposing `/compact --dry-run`; deferred.
 - `complete_turn_ends` in `crates/agent/runtime/src/loop_engine.rs` walks
-  `messages[from..]` for every assistant message and is O(n²) in the worst
+  `messages[from..]` for every assistant message and is O (n²) in the worst
   case. A single pass would be cheaper; deferred because the reviewer flagged
   it as an observation, not a blocker. Tracked as
   [issue #310](https://github.com/dallay/cortex/issues/310).
@@ -133,8 +133,7 @@ cancellation test with a real model, recorded in `docs/agent/validation.md`.
 
 The archived `spec.md` and `design.md` describe the original approach: capture
 a parallel `Arc<StandardLoop>` in `main.rs` alongside `LoopService` so the
-binary can call `compact()` on the concrete type. The first review cycle
-(commit `7a4bec3`) replaced that with a capability method on the
+binary can call `compact()` on the concrete type. The first review cycle (commit `7a4bec3`) replaced that with a capability method on the
 `AgentLoop` trait; the binary now resolves `LoopService` from the supervisor
 and calls `AgentLoop::compact` through the trait object, so no parallel
 handle exists. The archived `spec.md` (`§Composition and

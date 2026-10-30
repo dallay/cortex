@@ -22,9 +22,11 @@
 ```
 
 ### Valid Basis Arguments (`<calc-size-basis>`)
+
 The first argument defines the "base" size for the calculation.
 
 **Standard Keywords:**
+
 - `auto`: The default sizing for the element.
 - `min-content`: The smallest size the element can take without overflowing.
 - `max-content`: The size the element takes to fit all content on one line.
@@ -32,6 +34,7 @@ The first argument defines the "base" size for the calculation.
 - `content`: Only valid when `calc-size()` is used within the `flex-basis` property.
 
 **Special Arguments:**
+
 - `any`: A generic basis used when the specific intrinsic type is unknown or when nesting calculations.
 - Nested `calc-size()`: Allows for multi-step or conditional calculations.
 - `<calc-sum>`: A specific length, percentage, or mathematical expression (e.g., `100px` or `20%`). When a fixed value is used as the basis, the **`size` keyword is still available** (but only within the second argument) and represents the resolved value of that basis.
@@ -39,7 +42,9 @@ The first argument defines the "base" size for the calculation.
 **MANDATORY**: The `size` keyword is **not valid** within the first argument (`<calc-size-basis>`) itself. It is a local variable that only exists to refer back to the basis from within the second argument (`<calc-sum>`).
 
 ### Valid Calculation Arguments (`<calc-sum>`)
+
 The second argument is the mathematical expression.
+
 - It typically uses the `size` keyword to refer to the value of the basis.
 - While the `size` keyword is technically optional, omitting it means the calculation will resolve to a fixed value, ignoring the basis entirely.
 - It can include standard math operators (`+`, `-`, `*`, `/`).
@@ -49,9 +54,11 @@ The second argument is the mathematical expression.
 ## Use Cases
 
 ### Animating to and from Intrinsic Sizes
+
 By default, browsers cannot interpolate between a length (e.g., `0px`) and an intrinsic keyword (e.g., `auto`). Wrapping the keyword in `calc-size()` makes it an interpolatable value.
 
 #### Choosing the Right Tool for Animations
+
 - **MANDATORY: Use `interpolate-size: allow-keywords`**: For simple animations to or from intrinsic sizes (e.g., `height: 0` to `height: auto`) without any mathematical modifications. This is the required approach for simple keyword interpolation and should ideally be applied globally via `:root`.
 
   ```css
@@ -97,6 +104,7 @@ By default, browsers cannot interpolate between a length (e.g., `0px`) and an in
 **MANDATORY**: Interpolation between two intrinsic sizing keywords is not possible directly. One end of the transition must be a length or a percentage.
 
 #### Respecting User Motion Preferences
+
 Animations that change the size of large layout areas can be particularly disruptive for users with vestibular disorders. **MANDATORY**: Always respect user motion preferences by using the `prefers-reduced-motion` media query to simplify or minimize non-essential animations. Common strategies include disabling motion entirely, reducing duration, or replacing layout shifts with subtle opacity transitions.
 
 ```css
@@ -126,8 +134,8 @@ Animations that change the size of large layout areas can be particularly disrup
 }
 ```
 
-
 ### Applying Constraints to Intrinsic Sizes
+
 You can use `calc-size()` with any CSS math function—such as `min()`, `max()`, `clamp()`, or `round()`—to ensure an element's intrinsic size remains within design boundaries.
 
 ```css
@@ -152,7 +160,7 @@ You can use `calc-size()` with any CSS math function—such as `min()`, `max()`,
 
 ## Fallback strategies
 
-calc-size() has limited availability.
+calc-size () has limited availability.
 Supported by: Chrome 129 (Sep 2024) and Edge 129 (Sep 2024).
 Unsupported in: Firefox and Safari.
 interpolate-size has limited availability.
@@ -171,7 +179,8 @@ Unsupported in: Firefox and Safari.
 ```
 
 ### Animation and Transition Fallbacks
-In browsers without support for `calc-size()` or `interpolate-size`, transitions involving intrinsic sizing keywords will fail to interpolate. 
+
+In browsers without support for `calc-size()` or `interpolate-size`, transitions involving intrinsic sizing keywords will fail to interpolate.
 
 - **Graceful Degradation**: The default fallback is an "instant jump" between states (e.g., from `0` to `auto`). This is often acceptable as the layout remains functional.
 - **Enhanced Experience**: Use `@supports` to apply complex layout logic or additional styling that only makes sense when smooth intrinsic animations are possible.

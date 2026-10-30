@@ -98,8 +98,7 @@ cargo llvm-cov --workspace --all-features --fail-under-lines 87 \
   --lcov --output-path coverage/rust-lcov.info
 ```
 
-`just coverage` y `just coverage-text` envuelven los dos primeros comandos.
-**No usamos `cargo-tarpaulin`**: no soporta el workspace completo con las
+`just coverage` y `just coverage-text` envuelven los dos primeros comandos. **No usamos `cargo-tarpaulin`**: no soporta el workspace completo con las
 features y targets actuales de la misma forma.
 
 ### 6. cargo-audit
@@ -217,12 +216,12 @@ cargo geiger --manifest-path Cargo.toml
 
 ## Herramientas de CI no-Rust
 
-| Herramienta | Uso | Receta |
-|---|---|---|
-| `gitleaks` | Detección de secretos | `just ci-gitleaks` |
-| `semgrep` | Análisis estático (Rust, Docker, Actions) | `just ci-semgrep` |
-| `trivy` | Vulnerabilidades de imagen y filesystem | `just ci-trivy` |
-| `markdownlint-cli2` | Markdown canónico | `just ci-lint` |
+| Herramienta         | Uso                                       | Receta             |
+|---------------------|-------------------------------------------|--------------------|
+| `gitleaks`          | Detección de secretos                     | `just ci-gitleaks` |
+| `semgrep`           | Análisis estático (Rust, Docker, Actions) | `just ci-semgrep`  |
+| `trivy`             | Vulnerabilidades de imagen y filesystem   | `just ci-trivy`    |
+| `markdownlint-cli2` | Markdown canónico                         | `just ci-lint`     |
 
 ## Archivos Relacionados
 

@@ -400,7 +400,7 @@ test("chat messages sync between users", async ({ browser }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                  | Problem                       | Solution                     |
-| ----------------------------- | ----------------------------- | ---------------------------- |
+|-------------------------------|-------------------------------|------------------------------|
 | Sharing context between users | State leaks, not isolated     | Create separate contexts     |
 | Not closing contexts          | Memory leak, browser overload | Always close in cleanup      |
 | Hardcoded timing for sync     | Flaky tests                   | Use `expect().toBeVisible()` |

@@ -4,7 +4,7 @@ description: >
   Plan, write, run, and fix Playwright E2E tests for the Rook dashboard.
   Trigger: when working with apps/rook/dashboard/e2e, playwright.config.ts,
   browser tests, or E2E failures.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+allowed-tools: Read Edit Write Glob Grep Bash
 metadata:
   author: cortex
   version: "2.0"
@@ -63,22 +63,22 @@ Python, Docker and the image are prerequisites; see `dev/README.md`.
 
 ## Configuration (actual values)
 
-| Setting | Value |
-|---|---|
-| `testDir` | `./e2e` |
-| Base URL (CI) | `http://localhost:4173/dashboard/` |
-| Base URL (local) | `http://localhost:4747/dashboard/` |
-| Test timeout | 30 s |
-| Expect timeout | 5 s |
-| Action timeout | 0 (no per-action limit) |
-| Workers | `PLAYWRIGHT_WORKERS`, default `1` |
-| Retries | not configured (0) |
-| Reporter | `html` |
-| Trace | `on-first-retry` |
-| Projects | chromium, firefox, webkit |
-| Auth state | `e2e/.auth/admin.json` |
-| Web server (CI) | `pnpm run build && pnpm run preview`, port 4173 |
-| Web server (local) | `pnpm run dev`, port 4747 |
+| Setting            | Value                                           |
+|--------------------|-------------------------------------------------|
+| `testDir`          | `./e2e`                                         |
+| Base URL (CI)      | `http://localhost:4173/dashboard/`              |
+| Base URL (local)   | `http://localhost:4747/dashboard/`              |
+| Test timeout       | 30 s                                            |
+| Expect timeout     | 5 s                                             |
+| Action timeout     | 0 (no per-action limit)                         |
+| Workers            | `PLAYWRIGHT_WORKERS`, default `1`               |
+| Retries            | not configured (0)                              |
+| Reporter           | `html`                                          |
+| Trace              | `on-first-retry`                                |
+| Projects           | chromium, firefox, webkit                       |
+| Auth state         | `e2e/.auth/admin.json`                          |
+| Web server (CI)    | `pnpm run build && pnpm run preview`, port 4173 |
+| Web server (local) | `pnpm run dev`, port 4747                       |
 
 Workers default to 1 because the backend rate-limits login, CSRF and API calls.
 Raise `PLAYWRIGHT_WORKERS` only with evidence that the limits tolerate it.
