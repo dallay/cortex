@@ -86,7 +86,32 @@ cleanup_remote_refs() {
 
 cleanup_git_objects() {
     info "==> Limpiando reflogs y objetos inalcanzables"
-    git reflog expire --expire=30.days --expire-unreachable=now --all
+    # Expire reflogs per-ref instead of using --all. `--all` also expires
+    # refs/stash, which drops the stash stack and makes `git gc --prune=now`
+    # delete the stashed commits. Stashes are user work-in-progress, so they
+    # are never touched here.
+    local ref
+    while IFS= read -r ref; do
+        [[ -z "$ref" ]] && continue
+        git reflog expire --expire=30.days --expire-unreachable=now "$ref"
+    done < <(git for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags)
+
+    # HEAD reflog is tracked separately from the refs above.
+    git reflog expire --expire=30.days --expire-unreachable=now HEAD
+
+    # Protect the stash stack from the prune below. refs/stash points to the
+    # newest stash, but `git stash list` reads the refs/stash reflog. If that
+    # reflog is missing, recreate it so the stash stays visible.
+    # The ref must be deleted and recreated because `git update-ref` with an
+    # unchanged value does not write a reflog entry.
+    if git rev-parse --verify --quiet refs/stash >/dev/null && [[ -z "$(git stash list)" ]]; then
+        local stash_commit
+        stash_commit="$(git rev-parse refs/stash)"
+        git update-ref -d refs/stash
+        git update-ref --create-reflog -m "clean-git: restore stash reflog" "refs/stash" "$stash_commit"
+        warn "    reflog de refs/stash restaurado"
+    fi
+
     git gc --prune=now --quiet
     info "    gc completado"
 }
