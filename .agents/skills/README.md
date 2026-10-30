@@ -1,8 +1,11 @@
+---
+specs: https://agentskills.io/specification
+---
 # Agent Skills — Cortex
 
 Catalog of engineering and product skills for the monorepo. Each skill lives in
 its own directory with a `SKILL.md`; the legacy Rust guides are standalone
-documents under `languages-typing/rust/`.
+Documents under `languages-typing/rust/`. All skills should follow the official specs [Specification - Agent Skills](https://agentskills.io/specification)
 
 Structural validation is required in CI:
 
