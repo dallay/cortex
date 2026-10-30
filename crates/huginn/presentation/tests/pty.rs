@@ -857,11 +857,11 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
         pty.resize(rows, cols);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    pty.wait_for("chunk20");
+    pty.wait_output_for("chunk20");
     assert!(
-        !pty.screen_text().contains("STREAM_COMPLETE"),
+        !pty.output().contains("Assistant: STREAM_COMPLETE"),
         "the first 50 resizes must overlap active streaming:\n{}",
-        pty.screen_text()
+        pty.output()
     );
     for resize_index in 50..100 {
         let (rows, cols) = if resize_index % 2 == 0 {
@@ -872,11 +872,11 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
         pty.resize(rows, cols);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    pty.wait_for("chunk30");
+    pty.wait_output_for("chunk30");
     assert!(
-        !pty.screen_text().contains("STREAM_COMPLETE"),
+        !pty.output().contains("Assistant: STREAM_COMPLETE"),
         "all 100 resizes must finish before streaming completes:\n{}",
-        pty.screen_text()
+        pty.output()
     );
 
     pty.wait_for("Assistant: STREAM_COMPLETE");
