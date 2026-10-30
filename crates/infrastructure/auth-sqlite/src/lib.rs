@@ -2107,4 +2107,65 @@ mod tests {
             assert!(stored.revoked_at.is_none(), "key remains unrevoked");
         });
     }
+
+    #[test]
+    fn update_and_rotation_preserve_the_spending_budget_until_it_is_cleared() {
+        runtime().block_on(async {
+            let repo = SqliteApiKeyRepository::new(":memory:").expect("repo");
+            let id = ApiKeyId::new("budget-preserve");
+            let budget = rook_core::SpendingBudget {
+                api_key_id: id.clone(),
+                amount_micros_usd: 25_000_000,
+                request_limit_micros_usd: 2_000_000,
+                window: rook_core::SpendingBudgetWindow::Monthly,
+            };
+            let mut record = rook_core::ApiKeyRecord {
+                id: id.clone(),
+                label: "Budgeted Key".to_string(),
+                key_hash: "hash-budget".to_string(),
+                key_prefix: "rk-budget".to_string(),
+                scopes: vec![],
+                tier: ApiKeyTier::Free,
+                is_active: true,
+                revoked_at: None,
+                expires_at: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                allowed_models: vec![],
+                allowed_providers: vec![],
+                spending_budget: Some(budget.clone()),
+            };
+            repo.create(&record).await.expect("create");
+
+            record.label = "Renamed Key".to_string();
+            repo.update(&record).await.expect("update");
+
+            let stored = repo.find(&id).await.expect("find").expect("some");
+            assert_eq!(
+                stored.spending_budget,
+                Some(budget.clone()),
+                "the budget must survive a label update"
+            );
+
+            repo.rotate_hash(&id, "hash-rotated", "rk-rotated")
+                .await
+                .expect("rotate");
+
+            let rotated = repo.find(&id).await.expect("find").expect("some");
+            assert_eq!(
+                rotated.spending_budget,
+                Some(budget.clone()),
+                "the budget must survive a key rotation"
+            );
+
+            record.spending_budget = None;
+            repo.update(&record).await.expect("clear the budget");
+
+            let cleared = repo.find(&id).await.expect("find").expect("some");
+            assert!(
+                cleared.spending_budget.is_none(),
+                "an explicit clear must remove the budget"
+            );
+        });
+    }
 }

@@ -80,7 +80,9 @@ impl SpendingBudgetGuard {
             )));
         }
 
-        let (window_start, window_end) = budget.window.utc_bounds(now);
+        let (window_start, window_end) = budget.window.utc_bounds(now).ok_or_else(|| {
+            CortexError::cost_unavailable("the spending budget window bounds are unavailable")
+        })?;
         let reservation = SpendingBudgetReservation {
             api_key_id: api_key_id.clone(),
             request_id: request.id.clone(),
@@ -115,15 +117,19 @@ impl SpendingBudgetGuard {
     /// Settle the reservation with the final cost, or mark it as unresolved
     /// when the final cost is unknown. Unresolved reservations keep the
     /// reserved amount charged.
+    ///
+    /// Transient ledger failures are retried. The ledger write is idempotent
+    /// for a given terminal state, so a retry cannot double charge a
+    /// reservation.
     pub async fn settle(&self, admission: &SpendingAdmission, cost_micros_usd: Option<u64>) {
-        if let Err(error) = self
-            .ledger
-            .settle_spending(
+        if let Err(error) = settle_with_retry("settle", || {
+            self.ledger.settle_spending(
                 &admission.api_key_id,
                 &admission.request_id,
                 cost_micros_usd,
             )
-            .await
+        })
+        .await
         {
             tracing::warn!(
                 error = %error,
@@ -134,16 +140,62 @@ impl SpendingBudgetGuard {
 
     /// Release the reservation. Only valid when the caller can prove that no
     /// upstream I/O happened.
+    ///
+    /// Transient ledger failures are retried. Releasing an already released
+    /// reservation succeeds, so a retry cannot double release it.
     pub async fn release(&self, admission: &SpendingAdmission) {
-        if let Err(error) = self
-            .ledger
-            .release_spending_before_upstream(&admission.api_key_id, &admission.request_id)
-            .await
+        if let Err(error) = settle_with_retry("release", || {
+            self.ledger
+                .release_spending_before_upstream(&admission.api_key_id, &admission.request_id)
+        })
+        .await
         {
             tracing::warn!(
                 error = %error,
                 "failed to release the spending budget reservation; it stays charged"
             );
+        }
+    }
+}
+
+/// Maximum number of attempts for a durable settlement write.
+const SETTLEMENT_ATTEMPTS: usize = 3;
+
+/// Backoff applied before each settlement retry.
+const SETTLEMENT_RETRY_DELAYS: [std::time::Duration; SETTLEMENT_ATTEMPTS - 1] = [
+    std::time::Duration::from_millis(25),
+    std::time::Duration::from_millis(75),
+];
+
+/// Run a durable settlement write and retry transient failures.
+///
+/// The ledger writes are idempotent for a given terminal state, so retrying a
+/// failed settlement cannot double charge or double release a reservation.
+async fn settle_with_retry<F, Fut, E>(operation: &'static str, mut call: F) -> Result<(), E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), E>>,
+    E: std::fmt::Display,
+{
+    let mut attempt = 1usize;
+    loop {
+        match call().await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if attempt >= SETTLEMENT_ATTEMPTS {
+                    return Err(error);
+                }
+                let delay =
+                    SETTLEMENT_RETRY_DELAYS[(attempt - 1).min(SETTLEMENT_RETRY_DELAYS.len() - 1)];
+                tracing::warn!(
+                    attempt,
+                    operation,
+                    error = %error,
+                    "spending budget settlement write failed; retrying"
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
         }
     }
 }
@@ -270,6 +322,8 @@ mod tests {
         reservations: Mutex<HashMap<(String, String), SpendingBudgetReservation>>,
         reserve_outcome:
             Mutex<Option<Result<SpendingReservationOutcome, SpendingBudgetReservationError>>>,
+        settle_failures: Mutex<usize>,
+        release_failures: Mutex<usize>,
     }
 
     impl FakeLedger {
@@ -282,8 +336,28 @@ mod tests {
             }
         }
 
+        /// Fail the next `count` settlement writes.
+        fn with_settle_failures(count: usize) -> Self {
+            Self {
+                settle_failures: Mutex::new(count),
+                ..Self::default()
+            }
+        }
+
+        /// Fail the next `count` release writes.
+        fn with_release_failures(count: usize) -> Self {
+            Self {
+                release_failures: Mutex::new(count),
+                ..Self::default()
+            }
+        }
+
         fn actions(&self) -> Vec<LedgerAction> {
             self.actions.lock().unwrap().clone()
+        }
+
+        fn count(&self, action: &LedgerAction) -> usize {
+            self.actions().iter().filter(|item| *item == action).count()
         }
     }
 
@@ -318,6 +392,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(LedgerAction::Settle(cost_micros_usd));
+            let mut failures = self.settle_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(SpendingBudgetReservationError::Database(
+                    "transient ledger failure".to_string(),
+                ));
+            }
             Ok(())
         }
 
@@ -327,6 +408,13 @@ mod tests {
             _request_id: &RequestId,
         ) -> Result<(), SpendingBudgetReservationError> {
             self.actions.lock().unwrap().push(LedgerAction::Release);
+            let mut failures = self.release_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(SpendingBudgetReservationError::Database(
+                    "transient ledger failure".to_string(),
+                ));
+            }
             Ok(())
         }
     }
@@ -558,6 +646,101 @@ mod tests {
         assert_eq!(
             ledger.actions(),
             vec![LedgerAction::Reserve, LedgerAction::Release]
+        );
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_settlement_failure_and_settles_the_reservation() {
+        let ledger = Arc::new(FakeLedger::with_settle_failures(2));
+        let guard = SpendingBudgetGuard::new(ledger.clone());
+
+        let admission = guard
+            .admit(
+                &FakeProvider::with_bound(500_000),
+                &request(),
+                &budget(),
+                now(),
+            )
+            .await
+            .expect("a bounded request is admitted");
+        guard.settle(&admission, Some(120_000)).await;
+
+        assert_eq!(
+            ledger.count(&LedgerAction::Settle(Some(120_000))),
+            3,
+            "the settlement write must be retried until it succeeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_retrying_the_settlement_after_the_attempt_budget_is_exhausted() {
+        let ledger = Arc::new(FakeLedger::with_settle_failures(SETTLEMENT_ATTEMPTS));
+        let guard = SpendingBudgetGuard::new(ledger.clone());
+
+        let admission = guard
+            .admit(
+                &FakeProvider::with_bound(500_000),
+                &request(),
+                &budget(),
+                now(),
+            )
+            .await
+            .expect("a bounded request is admitted");
+        guard.settle(&admission, Some(120_000)).await;
+
+        assert_eq!(
+            ledger.count(&LedgerAction::Settle(Some(120_000))),
+            SETTLEMENT_ATTEMPTS,
+            "the settlement write must not retry without limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_release_failure_and_releases_the_reservation() {
+        let ledger = Arc::new(FakeLedger::with_release_failures(2));
+        let guard = SpendingBudgetGuard::new(ledger.clone());
+
+        let admission = guard
+            .admit(
+                &FakeProvider::with_bound(500_000),
+                &request(),
+                &budget(),
+                now(),
+            )
+            .await
+            .expect("a bounded request is admitted");
+        guard.release(&admission).await;
+
+        assert_eq!(
+            ledger.count(&LedgerAction::Release),
+            3,
+            "the release write must be retried until it succeeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn fails_closed_when_the_window_bounds_are_unavailable() {
+        let ledger = Arc::new(FakeLedger::default());
+        let guard = SpendingBudgetGuard::new(ledger.clone());
+
+        let out_of_range = chrono::NaiveDate::MAX
+            .and_hms_opt(23, 59, 59)
+            .expect("the maximum calendar date has a valid time")
+            .and_utc();
+        let error = guard
+            .admit(
+                &FakeProvider::with_bound(500_000),
+                &request(),
+                &budget(),
+                out_of_range,
+            )
+            .await
+            .expect_err("an unrepresentable window must fail closed");
+
+        assert!(error.is_cost_unavailable());
+        assert!(
+            ledger.actions().is_empty(),
+            "no reservation may be created without window bounds"
         );
     }
 }

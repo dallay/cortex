@@ -172,42 +172,30 @@ impl SpendingBudgetWindow {
     ///
     /// The window starts at the beginning of the period and ends at the start of
     /// the next period, so consecutive windows never overlap.
-    pub fn utc_bounds(&self, at: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
-        match self {
-            SpendingBudgetWindow::Daily => {
-                let start = at
-                    .date_naive()
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight is a valid time")
-                    .and_utc();
-                let end = start
-                    .checked_add_signed(chrono::Duration::days(1))
-                    .expect("adding one day does not overflow");
-                (start, end)
-            }
+    ///
+    /// Returns `None` when the calendar cannot represent the window bounds for
+    /// `at`. Callers must fail closed instead of assuming a valid window.
+    pub fn utc_bounds(&self, at: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let date = at.date_naive();
+        let start_date = match self {
+            SpendingBudgetWindow::Daily => date,
+            SpendingBudgetWindow::Monthly => date.with_day(1)?,
+        };
+        let start = start_date.and_hms_opt(0, 0, 0)?.and_utc();
+        let end = match self {
+            SpendingBudgetWindow::Daily => start.checked_add_signed(chrono::Duration::days(1))?,
             SpendingBudgetWindow::Monthly => {
-                let date = at.date_naive();
-                let year = date.year();
-                let month = date.month();
-                let start = date
-                    .with_day(1)
-                    .expect("day 1 always exists")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight is a valid time")
-                    .and_utc();
-                let (next_year, next_month) = if month == 12 {
-                    (year + 1, 1)
+                let (next_year, next_month) = if date.month() == 12 {
+                    (date.year().checked_add(1)?, 1)
                 } else {
-                    (year, month + 1)
+                    (date.year(), date.month() + 1)
                 };
-                let end = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
-                    .expect("first day of the next month always exists")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight is a valid time")
-                    .and_utc();
-                (start, end)
+                chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)?
+                    .and_hms_opt(0, 0, 0)?
+                    .and_utc()
             }
-        }
+        };
+        Some((start, end))
     }
 }
 
@@ -369,7 +357,9 @@ mod tests {
         let at = DateTime::parse_from_rfc3339("2026-10-28T13:45:12Z")
             .unwrap()
             .with_timezone(&Utc);
-        let (start, end) = SpendingBudgetWindow::Daily.utc_bounds(at);
+        let (start, end) = SpendingBudgetWindow::Daily
+            .utc_bounds(at)
+            .expect("daily bounds");
         assert_eq!(
             start,
             DateTime::parse_from_rfc3339("2026-10-28T00:00:00Z")
@@ -389,7 +379,9 @@ mod tests {
         let at = DateTime::parse_from_rfc3339("2026-10-28T13:45:12Z")
             .unwrap()
             .with_timezone(&Utc);
-        let (start, end) = SpendingBudgetWindow::Monthly.utc_bounds(at);
+        let (start, end) = SpendingBudgetWindow::Monthly
+            .utc_bounds(at)
+            .expect("monthly bounds");
         assert_eq!(
             start,
             DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
@@ -409,7 +401,9 @@ mod tests {
         let at = DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
             .unwrap()
             .with_timezone(&Utc);
-        let (start, end) = SpendingBudgetWindow::Monthly.utc_bounds(at);
+        let (start, end) = SpendingBudgetWindow::Monthly
+            .utc_bounds(at)
+            .expect("monthly bounds");
         assert_eq!(
             start,
             DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
@@ -422,6 +416,16 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc)
         );
+    }
+
+    #[test]
+    fn window_bounds_are_unavailable_instead_of_panicking_at_calendar_limits() {
+        let at = chrono::NaiveDate::MAX
+            .and_hms_opt(23, 59, 59)
+            .expect("the maximum calendar date has a valid time")
+            .and_utc();
+        assert!(SpendingBudgetWindow::Daily.utc_bounds(at).is_none());
+        assert!(SpendingBudgetWindow::Monthly.utc_bounds(at).is_none());
     }
 
     #[test]
