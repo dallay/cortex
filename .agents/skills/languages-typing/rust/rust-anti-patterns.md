@@ -1,80 +1,81 @@
 # Skill: rust-anti-patterns
 
-Colección de anti-patterns de Rust adaptada para el monorepo Cortex.
+Collection of Rust anti-patterns adapted for the Cortex monorepo.
 
-> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtrada y adaptada.
+> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtered and adapted.
 
-## Propósito
+## Purpose
 
-Guiar a los desarrolladores a evitar errores comunes que contradicen la arquitectura
-hexagonal o degradan la calidad del código en el contexto de Rook.
+Help developers avoid common mistakes that conflict with hexagonal architecture
+or degrade code quality in the context of Rook.
 
-## Reglas Incluidas
+## Included Rules
 
 ### 1. anti-clone-excessive
 
-> No clones cuando borrow funciona.
+> Do not clone when borrowing works.
 
-En Cortex esto es especialmente importante en los providers y en el hot path
-de RouteRequest. El código frequently cloneaba Arc<ProviderPort> innecesariamente.
+In Cortex, this is especially important in providers and the `RouteRequest` hot path.
+The code has frequently cloned `Arc<ProviderPort>` unnecessarily.
 
  ```rust
- // BAD — Clone en loop
+ // BAD — Clone inside a loop
  for provider in providers.clone() {
      check(provider);
  }
 
- // GOOD — Iterar por referencia
+ // GOOD — Iterate by reference
  for provider in &providers {
      check(provider);
  }
  ```
 
-Útil para:
+Useful for:
 
-- `providers.read().await.iter()` en router_impl
-- Iteración sobre `Vec<Arc<dyn ProviderPort>>`
+- `providers.read().await.iter()` in `router_impl`
+- Iteration over `Vec<Arc<dyn ProviderPort>>`
 
 ### 2. anti-over-abstraction
 
-> No sobre-abstract con generics excesivos.
+> Do not over-abstract with excessive generics.
 
-Nuestra arquitectura ya define traits en rook-core (ProviderPort, RouterPort, etc.).
-No agregar más abstracción a menos que sea necesario.
+Our architecture already defines traits in rook-core (`ProviderPort`, `RouterPort`, etc.).
+Do not add more abstraction unless needed.
 
  ```rust
- // BAD — Trait explosion innecesario
+ // BAD — Unnecessary trait explosion
  trait Readable {}
  trait Writable {}
  trait AsyncReadable {}
  trait AsyncWritable {}
 
- // GOOD — Traits concretos de la arquitectura
+ // GOOD — Concrete architecture traits
  trait ProviderPort: Send + Sync + 'static { ... }
  ```
 
-Exception: Los traits de dominio en rook-core SON la abstracción correcta.
+Exception: Domain traits in rook-core ARE the correct abstraction.
 
 ### 3. anti-stringly-typed
 
-> No uses Strings donde enums/newtypes darían type safety.
+> Do not use strings when enums or newtypes would provide type safety.
 
-En Cortex ya usamos esto bien: ProviderId, ModelId, RequestId.
-Mantener este padrão.
+In Cortex, we already use this pattern correctly: `ProviderId`, `ModelId`, and `RequestId`.
+Keep following it.
 
  ```rust
  // BAD
  fn route(provider: &str, model: &str) { ... }
 
- // GOOD — Newtypes ya definidos
+ // GOOD — Existing newtypes
  fn route(provider: &ProviderId, model: &ModelId) { ... }
  ```
 
 ### 4. anti-unwrap-abuse
 
-> No uses .unwrap () en código de producción.
+> Do not use `.unwrap()` in production code.
 
-Especialmente crítico en providers y use cases. El código de transporte (transport-axum) es donde más вероятно encontrar unwrap.
+This is especially critical in providers and use cases. Transport code (`transport-axum`)
+is where `.unwrap()` is most likely to appear.
 
  ```rust
  // BAD
@@ -85,13 +86,13 @@ let response = provider.complete(req)
       .map_err(|e| CortexError::provider(e.to_string()))?;
  ```
 
-Excepciones válidas:
+Valid exceptions:
 
 - Tests
 - Const/static initialization (compile-time guaranteed)
 - After a check that guarantees success
 
-## Configuración Clippy
+## Clippy Configuration
 
  ```toml
  [lints.clippy]
@@ -101,13 +102,13 @@ Excepciones válidas:
  unwrap_used = "warn"
  ```
 
-## Archivos Relacionados
+## Related Files
 
-- `crates/domain/rook-core/src/ports.rs` — Traits de dominio
+- `crates/domain/rook-core/src/ports.rs` — Domain traits
 - `crates/domain/shared-kernel/src/id.rs` — Newtypes
 - `crates/application/rook-usecases/src/router_impl.rs` — Hot path
 
 ## See Also
 
-- rust-api-design — Para patrones de API correctos
-- rust-async-patterns — Para patrones async
+- rust-api-design — For correct API patterns
+- rust-async-patterns — For async patterns

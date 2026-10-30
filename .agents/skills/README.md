@@ -1,134 +1,133 @@
 # Agent Skills — Cortex
 
-Catálogo de skills de ingeniería y de producto del monorepo. Cada skill vive en
-su propio directorio con un `SKILL.md`; las guías Rust heredadas son documentos
-sueltos bajo `languages-typing/rust/`.
+Catalog of engineering and product skills for the monorepo. Each skill lives in
+its own directory with a `SKILL.md`; the legacy Rust guides are standalone
+documents under `languages-typing/rust/`.
 
-La validación estructural es obligatoria en CI:
+Structural validation is required in CI:
 
 ```bash
 node scripts/validate-skills.mjs
 node --test scripts/validate-skills.test.mjs
 ```
 
-El validador comprueba frontmatter estructural (incluido `allowed-tools` separado
-por espacios), identidad `name`/directorio, duplicados, longitud de descripción,
-tamaño y enlaces locales. **No certifica** afirmaciones
-técnicas, versiones ni comandos: eso se revisa contra manifiestos, código y tests.
+The validator checks frontmatter structure (including space-separated
+`allowed-tools`), `name`/directory identity, duplicates, description length, size,
+and local links. **It does not certify** technical claims, versions, or commands:
+verify those against manifests, code, and tests.
 
-## Descubrimiento: dos consumidores
+## Discovery: Two Consumers
 
-`.agents/skills/` tiene dos usos distintos y no comparten el mismo mecanismo:
+`.agents/skills/` has two distinct uses, and they do not share the same mechanism:
 
-| Consumidor                                           | Qué usa                                       | Alcance               |
+| Consumer                                             | What it uses                                  | Scope                 |
 |------------------------------------------------------|-----------------------------------------------|-----------------------|
-| Agentes de ingeniería (OpenCode, Claude Code, Codex) | Catálogo completo, sincronizado con AgentSync | Cualquier profundidad |
-| Huginn (`FilesystemSkillCatalog`)                    | Solo hijos directos de `.agents/skills/`      | Un nivel              |
+| Engineering agents (OpenCode, Claude Code, Codex)    | Full catalog, synchronized with AgentSync     | Any depth             |
+| Huginn (`FilesystemSkillCatalog`)                    | Direct children of `.agents/skills/` only     | One level             |
 
-Consecuencias:
+Consequences:
 
-- `pinned-tag/SKILL.md` es **descubrible** por Huginn.
-- `tui/ratatui-tui/SKILL.md` es una skill de ingeniería y **no** es descubrible
-  por el catálogo actual. Es intencional; cambiar el contrato de descubrimiento
-  requiere una decisión de producto y pruebas de profundidad, duplicados y
-  enlaces simbólicos.
-- Huginn valida hasta 65.536 bytes por archivo, pero `load_skill` tiene un
-  presupuesto de 16 KiB para la respuesta JSON. Una skill puede ser **válida** y
-  no ser **cargable**; revisa el tamaño antes de añadir material extenso.
+- `pinned-tag/SKILL.md` is **discoverable** by Huginn.
+- `tui/ratatui-tui/SKILL.md` is an engineering skill and is **not** discoverable
+  by the current catalog. This is intentional; changing the discovery contract
+  requires a product decision and tests for nesting depth, duplicates, and
+  symbolic links.
+- Huginn validates up to 65,536 bytes per file, but `load_skill` has a
+  16 KiB budget for the JSON response. A skill can be **valid** but not
+  **loadable**; check its size before adding extensive content.
 
-## Skills de producto
+## Product Skills
 
 ### [pinned-tag](pinned-tag/SKILL.md)
 
-Fija GitHub Actions a SHAs inmutables y resuelve la referencia correcta (`v4`, `v4.2.2`, tags anotados) con `scripts/resolve-action-sha.sh`.
+Pins GitHub Actions to immutable SHAs and resolves the correct reference (`v4`, `v4.2.2`, annotated tags) with `scripts/resolve-action-sha.sh`.
 
 ### [tui/ratatui-tui](tui/ratatui-tui/SKILL.md)
 
-Contratos operativos para la TUI de Huginn: propietario único del terminal,
-renderizado inline con Ratatui, layout, Unicode, foco/overlays, ciclo de vida y
-pruebas PTY.
+Operational contracts for the Huginn TUI: single terminal owner, inline Ratatui
+rendering, layout, Unicode, focus/overlays, lifecycle, and PTY tests.
 
 ## Frontend
 
-Ruta base: `frontend-platform/`.
+Base path: `frontend-platform/`.
 
-| Skill                                                                 | Uso                                                               |
+| Skill                                                                 | Use case                                                          |
 |-----------------------------------------------------------------------|-------------------------------------------------------------------|
-| [vue](frontend-platform/vue/SKILL.md)                                 | Componentes, composables, stores Pinia, formularios del dashboard |
-| [shadcn-vue](frontend-platform/shadcn-vue/SKILL.md)                   | Componentes y registro de shadcn-vue                              |
-| [best-practices](frontend-platform/best-practices/SKILL.md)           | Seguridad, compatibilidad, calidad y rendimiento web              |
-| [accessibility](frontend-platform/accessibility/SKILL.md)             | WCAG, navegación por teclado, lectores de pantalla                |
-| [core-web-vitals](frontend-platform/core-web-vitals/SKILL.md)         | LCP, CLS e INP                                                    |
-| [performance](frontend-platform/performance/SKILL.md)                 | Optimización de carga y runtime                                   |
-| [seo](frontend-platform/seo/SKILL.md)                                 | Metadatos, datos estructurados, sitemap                           |
-| [astro](frontend-platform/astro/SKILL.md)                             | Astro, SSG e islas                                                |
-| [frontend-design](frontend-platform/frontend-design/SKILL.md)         | Diseño de componentes y páginas                                   |
-| [animate-text](frontend-platform/animate-text/SKILL.md)               | Efectos de texto con nombre                                       |
-| [nothing-design](frontend-platform/nothing-design/SKILL.md)           | Estilo Nothing                                                    |
-| [modern-web-guidance](frontend-platform/modern-web-guidance/SKILL.md) | Búsqueda de APIs y patrones web actuales                          |
-| [chrome-extensions](frontend-platform/chrome-extensions/SKILL.md)     | Extensiones Manifest V3 y Chrome Web Store                        |
+| [vue](frontend-platform/vue/SKILL.md)                                 | Components, composables, Pinia stores, dashboard forms             |
+| [shadcn-vue](frontend-platform/shadcn-vue/SKILL.md)                   | shadcn-vue components and registry                                 |
+| [best-practices](frontend-platform/best-practices/SKILL.md)           | Web security, compatibility, quality, and performance              |
+| [accessibility](frontend-platform/accessibility/SKILL.md)             | WCAG, keyboard navigation, screen readers                          |
+| [core-web-vitals](frontend-platform/core-web-vitals/SKILL.md)         | LCP, CLS, and INP                                                  |
+| [performance](frontend-platform/performance/SKILL.md)                 | Load-time and runtime optimization                                 |
+| [seo](frontend-platform/seo/SKILL.md)                                 | Metadata, structured data, sitemaps                                |
+| [astro](frontend-platform/astro/SKILL.md)                             | Astro, SSG, and islands                                            |
+| [frontend-design](frontend-platform/frontend-design/SKILL.md)         | Component and page design                                          |
+| [animate-text](frontend-platform/animate-text/SKILL.md)               | Named text effects                                                 |
+| [nothing-design](frontend-platform/nothing-design/SKILL.md)           | Nothing-inspired design                                            |
+| [modern-web-guidance](frontend-platform/modern-web-guidance/SKILL.md) | Current web APIs and patterns                                      |
+| [chrome-extensions](frontend-platform/chrome-extensions/SKILL.md)     | Manifest V3 extensions and Chrome Web Store                        |
 
 ## Testing
 
-Ruta base: `testing/`.
+Base path: `testing/`.
 
-| Skill                                                                   | Uso                                            |
+| Skill                                                                   | Use case                                       |
 |-------------------------------------------------------------------------|------------------------------------------------|
-| [vitest](testing/vitest/SKILL.md)                                       | Tests unitarios y de componentes; Vitest 5.0.5 |
-| [playwright](testing/playwright/SKILL.md)                               | E2E del dashboard; `apps/rook/dashboard/e2e`   |
-| [playwright-best-practices](testing/playwright-best-practices/SKILL.md) | Patrones avanzados de Playwright               |
+| [vitest](testing/vitest/SKILL.md)                                       | Unit and component tests; Vitest 5.0.5         |
+| [playwright](testing/playwright/SKILL.md)                               | Dashboard E2E; `apps/rook/dashboard/e2e`       |
+| [playwright-best-practices](testing/playwright-best-practices/SKILL.md) | Advanced Playwright patterns                   |
 
-## Lenguajes y tipado
+## Languages and Typing
 
-| Skill                                                               | Uso                                      |
+| Skill                                                               | Use case                                 |
 |---------------------------------------------------------------------|------------------------------------------|
-| [typescript](languages-typing/typescript/SKILL.md)                  | Tipos, interfaces y genéricos            |
-| [rust-anti-patterns](languages-typing/rust/rust-anti-patterns.md)   | Anti-patterns comunes                    |
-| [rust-api-design](languages-typing/rust/rust-api-design.md)         | Diseño de APIs públicas                  |
-| [rust-async-patterns](languages-typing/rust/rust-async-patterns.md) | Tokio y concurrencia                     |
-| [rust-error-handling](languages-typing/rust/rust-error-handling.md) | `CortexError`, `thiserror`, propagación  |
-| [rust-linting](languages-typing/rust/rust-linting.md)               | Lints y enforcement                      |
-| [rust-documentation](languages-typing/rust/rust-documentation.md)   | Docs públicas, ejemplos y safety         |
-| [rust-naming](languages-typing/rust/rust-naming.md)                 | Convenciones de nombres                  |
-| [rust-memory](languages-typing/rust/rust-memory.md)                 | Asignación, clonado y zero-copy          |
-| [rust-testing](languages-typing/rust/rust-testing.md)               | Tests, doc-tests y benchmarks            |
-| [rust-tooling](languages-typing/rust/rust-tooling.md)               | `just`, cobertura, auditoría y debugging |
+| [typescript](languages-typing/typescript/SKILL.md)                  | Types, interfaces, and generics          |
+| [rust-anti-patterns](languages-typing/rust/rust-anti-patterns.md)   | Common anti-patterns                     |
+| [rust-api-design](languages-typing/rust/rust-api-design.md)         | Public API design                        |
+| [rust-async-patterns](languages-typing/rust/rust-async-patterns.md) | Tokio and concurrency                    |
+| [rust-error-handling](languages-typing/rust/rust-error-handling.md) | `CortexError`, `thiserror`, propagation  |
+| [rust-linting](languages-typing/rust/rust-linting.md)               | Lints and enforcement                    |
+| [rust-documentation](languages-typing/rust/rust-documentation.md)   | Public docs, examples, and safety        |
+| [rust-naming](languages-typing/rust/rust-naming.md)                 | Naming conventions                       |
+| [rust-memory](languages-typing/rust/rust-memory.md)                 | Allocation, cloning, and zero-copy       |
+| [rust-testing](languages-typing/rust/rust-testing.md)               | Tests, doctests, and benchmarks          |
+| [rust-tooling](languages-typing/rust/rust-tooling.md)               | `just`, coverage, auditing, and debugging |
 
-## Arquitectura del monorepo
+## Monorepo Architecture
 
 ```text
 crates/
 ├── domain/
-│   ├── shared-kernel/     # CortexError, IDs, sin dependencias de infraestructura
-│   └── rook-core/         # Puertos y modelo de dominio
+│   ├── shared-kernel/     # CortexError, IDs, no infrastructure dependencies
+│   └── rook-core/         # Ports and domain model
 ├── application/
-│   └── rook-usecases/     # Casos de uso, routing, fallback
+│   └── rook-usecases/     # Use cases, routing, fallback
 ├── infrastructure/
-│   ├── providers-*/       # Adaptadores de proveedores
-│   ├── transport-axum/    # Adaptador HTTP
-│   └── …                  # Cache, auditoría, persistencia
-├── huginn/                # Agente local: dominio, aplicación, runtime, presentación
-└── test-support/          # Utilidades compartidas de test
+│   ├── providers-*/       # Provider adapters
+│   ├── transport-axum/    # HTTP adapter
+│   └── …                  # Cache, auditing, persistence
+├── huginn/                # Local agent: domain, application, runtime, presentation
+└── test-support/          # Shared test utilities
 ```
 
-Las skills respetan esta estructura y la dirección de dependencias.
+The skills follow this structure and its dependency direction.
 
-## Reglas de aplicación
+## Application Rules
 
-1. **Domain (`shared-kernel`, `rook-core`)** — no usar `anyhow`.
-    - `CortexError` y errores específicos de dominio.
-    - `thiserror` para definiciones.
-2. **Application (`rook-usecases`)** — errores tipados.
-    - Propagar errores de proveedores.
-    - No capturar y ocultar fallos.
-3. **Infrastructure (`providers-*`, `transport-axum`)** — adaptar errores.
-    - Convertir errores externos a `CortexError`.
-    - Documentar errores de APIs externas.
-4. **Binarios (`apps/rook`)** — pueden usar `anyhow` en el borde.
-    - Contexto adicional, logging y respuesta HTTP.
+1. **Domain (`shared-kernel`, `rook-core`)** — do not use `anyhow`.
+    - Use `CortexError` and domain-specific errors.
+    - Use `thiserror` for error definitions.
+2. **Application (`rook-usecases`)** — use typed errors.
+    - Propagate provider errors.
+    - Do not catch and hide failures.
+3. **Infrastructure (`providers-*`, `transport-axum`)** — adapt errors.
+    - Convert external errors to `CortexError`.
+    - Document errors from external APIs.
+4. **Binaries (`apps/rook`)** — may use `anyhow` at the boundary.
+    - Add context, logging, and HTTP responses.
 
-## Fuentes
+## Sources
 
-- [rust-skills](https://github.com/leonardomso/rust-skills) — colección original
-- [Arquitectura Cortex](../../docs/rook/architecture.md)
-- [Guía de desarrollo](../../docs/development.md)
+- [rust-skills](https://github.com/leonardomso/rust-skills) — original collection
+- [Cortex architecture](../../docs/rook/architecture.md)
+- [Development guide](../../docs/development.md)

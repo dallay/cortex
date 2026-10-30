@@ -48,9 +48,14 @@ actual=$("$resolver" "$url" v1.2)
 [ "$actual" = "$second" ] && pass "annotated tag resolves to peeled commit" || fail "annotated tag: expected $second, got $actual"
 [ "$actual" != "$tag_object" ] && pass "annotated tag does not resolve to tag object" || fail "annotated tag returned tag object"
 
-# Exact matching: v1 must not be satisfied by v1.2.
+# Exact matching: v1 must not be satisfied by v1.2, and a prefix is not a tag.
 actual=$("$resolver" "$url" v1)
 [ "$actual" = "$first" ] && pass "tag matching is exact" || fail "exact tag matching: expected $first, got $actual"
+if "$resolver" "$url" v >/dev/null 2>&1; then
+    fail "tag prefix should not resolve"
+else
+    pass "tag prefix does not resolve"
+fi
 
 # Missing tags fail closed with a non-zero status.
 if "$resolver" "$url" missing >/dev/null 2>&1; then

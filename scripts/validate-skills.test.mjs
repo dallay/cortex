@@ -1,11 +1,11 @@
 'use strict';
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, it } from 'node:test';
-import { validateSkills, analyzeSkills } from './validate-skills.mjs';
+import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {afterEach, describe, it} from 'node:test';
+import {analyzeSkills, validateSkills} from './validate-skills.mjs';
 
 const roots = [];
 

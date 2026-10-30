@@ -1,15 +1,15 @@
 # Skill: rust-linting
 
-Configuración de lints y enforcement para el monorepo Cortex.
+Lint configuration and enforcement for the Cortex monorepo.
 
-> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtrada y adaptada.
+> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtered and adapted.
 
-## Propósito
+## Purpose
 
-Documentar y enforced los lints de Clippy y Rust que usamos para mantener
-la calidad del código. Mantener alineado con Cargo.toml workspace lints.
+Document and enforce the Clippy and Rust lints we use to maintain code quality.
+Keep this aligned with the workspace lints in `Cargo.toml`.
 
-## Configuración Actual (ya aplicada)
+## Current Configuration (already applied)
 
  ```toml
  [workspace.lints.rust]
@@ -35,30 +35,30 @@ la calidad del código. Mantener alineado con Cargo.toml workspace lints.
  missing_panics_doc = "allow"
  ```
 
-## Reglas Clave
+## Key Rules
 
 ### 1. lint-deny-correctness ⚠️ CRÍTICO
 
 > `#![deny(clippy::correctness)]`
 
-Correctness lints capturan código que está completamente mal:
-logic errors, undefined behavior, código que no hace lo que piensas.
+Correctness lints catch code that is fundamentally wrong:
+logic errors, undefined behavior, and code that does not do what you expect.
 
  ```toml
  correctness = { level = "deny", priority = -2 }
  ```
 
-Qué captura:
+What they catch:
 
-- `approx_constant` — Usar PI de std::f64::consts::PI
-- `invalid_regex` — Regex que no compila
-- `iter_next_loop` — Uso incorrecto de .next () en for loops
-- `never_loop` — Loops que nunca iteran
-- `unit_cmp` — Comparación de unit types ()
+- `approx_constant` — Use `std::f64::consts::PI` instead of an approximation
+- `invalid_regex` — Regex that does not compile
+- `iter_next_loop` — Incorrect use of `.next()` in `for` loops
+- `never_loop` — Loops that never iterate
+- `unit_cmp` — Comparison of unit types `()`
 
 ### 2. lint-missing-docs
 
-> Warn on missing documentation para items públicos.
+> Warn on missing documentation for public items.
 
  ```rust
  #![warn(missing_docs)]
@@ -71,12 +71,12 @@ Qué captura:
  pub struct ModelId(pub String);
  ```
 
-**Excepciones actuales:** `missing_errors_doc` y `missing_panics_doc` están
-en allow list porque genera demasiado ruido en el codebase actual.
+**Current exceptions:** `missing_errors_doc` and `missing_panics_doc` are
+on the allow list because they generate too much noise in the current codebase.
 
 ### 3. lint-unsafe-doc
 
-> Requiere documentación para unsafe blocks.
+> Require documentation for unsafe blocks.
 
  ```toml
  undocumented_unsafe_blocks = "warn"  # En [lints.clippy]
@@ -94,7 +94,7 @@ en allow list porque genera demasiado ruido en el codebase actual.
  }
  ```
 
-En Cortex:encryption-inmemory usa unsafe para AES-GCM operations.
+In Cortex, `encryption-inmemory` uses unsafe for AES-GCM operations.
 
 ### 4. lint-rustfmt-check
 
@@ -114,7 +114,7 @@ Nuestro rustfmt.toml:
  use_small_heuristics = "Max"
  ```
 
-## Reglas Adicionales Recomendadas
+## Additional Recommended Rules
 
 ### Para agregar gradualmente
 
@@ -150,22 +150,22 @@ Nuestro rustfmt.toml:
 
 ## CI Order
 
-Importante: el orden de CI es:
+Important: CI runs in this order:
 
-1. `fmt --check` — Formato primero (fail fast)
+1. `fmt --check` — Format first (fail fast)
 2. `clippy` — Lints
-3. `check` — Compilación
+3. `check` — Compilation
 4. `test` — Tests
-5. `doc` — Documentación
+5. `doc` — Documentation
 6. `audit` — Security audit
 
-## Archivos Relacionados
+## Related Files
 
 - `Cargo.toml` — Workspace lints configuration
-- `rustfmt.toml` — Formato configuration
+- `rustfmt.toml` — Formatting configuration
 - `.github/workflows/` — CI/CD
 
 ## See Also
 
-- rust-api-design — Para patrones de API
-- rust-anti-patterns — Anti-patterns a evitar
+- rust-api-design — For API patterns
+- rust-anti-patterns — Anti-patterns to avoid

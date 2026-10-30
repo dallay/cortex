@@ -122,8 +122,14 @@ test.describe("API keys", () => {
   reading state manually.
 - Assert user-visible outcomes, not implementation details; control requests
   through the UI.
-- When a request is unavoidable in a test, wait for the response explicitly:
-  `await page.waitForResponse("**/api/providers")`.
+- When a request is unavoidable in a test, register the response wait before the
+  action that triggers the request, then await it:
+
+  ```ts
+  const response = page.waitForResponse("**/api/providers");
+  await page.getByRole("button", { name: /refresh/i }).click();
+  await response;
+  ```
 - Mock only external or failure paths. Prefer the real backend for CRUD flows
   when the Docker suite provides it. Example:
 

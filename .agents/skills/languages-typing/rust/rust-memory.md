@@ -1,59 +1,59 @@
 # Skill: rust-memory
 
-Patrones de gestión de memoria para Rust, adaptados para el monorepo Cortex.
+Rust memory management patterns adapted for the Cortex monorepo.
 
 > Based on [rust-skills](https://github.com/leonardomso/rust-skills) — memory rules.
 
-## Propósito
+## Purpose
 
-Guía para optimizar uso de memoria en el codebase. Especialmente relevante
-para providers que procesan respuestas grandes y el cache en memory.
+Guidance for optimizing memory use in the codebase. Especially relevant
+for providers that process large responses and the in-memory cache.
 
-## Reglas Incluidas
+## Included Rules
 
 ### 1. mem-with-capacity
 
-> Usa `with_capacity()` cuando conoces el tamaño.
+> Use `with_capacity()` when you know the size.
 
  ```rust
- // ✅ Correcto - pre-allocation
+ // ✅ Correct - pre-allocation
  let mut results = Vec::with_capacity(providers.len());
  for provider in providers {
      results.push(process(provider));
  }
 
- // ❌ Incorrecto - reallocations
+ // ❌ Incorrect - reallocations
  let mut results = Vec::new();
  for provider in providers {
-     results.push(process(provider));  // Puede reallocate múltiples veces
+     results.push(process(provider));  // May reallocate multiple times
  }
  ```
 
 ### 2. mem-avoid-format
 
-> Evita `format!()` en hot paths.
+> Avoid `format!()` in hot paths.
 
  ```rust
- // ✅ Correcto - string literal
+ // ✅ Correct - string literal
  fn get_error_message() -> &'static str {
      "An error occurred"
  }
 
- // ❌ Incorrecto - allocation en cada llamada
+ // ❌ Incorrect - allocation on every call
  fn get_error_message() -> String {
-     format!("An error occurred")  // Allocation innecesaria
+     format!("An error occurred")  // Unnecessary allocation
  }
  ```
 
-Para logging en loops:
+For logging in loops:
 
  ```rust
- // ✅ Correcto - format args directo
+ // ✅ Correct - format arguments directly
  for event in events {
      log::info!("Processing item: {}", event.name);
  }
 
- // ❌ Incorrecto
+ // ❌ Incorrect
  for event in events {
      let msg = format!("Processing item: {}", event.name);
      log::info!("{}", msg);  // Double work
@@ -62,7 +62,7 @@ Para logging en loops:
 
 ### 3. mem-clone-from
 
-> Usa `clone_from()` para reusar allocaciones en clones repetidos.
+> Use `clone_from()` to reuse allocations across repeated clones.
 
  ```rust
  let mut buffer = String::with_capacity(1024);
@@ -74,12 +74,12 @@ Para logging en loops:
 
 ### 4. mem-compact-string
 
-> Considera `CompactString` para muchos strings pequeños.
+> Consider `CompactString` for many small strings.
 
-Para IDs de providers y modelos que son cortos:
+For short provider and model IDs:
 
  ```rust
- // En lugar de String para Short IDs
+ // Use this instead of String for short IDs
  struct ModelId(CompactString);
 
  impl ModelId {
@@ -93,23 +93,23 @@ Para IDs de providers y modelos que son cortos:
  }
  ```
 
-**Aplicar solo si profiling muestra que es necesario.**
+**Apply only if profiling shows it is necessary.**
 
 ### 5. mem-zero-copy
 
-> Usa referencias en lugar de clones cuando sea posible.
+> Use references instead of clones when possible.
 
  ```rust
- // ✅ Zero-copy - referencias
+ // ✅ Zero-copy - references
  fn process_items(items: &[Item]) {
      for item in items {
          println!("{}", item.name);
      }
  }
 
- // ❌ Allocation innecesaria
+ // ❌ Unnecessary allocation
  fn process_items(items: &Vec<Item>) {
-     for item in items.clone() {  // Clona todo el Vec
+     for item in items.clone() {  // Clones the entire Vec
          println!("{}", item.name);
      }
  }
@@ -117,15 +117,15 @@ Para IDs de providers y modelos que son cortos:
 
 ### 6. mem-boxed-slice
 
-> Usa `Box<[T]>` en lugar de `Vec<T>` para datos de tamaño fijo.
+> Use `Box<[T]>` instead of `Vec<T>` for fixed-size data.
 
  ```rust
- // ✅ Mejor - solo pointer + length (16 bytes)
+ // ✅ Better - pointer + length only (16 bytes)
  struct Document {
      pages: Box<[Page]>,
  }
 
- // ❌ Mayor overhead (24 bytes: pointer + length + capacity)
+ // ❌ More overhead (24 bytes: pointer + length + capacity)
  struct Document {
      pages: Vec<Page>,
  }
@@ -133,9 +133,9 @@ Para IDs de providers y modelos que son cortos:
 
 ### 7. mem-smallvec
 
-> Usa `SmallVec` para colecciones usualmente pequeñas.
+> Use `SmallVec` for collections that are usually small.
 
-Para headers HTTP o query params que típicamente son pocos:
+For HTTP headers or query parameters that are typically few:
 
  ```rust
  use smallvec::{smallvec, SmallVec};
@@ -147,63 +147,63 @@ Para headers HTTP o query params que típicamente son pocos:
 
 ### 8. mem-reuse-collections
 
-> Clear y reusa collections en loops en lugar de crear nuevas.
+> Clear and reuse collections in loops instead of creating new ones.
 
  ```rust
- // ✅ Correcto
+ // ✅ Correct
  let mut temp = Vec::new();
  for batch in batches {
-     temp.clear();  // Reusa la allocation
+     temp.clear();  // Reuse the allocation
      for item in &batch.items {
          temp.push(process(item));
      }
      results.push(finalize(&temp));
  }
 
- // ❌ Incorrecto - allocation por iteration
+ // ❌ Incorrect - allocation on every iteration
  for batch in batches {
-     let mut temp = Vec::new();  // Nueva allocation cada vez
+     let mut temp = Vec::new();  // New allocation each time
      // ...
  }
  ```
 
-## Anti-Patterns de Memoria
+## Memory Anti-Patterns
 
-### Evitar clone excesivo
+### Avoid excessive cloning
 
 Ya cubierto en `rust-anti-patterns.md`:
 
-- No clones cuando borrow funciona
-- Usa `Arc` para shared ownership
+- Do not clone when borrowing works
+- Use `Arc` for shared ownership
 - Clone only en async move
 
-### Evitar String para Strings Peques
+### Avoid `String` for Short Strings
 
  ```rust
- // ❌ String para short identifiers
+ // ❌ String for short identifiers
  struct ModelId(String);  // 24 bytes + heap
 
- // ✅ CompactString para strings cortos
+ // ✅ CompactString for short strings
  struct ModelId(CompactString);  // 24 bytes, inline
  ```
 
-## Aplicación en Cortex
+## Application in Cortex
 
-### Cache de Respuestas
+### Response Cache
 
-El cache en memoria usa `DashMap` con TTL. Consideraciones:
+The in-memory cache uses `DashMap` with TTL. Considerations:
 
-- Keys: `CacheKey` derivado de request hash (short)
-- Values: `CompletionResponse` puede ser grande
-- No hacer clone innecesario de responses completas
+- Keys: `CacheKey` derived from a request hash (short)
+- Values: `CompletionResponse` can be large
+- Avoid unnecessarily cloning complete responses
 
 ### Providers
 
-Providers procesan respuestas HTTP:
+Providers process HTTP responses:
 
-- Usar `reqwest` con streaming para respuestas grandes
-- Considerar `bytes::Bytes` para evitar copias
-- No parsear JSON completo si solo necesitas extract fields
+- Use `reqwest` streaming for large responses
+- Consider `bytes::Bytes` to avoid copies
+- Do not parse the entire JSON if you only need to extract fields
 
 ### Routes/Axum
 
@@ -213,10 +213,10 @@ Providers procesan respuestas HTTP:
      body: axum::body::Body,
  ) -> impl Response {
      let bytes = axum::body::to_bytes(body, 10_000_000).await?;
-     // Process sin allocation excesiva
+     // Process without excessive allocation
  }
 
- // ❌ Buffer entire body
+ // ❌ Buffer the entire body
  async fn stream_completion(
      body: Body,
  ) -> Result<String> {
@@ -225,26 +225,26 @@ Providers procesan respuestas HTTP:
  }
  ```
 
-## Medición
+## Measurement
 
-Antes de optimizar memoria, mide:
+Measure before optimizing memory:
 
  ```bash
  # Memory profiling
  valgrind --tool=massif target/release/rook
  cargo flamegraph
 
- # O con instruments en macOS
+ # Or use Instruments on macOS
  Instruments > Allocations
  ```
 
-## Archivos Relacionados
+## Related Files
 
-- rust-anti-patterns — Anti-patterns de clones
+- rust-anti-patterns — Clone anti-patterns
 - rust-async-patterns — Async memory patterns
 - rust-linting — Clippy memory lints
 
 ## See Also
 
 - [Rust Memory Management](https://doc.rust-lang.org/nomicon/mem.html)
-- [bytes crate](https://docs.rs/bytes) — Para zero-copy byte handling
+- [bytes crate](https://docs.rs/bytes) — For zero-copy byte handling

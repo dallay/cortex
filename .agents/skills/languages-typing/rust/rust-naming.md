@@ -1,65 +1,65 @@
 # Skill: rust-naming
 
-Convenciones de nomenclatura para Rust, adaptadas para el monorepo Cortex.
+Rust naming conventions adapted for the Cortex monorepo.
 
 > Based on [rust-skills](https://github.com/leonardomso/rust-skills) — naming rules.
 
-## Propósito
+## Purpose
 
-Estandarizar nombres en todo el codebase para que sea más legible y mantenible.
-Las convenciones de Rust son enforced por el compilador en algunos casos.
+Standardize names across the codebase to improve readability and maintainability.
+The Rust compiler enforces some naming conventions.
 
-## Reglas de Nomenclatura
+## Naming Rules
 
 ### 1. name-funcs-snake
 
-> Usa `snake_case` para funciones, métodos y variables.
+> Use `snake_case` for functions, methods, and variables.
 
  ```rust
- // ✅ Correcto
+ // ✅ Correct
  fn calculate_total() -> f64 { ... }
  fn get_provider_id(&self) -> &ProviderId { ... }
  let max_retries = 3;
 
- // ❌ Incorrecto
+ // ❌ Incorrect
  fn calculateTotal() -> f64 { ... }  //warning
  fn GetProviderId(&self) -> &ProviderId { ... }  //warning
  ```
 
 ### 2. name-consts-screaming
 
-> Usa `SCREAMING_SNAKE_CASE` para constantes y statics.
+> Use `SCREAMING_SNAKE_CASE` for constants and statics.
 
  ```rust
- // ✅ Correcto
+ // ✅ Correct
  const MAX_CONNECTIONS: u32 = 100;
  const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
  static CACHE: OnceLock<Cache> = OnceLock::new();
 
- // ❌ Incorrecto
+ // ❌ Incorrect
  const maxConnections: u32 = 100;  //warning
  ```
 
 ### 3. name-acronym-word
 
-> Trata los acrónimos como palabras: `HttpServer`, no `HTTPServer`.
+> Treat acronyms as words: `HttpServer`, not `HTTPServer`.
 
  ```rust
- // ✅ Correcto
+ // ✅ Correct
  struct HttpServer { ... }
  struct JsonParser { ... }
  fn parse_json() { ... }
  let tcp_connection = connect_tcp();
 
- // ❌ Incorrecto
- struct HTTPServer { ... }  // HTTP es un acrónimo, no todo mayúsculas
+ // ❌ Incorrect
+ struct HTTPServer { ... }  // HTTP is an acronym; do not capitalize the whole name
  struct JSONParser { ... }
  fn parseJSON() { ... }
  ```
 
 ### 4. name-into-ownership
 
-> Usa `into_` prefix para conversiones que consumen ownership.
+> Use the `into_` prefix for conversions that consume ownership.
 
  ```rust
  impl Request {
@@ -69,13 +69,13 @@ Las convenciones de Rust son enforced por el compilador en algunos casos.
      }
  }
 
- // Uso:
- let request = wrapper.into_completion_request();  // wrapper consumido
+ // Usage:
+ let request = wrapper.into_completion_request();  // wrapper is consumed
  ```
 
 ### 5. name-as-free
 
-> Usa `as_` prefix para conversiones libres (O (1), no alloc).
+> Use the `as_` prefix for low-cost conversions (O(1), no allocation).
 
  ```rust
  impl ProviderConfig {
@@ -85,13 +85,13 @@ Las convenciones de Rust son enforced por el compilador en algunos casos.
      }
  }
 
- // Uso:
+ // Usage:
  let timeout_ref = config.as_timeout();  // No allocation
  ```
 
-## Patrones de Conversion Summary
+## Conversion Pattern Summary
 
-| Prefix  | Costo     | Ownership         | Ejemplo                |
+| Prefix  | Cost      | Ownership         | Example                |
  |---------|-----------|-------------------|------------------------|
 | `as_`   | Free      | `&T -> &U`        | `str::as_bytes()`      |
 | `to_`   | Expensive | `&T -> U` (alloc) | `str::to_lowercase()`  |
@@ -108,41 +108,41 @@ Las convenciones de Rust son enforced por el compilador en algunos casos.
  let bytes: Vec<u8> = string.into_bytes();
  ```
 
-## Para Nuevos Crates
+## For New Crates
 
-Cuando crees un nuevo crate público:
+When creating a new public crate:
 
-- **No** suffixe con `-rs` o `-rust`
-- Usa el nombre del concepto, no del lenguaje
+- Do **not** add the `-rs` or `-rust` suffix
+- Use the name of the concept, not the language
 
  ```toml
- # ✅ Correcto
+ # ✅ Correct
  name = "provider-sqlite"
 
- # ❌ Incorrecto
+ # ❌ Incorrect
  name = "provider-sqlite-rs"
  name = "rust-provider-sqlite"
  ```
 
-## Enforzamiento
+## Enforcement
 
-Rust warn en muchos de estos por defecto:
+Rust warns about many of these by default:
 
  ```bash
  cargo clippy
  # warning: function `calculateTotal` should have a snake case name
  ```
 
-## Casos Especiales en Cortex
+## Special Cases in Cortex
 
-### Provider IDs y Model IDs
+### Provider IDs and Model IDs
 
  ```rust
- // Nuestros newtypes ya usan PascalCase internamente
+ // Our newtypes already use PascalCase internally
  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
  pub struct ProviderId(pub u64);
 
- // En variables/funciones: snake_case
+ // Variables and functions use snake_case
  fn get_provider_id(provider: &ProviderId) -> u64 {
      provider.0
  }
@@ -151,7 +151,7 @@ Rust warn en muchos de estos por defecto:
 ### Async Handlers en Transport
 
  ```rust
- // handlers HTTP
+ // HTTP handlers
  pub async fn handle_completion(
      Json(payload): Json<CompletionRequest>,
  ) -> Result<Json<CompletionResponse>, StatusCode> {
@@ -159,20 +159,20 @@ Rust warn en muchos de estos por defecto:
  }
  ```
 
-## Checklist para Code Review
+## Code Review Checklist
 
-- [ ] Funciones/métodos en `snake_case`
+- [ ] Functions/methods use `snake_case`
 - [ ] Constantes en `SCREAMING_SNAKE_CASE`
-- [ ] Acrónimos como palabras (`HttpServer`, no `HTTPServer`)
-- [ ] Conversiones con prefix correcto (`as_`, `to_`, `into_`)
-- [ ] No sufijos `-rs` en nombres de crates
+- [ ] Acronyms are treated as words (`HttpServer`, not `HTTPServer`)
+- [ ] Use the correct conversion prefix (`as_`, `to_`, `into_`)
+- [ ] Do not use the `-rs` suffix in crate names
 
-## Archivos Relacionados
+## Related Files
 
-- rust-api-design — Para diseño de APIs
-- rust-linting — Para enforcement
+- rust-api-design — For API design
+- rust-linting — For lint enforcement
 
 ## See Also
 
 - [Rust Naming Conventions](https://rust-lang.github.io/api-guidelines/naming.html)
-- rust-anti-patterns — Anti-patterns de naming
+- rust-anti-patterns — Naming anti-patterns

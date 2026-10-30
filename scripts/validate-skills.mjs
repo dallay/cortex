@@ -16,11 +16,26 @@
 //                   This does not certify catalog availability or activation.
 'use strict';
 
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { createHash } from 'node:crypto';
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync
+} from 'node:fs';
+import {createRequire} from 'node:module';
+import {createHash} from 'node:crypto';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep
+} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 // Reuse the existing CLI dependency; do not depend on pnpm's private store layout.
 const require = createRequire(import.meta.url);

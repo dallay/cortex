@@ -83,6 +83,7 @@ API object form:
 ```ts
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
+import { i18n } from "@/i18n";
 import { useApi } from "@/lib/api";
 
 export const useExampleStore = defineStore("example", () => {
@@ -100,7 +101,7 @@ export const useExampleStore = defineStore("example", () => {
 			const providers = await api.getProviders();
 			items.value = providers.map((provider) => provider.name);
 		} catch (value) {
-			error.value = value instanceof Error ? value.message : "Request failed";
+			error.value = value instanceof Error ? value.message : i18n.global.t("errors.requestFailed");
 		} finally {
 			isLoading.value = false;
 		}
