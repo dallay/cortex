@@ -53,6 +53,9 @@
 		"previous": "Previous",
 		"next": "Next"
 	},
+	"errors": {
+		"requestFailed": "Request failed"
+	},
 	"home": {
 		"title": "Dashboard",
 		"usageSummary": "Usage summary",

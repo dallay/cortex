@@ -1,4 +1,4 @@
-Single Page Applications (SPAs) provide the appearance of navigation by replacing the content of the page without navigating to a new page. By default, the content is simply replaced, without any transitions. Directional transitions can visually reinforce a spatial relationship between views. 
+Single Page Applications (SPAs) provide the appearance of navigation by replacing the content of the page without navigating to a new page. By default, the content is simply replaced, without any transitions. Directional transitions can visually reinforce a spatial relationship between views.
 
 By sliding new content in from the direction the user is moving you create a mental map of the application structure. For instance, a product site may show a transition to the right for "forward," and to the left for "back", or a slideshow may transition up and down to show next and previous slides.
 
@@ -80,7 +80,6 @@ document.startViewTransition({
   types: [transitionType] // Matches the CSS :active-view-transition-type() selectors
 });
 ```
-
 
 ### Accessibility
 

@@ -12,14 +12,14 @@ By using `content-visibility: hidden` on inactive views, the browser removes the
 
 While this approach offers massive performance benefits, it introduces a specific trade-off that you must manage carefully:
 
-*   **CPU Savings:** Massive. The browser completely skips layout and paint passes for hidden views.
-*   **RAM Cost:** High. The browser keeps all DOM nodes, event listeners, and state for the hidden view in memory.
+* **CPU Savings:** Massive. The browser completely skips layout and paint passes for hidden views.
+* **RAM Cost:** High. The browser keeps all DOM nodes, event listeners, and state for the hidden view in memory.
 
 #### When This Trade-off Becomes Dangerous
 
-*   **DO** use this strategy for simple applications with a small, predictable number of views (e.g., a 3-to-5 tabbed interface).
-*   **DO NOT** unconditionally cache every view in highly dynamic applications that generate dozens of unique reports or use infinite dynamic routes. Doing so will eventually cause severe memory bloat and may crash the browser on low-end devices.
-*   **MANDATORY:** If your application is highly dynamic, you MUST implement an **eviction strategy** (like a Least Recently Used cache) to destroy old views when a memory threshold is reached.
+* **DO** use this strategy for simple applications with a small, predictable number of views (e.g., a 3-to-5 tabbed interface).
+* **DO NOT** unconditionally cache every view in highly dynamic applications that generate dozens of unique reports or use infinite dynamic routes. Doing so will eventually cause severe memory bloat and may crash the browser on low-end devices.
+* **MANDATORY:** If your application is highly dynamic, you MUST implement an **eviction strategy** (like a Least Recently Used cache) to destroy old views when a memory threshold is reached.
 
 ## Implementation
 
@@ -67,8 +67,9 @@ Baseline status for content-visibility: Newly available. It's been Baseline sinc
 Supported by: Chrome 108 (Nov 2022), Edge 108 (Dec 2022), Firefox 130 (Sep 2024), and Safari 26 (Sep 2025).
 
 The `content-visibility` property degrades gracefully. In browsers that do not support it:
-*   The property is ignored.
-*   To prevent fallback browsers from rendering all views simultaneously, you should provide a fallback to `display: none` in your CSS:
+
+* The property is ignored.
+* To prevent fallback browsers from rendering all views simultaneously, you should provide a fallback to `display: none` in your CSS:
 
 ```css
 @supports not (content-visibility: hidden) {

@@ -2,7 +2,7 @@
 name: shadcn-vue
 description: Manages shadcn-vue components and projects — adding, searching, fixing, debugging, styling, and composing UI. Provides project context, component docs, and usage examples. Applies when working with shadcn-vue, component registries, presets, --preset codes, or any project with a components.json file. Also triggers for "shadcn-vue init", "create an app with --preset", or "switch to --preset".
 user-invocable: false
-allowed-tools: Bash(npx shadcn-vue@latest *), Bash(pnpm dlx shadcn-vue@latest *), Bash(bunx --bun shadcn-vue@latest *)
+allowed-tools: Bash(npx shadcn-vue@latest *) Bash(pnpm dlx shadcn-vue@latest *) Bash(bunx --bun shadcn-vue@latest *)
 ---
 
 # shadcn-vue
@@ -120,14 +120,14 @@ These are the most common patterns that differentiate correct shadcn-vue code. F
 ## Component Selection
 
 | Need                       | Use                                                                                                 |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
+|----------------------------|-----------------------------------------------------------------------------------------------------|
 | Button/action              | `Button` with appropriate variant                                                                   |
 | Form inputs                | `Input`, `Select`, `Combobox`, `Switch`, `Checkbox`, `RadioGroup`, `Textarea`, `InputOTP`, `Slider` |
 | Toggle between 2–7 options | `ToggleGroup` + `ToggleGroupItem`                                                                   |
 | Data display               | `Table`, `Card`, `Badge`, `Avatar`                                                                  |
 | Navigation                 | `Sidebar`, `NavigationMenu`, `Breadcrumb`, `Tabs`, `Pagination`                                     |
 | Overlays                   | `Dialog` (modal), `Sheet` (side panel), `Drawer` (bottom sheet), `AlertDialog` (confirmation)       |
-| Feedback                   | `vue-sonner` (toast), `Alert`, `Progress`, `Skeleton`, `Spinner`                                   |
+| Feedback                   | `vue-sonner` (toast), `Alert`, `Progress`, `Skeleton`, `Spinner`                                    |
 | Command palette            | `Command` inside `Dialog`                                                                           |
 | Charts                     | `Chart` (wraps Unovis)                                                                              |
 | Layout                     | `Card`, `Separator`, `Resizable`, `ScrollArea`, `Accordion`, `Collapsible`                          |
@@ -172,10 +172,10 @@ npx shadcn-vue@latest docs button dialog select
 7. **Review added components** — After adding a component or block from any registry, **always read the added files and verify they are correct**. Check for missing sub-components (e.g. `SelectItem` without `SelectGroup`), missing imports, incorrect composition, or violations of the [Critical Rules](#critical-rules). Also replace any icon imports with the project's `iconLibrary` from the project context (e.g. if the registry item uses `@lucide/vue` but the project uses `hugeicons`, swap the imports and icon names accordingly). Fix all issues before moving on.
 8. **Registry must be explicit** — When the user asks to add a block or component, **do not guess the registry**. If no registry is specified (e.g. user says "add a login block" without specifying `@shadcn`, etc.), ask which registry to use. Never default to a registry on behalf of the user.
 9. **Switching presets** — Ask the user first: **overwrite**, **merge**, or **skip**?
-   - **Overwrite**: `npx shadcn-vue@latest apply <code>`. Overwrites detected components, fonts, and CSS variables.
-   - **Merge**: `npx shadcn-vue@latest init --preset <code> --force --no-reinstall`, then run `npx shadcn-vue@latest info` to list installed components, then for each installed component use `--dry-run` and `--diff` to [smart merge](#updating-components) it individually.
-   - **Skip**: `npx shadcn-vue@latest init --preset <code> --force --no-reinstall`. Only updates config and CSS, leaves components as-is.
-   - **Important**: Always run preset commands inside the user's project directory. `apply` only works in an existing project with a `components.json` file. The CLI automatically preserves the current base (`reka`) from `components.json`. If you must use a scratch/temp directory (e.g. for `--dry-run` comparisons), pass `--base <current-base>` explicitly — preset codes do not encode the base.
+    - **Overwrite**: `npx shadcn-vue@latest apply <code>`. Overwrites detected components, fonts, and CSS variables.
+    - **Merge**: `npx shadcn-vue@latest init --preset <code> --force --no-reinstall`, then run `npx shadcn-vue@latest info` to list installed components, then for each installed component use `--dry-run` and `--diff` to [smart merge](#updating-components) it individually.
+    - **Skip**: `npx shadcn-vue@latest init --preset <code> --force --no-reinstall`. Only updates config and CSS, leaves components as-is.
+    - **Important**: Always run preset commands inside the user's project directory. `apply` only works in an existing project with a `components.json` file. The CLI automatically preserves the current base (`reka`) from `components.json`. If you must use a scratch/temp directory (e.g. for `--dry-run` comparisons), pass `--base <current-base>` explicitly — preset codes do not encode the base.
 
 ## Updating Components
 
@@ -184,9 +184,9 @@ When the user asks to update a component from upstream while keeping their local
 1. Run `npx shadcn-vue@latest add <component> --dry-run` to see all files that would be affected.
 2. For each file, run `npx shadcn-vue@latest add <component> --diff <file>` to see what changed upstream vs local.
 3. Decide per file based on the diff:
-   - No local changes → safe to overwrite.
-   - Has local changes → read the local file, analyze the diff, and apply upstream updates while preserving local modifications.
-   - User says "just update everything" → use `--overwrite`, but confirm first.
+    - No local changes → safe to overwrite.
+    - Has local changes → read the local file, analyze the diff, and apply upstream updates while preserving local modifications.
+    - User says "just update everything" → use `--overwrite`, but confirm first.
 4. **Never use `--overwrite` without the user's explicit approval.**
 
 ## Quick Reference
@@ -226,6 +226,6 @@ npx shadcn-vue@latest view @shadcn/button
 - [rules/forms.md](rules/forms.md) — FieldGroup, Field, InputGroup, ToggleGroup, FieldSet, validation states
 - [rules/composition.md](rules/composition.md) — Groups, overlays, Card, Tabs, Avatar, Alert, Empty, Toast, Separator, Skeleton, Badge, Button loading
 - [rules/icons.md](rules/icons.md) — data-icon, icon sizing, passing icons as objects
-- [rules/styling.md](rules/styling.md) — Semantic colors, variants, class, spacing, size, truncate, dark mode, cn(), z-index
+- [rules/styling.md](rules/styling.md) — Semantic colors, variants, class, spacing, size, truncate, dark mode, cn (), z-index
 - [cli.md](cli.md) — Commands, flags, presets, templates
 - [customization.md](customization.md) — Theming, CSS variables, extending components

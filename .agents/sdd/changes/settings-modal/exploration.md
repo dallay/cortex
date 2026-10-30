@@ -23,8 +23,8 @@ decisions that the proposal must lock down before specs are written.
 - Presentation crate: `crates/huginn/presentation/`. All terminal I/O lives behind `Ratatui` (`crates/huginn/presentation/src/terminal.rs`) and is driven by a deterministic state projection in `crates/huginn/presentation/src/state.rs`.
 - Config crate: `apps/huginn/src/config.rs`. `Config` derives `Deserialize` with `#[serde(default, deny_unknown_fields)]`.
 - Commands are split in two layers:
-  - **Plugin-contributed commands** registered through `Contributions` (`crates/huginn/presentation/src/contributions.rs`). Looked up by `Ui::dispatch_command` (`state.rs:367`). Examples: `/help` (`contributions.rs:24–26`).
-  - **Host-only commands** (`/quit`, `/exit`, `/compact`, `/summarize`) — these are added to the completion catalog (`state.rs:400–416`) but `dispatch_command` returns `false` for them so they fall through to the prompt sender. The only host-only command short-circuited before submission is `/quit` / `/exit`, hard-coded in the Enter handler (`terminal.rs:923–926`).
+    - **Plugin-contributed commands** registered through `Contributions` (`crates/huginn/presentation/src/contributions.rs`). Looked up by `Ui::dispatch_command` (`state.rs:367`). Examples: `/help` (`contributions.rs:24–26`).
+    - **Host-only commands** (`/quit`, `/exit`, `/compact`, `/summarize`) — these are added to the completion catalog (`state.rs:400–416`) but `dispatch_command` returns `false` for them so they fall through to the prompt sender. The only host-only command short-circuited before submission is `/quit` / `/exit`, hard-coded in the Enter handler (`terminal.rs:923–926`).
 - Host commands `/help`, all modal/dialog rendering, and key wiring happen inside the presentation crate. The `apps/huginn` binary only loads `Config` and starts the plugin supervisor.
 - Prior change precedent: `.agents/sdd/changes/provider-quota-tracking/`. Uses Markdown headings, GitHub-style task checkboxes, kebab-case filenames. `state.yaml` tracks `current_phase`, the cumulative `completed:`, and a `next` pointer.
 
@@ -33,11 +33,11 @@ decisions that the proposal must lock down before specs are written.
 ### State projection (`crates/huginn/presentation/src/state.rs`)
 
 - `UiState` struct (line 132) is the single mutexed projection. It owns:
-  - `editor: Editor` (line 134) — composer input.
-  - `completion: Completion` (line 135) — `/`-prefix palette.
-  - `modal: Option<Modal>` (line 145) — approval prompt with one-shot reply channel and UUID confirmation code.
-  - `plugin_dialog: Option<PluginDialog>` (line 146) — **closest analogue to what settings needs**.
-  - `workflow: Option<crate::workflow::HostWorkflow>` (line 147) — multi-step plugin form; useful as a reference for tab/select rendering but heavier than necessary.
+    - `editor: Editor` (line 134) — composer input.
+    - `completion: Completion` (line 135) — `/`-prefix palette.
+    - `modal: Option<Modal>` (line 145) — approval prompt with one-shot reply channel and UUID confirmation code.
+    - `plugin_dialog: Option<PluginDialog>` (line 146) — **closest analogue to what settings needs**.
+    - `workflow: Option<crate::workflow::HostWorkflow>` (line 147) — multi-step plugin form; useful as a reference for tab/select rendering but heavier than necessary.
 - `PluginDialog` (line 164): `selected: usize`, `body_scroll: usize` (PgUp/PgDn). No tabs, no footer.
 - `Ui::new` (line 334) is constructed once per session; it does not accept config today.
 - `Ui::dispatch_command` (line 367) is the only path that walks the user-typed `/`-prefix line into a `Contributions::command` lookup. If no plugin matches, this returns `false` and the line goes into the prompt sender (or, for `/quit`/`/exit`, hits the hard-coded short-circuit at `terminal.rs:923`).
@@ -51,9 +51,9 @@ decisions that the proposal must lock down before specs are written.
 
 - `Driver` struct (line 187) and the per-session run loop (line 658) drain input + draw frames at ~30 fps (33 ms tick, line 663).
 - `View` snapshot (line 354) packages the state for the renderer:
-  - `modal: Option<(preview, number, code, typed, scroll)>` (line 361).
-  - `plugin_dialog: Option<(title, body, choices, selected, body_scroll)>` (line 362).
-  - `workflow: Option<(title, body, fields, selected, pending)>` (line 363).
+    - `modal: Option<(preview, number, code, typed, scroll)>` (line 361).
+    - `plugin_dialog: Option<(title, body, choices, selected, body_scroll)>` (line 362).
+    - `workflow: Option<(title, body, fields, selected, pending)>` (line 363).
 - `View::snapshot` (line 367) destructures each Option into a flat tuple used by `draw_frame`. **A settings pane needs a new snapshot field**, or we have to project to the closest existing shape (`plugin_dialog`) with implicit tabs encoded inside the body — the cleaner path is to add a new field.
 - `draw_frame` (line 482) lays out per-overlay as `Layout::vertical([body, footer])`, then a single `Block::bordered()` for body and a `Paragraph` for footer. Modal (line 486) uses two-line footer; workflow (line 514) uses two-line header + footer; plugin dialog (line 530) uses one-line footer — the **closest layout to the requested settings picker**.
 - Key handling (line 734): the dispatch order matters — modal > plugin_dialog > workflow > completion > editor. Enter on plugin_dialog calls `self.ui.choose_plugin_dialog()` (line 821–823).
@@ -134,11 +134,11 @@ A `SettingsDialog` needs:
 - `tabs: Vec<&'static str>` for the fixed five: `theme`, `indicators`, `sound`, `toasts`, `integrations`.
 - `active_tab: usize` cycled by `Tab` / `BackTab` (or `←/→`).
 - For each tab, a list of selectable items. v1 is shell-only, so items are mostly placeholders:
-  - `theme`: `auto`, `dark`, `light`, `solarized` (or similar preset names) — backed by a real string in TOML.
-  - `indicators`: `minimal`, `verbose` — single-select.
-  - `sound`: `off`, `on` — toggles a boolean.
-  - `toasts`: `off`, `errors`, `all` — single-select.
-  - `integrations`: list of provider ids — read-only display in v1 (live integration with `plugins_rs::providers` is deferred).
+    - `theme`: `auto`, `dark`, `light`, `solarized` (or similar preset names) — backed by a real string in TOML.
+    - `indicators`: `minimal`, `verbose` — single-select.
+    - `sound`: `off`, `on` — toggles a boolean.
+    - `toasts`: `off`, `errors`, `all` — single-select.
+    - `integrations`: list of provider ids — read-only display in v1 (live integration with `plugins_rs::providers` is deferred).
 - Each tab's selected option renders with the requested `▶ … ✓` marker and the active item gets the `✓` suffix.
 
 Open sub-decision: do we want **horizontal Tab/BackTab** (and disable `↑↓` for tab change) or **vertical tabs as a sidebar**? The user prompt explicitly says "tabs in header" → render as header text like `theme · indicators · sound · toasts · integrations` with the active tab inverted/highlighted. Items listed beneath it as rows.
@@ -190,18 +190,18 @@ v1 is shell + persistence. So:
 
 ## Risks
 
-| Risk | Impact | Mitigation direction |
-|---|---|---|
-| TOML `deny_unknown_fields` rejects user configs that suddenly contain a new top-level `[ui]` from another tool | Existing configs fail to parse on startup | Make `ui: UiConfig` itself `#[serde(default)]`; the table deserializer ignores unknown inner fields only when the table is also default-tolerant — confirm by adding a regression test with a hand-written `[ui] unknown = true` |
-| `apply` overwrites hand-edited top-level keys via full rewrite | User's manual edits to `[provider]` etc. disappear on settings save | Use `toml_edit` patch; preserve comments + unknown tables; add a round-trip test with extra keys |
-| Settings dialog and an approval modal both arrive while both are `Some` | The wrong modal wins | Modal opening (`request_decision`) already takes the `plugin_dialog` and `workflow` (state.rs:675–677) — settings must follow that same precedence (modal first, then settings, then plugin_dialog) |
-| `Esc` in settings is indistinguishable from the modal-level `Esc` reject (terminal.rs:905–909 only handles `cancel` context) | Could cancel a turn | Place the settings handler before the modal/turn layer with no fall-through to the `Esc → cancel turn` branch, mirroring plugin_dialog's placement |
-| `/settings` is treated as a model prompt and sent to the LLM | Wasted tokens, surprising behavior | Register a contributed command (D5a) so `dispatch_command` returns `true` and the Enter handler clears the editor at terminal.rs:929 without sending |
-| `Ratatui::with_ui_config` clashing with `with_readiness` | Plugin builder becomes ambiguous | Provide `RatatuiPlugin::with_readiness_and_ui_config` to keep both, or a single `RatatuiPluginBuilder` |
-| File-write races with concurrent config writers | Loss of changes | Mutex around `[ui]` write through `presentation::ui_config::persist`, called from the locked UI mutex so the dialog and the writer never interleave |
-| `CatalogCommand::host` catalog shows `/settings` as completable even if it didn't dispatch | Future-proof nit; today host commands are catalog-only and `/help` is the only plugin example | Acceptable for v1 — `dispatch_command` will return `true` when registered, so the catalog will be honest |
-| `crates/huginn/presentation` does not depend on `apps/huginn`, so it can't reach `Config` directly | Architectural confusion | Keep `Config` in `apps/huginn`; the dialog only knows `UiConfig` (a small subset moved into a shared module or duplicated with serde). Persist function is injected as `Fn(&UiConfig)` closure into the dialog |
-| The five tabs are mostly TODOs | v1 ships a shell with no real effect | Spec must encode that this is intentional; the contract is "shell + persistence, subscribers follow" |
+| Risk                                                                                                                         | Impact                                                                                        | Mitigation direction                                                                                                                                                                                                             |
+|------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| TOML `deny_unknown_fields` rejects user configs that suddenly contain a new top-level `[ui]` from another tool               | Existing configs fail to parse on startup                                                     | Make `ui: UiConfig` itself `#[serde(default)]`; the table deserializer ignores unknown inner fields only when the table is also default-tolerant — confirm by adding a regression test with a hand-written `[ui] unknown = true` |
+| `apply` overwrites hand-edited top-level keys via full rewrite                                                               | User's manual edits to `[provider]` etc. disappear on settings save                           | Use `toml_edit` patch; preserve comments + unknown tables; add a round-trip test with extra keys                                                                                                                                 |
+| Settings dialog and an approval modal both arrive while both are `Some`                                                      | The wrong modal wins                                                                          | Modal opening (`request_decision`) already takes the `plugin_dialog` and `workflow` (state.rs:675–677) — settings must follow that same precedence (modal first, then settings, then plugin_dialog)                              |
+| `Esc` in settings is indistinguishable from the modal-level `Esc` reject (terminal.rs:905–909 only handles `cancel` context) | Could cancel a turn                                                                           | Place the settings handler before the modal/turn layer with no fall-through to the `Esc → cancel turn` branch, mirroring plugin_dialog's placement                                                                               |
+| `/settings` is treated as a model prompt and sent to the LLM                                                                 | Wasted tokens, surprising behavior                                                            | Register a contributed command (D5a) so `dispatch_command` returns `true` and the Enter handler clears the editor at terminal.rs:929 without sending                                                                             |
+| `Ratatui::with_ui_config` clashing with `with_readiness`                                                                     | Plugin builder becomes ambiguous                                                              | Provide `RatatuiPlugin::with_readiness_and_ui_config` to keep both, or a single `RatatuiPluginBuilder`                                                                                                                           |
+| File-write races with concurrent config writers                                                                              | Loss of changes                                                                               | Mutex around `[ui]` write through `presentation::ui_config::persist`, called from the locked UI mutex so the dialog and the writer never interleave                                                                              |
+| `CatalogCommand::host` catalog shows `/settings` as completable even if it didn't dispatch                                   | Future-proof nit; today host commands are catalog-only and `/help` is the only plugin example | Acceptable for v1 — `dispatch_command` will return `true` when registered, so the catalog will be honest                                                                                                                         |
+| `crates/huginn/presentation` does not depend on `apps/huginn`, so it can't reach `Config` directly                           | Architectural confusion                                                                       | Keep `Config` in `apps/huginn`; the dialog only knows `UiConfig` (a small subset moved into a shared module or duplicated with serde). Persist function is injected as `Fn(&UiConfig)` closure into the dialog                   |
+| The five tabs are mostly TODOs                                                                                               | v1 ships a shell with no real effect                                                          | Spec must encode that this is intentional; the contract is "shell + persistence, subscribers follow"                                                                                                                             |
 
 ## Validation Strategy for This Change
 

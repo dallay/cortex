@@ -63,13 +63,13 @@ Build on existing `UsageRecorderPort`, `usage_history`, `/api/providers/quota`, 
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| Dashboard implies an account-wide quota where only Cortex request usage exists | High | Explicit provenance, Cortex-only coverage label, and no fabricated limits |
-| Existing `quotaWindowThresholds` are confused with provider limits | High | Name them local thresholds and keep warning semantics separate from upstream signals |
-| Provider header support differs or is absent | High | Optional values with provider-specific availability; no false default values |
-| Partial database/provider failures erase useful data | Medium | Define per-provider/field degradation and retain last successful dashboard result |
-| Cost estimate presented as authoritative billing | Medium | Mark as estimate; show unknown when pricing is missing |
+| Risk                                                                           | Likelihood | Mitigation                                                                           |
+|--------------------------------------------------------------------------------|------------|--------------------------------------------------------------------------------------|
+| Dashboard implies an account-wide quota where only Cortex request usage exists | High       | Explicit provenance, Cortex-only coverage label, and no fabricated limits            |
+| Existing `quotaWindowThresholds` are confused with provider limits             | High       | Name them local thresholds and keep warning semantics separate from upstream signals |
+| Provider header support differs or is absent                                   | High       | Optional values with provider-specific availability; no false default values         |
+| Partial database/provider failures erase useful data                           | Medium     | Define per-provider/field degradation and retain last successful dashboard result    |
+| Cost estimate presented as authoritative billing                               | Medium     | Mark as estimate; show unknown when pricing is missing                               |
 
 ## Next Phase
 

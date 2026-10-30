@@ -15,9 +15,8 @@ defineConfig({
     // Run files in parallel (default: true)
     fileParallelism: true,
     
-    // Number of worker threads
+    // Maximum number of worker threads or processes
     maxWorkers: 4,
-    minWorkers: 1,
     
     // Pool type: 'threads', 'forks', 'vmThreads'
     pool: 'threads',
@@ -52,17 +51,20 @@ describe.concurrent('parallel suite', () => {
 
 Force sequential execution:
 
+Vitest 5 removed `test.sequential` and `describe.sequential`. Use
+`{ concurrent: false }` to opt out of inherited concurrency:
+
 ```ts
 describe.concurrent('mostly parallel', () => {
   test('parallel 1', async () => {})
   test('parallel 2', async () => {})
-  
-  test.sequential('must run alone 1', async () => {})
-  test.sequential('must run alone 2', async () => {})
+
+  test('must run alone 1', { concurrent: false }, async () => {})
+  test('must run alone 2', { concurrent: false }, async () => {})
 })
 
 // Or entire suite
-describe.sequential('sequential suite', () => {
+describe('sequential suite', { concurrent: false }, () => {
   test('first', () => {})
   test('second', () => {})
 })
@@ -178,19 +180,17 @@ describe.shuffle('random order', () => {
 
 ## Pool Options
 
+In Vitest 4 and later, `poolOptions` was removed. Configure the pool with
+`pool` and set the worker limit with the top-level `maxWorkers` option.
+
 ### Threads (Default)
 
 ```ts
 defineConfig({
   test: {
     pool: 'threads',
-    poolOptions: {
-      threads: {
-        maxThreads: 8,
-        minThreads: 2,
-        isolate: true,
-      },
-    },
+    maxWorkers: 8,
+    isolate: true,
   },
 })
 ```
@@ -203,12 +203,8 @@ Better isolation, slower:
 defineConfig({
   test: {
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: 4,
-        isolate: true,
-      },
-    },
+    maxWorkers: 4,
+    isolate: true,
   },
 })
 ```

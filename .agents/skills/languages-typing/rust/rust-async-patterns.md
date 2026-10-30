@@ -1,47 +1,47 @@
 # Skill: rust-async-patterns
 
-Patrones de código async para Tokio, adaptados para el monorepo Cortex.
+Tokio async coding patterns adapted for the Cortex monorepo.
 
-> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtrada y adaptada.
+> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtered and adapted.
 
-## Propósito
+## Purpose
 
-Estandarizar patrones async en todo el codebase, especialmente críticos
-para evitar deadlocks y garantizar graceful shutdown.
+Standardize async patterns across the codebase, especially those critical
+for preventing deadlocks and ensuring graceful shutdown.
 
-## Reglas Incluidas
+## Included Rules
 
-### 1. async-no-lock-await ⚠️ CRÍTICO
+### 1. async-no-lock-await ⚠️ CRITICAL
 
-> Nunca holder Mutex/RwLock across `.await`.
+> Never hold a `Mutex` or `RwLock` across `.await`.
 
-Este es EL problema crítico encontrado durante el análisis. El codebase
-ACTUALMENTE tiene errores de este tipo en router_impl.rs.
+This is THE critical issue found during the analysis. The codebase CURRENTLY
+has errors of this kind in `router_impl.rs`.
 
  ```rust
- // BAD — Lock across await causa deadlocks
+ // BAD — Holding a lock across await can cause deadlocks
  async fn bad(state: &Mutex<State>) {
      let mut guard = state.lock().await;
-     let data = fetch_from_network().await; // Lockheld!
+     let data = fetch_from_network().await; // Lock held!
      guard.value = data;
  }
 
- // GOOD — Lock solo para update rápido
+ // GOOD — Lock only for a quick update
  async fn good(state: &Mutex<State>) {
-     let data = fetch_from_network().await; // Sin lock
+     let data = fetch_from_network().await; // No lock held
      let mut guard = state.lock().await;
      guard.value = data; // Quick update
  }
  ```
 
-**¿Por qué importa?** Tokio usa pocos threads para muchas tasks. Si una task
-hold un lock durante I/O, todas las demás esperan — potencialmente indefinidamente.
+**Why does it matter?** Tokio uses a small number of threads for many tasks. If a task
+holds a lock during I/O, all other tasks wait — potentially indefinitely.
 
 ### 2. async-clone-before-await
 
-> Clone Arc/Rc data antes de await points.
+> Clone `Arc`/`Rc` data before await points.
 
-Necesario para que los futures sean Send.
+This is necessary for futures to be `Send`.
 
  ```rust
  // BAD — Borrow across await, future not Send
@@ -59,11 +59,11 @@ Necesario para que los futures sean Send.
  }
  ```
 
-En Cortex: importante para spawn_blocking y para pasar datos a tareas.
+In Cortex: Important for `spawn_blocking` and for passing data to tasks.
 
 ### 3. async-join-parallel
 
-> Usa `join!` o `try_join!` para futures independientes concurrentes.
+> Use `join!` or `try_join!` for independent futures that can run concurrently.
 
  ```rust
  // BAD — Sequential, 300ms total
@@ -85,19 +85,19 @@ En Cortex: importante para spawn_blocking y para pasar datos a tareas.
  }
  ```
 
-**Aplicar a:** Fallback multiple providers, health checks paralelos.
+**Apply to:** Fallback across multiple providers and parallel health checks.
 
 ### 4. async-spawn-blocking
 
-> Usa `spawn_blocking` para trabajo CPU-intensive.
+> Use `spawn_blocking` for CPU-intensive work.
 
  ```rust
- // BAD — CPU work en async thread
+ // BAD — CPU work on an async thread
  async fn hash_password(password: String) -> String {
      bcrypt::hash(&password, bcrypt::DEFAULT_COST).unwrap() // Blocks runtime!
  }
 
- // GOOD — Offload a blocking thread pool
+ // GOOD — Offload to the blocking thread pool
  async fn hash_password(password: String) -> String {
      tokio::task::spawn_blocking(move || {
          bcrypt::hash(&password, bcrypt::DEFAULT_COST).unwrap()
@@ -107,15 +107,15 @@ En Cortex: importante para spawn_blocking y para pasar datos a tareas.
  }
  ```
 
-Guideline:
+Guidelines:
 
-- < 10µs: OK en async thread
-- 10µs - 1ms: Consider spawn_blocking
-- > 1ms: Definitivamente spawn_blocking
+- < 10µs: OK on an async thread
+- 10µs - 1ms: Consider `spawn_blocking`
+- > 1ms: Definitely use `spawn_blocking`
 
 ### 5. async-cancellation-token
 
-> Usa CancellationToken para graceful shutdown.
+> Use `CancellationToken` for graceful shutdown.
 
  ```rust
  use tokio_util::sync::CancellationToken;
@@ -138,48 +138,48 @@ Guideline:
  }
  ```
 
-**Aplicar a:** Server shutdown en apps/rook, graceful request cancellation.
+**Apply to:** Server shutdown in `apps/rook` and graceful request cancellation.
 
 ### 6. async-bounded-channel
 
-> Usa bounded channels para aplicar backpressure.
+> Use bounded channels to apply backpressure.
 
  ```rust
- // BAD — Unbounded puede causar OOM
+ // BAD — Unbounded channels can cause OOM
  let (tx, mut rx) = mpsc::unbounded_channel();
 
  // GOOD — Backpressure natural
  let (tx, mut rx) = mpsc::channel(100); // Cap at 100
  ```
 
-Guideline para buffer size:
+Guidelines for buffer size:
 
-- Start con expected burst size
-- Error on smaller side initially
-- Measure en producción
+- Start with the expected burst size
+- Initially err on the smaller side
+- Measure in production
 
-## Errores Comunes en Cortex
+## Common Errors in Cortex
 
  ```rust
- // ❌ ERROR ENCONTRADO en router_impl.rs
+ // ❌ ERROR FOUND in router_impl.rs
  let providers = self.providers.read().unwrap();
- // parking_lot::RwLock no tiene .read().await()
- // Debe usar tokio::sync::RwLock O no usar await con parking_lot
+ // parking_lot::RwLock does not have .read().await()
+ // Use tokio::sync::RwLock OR do not await while using parking_lot
 
- // ✅ Fix correcto (opción 1: usar tokio::sync::RwLock)
+ // ✅ Correct fix (option 1: use tokio::sync::RwLock)
  let providers = self.providers.read().await;
 
- // ✅ Fix alternativo (opción 2: no hacer async)
+ // ✅ Alternative fix (option 2: do not make it async)
  let providers = self.providers.read(); // Sync read, no await
  ```
 
-## Archivos Relacionados
+## Related Files
 
-- `crates/application/rook-usecases/src/router_impl.rs` —⚠️Tiene errores
+- `crates/application/rook-usecases/src/router_impl.rs` — ⚠️ Contains errors
 - `crates/infrastructure/providers-*/src/` — Providers async
 - `apps/rook/src/server.rs` — Server shutdown
 
 ## See Also
 
-- rust-anti-patterns — Anti-patterns a evitar
-- rust-api-design — Patrones de API
+- rust-anti-patterns — Anti-patterns to avoid
+- rust-api-design — API patterns

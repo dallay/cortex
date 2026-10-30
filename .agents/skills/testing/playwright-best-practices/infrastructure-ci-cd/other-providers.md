@@ -448,7 +448,7 @@ export default defineConfig({
 ## Platform Comparison
 
 | Feature           | CircleCI                                        | Azure DevOps                     | Jenkins                |
-| ----------------- | ----------------------------------------------- | -------------------------------- | ---------------------- |
+|-------------------|-------------------------------------------------|----------------------------------|------------------------|
 | Docker support    | `docker:` executor                              | `vmImage` or container jobs      | Docker Pipeline plugin |
 | Parallelism       | `parallelism: N` + `CIRCLE_NODE_INDEX`          | `strategy.matrix`                | `parallel` stages      |
 | Artifact upload   | `store_artifacts`                               | `PublishPipelineArtifact@1`      | `archiveArtifacts`     |
@@ -512,7 +512,7 @@ command: npx playwright test --shard=$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOT
 ## Anti-Patterns
 
 | Anti-Pattern                        | Problem                                   | Solution                                             |
-| ----------------------------------- | ----------------------------------------- | ---------------------------------------------------- |
+|-------------------------------------|-------------------------------------------|------------------------------------------------------|
 | Missing `--with-deps` on bare metal | OS libs missing, browser launch fails     | Use Playwright Docker image or `--with-deps`         |
 | No JUnit reporter                   | CI can't display test results             | Add `['junit', { outputFile: 'results/junit.xml' }]` |
 | No job timeout                      | Hung tests consume resources indefinitely | Set explicit timeout (20-30 min)                     |

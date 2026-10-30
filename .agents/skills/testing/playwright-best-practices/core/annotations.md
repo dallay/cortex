@@ -115,7 +115,7 @@ test("fails on webkit", async ({ page, browserName }) => {
 ### Difference Between Skip, Fixme, Fail
 
 | Annotation     | Runs? | Use Case                         |
-| -------------- | ----- | -------------------------------- |
+|----------------|-------|----------------------------------|
 | `test.skip()`  | No    | Feature not applicable           |
 | `test.fixme()` | No    | Known bug, needs investigation   |
 | `test.fail()`  | Yes   | Expected to fail, tracking a bug |
@@ -415,7 +415,7 @@ test.describe("Desktop features", () => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                | Problem                | Solution                         |
-| --------------------------- | ---------------------- | -------------------------------- |
+|-----------------------------|------------------------|----------------------------------|
 | Skipping without reason     | Hard to track why      | Always provide description       |
 | Too many skipped tests      | Test debt accumulates  | Review and clean up regularly    |
 | Using skip instead of fixme | Loses intent           | Use fixme for bugs, skip for N/A |

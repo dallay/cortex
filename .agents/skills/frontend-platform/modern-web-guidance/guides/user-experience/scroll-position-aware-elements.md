@@ -58,6 +58,7 @@ Supported by: Chrome 133 (Feb 2025) and Edge 133 (Feb 2025).
 Unsupported in: Firefox and Safari.
 
 ### Basic Fallback
+
 If `container-scroll-state-queries` is not supported, the floating element will remain invisible because of the default `visibility: hidden`. To ensure functionality, you can choose to make the element always visible in unsupported browsers.
 
 ```css
@@ -85,6 +86,7 @@ If `container-scroll-state-queries` is not supported, the floating element will 
 ```
 
 ### Advanced Fallback (Intersection Observer)
+
 If dynamic visibility is required, use an `IntersectionObserver` to toggle a class when a sentinel element at the top of the scroller goes out of view.
 
 ```html

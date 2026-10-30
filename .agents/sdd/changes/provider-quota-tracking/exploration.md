@@ -71,13 +71,13 @@ Self-hosted Ollama has no third-party account quota to query. It should still sh
 
 ## Risks
 
-| Risk | Impact | Mitigation direction |
-|---|---|---|
-| Local thresholds or 429 ratios are presented as account quota percentages | Users make billing/capacity decisions from false data | Separate the concepts and label data provenance; never fabricate provider limits |
-| Cortex request usage is mistaken for complete provider account usage | Under-counting when users also call provider APIs directly | Label all recorded usage as Cortex-routed and state coverage explicitly |
-| One missing integration/storage error blanks all provider data | Dashboard becomes unusable during partial outages | Specify per-provider/field degradation and preserve last good data |
-| Local Ollama gets a misleading quota meter or cost | False warning/zero/unlimited interpretation | Model quota as not applicable/not reported; keep usage and cost as separate facts |
-| Existing response's 7-day trends and warning labels are inconsistent or unused | UI and API disagree on what a warning means | Define an observable warning contract and scenario coverage before implementation |
+| Risk                                                                           | Impact                                                     | Mitigation direction                                                              |
+|--------------------------------------------------------------------------------|------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| Local thresholds or 429 ratios are presented as account quota percentages      | Users make billing/capacity decisions from false data      | Separate the concepts and label data provenance; never fabricate provider limits  |
+| Cortex request usage is mistaken for complete provider account usage           | Under-counting when users also call provider APIs directly | Label all recorded usage as Cortex-routed and state coverage explicitly           |
+| One missing integration/storage error blanks all provider data                 | Dashboard becomes unusable during partial outages          | Specify per-provider/field degradation and preserve last good data                |
+| Local Ollama gets a misleading quota meter or cost                             | False warning/zero/unlimited interpretation                | Model quota as not applicable/not reported; keep usage and cost as separate facts |
+| Existing response's 7-day trends and warning labels are inconsistent or unused | UI and API disagree on what a warning means                | Define an observable warning contract and scenario coverage before implementation |
 
 ## Recommendation
 

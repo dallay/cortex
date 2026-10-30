@@ -1,13 +1,13 @@
 # CSS Layouts and Responsive Design
 
 1. [1 Fundamentals](#1-fundamentals)
-   1. [Which layout mode to use?](#11-which-layout-mode-to-use)
-   2. [Working principles](#12-working-principles)
+    1. [Which layout mode to use?](#11-which-layout-mode-to-use)
+    2. [Working principles](#12-working-principles)
 2. [2 Flexbox](#2-flexbox)
 3. [3 Grid and subgrid](#3-grid-and-subgrid)
-   1. [Code example: grid and subgrid](#31-code-example-grid-and-subgrid)
+    1. [Code example: grid and subgrid](#31-code-example-grid-and-subgrid)
 4. [4 Container queries](#4-container-queries)
-   1. [Code example: fluid typography using container query units](#41-code-example-fluid-typography-using-container-query-units)
+    1. [Code example: fluid typography using container query units](#41-code-example-fluid-typography-using-container-query-units)
 5. [5 Native overlays, anchor positioning, and stacking contexts](#5-native-overlays-anchor-positioning-and-stacking-contexts)
 6. [6 Overflow tracking and layout stability](#6-overflow-tracking-and-layout-stability)
 7. [7 Viewport mechanics and track distribution](#7-viewport-mechanics-and-track-distribution)
@@ -89,20 +89,20 @@ Two-dimensional layout — define rows AND columns explicitly, or let the engine
 **Choosing grid features:**
 
 - Do you know exactly how many columns you need?
-  - **Yes** — use explicit tracks (`grid-template-columns: 200px 1fr`, `repeat(3, 1fr)`, etc.)
-    - Do different columns need different sizes (sidebar + main, header spanning all)? → use `grid-template-areas` for named, readable regions
-    - Are all columns uniform or positioned purely by line number? → use `repeat(N, ...)` or named lines
-  - **No** (responsive, unknown item count) — use `repeat(auto-fit, minmax(min, 1fr))`
-    - Should items on the last row stretch to fill remaining space? → `auto-fit`
-    - Should empty last-row tracks hold their min size (preserving column ghost slots)? → `auto-fill`
+    - **Yes** — use explicit tracks (`grid-template-columns: 200px 1fr`, `repeat(3, 1fr)`, etc.)
+        - Do different columns need different sizes (sidebar + main, header spanning all)? → use `grid-template-areas` for named, readable regions
+        - Are all columns uniform or positioned purely by line number? → use `repeat(N, ...)` or named lines
+    - **No** (responsive, unknown item count) — use `repeat(auto-fit, minmax(min, 1fr))`
+        - Should items on the last row stretch to fill remaining space? → `auto-fit`
+        - Should empty last-row tracks hold their min size (preserving column ghost slots)? → `auto-fill`
 - Do you need to place an item at a specific location?
-  - **Yes** — use `grid-column: <start> / <end>` or `grid-area: <name>`
-  - **No** (just spanning multiple tracks, flow position doesn't matter) — use `grid-column: span <n>`
+    - **Yes** — use `grid-column: <start> / <end>` or `grid-area: <name>`
+    - **No** (just spanning multiple tracks, flow position doesn't matter) — use `grid-column: span <n>`
 - Do child elements need to inherit the parent grid's track sizes (ragged-edge alignment across siblings)?
-  - **Yes** — use subgrid on the affected axis
-    - Is the number of children per cell variable? → subgrid **one axis only**; use `grid-auto-rows`/`grid-auto-columns` for the other
-    - Is the child count fixed? → subgrid on both axes is fine
-  - **No** — standard grid, no subgrid needed
+    - **Yes** — use subgrid on the affected axis
+        - Is the number of children per cell variable? → subgrid **one axis only**; use `grid-auto-rows`/`grid-auto-columns` for the other
+        - Is the child count fixed? → subgrid on both axes is fine
+    - **No** — standard grid, no subgrid needed
 
 **Do:**
 
@@ -238,8 +238,7 @@ Manage layout shifts, scrollbars, and clipping predictably.
 - Use `overflow: clip` to clip content **without** establishing a scroll container; opt into spillover with `overflow-clip-margin`.
 - Use `scrollbar-gutter: stable` to reserve space for scrollbars and prevent layout shifts when content grows.
 - Use `overscroll-behavior: contain` (or `none`) on scrollable containers to stop scroll chains from bubbling into the parent or document.
-- Use the `-webkit-line-clamp` + `display: -webkit-box` + `-webkit-box-orient: vertical` triad for multi-line truncation — despite the prefix, this pattern is fully specified and not deprecated. Declare the unprefixed `line-clamp` shorthand alongside it; browsers that don't yet support it ignore the property harmlessly.
-**Do not:**
+- Use the `-webkit-line-clamp` + `display: -webkit-box` + `-webkit-box-orient: vertical` triad for multi-line truncation — despite the prefix, this pattern is fully specified and not deprecated. Declare the unprefixed `line-clamp` shorthand alongside it; browsers that don't yet support it ignore the property harmlessly. **Do not:**
 
 - Don't use `overflow: scroll` when `auto` will do — `scroll` forces scrollbars even when there's nothing to scroll.
 - Don't reach for `overflow: hidden` when you only want to clip — `hidden` establishes a scroll container that can be programmatically scrolled.

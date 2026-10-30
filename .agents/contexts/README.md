@@ -8,11 +8,11 @@ except dashboard-local paths explicitly identified in `dashboard.md`.
 
 ## Scope and inheritance
 
-| Context | Scope |
-| --- | --- |
-| `rook.md` | `apps/rook`, `rook-core`, `rook-usecases`, and explicitly mapped Rook infrastructure crates |
-| `huginn.md` | `apps/huginn` and `crates/huginn` |
-| `dashboard.md` | `apps/rook/dashboard`, in addition to the global and Rook contracts |
+| Context        | Scope                                                                                       |
+|----------------|---------------------------------------------------------------------------------------------|
+| `rook.md`      | `apps/rook`, `rook-core`, `rook-usecases`, and explicitly mapped Rook infrastructure crates |
+| `huginn.md`    | `apps/huginn` and `crates/huginn`                                                           |
+| `dashboard.md` | `apps/rook/dashboard`, in addition to the global and Rook contracts                         |
 
 `shared-kernel` and the generic `sse-stream` utility receive only root
 instructions. `test-support` depends on `rook-core`, so it is Rook-specific test

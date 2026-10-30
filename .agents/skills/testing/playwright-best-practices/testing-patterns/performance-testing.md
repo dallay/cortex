@@ -464,7 +464,7 @@ test("no performance regression", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                | Problem                   | Solution                         |
-| --------------------------- | ------------------------- | -------------------------------- |
+|-----------------------------|---------------------------|----------------------------------|
 | Testing only once           | Results vary              | Run multiple times, use averages |
 | Ignoring network conditions | Unrealistic results       | Test with throttling             |
 | No baseline comparison      | Can't detect regressions  | Track metrics over time          |

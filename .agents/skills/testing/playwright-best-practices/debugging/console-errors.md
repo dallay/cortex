@@ -409,7 +409,7 @@ test("capture console for debugging", async ({ page }, testInfo) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern               | Problem                    | Solution                    |
-| -------------------------- | -------------------------- | --------------------------- |
+|----------------------------|----------------------------|-----------------------------|
 | Ignoring console errors    | Bugs go unnoticed          | Check for errors in tests   |
 | Too strict error checking  | Tests fail on minor issues | Allow known/expected errors |
 | Not capturing stack traces | Hard to debug              | Include location info       |

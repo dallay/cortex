@@ -452,7 +452,7 @@ test("tracks purchase event", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern              | Problem                        | Solution                |
-| ------------------------- | ------------------------------ | ----------------------- |
+|---------------------------|--------------------------------|-------------------------|
 | Using real OAuth in tests | Slow, needs credentials, flaky | Mock OAuth endpoints    |
 | Real payment processing   | Charges real money, slow       | Use test mode or mock   |
 | Waiting for real emails   | Very slow, unreliable          | Mock email API          |

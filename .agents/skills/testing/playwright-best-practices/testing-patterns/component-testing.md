@@ -487,7 +487,7 @@ test("Svelte component", async ({ mount }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                   | Problem             | Solution                          |
-| ------------------------------ | ------------------- | --------------------------------- |
+|--------------------------------|---------------------|-----------------------------------|
 | Testing implementation details | Brittle tests       | Test behavior, not internal state |
 | Snapshot testing everything    | Maintenance burden  | Use for visual regression only    |
 | Not isolating components       | Hidden dependencies | Mock all external dependencies    |

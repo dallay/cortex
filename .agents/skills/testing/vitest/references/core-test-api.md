@@ -114,9 +114,11 @@ test.concurrent('test 2', async ({ expect }) => {
 
 ### Sequential Tests
 
+Vitest 5 removed `test.sequential`. Opt out of inherited concurrency explicitly:
+
 ```ts
 // Force sequential in concurrent context
-test.sequential('must run alone', async () => {})
+test('must run alone', { concurrent: false }, async () => {})
 ```
 
 ## Parameterized Tests

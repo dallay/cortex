@@ -46,8 +46,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 });
 ```
 
-**Note:** Requires Chrome 99+, only use when minimum Chrome version is set to 99.
-**Note:** Do NOT mix the two styles. If you return a Promise, do NOT also call `sendResponse` or `return true`.
+**Note:** Requires Chrome 99+, only use when minimum Chrome version is set to 99. **Note:** Do NOT mix the two styles. If you return a Promise, do NOT also call `sendResponse` or `return true`.
 
 ## Content script ↔ service worker
 

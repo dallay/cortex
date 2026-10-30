@@ -379,7 +379,7 @@ test("handles camera access error", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                  | Problem                           | Solution                            |
-| ----------------------------- | --------------------------------- | ----------------------------------- |
+|-------------------------------|-----------------------------------|-------------------------------------|
 | Not granting permissions      | Tests fail with permission errors | Use `context.grantPermissions()`    |
 | Testing real geolocation      | Flaky, environment-dependent      | Mock with `setGeolocation()`        |
 | Not testing permission denial | Misses error handling             | Test both granted and denied states |

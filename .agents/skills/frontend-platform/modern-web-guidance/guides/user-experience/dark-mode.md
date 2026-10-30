@@ -62,7 +62,6 @@ Even when overriding the system default, it can be useful to use the `prefers-co
 
 For example, use a slightly dimmer light theme when the system setting is `dark`, or a more contrasting dark theme when the system setting is `light`, so the page is not visually overpowered by the surrounding UI.
 
-
 ## Fine-grained browser UI customization
 
 Setting `color-scheme` already adapts browser UI to the used color scheme, but this will use OS defaults and/or system colors that may not perfectly align with the website design.
@@ -106,6 +105,7 @@ You can use `scrollbar-color` together with `light-dark()` to set custom scrollb
 ### Further customization
 
 Most browser UI exposes pseudo-elements to fully customize its appearance, such as:
+
 - `::placeholder`
 - `::spelling-error`
 - `::grammar-error`
@@ -124,6 +124,7 @@ The default color-scheme MUST be the user's system preference, which happens aut
 For website-specific customization, a manual toggle could be provided to allow users to choose between light, dark, or system-default modes.
 
 If a user-facing toggle to override it is desired, it should:
+
 - Update the `<meta name="color-scheme">` element to reflect the chosen theme (`light dark` for system default, `light` for light, and `dark` for dark).
 - If branching is desired for non-color values, set a class on `<html>` to match the theme preference and use descendant selectors. While `:root:has(> head > meta[name="color-scheme"][content="dark"])` would technically work, it is slower and confers no benefit, since we are already using JS to update the `<meta>` element.
 - Persist user choice in `localStorage`.
@@ -146,6 +147,7 @@ If a user-facing toggle to override it is desired, it should:
 ### UX considerations
 
 Use a two-state control:
+
 1. System setting.
 2. The opposite (e.g. light when the system setting is dark, and dark when the system setting is light). Selecting this setting must pin that exact color scheme, not a dynamically computed "opposite of system setting" value. Example scenario:
     1. The OS is set to light mode.
@@ -154,6 +156,7 @@ Use a two-state control:
     4. The website should remain dark.
 
 **DON'T** expose all three states (system, light, dark). While the rationale is plausible — "Follow system (currently dark)" is a distinct user intent from "Always dark" — it provides suboptimal UX:
+
 - Users cannot meaningfully express intent for problems they don't currently have. A manual toggle is a temporary comfort adjustment ("it's too bright right now"), not a long-term preference ("make sure this never changes").
 - Two of the three options always produce the same visual result, violating the principle of feedback.
 
@@ -176,8 +179,8 @@ For more information about component-specific overrides and their gotchas, see `
 ### Issues to be aware of when using color-scheme
 
 - Chrome and Firefox respect `color-scheme` for iframes: they render embedded pages in the correct color scheme and adjust the embedded page's `prefers-color-scheme` media query to reflect the embedding context's `color-scheme`. Safari does not, and resolves `prefers-color-scheme` to the system setting even inside iframes.
-  - **If you control both parent and iframe:** pass the parent's color scheme to the iframe explicitly — via a URL parameter (`?theme=dark`) at iframe construction time, or via `postMessage()` (which also lets you react to runtime changes). In the iframe, set a class on `<html>` (and/or `color-scheme` on `:root`) from that signal instead of relying on `prefers-color-scheme`.
-  - **If you only control the embedded page:** there is no reliable way to detect the embedding context's `color-scheme` from inside the iframe in Safari. Expose an explicit theme parameter on your embed API (e.g. a query string or `postMessage` protocol) and document it for embedders.
+    - **If you control both parent and iframe:** pass the parent's color scheme to the iframe explicitly — via a URL parameter (`?theme=dark`) at iframe construction time, or via `postMessage()` (which also lets you react to runtime changes). In the iframe, set a class on `<html>` (and/or `color-scheme` on `:root`) from that signal instead of relying on `prefers-color-scheme`.
+    - **If you only control the embedded page:** there is no reliable way to detect the embedding context's `color-scheme` from inside the iframe in Safari. Expose an explicit theme parameter on your embed API (e.g. a query string or `postMessage` protocol) and document it for embedders.
 
 ## Fallback strategies
 
@@ -215,9 +218,9 @@ button.primary {
 }
 ```
 
-### Fallbacks & browser support for light-dark()
+### Fallbacks & browser support for light-dark ()
 
-Baseline status for light-dark(): Newly available. It's been Baseline since 2024-05-13.
+Baseline status for light-dark (): Newly available. It's been Baseline since 2024-05-13.
 Supported by: Chrome 123 (Mar 2024), Edge 123 (Mar 2024), Firefox 120 (Nov 2023), and Safari 17.5 (May 2024).
 
 For browsers that support `color-scheme` but not yet `light-dark()`, light and dark versions of colors should first be defined as custom properties, and the `prefers-color-scheme` media query should be used to set colors for the respective mode like in the example below:

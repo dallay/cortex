@@ -53,6 +53,9 @@
 		"previous": "Anterior",
 		"next": "Siguiente"
 	},
+	"errors": {
+		"requestFailed": "No se pudo completar la solicitud"
+	},
 	"home": {
 		"title": "Panel",
 		"usageSummary": "Resumen de uso",

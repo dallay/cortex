@@ -4,6 +4,7 @@ While more commonly set on the root, the `color-scheme` property can be set on i
 This can be useful for components that must always be viewed in a specific color scheme (e.g. always in dark or light mode).
 
 Example use cases include:
+
 - Elements that are often in dark mode even on light mode pages for aesthetic reasons, e.g. code blocks, media players, photo galleries
 - Areas that contain media designed for a light background (e.g. images, videos, illustrations, print previews) can be set to light mode even if the rest of the page is in dark mode.
 - Elements whose color-scheme is controlled by a user-level setting, such as component previews
@@ -56,11 +57,13 @@ To force the specified color scheme in all cases, use `only`, i.e. `color-scheme
 This means that any inherited `<color>` properties set to a `light-dark()` color will only pass down one of the two colors to their descendants, not the `light-dark()` expression itself.
 
 This includes:
+
 - Built-in color properties that inherit, such as `color`, `accent-color`, `fill`, `stroke`, `text-shadow`, `caret-color`
 - Any registered inheritable custom properties with `syntax: <color>` and `inherits: true`
 - Any other `<color>` property set to `inherit`
 
 This means you should:
+
 - **NOT** register custom properties meant to hold *design tokens* (e.g. `--surface-color`) as `<color>`. Tokens need to keep their `light-dark()` expression live so descendants can re-resolve them under a different `color-scheme`.
 - When setting `color-scheme` on an element, re-specify any inherited `<color>` properties that may have been set to `light-dark()` values (directly or via design tokens), even if that's to the same design token.
 - **NOT** use `inherit` on `<color>` properties on elements with a `color-scheme` override (fine to use on their descendants).
@@ -100,8 +103,8 @@ pre, code {
 ### Issues to be aware of when using color-scheme
 
 - Chrome and Firefox respect `color-scheme` for iframes: they render embedded pages in the correct color scheme and adjust the embedded page's `prefers-color-scheme` media query to reflect the embedding context's `color-scheme`. Safari does not, and resolves `prefers-color-scheme` to the system setting even inside iframes.
-  - **If you control both parent and iframe:** pass the parent's color scheme to the iframe explicitly — via a URL parameter (`?theme=dark`) at iframe construction time, or via `postMessage()` (which also lets you react to runtime changes). In the iframe, set a class on `<html>` (and/or `color-scheme` on `:root`) from that signal instead of relying on `prefers-color-scheme`.
-  - **If you only control the embedded page:** there is no reliable way to detect the embedding context's `color-scheme` from inside the iframe in Safari. Expose an explicit theme parameter on your embed API (e.g. a query string or `postMessage` protocol) and document it for embedders.
+    - **If you control both parent and iframe:** pass the parent's color scheme to the iframe explicitly — via a URL parameter (`?theme=dark`) at iframe construction time, or via `postMessage()` (which also lets you react to runtime changes). In the iframe, set a class on `<html>` (and/or `color-scheme` on `:root`) from that signal instead of relying on `prefers-color-scheme`.
+    - **If you only control the embedded page:** there is no reliable way to detect the embedding context's `color-scheme` from inside the iframe in Safari. Expose an explicit theme parameter on your embed API (e.g. a query string or `postMessage` protocol) and document it for embedders.
 
 ## Fallback strategies
 
@@ -139,9 +142,9 @@ button.primary {
 }
 ```
 
-### Fallbacks & browser support for light-dark()
+### Fallbacks & browser support for light-dark ()
 
-Baseline status for light-dark(): Newly available. It's been Baseline since 2024-05-13.
+Baseline status for light-dark (): Newly available. It's been Baseline since 2024-05-13.
 Supported by: Chrome 123 (Mar 2024), Edge 123 (Mar 2024), Firefox 120 (Nov 2023), and Safari 17.5 (May 2024).
 
 For browsers that support `color-scheme` but not yet `light-dark()`, light and dark versions of colors should first be defined as custom properties, and the `prefers-color-scheme` media query should be used to set colors for the respective mode like in the example below:

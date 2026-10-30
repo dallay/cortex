@@ -89,8 +89,7 @@ jobs:
 
 ### Sharded Execution
 
-**Use when**: Test suite exceeds 10 minutes. Sharding cuts wall-clock time significantly.
-**Avoid when**: Suite runs under 5 minutes—sharding overhead negates benefits.
+**Use when**: Test suite exceeds 10 minutes. Sharding cuts wall-clock time significantly. **Avoid when**: Suite runs under 5 minutes—sharding overhead negates benefits.
 
 ```yaml
 # .github/workflows/e2e-sharded.yml
@@ -192,8 +191,7 @@ export default defineConfig({
 
 ### Container-Based Execution
 
-**Use when**: Reproducible environment matching local Docker setup, or runner OS dependencies cause issues.
-**Avoid when**: Standard `ubuntu-latest` with `--with-deps` works fine.
+**Use when**: Reproducible environment matching local Docker setup, or runner OS dependencies cause issues. **Avoid when**: Standard `ubuntu-latest` with `--with-deps` works fine.
 
 ```yaml
 # .github/workflows/e2e-container.yml
@@ -230,8 +228,7 @@ jobs:
 
 ### Environment Secrets
 
-**Use when**: Tests target staging/production with credentials.
-**Avoid when**: Tests only run against local dev server.
+**Use when**: Tests target staging/production with credentials. **Avoid when**: Tests only run against local dev server.
 
 ```yaml
 # .github/workflows/e2e-staging.yml
@@ -287,8 +284,7 @@ jobs:
 
 ### Scheduled Runs
 
-**Use when**: Full regression suite is too slow for every PR—run nightly instead.
-**Avoid when**: Suite runs under 15 minutes and can run on every PR.
+**Use when**: Full regression suite is too slow for every PR—run nightly instead. **Avoid when**: Suite runs under 15 minutes and can run on every PR.
 
 ```yaml
 # .github/workflows/nightly.yml
@@ -340,8 +336,7 @@ jobs:
 
 ### Reusable Workflow
 
-**Use when**: Multiple repositories share the same Playwright setup.
-**Avoid when**: Single repo with one workflow.
+**Use when**: Multiple repositories share the same Playwright setup. **Avoid when**: Single repo with one workflow.
 
 ```yaml
 # .github/workflows/pw-reusable.yml
@@ -429,30 +424,30 @@ jobs:
 
 ## Scenario Guide
 
-| Scenario | Approach |
-|---|---|
-| Small suite (< 5 min) | Single job, no sharding |
-| Medium suite (5-20 min) | 2-4 shards with matrix |
-| Large suite (20+ min) | 4-8 shards + blob merge |
-| Cross-browser on PRs | Chromium only on PRs; all browsers on main |
-| Staging/prod smoke tests | Separate workflow with `environment:` |
-| Nightly full regression | `schedule` trigger + `workflow_dispatch` |
-| Multiple repos, same setup | Reusable workflow with `workflow_call` |
-| Reproducible env needed | Container job with Playwright image |
+| Scenario                   | Approach                                   |
+|----------------------------|--------------------------------------------|
+| Small suite (< 5 min)      | Single job, no sharding                    |
+| Medium suite (5-20 min)    | 2-4 shards with matrix                     |
+| Large suite (20+ min)      | 4-8 shards + blob merge                    |
+| Cross-browser on PRs       | Chromium only on PRs; all browsers on main |
+| Staging/prod smoke tests   | Separate workflow with `environment:`      |
+| Nightly full regression    | `schedule` trigger + `workflow_dispatch`   |
+| Multiple repos, same setup | Reusable workflow with `workflow_call`     |
+| Reproducible env needed    | Container job with Playwright image        |
 
 ## Common Mistakes
 
-| Mistake | Problem | Fix |
-|---|---|---|
-| No `concurrency` group | Duplicate runs waste minutes | Add `concurrency: { group: ..., cancel-in-progress: true }` |
-| `fail-fast: true` with sharding | One failure cancels others | Set `fail-fast: false` |
-| No browser caching | 60-90 seconds wasted per run | Cache `~/.cache/ms-playwright` |
-| No `timeout-minutes` | Stuck jobs run for 6 hours | Set explicit timeout: 20-30 minutes |
-| Artifacts only on failure | No report when tests pass | Use `if: ${{ !cancelled() }}` |
-| Hardcoded secrets | Security risk | Use GitHub Secrets and Environments |
-| All browsers on every PR | 3x CI cost | Chromium on PR; cross-browser on main |
-| No artifact retention | Default 90-day fills storage | Set `retention-days: 7-14` |
-| Missing `--with-deps` | Browser launch failures | Always use `npx playwright install --with-deps` |
+| Mistake                         | Problem                      | Fix                                                         |
+|---------------------------------|------------------------------|-------------------------------------------------------------|
+| No `concurrency` group          | Duplicate runs waste minutes | Add `concurrency: { group: ..., cancel-in-progress: true }` |
+| `fail-fast: true` with sharding | One failure cancels others   | Set `fail-fast: false`                                      |
+| No browser caching              | 60-90 seconds wasted per run | Cache `~/.cache/ms-playwright`                              |
+| No `timeout-minutes`            | Stuck jobs run for 6 hours   | Set explicit timeout: 20-30 minutes                         |
+| Artifacts only on failure       | No report when tests pass    | Use `if: ${{ !cancelled() }}`                               |
+| Hardcoded secrets               | Security risk                | Use GitHub Secrets and Environments                         |
+| All browsers on every PR        | 3x CI cost                   | Chromium on PR; cross-browser on main                       |
+| No artifact retention           | Default 90-day fills storage | Set `retention-days: 7-14`                                  |
+| Missing `--with-deps`           | Browser launch failures      | Always use `npx playwright install --with-deps`             |
 
 ## Troubleshooting
 

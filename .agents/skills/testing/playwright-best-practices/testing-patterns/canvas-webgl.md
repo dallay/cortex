@@ -479,7 +479,7 @@ test("game state changes", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern             | Problem                  | Solution                            |
-| ------------------------ | ------------------------ | ----------------------------------- |
+|--------------------------|--------------------------|-------------------------------------|
 | Pixel-perfect assertions | Fails across browsers/OS | Use maxDiffPixelRatio threshold     |
 | Not waiting for render   | Blank canvas screenshots | Wait for draw completion            |
 | Testing raw pixel data   | Brittle and slow         | Use visual comparison               |

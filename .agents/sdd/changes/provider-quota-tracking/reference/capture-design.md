@@ -6,12 +6,12 @@ Keep local `usage_history` intact; add separate event-driven persistence for ver
 
 ## Architecture Decisions
 
-| Option | Tradeoff | Decision |
-|---|---|---|
-| Infer quota from local usage/429s | Conflates client activity with upstream limit state | Reject; only report observed upstream values |
-| Poll account APIs | Endpoint credentials/scopes/cadence vary | Out of scope; response-driven capture only |
-| Extend local history | Risks mixing semantics | Separate additive SQLite observation table |
-| Threshold provider-wide aggregates | Hides differing limits/windows | Classify per connection, metric, and window |
+| Option                             | Tradeoff                                            | Decision                                     |
+|------------------------------------|-----------------------------------------------------|----------------------------------------------|
+| Infer quota from local usage/429s  | Conflates client activity with upstream limit state | Reject; only report observed upstream values |
+| Poll account APIs                  | Endpoint credentials/scopes/cadence vary            | Out of scope; response-driven capture only   |
+| Extend local history               | Risks mixing semantics                              | Separate additive SQLite observation table   |
+| Threshold provider-wide aggregates | Hides differing limits/windows                      | Classify per connection, metric, and window  |
 
 ## Data Flow and Eligibility
 
@@ -35,25 +35,25 @@ The API already returns a local daily `trend`, but the quota view does not rende
 
 ## File Changes
 
-| File | Action | Description |
-|---|---|---|
-| `crates/domain/rook-core/src/model.rs`, `ports.rs` | Modify | Observation model and recorder port |
-| `crates/infrastructure/db-migration/src/migrations/V6__provider_quota_observations.sql` | Create | Separate table/indexes |
-| `crates/infrastructure/audit-sqlite/src/lib.rs` | Modify | Persistence and retention |
-| `crates/infrastructure/providers-{openai,anthropic,groq}/src/*` | Modify | Parse documented response headers |
-| `apps/rook/src/di.rs`, `usage_retention.rs` | Modify | Wire recorder and retention |
-| `crates/infrastructure/transport-axum/src/handlers/provider_quota.rs`, `provider_dto.rs` | Modify | Distinct observations/local data; remove 429-derived warning |
+| File                                                                                                                | Action | Description                                                       |
+|---------------------------------------------------------------------------------------------------------------------|--------|-------------------------------------------------------------------|
+| `crates/domain/rook-core/src/model.rs`, `ports.rs`                                                                  | Modify | Observation model and recorder port                               |
+| `crates/infrastructure/db-migration/src/migrations/V6__provider_quota_observations.sql`                             | Create | Separate table/indexes                                            |
+| `crates/infrastructure/audit-sqlite/src/lib.rs`                                                                     | Modify | Persistence and retention                                         |
+| `crates/infrastructure/providers-{openai,anthropic,groq}/src/*`                                                     | Modify | Parse documented response headers                                 |
+| `apps/rook/src/di.rs`, `usage_retention.rs`                                                                         | Modify | Wire recorder and retention                                       |
+| `crates/infrastructure/transport-axum/src/handlers/provider_quota.rs`, `provider_dto.rs`                            | Modify | Distinct observations/local data; remove 429-derived warning      |
 | `apps/rook/dashboard/src/{lib/api.ts,composables/useProvidersQuota.ts,views/ProvidersQuotaView.vue,locales/*.json}` | Modify | Age, per-connection warning, and separate history/trend rendering |
-| `.agents/sdd/specs/providers-ui/spec.md` | Modify | Replace placeholder contract |
+| `.agents/sdd/specs/providers-ui/spec.md`                                                                            | Modify | Replace placeholder contract                                      |
 
 ## Testing Strategy
 
-| Layer | Focus |
-|---|---|
-| Unit | Header parsing, reset validity/expiry, compatible fraction thresholds, no inference |
-| Integration | Migration, retention, connection scoping, handler mapping |
-| Adapter/stream | Success/error/stream capture without response behavior changes |
-| UI | Local daily trend vs upstream history; reset-eligible, stale, unknown-expiry, unavailable states |
+| Layer          | Focus                                                                                            |
+|----------------|--------------------------------------------------------------------------------------------------|
+| Unit           | Header parsing, reset validity/expiry, compatible fraction thresholds, no inference              |
+| Integration    | Migration, retention, connection scoping, handler mapping                                        |
+| Adapter/stream | Success/error/stream capture without response behavior changes                                   |
+| UI             | Local daily trend vs upstream history; reset-eligible, stale, unknown-expiry, unavailable states |
 
 ## Migration / Rollout
 

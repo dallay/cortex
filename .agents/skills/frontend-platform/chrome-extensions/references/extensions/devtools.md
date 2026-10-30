@@ -13,6 +13,7 @@ The devtools page runs ONLY when DevTools is open. It's invisible — its job is
 ## Creating a Panel
 
 `devtools/devtools.html`:
+
 ```html
 <!DOCTYPE html>
 <html>
@@ -23,6 +24,7 @@ The devtools page runs ONLY when DevTools is open. It's invisible — its job is
 ```
 
 `devtools/devtools.js`:
+
 ```js
 chrome.devtools.panels.create(
   'My Panel',                    // Title shown in DevTools tab

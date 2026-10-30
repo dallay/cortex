@@ -29,41 +29,41 @@ DEBUG=pw:api npx playwright test              # verbose logging
 
 ### Timeout Selection
 
-| Symptom | Setting | Default | Recommended |
-|---------|---------|---------|-------------|
-| Test takes too long overall | `timeout` | 30s | 30-60s (max 120s) |
-| Assertion retries too long/short | `expect.timeout` | 5s | 5-10s |
-| `page.goto()` or `waitForURL()` times out | `navigationTimeout` | 30s | 10-30s |
-| `click()`, `fill()` time out | `actionTimeout` | 0 (unlimited) | 10-15s |
-| Dev server slow to start | `webServer.timeout` | 60s | 60-180s |
+| Symptom                                   | Setting             | Default       | Recommended       |
+|-------------------------------------------|---------------------|---------------|-------------------|
+| Test takes too long overall               | `timeout`           | 30s           | 30-60s (max 120s) |
+| Assertion retries too long/short          | `expect.timeout`    | 5s            | 5-10s             |
+| `page.goto()` or `waitForURL()` times out | `navigationTimeout` | 30s           | 10-30s            |
+| `click()`, `fill()` time out              | `actionTimeout`     | 0 (unlimited) | 10-15s            |
+| Dev server slow to start                  | `webServer.timeout` | 60s           | 60-180s           |
 
 ### Server Management
 
-| Scenario | Approach |
-|----------|----------|
-| App in same repo | `webServer` with `reuseExistingServer: !process.env.CI` |
-| Separate repos | Manual start or Docker Compose |
-| Testing deployed environment | No `webServer`; set `baseURL` via env |
-| Multiple services | Array of `webServer` entries |
+| Scenario                     | Approach                                                |
+|------------------------------|---------------------------------------------------------|
+| App in same repo             | `webServer` with `reuseExistingServer: !process.env.CI` |
+| Separate repos               | Manual start or Docker Compose                          |
+| Testing deployed environment | No `webServer`; set `baseURL` via env                   |
+| Multiple services            | Array of `webServer` entries                            |
 
 ### Single vs Multi-Project
 
-| Scenario | Approach |
-|----------|----------|
-| Early development | Single project (chromium only) |
+| Scenario               | Approach                                   |
+|------------------------|--------------------------------------------|
+| Early development      | Single project (chromium only)             |
 | Pre-release validation | Multi-project: chromium + firefox + webkit |
-| Mobile-responsive app | Add mobile projects alongside desktop |
-| Auth + non-auth tests | Setup project with dependencies |
-| Tight CI budget | Chromium on PRs; all browsers on main |
+| Mobile-responsive app  | Add mobile projects alongside desktop      |
+| Auth + non-auth tests  | Setup project with dependencies            |
+| Tight CI budget        | Chromium on PRs; all browsers on main      |
 
 ### globalSetup vs Setup Projects vs Fixtures
 
-| Need | Use |
-|------|-----|
-| One-time DB seed | `globalSetup` |
-| Shared browser auth | Setup project with `dependencies` |
+| Need                    | Use                                |
+|-------------------------|------------------------------------|
+| One-time DB seed        | `globalSetup`                      |
+| Shared browser auth     | Setup project with `dependencies`  |
 | Per-test isolated state | Custom fixture via `test.extend()` |
-| Cleanup after all tests | `globalTeardown` |
+| Cleanup after all tests | `globalTeardown`                   |
 
 ## Production-Ready Config
 
@@ -356,11 +356,11 @@ npx playwright test --project=regression
 
 ### Artifact Collection Strategy
 
-| Setting | Local | CI | Reason |
-|---------|-------|-----|--------|
-| `trace` | `'off'` | `'on-first-retry'` | Traces are large; collect on failure only |
-| `screenshot` | `'off'` | `'only-on-failure'` | Useful for CI debugging |
-| `video` | `'off'` | `'retain-on-failure'` | Recording slows tests |
+| Setting      | Local   | CI                    | Reason                                    |
+|--------------|---------|-----------------------|-------------------------------------------|
+| `trace`      | `'off'` | `'on-first-retry'`    | Traces are large; collect on failure only |
+| `screenshot` | `'off'` | `'only-on-failure'`   | Useful for CI debugging                   |
+| `video`      | `'off'` | `'retain-on-failure'` | Recording slows tests                     |
 
 ```ts
 // playwright.config.ts
@@ -378,18 +378,18 @@ export default defineConfig({
 
 ## Anti-Patterns
 
-| Don't | Problem | Do Instead |
-|-------|---------|------------|
-| `timeout: 300_000` globally | Masks flaky tests; slow CI | Fix root cause; keep 30s default |
-| Hardcoded URLs: `page.goto('http://localhost:4000/login')` | Breaks in other environments | Use `baseURL` + relative paths |
-| All browsers on every PR | 3x CI time | Chromium on PRs; all on main |
-| `trace: 'on'` always | Huge artifacts, slow uploads | `trace: 'on-first-retry'` |
-| `video: 'on'` always | Massive storage; slow tests | `video: 'retain-on-failure'` |
-| Config in test files: `test.use({ viewport: {...} })` everywhere | Scattered, inconsistent | Define once in project config |
-| `retries: 3` locally | Hides flakiness | `retries: 0` local, `retries: 2` CI |
-| No `forbidOnly` in CI | Committed `test.only` runs single test | `forbidOnly: !!process.env.CI` |
-| `globalSetup` for browser auth | No browser context available | Use setup project with dependencies |
-| Committing `.env` with credentials | Security risk | Commit `.env.example` only |
+| Don't                                                            | Problem                                | Do Instead                          |
+|------------------------------------------------------------------|----------------------------------------|-------------------------------------|
+| `timeout: 300_000` globally                                      | Masks flaky tests; slow CI             | Fix root cause; keep 30s default    |
+| Hardcoded URLs: `page.goto('http://localhost:4000/login')`       | Breaks in other environments           | Use `baseURL` + relative paths      |
+| All browsers on every PR                                         | 3x CI time                             | Chromium on PRs; all on main        |
+| `trace: 'on'` always                                             | Huge artifacts, slow uploads           | `trace: 'on-first-retry'`           |
+| `video: 'on'` always                                             | Massive storage; slow tests            | `video: 'retain-on-failure'`        |
+| Config in test files: `test.use({ viewport: {...} })` everywhere | Scattered, inconsistent                | Define once in project config       |
+| `retries: 3` locally                                             | Hides flakiness                        | `retries: 0` local, `retries: 2` CI |
+| No `forbidOnly` in CI                                            | Committed `test.only` runs single test | `forbidOnly: !!process.env.CI`      |
+| `globalSetup` for browser auth                                   | No browser context available           | Use setup project with dependencies |
+| Committing `.env` with credentials                               | Security risk                          | Commit `.env.example` only          |
 
 ## Troubleshooting
 

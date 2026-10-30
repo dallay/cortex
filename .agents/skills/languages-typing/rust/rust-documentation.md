@@ -1,25 +1,25 @@
 # Skill: rust-documentation
 
-Patrones de documentación para Rust, adaptados para el monorepo Cortex.
+Rust documentation patterns adapted for the Cortex monorepo.
 
 > Based on [rust-skills](https://github.com/leonardomso/rust-skills) — documentation rules.
 
-## Propósito
+## Purpose
 
-Estandarizar cómo documentamos el código en todo el monorepo Cortex.
-Una buena documentación reduce la carga de soporte y mejora la adopción.
+Standardize how we document code across the Cortex monorepo.
+Good documentation reduces support burden and improves adoption.
 
-## Reglas Incluidas
+## Included Rules
 
 ### 1. doc-all-public
 
-> Documenta todos los items públicos con `///`.
+> Document all public items with `///`.
 
-Cada item público debe tener documentación que explique:
+Every public item must have documentation that explains:
 
-- Qué es
-- Cómo usarlo
-- Errores posibles
+- What it is
+- How to use it
+- Possible errors
 
  ```rust
  /// Configuration for establishing a connection to the provider.
@@ -42,7 +42,7 @@ Cada item público debe tener documentación que explique:
 
 ### 2. doc-module-inner
 
-> Usa `//!` para documentación de módulo.
+> Use `//!` for module documentation.
 
  ```rust
  //! # Provider Module
@@ -61,7 +61,7 @@ Cada item público debe tener documentación que explique:
   //! ```
 
 ### 3. doc-examples-section
- > Incluye `# Examples` con código ejecutable.
+ > Include `# Examples` with executable code.
 
  ```rust
  /// Parses a completion request.
@@ -77,7 +77,7 @@ Cada item público debe tener documentación que explique:
  pub fn new(model: &str, prompt: &str) -> Result<Self, ParseError> { ... }
  ```
 
-**Usa `?` en ejemplos, no `.unwrap()`:**
+**Use `?` in examples, not `.unwrap()`:**
 
  ```rust
  /// # Examples
@@ -93,7 +93,7 @@ Cada item público debe tener documentación que explique:
 
 ### 4. doc-errors-section
 
-> Incluye `# Errors` para funciones que pueden fallar.
+> Include `# Errors` for functions that can fail.
 
  ```rust
  /// Loads a provider configuration.
@@ -109,7 +109,7 @@ Cada item público debe tener documentación que explique:
 
 ### 5. doc-panics-section
 
-> Incluye `# Panics` para funciones que pueden panic.
+> Include `# Panics` for functions that can panic.
 
  ```rust
  /// Returns the element at the given index.
@@ -122,14 +122,14 @@ Cada item público debe tener documentación que explique:
 
 ### 6. doc-safety-section
 
-> Incluye `# Safety` para funciones unsafe.
+> Include `# Safety` for unsafe functions.
 
  ```rust
  /// Reads a value from a pointer.
  ///
  /// # Safety
  ///
- /// Caller must guarantee:
+ ///  /// Caller must guarantee:
  /// - `ptr` is valid for reads
  /// - `ptr` is properly aligned
  /// - No mutable references exist
@@ -138,7 +138,7 @@ Cada item público debe tener documentación que explique:
 
 ### 7. doc-intra-links
 
-> Usa intra-doc links `[Type]` para referenciar tipos.
+> Use intra-doc links `[Type]` to reference types.
 
  ```rust
  /// See [`ProviderPort`] for the provider interface.
@@ -150,7 +150,7 @@ Cada item público debe tener documentación que explique:
 
 ### 8. doc-hidden-setup
 
-> Usa `# ` prefix para ocultar código de setup en ejemplos.
+> Prefix setup lines with `#` and a space to hide them in examples.
 
  ```rust
  /// # Examples
@@ -165,7 +165,7 @@ Cada item público debe tener documentación que explique:
  pub fn process(&self) -> Result<Value, Error> { ... }
  ```
 
-## Enforced con Lints
+## Enforced by Lints
 
  ```toml
  [lints.rust]
@@ -173,26 +173,26 @@ Cada item público debe tener documentación que explique:
  ```
 
  ```rust
- // Excepciones actuales en Cortex:
+ // Current exceptions in Cortex:
  #![allow(missing_errors_doc)]
  #![allow(missing_panics_doc)]
  ```
 
-Estos están allow porque el codebase aún no tiene toda la documentación,
-pero NUEVO código debe seguirlos.
+These are allowed because the codebase is not yet fully documented,
+but all NEW code must follow them.
 
-## Checklist para Nuevas Funciones
+## Checklist for New Functions
 
-Para cualquier función pública nueva:
+For every new public function:
 
 - [ ] `///` doc comment
-- [ ] `# Examples` con código ejecutable
+- [ ] `# Examples` with executable code
 - [ ] `# Errors` si returns `Result`
-- [ ] `# Panics` si puede panic
-- [ ] `# Safety` si es `unsafe`
-- [ ] Intra-doc links a tipos relacionados
+- [ ] `# Panics` if it can panic
+- [ ] `# Safety` if it is `unsafe`
+- [ ] Intra-doc links to related types
 
-## Archivos Relacionados
+## Related Files
 
 - `crates/domain/rook-core/src/` — Domain types
 - `crates/infrastructure/providers-*/src/` — Provider implementations
@@ -200,5 +200,5 @@ Para cualquier función pública nueva:
 
 ## See Also
 
-- rust-linting — Para enforcement de documentación
-- rust-api-design — Para diseño de APIs públicas
+- rust-linting — For documentation lint enforcement
+- rust-api-design — For public API design

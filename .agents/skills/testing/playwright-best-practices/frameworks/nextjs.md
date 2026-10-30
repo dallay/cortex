@@ -415,10 +415,10 @@ test('authenticated user sees dashboard', async ({ page }) => {
 
 ### Dev Server vs Production Build
 
-| Scenario | Command | Trade-off |
-|---|---|---|
-| Local development | `npm run dev` | Fast iteration, no production behavior |
-| CI pipeline | `npm run build && npm run start` | Tests real production bundle |
+| Scenario          | Command                          | Trade-off                              |
+|-------------------|----------------------------------|----------------------------------------|
+| Local development | `npm run dev`                    | Fast iteration, no production behavior |
+| CI pipeline       | `npm run build && npm run start` | Tests real production bundle           |
 
 ### Turbopack
 
@@ -451,15 +451,15 @@ webServer: [
 
 ## Anti-Patterns
 
-| Don't Do This | Problem | Do This Instead |
-|---|---|---|
-| `await page.waitForTimeout(3000)` | Arbitrary waits are fragile | `await page.waitForURL('/path')` or `await expect(locator).toBeVisible()` |
-| Test `getServerSideProps` directly | Depends on req/res context | Navigate to page and verify rendered output |
-| Mock your own API routes | Hides real API bugs | Let real API handle requests; mock only external services |
-| `page.goto('http://localhost:3000/path')` | Breaks when port changes | Use `page.goto('/path')` with `baseURL` |
-| Run `npm run build` locally for every test | Extremely slow | Use `npm run dev` locally with `reuseExistingServer: true` |
-| Test `next/image` by checking exact URLs | Paths change between dev/prod | Assert on `alt`, visibility, `naturalWidth > 0`, `srcset` |
-| Test server actions by calling as functions | Server actions need Next.js runtime | Trigger through UI (forms, buttons) |
+| Don't Do This                               | Problem                             | Do This Instead                                                           |
+|---------------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
+| `await page.waitForTimeout(3000)`           | Arbitrary waits are fragile         | `await page.waitForURL('/path')` or `await expect(locator).toBeVisible()` |
+| Test `getServerSideProps` directly          | Depends on req/res context          | Navigate to page and verify rendered output                               |
+| Mock your own API routes                    | Hides real API bugs                 | Let real API handle requests; mock only external services                 |
+| `page.goto('http://localhost:3000/path')`   | Breaks when port changes            | Use `page.goto('/path')` with `baseURL`                                   |
+| Run `npm run build` locally for every test  | Extremely slow                      | Use `npm run dev` locally with `reuseExistingServer: true`                |
+| Test `next/image` by checking exact URLs    | Paths change between dev/prod       | Assert on `alt`, visibility, `naturalWidth > 0`, `srcset`                 |
+| Test server actions by calling as functions | Server actions need Next.js runtime | Trigger through UI (forms, buttons)                                       |
 
 ## Related
 

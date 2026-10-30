@@ -486,7 +486,7 @@ jobs:
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                 | Problem                                | Solution                    |
-| ---------------------------- | -------------------------------------- | --------------------------- |
+|------------------------------|----------------------------------------|-----------------------------|
 | Coverage for coverage's sake | Gaming metrics                         | Focus on critical paths     |
 | 100% coverage target         | Diminishing returns, tests for getters | Set realistic thresholds    |
 | Ignoring coverage drops      | Technical debt                         | Enforce thresholds in CI    |

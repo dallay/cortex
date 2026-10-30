@@ -1,351 +1,242 @@
 ---
 name: vue
-description: Use when working with .vue files, composables, Pinia stores, or form validation.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+description: Use when working with .vue files, composables, Pinia stores, or form validation in the Rook dashboard.
+allowed-tools: Read Edit Write Glob Grep Bash
 metadata:
-  author: profiletailors
-  version: "1.0"
+  author: cortex
+  version: "2.0"
 ---
 
-# Vue 3 Skill
+# Vue 3 — Rook dashboard
 
-Conventions for Vue 3 development with Composition API, TypeScript, and the profiletailors component
-ecosystem.
+Conventions for `apps/rook/dashboard`. They extend
+`.agents/contexts/dashboard.md`; global and dashboard instructions still apply.
 
-## When to Use
+## Stack (verify before assuming)
 
-- Creating or modifying `.vue` components
-- Building composables for reusable logic
-- Managing state with Pinia stores
-- Implementing form validation with Vee-Validate + Zod
-- Working with the `@profiletailors/ui` component library
+| Piece          | Value                                                | Source                             |
+|----------------|------------------------------------------------------|------------------------------------|
+| Framework      | Vue `^3.6.0-rc`                                      | `apps/rook/dashboard/package.json` |
+| Router / state | `vue-router` 5, Pinia 4 (setup stores)               | same                               |
+| UI             | shadcn-vue components in `src/components/ui`         | `components.json`                  |
+| Styling        | Tailwind CSS 4 + tokens in `src/style.css`           | same                               |
+| i18n           | vue-i18n, `src/locales/en.json` + `es.json`          | same                               |
+| HTTP           | native `fetch` behind `useApi()` in `src/lib/api.ts` | same                               |
+| Forms          | vee-validate + `@vee-validate/zod` + Zod             | same                               |
+| Lint/format    | Biome (tabs, double quotes)                          | `biome.json`                       |
 
-## Critical Patterns
+There is no Axios dependency and no shared `@profiletailors/*` package. Do not
+reintroduce either.
 
-### 1. Component Structure
+## Component structure
 
-**ALWAYS use `<script setup lang="ts">`**:
+Use `<script setup lang="ts">` with typed props and emits:
 
 ```vue
 <script setup lang="ts">
-// 1. Imports
-import { computed, ref } from 'vue';
-import { useUserStore } from '@/stores/user';
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { Button } from "@/components/ui/button";
 
-// 2. Type definitions
 type Props = {
-  title: string;
-  count?: number;
-  isActive?: boolean;
+	title: string;
+	count?: number;
 };
 
-// 3. Props with defaults
-const props = withDefaults(defineProps<Props>(), {
-  count: 0,
-  isActive: false,
-});
-
-// 4. Emits with types
+const props = withDefaults(defineProps<Props>(), { count: 0 });
 const emit = defineEmits<{
-  (e: 'update', value: number): void;
-  (e: 'close'): void;
+	update: [value: number];
+	close: [];
 }>();
 
-// 5. Composables and stores
-const userStore = useUserStore();
-
-// 6. Reactive state
+const { t } = useI18n();
 const localCount = ref(props.count);
-
-// 7. Computed properties
 const doubled = computed(() => localCount.value * 2);
 
-// 8. Methods
 const increment = () => {
-  localCount.value++;
-  emit('update', localCount.value);
+	localCount.value++;
+	emit("update", localCount.value);
 };
 </script>
 
 <template>
-  <div class="card">
-    <h2>{{ title }}</h2>
-    <p>Count: {{ localCount }} (Doubled: {{ doubled }})</p>
-    <button @click="increment">Increment</button>
-  </div>
+	<div>
+		<h2>{{ props.title }}</h2>
+		<p>{{ localCount }} · {{ doubled }}</p>
+		<Button type="button" @click="increment">{{ t("common.next") }}</Button>
+	</div>
 </template>
-
-<style scoped>
-.card {
-  padding: var(--space-4);
-}
-</style>
 ```
 
-### 2. Pinia Stores
+- Every visible string comes from vue-i18n; update both locale files in the
+  same change.
+- Use `@/components/ui/<component>` imports (for example
+  `@/components/ui/button`). Do not import from a UI package.
+- Reuse `LoadingState`, `EmptyState` and `ErrorBanner`; every view needs
+  loading, empty, error and denied states where applicable.
 
-**ALWAYS type state, getters, and actions**:
+## Pinia: setup stores
 
-```typescript
-// stores/user.ts
-import { defineStore } from 'pinia';
-import { api, isAxiosError } from '@/api';
-import { toast } from 'vue-sonner';
+Stores are functions with refs, computed values and actions — not the Options
+API object form:
 
-type User = {
-  id: string;
-  name: string;
-  email: string;
-};
+```ts
+import { computed, ref } from "vue";
+import { defineStore } from "pinia";
+import { i18n } from "@/i18n";
+import { useApi } from "@/lib/api";
 
-type UserState = {
-  currentUser: User | null;
-  isLoading: boolean;
-  error: string | null;
-};
+export const useExampleStore = defineStore("example", () => {
+	const api = useApi();
+	const items = ref<string[]>([]);
+	const isLoading = ref(false);
+	const error = ref<string | null>(null);
 
-export const useUserStore = defineStore('user', {
-  state: (): UserState => ({
-    currentUser: null,
-    isLoading: false,
-    error: null,
-  }),
+	const isEmpty = computed(() => items.value.length === 0);
 
-  getters: {
-    isAuthenticated: (state): boolean => state.currentUser !== null,
-    userInitials: (state): string => {
-      if (!state.currentUser) return '';
-      return state.currentUser.name
-        .split(' ')
-        .map(n => n[0])
-        .join('');
-    },
-  },
+	async function load(): Promise<void> {
+		isLoading.value = true;
+		error.value = null;
+		try {
+			const providers = await api.getProviders();
+			items.value = providers.map((provider) => provider.name);
+		} catch (value) {
+			error.value = value instanceof Error ? value.message : i18n.global.t("errors.requestFailed");
+		} finally {
+			isLoading.value = false;
+		}
+	}
 
-  actions: {
-    async fetchUser(id: string): Promise<void> {
-      this.isLoading = true;
-      this.error = null;
-      try {
-        const response = await api.getUser(id);
-        this.currentUser = response.data;
-      } catch (e) {
-        // Type-safe error handling
-        const error = e instanceof Error ? e : new Error('Unknown error');
-        const message = isAxiosError(e) && e.response?.data?.message
-          ? e.response.data.message
-          : error.message || 'Failed to fetch user';
-
-        this.error = message;
-        toast.error('Error', { description: message });
-      } finally {
-        this.isLoading = false;
-      }
-    },
-
-    logout(): void {
-      this.currentUser = null;
-    },
-  },
+	return { items, isLoading, error, isEmpty, load };
 });
 ```
 
-### 3. Composables
+- Keep API calls in `useApi()`/`src/lib/api.ts`; components and stores do not
+  assemble URLs or headers.
+- The management cookie and CSRF token are handled by the API layer. Never
+  duplicate or bypass that logic in a component.
 
-**Return reactive values, prefix with `use`**:
+## Composables
 
-```typescript
-// composables/useCounter.ts
-import { ref, computed, type Ref, type ComputedRef } from 'vue';
+Prefix with `use`, return refs/computed values, and clean up side effects:
 
-type UseCounterReturn = {
-  count: Ref<number>;
-  doubled: ComputedRef<number>;
-  increment: () => void;
-  decrement: () => void;
-  reset: () => void;
+```ts
+import { computed, onMounted, onUnmounted, ref, type ComputedRef, type Ref } from "vue";
+
+type UseCounter = {
+	count: Ref<number>;
+	doubled: ComputedRef<number>;
+	increment: () => void;
 };
 
-export const useCounter = (initial = 0): UseCounterReturn => {
-  const count = ref(initial);
-  const doubled = computed(() => count.value * 2);
+export const useCounter = (initial = 0): UseCounter => {
+	const count = ref(initial);
+	const doubled = computed(() => count.value * 2);
+	const onResize = () => undefined;
 
-  const increment = () => count.value++;
-  const decrement = () => count.value--;
-  const reset = () => count.value = initial;
+	onMounted(() => window.addEventListener("resize", onResize));
+	onUnmounted(() => window.removeEventListener("resize", onResize));
 
-  return { count, doubled, increment, decrement, reset };
+	return { count, doubled, increment: () => { count.value++; } };
 };
 ```
 
-### 4. Form Validation (Vee-Validate + Zod)
+## Forms (Vee-Validate + Zod)
 
-**CRITICAL: Manual validation on blur, NOT automatic**:
+Validate on submit or blur; do not validate on mount, which produces noisy
+errors before the user interacts:
 
 ```vue
 <script setup lang="ts">
-import { useForm } from 'vee-validate';
-import { toTypedSchema } from '@vee-validate/zod';
-import { z } from 'zod';
+import { toTypedSchema } from "@vee-validate/zod";
+import { useForm } from "vee-validate";
+import { z } from "zod";
+import { useI18n } from "vue-i18n";
+import { Button } from "@/components/ui/button";
 import {
-  FormField,
-  FormItem,
-  FormLabel,
-  FormControl,
-  FormMessage,
-  Input,
-  Button,
-} from '@profiletailors/ui';
+	FormControl,
+	FormField,
+	FormItem,
+	FormLabel,
+	FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 
-const schema = z.object({
-  email: z.string().email('Invalid email format'),
-  password: z.string().min(8, 'Must be at least 8 characters'),
-});
+const schema = z.object({ name: z.string().min(1) });
+type FormValues = z.infer<typeof schema>;
 
-type FormData = z.infer<typeof schema>;
-
-const { handleSubmit, validateField, resetForm } = useForm<FormData>({
-  validationSchema: toTypedSchema(schema),
-  validateOnMount: false, // ✅ CRITICAL: Don't validate on mount
-});
-
-const onSubmit = handleSubmit((values) => {
-  console.log('Form submitted:', values);
-});
-</script>
-
-<template>
-  <form @submit="onSubmit">
-    <FormField v-slot="{ componentField }" name="email">
-      <FormItem>
-        <FormLabel>Email</FormLabel>
-        <FormControl>
-          <!-- ✅ Manual validation on blur -->
-          <Input
-            type="email"
-            v-bind="componentField"
-            @blur="validateField('email')"
-          />
-        </FormControl>
-        <FormMessage />
-      </FormItem>
-    </FormField>
-
-    <Button type="submit">Submit</Button>
-  </form>
-</template>
-```
-
-### 5. Component Communication
-
-| Scenario        | Approach                  |
-|-----------------|---------------------------|
-| Parent → Child  | Props                     |
-| Child → Parent  | `emit()`                  |
-| Sibling/Distant | Pinia store               |
-| Provide/Inject  | Rarely, for deeply nested |
-
-**NEVER use global event buses**.
-
-## UI Components (@profiletailors/ui)
-
-Use Shadcn-Vue components from `@profiletailors/ui`:
-
-```vue
-<script setup lang="ts">
-import { Button, Card, CardHeader, CardTitle, CardContent } from '@profiletailors/ui';
-</script>
-
-<template>
-  <Card>
-    <CardHeader>
-      <CardTitle>Dashboard</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <Button variant="default" @click="handleAction">
-        Take Action
-      </Button>
-    </CardContent>
-  </Card>
-</template>
-```
-
-## Performance Patterns
-
-```vue
-<script setup lang="ts">
-import { onUnmounted, shallowRef } from 'vue';
-
-// ✅ Use shallowRef for large objects that don't need deep reactivity
-const largeData = shallowRef<LargeObject | null>(null);
-
-// ✅ Clean up side effects
-const intervalId = setInterval(() => {
-  // polling logic
-}, 5000);
-
-onUnmounted(() => {
-  clearInterval(intervalId);
-});
-</script>
-
-<template>
-  <!-- ✅ v-once for truly static content -->
-  <footer v-once>
-    <p>© 2024 CVIX</p>
-  </footer>
-
-  <!-- ✅ v-memo for expensive lists -->
-  <div v-for="item in items" :key="item.id" v-memo="[item.id, item.updated]">
-    {{ item.name }}
-  </div>
-</template>
-```
-
-## Anti-Patterns
-
-❌ **Options API** - Always use Composition API with `<script setup>`
-❌ **`any` type** - Always provide proper TypeScript types
-❌ **Mutating props** - Props are read-only, emit events instead
-❌ **Global event bus** - Use Pinia for cross-component state
-❌ **`validate-on-blur` prop** - Use manual `validateField()` on `@blur`
-❌ **Field injection** - Use constructor pattern in stores
-
-## i18n Pattern
-
-```vue
-<script setup lang="ts">
-import { useI18n } from 'vue-i18n';
-
+const props = defineProps<{
+	onSave: (values: FormValues) => Promise<void>;
+}>();
 const { t } = useI18n();
+
+const { handleSubmit, validateField } = useForm({
+	validationSchema: toTypedSchema(schema),
+	validateOnMount: false,
+});
+
+const onSubmit = handleSubmit(async (values) => {
+	await props.onSave(values);
+});
 </script>
 
 <template>
-  <h1>{{ t('dashboard.title') }}</h1>
-  <p>{{ t('dashboard.welcome', { name: user.name }) }}</p>
+	<form @submit="onSubmit">
+		<FormField v-slot="{ componentField }" name="name">
+			<FormItem>
+				<FormLabel>{{ t("apiKeys.name") }}</FormLabel>
+				<FormControl>
+					<Input v-bind="componentField" @blur="validateField('name')" />
+				</FormControl>
+				<FormMessage />
+			</FormItem>
+		</FormField>
+		<Button type="submit">{{ t("common.save") }}</Button>
+	</form>
 </template>
 ```
+
+## Communication and performance
+
+| Need                       | Use                |
+|----------------------------|--------------------|
+| Parent → child             | props              |
+| Child → parent             | typed `emit`       |
+| Shared/distant state       | Pinia store        |
+| Deeply nested, stable tree | `provide`/`inject` |
+
+- Do not use global event buses.
+- Use `computed` instead of methods in templates; `shallowRef` for large
+  structures that do not need deep reactivity.
+- Remove listeners, intervals and observers in `onUnmounted`.
 
 ## Commands
 
+From the repository root:
+
 ```bash
-# Development
-pnpm --filter @profiletailors/webapp dev
-
-# Testing
-pnpm --filter @profiletailors/webapp vitest run
-pnpm --filter @profiletailors/webapp vitest --watch
-
-# Type checking
-pnpm --filter @profiletailors/webapp vue-tsc --noEmit
-
-# Linting
-pnpm --filter @profiletailors/webapp lint
+pnpm --filter @dallay/rook-dashboard dev
+pnpm --filter @dallay/rook-dashboard run build
+pnpm --filter @dallay/rook-dashboard run typecheck
+pnpm --filter @dallay/rook-dashboard run lint
+pnpm --filter @dallay/rook-dashboard exec vitest run src/components/Foo.spec.ts
+pnpm --filter @dallay/rook-dashboard exec playwright test e2e/login.spec.ts
 ```
+
+## Anti-patterns
+
+- Options API or untyped `defineProps`/`defineEmits`.
+- `any`; use `unknown` plus narrowing or a schema.
+- Mutating props, or copying them into state without a reason.
+- Importing `@profiletailors/ui`, `axios` or any package that is not installed.
+- Hardcoded user-facing text instead of i18n keys.
+- Duplicating CSRF, cookie or URL handling outside `src/lib/api.ts`.
+- Editing generated shadcn-vue internals when the wrapper should be composed
+  instead; keep `src/components/ui` reusable and product-agnostic.
 
 ## Resources
 
-- [Vue 3 Documentation](https://vuejs.org/guide/)
-- [Pinia Documentation](https://pinia.vuejs.org/)
+- [Vue 3](https://vuejs.org/guide/)
+- [Pinia](https://pinia.vuejs.org/)
 - [Vee-Validate + Zod](https://vee-validate.logaretm.com/v4/integrations/zod-schema-validation/)
-- [Shadcn-Vue](https://www.shadcn-vue.com/)
+- [shadcn-vue](https://www.shadcn-vue.com/)

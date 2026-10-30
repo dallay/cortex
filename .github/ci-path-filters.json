@@ -3,7 +3,10 @@
     "docs/**",
     "docs/*.md",
     "*.md",
-    "README.md"
+    "README.md",
+    ".agents/**",
+    "scripts/validate-skills.mjs",
+    "scripts/validate-skills.test.mjs"
   ],
   "backend": [
     "apps/rook/**",

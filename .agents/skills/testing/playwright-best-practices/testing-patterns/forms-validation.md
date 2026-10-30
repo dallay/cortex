@@ -476,7 +476,7 @@ test("confirmation dialog before resetting a dirty form", async ({ page }) => {
 ## Decision Guide
 
 | Scenario                             | Approach                                               | Key API                                                      |
-| ------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------ |
+|--------------------------------------|--------------------------------------------------------|--------------------------------------------------------------|
 | Standard text input                  | `fill()` (clears, then types)                          | `page.getByLabel('Field').fill('value')`                     |
 | Need keystroke events (autocomplete) | `pressSequentially()` with delay                       | `locator.pressSequentially('text', { delay: 100 })`          |
 | Native `<select>` dropdown           | `selectOption()` by value or label                     | `locator.selectOption('US')` or `{ label: 'United States' }` |
@@ -495,7 +495,7 @@ test("confirmation dialog before resetting a dirty form", async ({ page }) => {
 ## Anti-Patterns
 
 | Don't Do This                                           | Problem                                                    | Do This Instead                                        |
-| ------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
+|---------------------------------------------------------|------------------------------------------------------------|--------------------------------------------------------|
 | `await page.getByLabel('Field').type('value')`          | `type()` appends to existing content; does not clear first | `await page.getByLabel('Field').fill('value')`         |
 | `await page.getByLabel('Option').click()`               | `click()` toggles — if already checked, it unchecks        | `await page.getByLabel('Option').check()`              |
 | `await page.fill('#email', 'test@test.com')`            | CSS selector is fragile                                    | `await page.getByLabel('Email').fill('test@test.com')` |

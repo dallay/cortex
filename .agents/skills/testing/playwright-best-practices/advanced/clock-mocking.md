@@ -352,7 +352,7 @@ await page.clock.install({ time: new Date("2025-01-15T09:00:00") });
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                             | Problem                         | Solution                               |
-| ---------------------------------------- | ------------------------------- | -------------------------------------- |
+|------------------------------------------|---------------------------------|----------------------------------------|
 | Installing clock after navigation        | Page already captured real time | Install clock before `goto()`          |
 | Hardcoded relative dates                 | Tests break over time           | Use fixed dates with clock mock        |
 | Not accounting for timezone              | Tests fail in different regions | Use explicit UTC times or set timezone |

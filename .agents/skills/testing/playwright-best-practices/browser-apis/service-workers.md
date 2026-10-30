@@ -502,7 +502,7 @@ test("sync event fires when online", async ({ context, page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                   | Problem                 | Solution                                     |
-| ------------------------------ | ----------------------- | -------------------------------------------- |
+|--------------------------------|-------------------------|----------------------------------------------|
 | Not clearing SW between tests  | Tests affect each other | Unregister SW in beforeEach                  |
 | Not waiting for SW ready       | Race conditions         | Always await `navigator.serviceWorker.ready` |
 | Testing in isolation only      | Misses real SW behavior | Test with actual caching                     |

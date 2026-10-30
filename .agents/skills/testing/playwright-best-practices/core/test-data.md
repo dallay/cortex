@@ -477,7 +477,7 @@ export const test = base.extend<{}, { db: DbTransaction }>({
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                    | Problem                         | Solution                   |
-| ------------------------------- | ------------------------------- | -------------------------- |
+|---------------------------------|---------------------------------|----------------------------|
 | Hardcoded test data             | Brittle, repetitive             | Use factories              |
 | Random data without seed        | Non-reproducible failures       | Seed faker per test        |
 | Shared mutable test data        | Tests interfere with each other | Create fresh data per test |

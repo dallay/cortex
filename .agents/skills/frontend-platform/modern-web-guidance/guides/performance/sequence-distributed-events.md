@@ -1,6 +1,6 @@
 # Sequencing Distributed Events
 
-High-frequency tracing and event logging in distributed systems require precise timestamps to ensure correct causal ordering. Standard JavaScript `Date.now()` provides millisecond resolution, which can lead to timestamp collisions when multiple events occur within the same millisecond. 
+High-frequency tracing and event logging in distributed systems require precise timestamps to ensure correct causal ordering. Standard JavaScript `Date.now()` provides millisecond resolution, which can lead to timestamp collisions when multiple events occur within the same millisecond.
 
 The `Temporal` API, specifically `Temporal.Instant`, provides nanosecond-resolution timestamps, enabling precise sequencing of events without collisions.
 

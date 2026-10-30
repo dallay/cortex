@@ -6,9 +6,9 @@ This guide details how to enable users to view, rename, and delete their registe
 
 Your backend database layer and endpoints MUST support common CRUD actions for registered credentials. Decoupled from framework-specific libraries, the server exposes endpoints to:
 
-1.  **List all user credentials**: Fetch all `StoredPasskeyCredential` records matching the signed-in user's ID.
-2.  **Update credential names**: Accept a new custom string name for a specific credential ID and persist the update.
-3.  **Delete credentials**: Remove a specific credential ID from the database.
+1. **List all user credentials**: Fetch all `StoredPasskeyCredential` records matching the signed-in user's ID.
+2. **Update credential names**: Accept a new custom string name for a specific credential ID and persist the update.
+3. **Delete credentials**: Remove a specific credential ID from the database.
 
 ```javascript
 // Node.js routing example for credential CRUD
@@ -44,30 +44,30 @@ router.delete('/api/credential/:id', checkUserAuthenticated, async (req, res) =>
 
 Render a dedicated settings panel allowing users to easily audit and manage their registered authentication options:
 
-1.  **Display saved list**: Fetch list from your endpoint and render individual credential rows. If the response is empty, render a helpful empty-state message (e.g., "No passkeys found").
-2.  **Map AAGUID Metadata**: For each passkey, lookup its `aaguid` property against your local registry to render its provider details. See [Determine the passkey provider from AAGUID](#aaguid) section for more details.
-3.  **Per-Item UI Requirements**: Every row inside the list container MUST render:
-    *   **Provider Icon**: AAGUID-derived image or data URI.
-    *   **Provider/Custom Name**: AAGUID-derived name or user-renamed string.
-    *   **Registration Date**: The database-persisted raw epoch timestamp `registeredAt` formatted to a human-readable date for client display.
-    *   **Last Used Date**: The database-persisted raw epoch timestamp `lastUsedAt` formatted to a human-readable date (if present) for client display.
-    *   **Rename Button**: Triggers a rename text input modal.
-    *   **Delete Button**: Triggers deletion.
-4.  **Conditional "Create Passkey" Button**:
-    *  Offer a prominent "Create passkey" registration trigger button on the management page. Before rendering this UI element, the page MUST feature-detect capabilities using `PublicKeyCredential.getClientCapabilities()` to verify platform authenticator is supported. If passkeys are unsupported, hide this button and gracefully encourage standard MFA enrollments instead.
-    *  Allow registering a security key by omitting `authenticatorSelection.authenticatorAttachment` on `navigator.credentials.create()` call.
+1. **Display saved list**: Fetch list from your endpoint and render individual credential rows. If the response is empty, render a helpful empty-state message (e.g., "No passkeys found").
+2. **Map AAGUID Metadata**: For each passkey, lookup its `aaguid` property against your local registry to render its provider details. See [Determine the passkey provider from AAGUID](#aaguid) section for more details.
+3. **Per-Item UI Requirements**: Every row inside the list container MUST render:
+    * **Provider Icon**: AAGUID-derived image or data URI.
+    * **Provider/Custom Name**: AAGUID-derived name or user-renamed string.
+    * **Registration Date**: The database-persisted raw epoch timestamp `registeredAt` formatted to a human-readable date for client display.
+    * **Last Used Date**: The database-persisted raw epoch timestamp `lastUsedAt` formatted to a human-readable date (if present) for client display.
+    * **Rename Button**: Triggers a rename text input modal.
+    * **Delete Button**: Triggers deletion.
+4. **Conditional "Create Passkey" Button**:
+    * Offer a prominent "Create passkey" registration trigger button on the management page. Before rendering this UI element, the page MUST feature-detect capabilities using `PublicKeyCredential.getClientCapabilities()` to verify platform authenticator is supported. If passkeys are unsupported, hide this button and gracefully encourage standard MFA enrollments instead.
+    * Allow registering a security key by omitting `authenticatorSelection.authenticatorAttachment` on `navigator.credentials.create()` call.
 
 ## Signal API Synchronization
 
 The Signal API lets the application communicate credential states to password managers, keeping the user's synced vaults and your backend database in lockstep.
 
-*   **Parameter Encoding Rule**:
-    *  All `userId` and credential ID parameters passed to Signal API methods (`signalAllAcceptedCredentials`, `signalCurrentUserDetails`) MUST be **Base64URL-encoded strings**.
-*   **Initiating Page Load Sync**:
-    *  The application MUST invoke `signalAllAcceptedCredentials()` automatically in a `DOMContentLoaded` page load event listener.
-*   **Management Updates Sync**:
-    *  The application MUST invoke `signalAllAcceptedCredentials()` immediately within your delete credential click handler post-fetch.
-    *  The application MUST invoke `signalCurrentUserDetails()` immediately within your username or display name rename click handler post-fetch.
+* **Parameter Encoding Rule**:
+    * All `userId` and credential ID parameters passed to Signal API methods (`signalAllAcceptedCredentials`, `signalCurrentUserDetails`) MUST be **Base64URL-encoded strings**.
+* **Initiating Page Load Sync**:
+    * The application MUST invoke `signalAllAcceptedCredentials()` automatically in a `DOMContentLoaded` page load event listener.
+* **Management Updates Sync**:
+    * The application MUST invoke `signalAllAcceptedCredentials()` immediately within your delete credential click handler post-fetch.
+    * The application MUST invoke `signalCurrentUserDetails()` immediately within your username or display name rename click handler post-fetch.
 
 ```javascript
 // Client-side management synchronization ES module
@@ -187,7 +187,7 @@ Baseline status for the api.PublicKeyCredential.getClientCapabilities_static cap
 Supported by: Chrome 133 (Feb 2025), Edge 133 (Feb 2025), Firefox 135 (Feb 2025), and Safari 17.4 (Mar 2024).
 
 Always install 'webauthn-polyfills' and import it in the context.
-Consider as long as  `PublicKeyCredential` is supported, `PublicKeyCredential.getClientCapabilities` is also supported. 
+Consider as long as  `PublicKeyCredential` is supported, `PublicKeyCredential.getClientCapabilities` is also supported.
 
 ```js 
 import 'webauthn-polyfills';
@@ -198,8 +198,8 @@ import 'webauthn-polyfills';
 Web authentication signal methods has limited availability.
 Supported by: Chrome 132 (Jan 2025), Edge 132 (Jan 2025), and Safari 26 (Sep 2025).
 Unsupported in: Firefox.
-If the browser does not support `PublicKeyCredential.parseRequestOptionsFromJSON`, use the 'webauthn-polyfills': 
-  
+If the browser does not support `PublicKeyCredential.parseRequestOptionsFromJSON`, use the 'webauthn-polyfills':
+
 ```html 
 <script type="module"> 
   if (!PublicKeyCredential.parseRequestOptionsFromJSON) { 

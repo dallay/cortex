@@ -261,12 +261,10 @@ when no entries were loaded, never a reset performed by Apply.
 **Why the structs live here, not in `apps/huginn/src/config.rs`.** The
 binary already imports `presentation` (it depends on
 `huginn_presentation`); `presentation` does not import `apps/huginn`.
-Moving the structs into `presentation` keeps the dependency arrow one-way
-**and** lets tests in `crates/huginn/presentation/tests/settings.rs`
+Moving the structs into `presentation` keeps the dependency arrow one-way **and** lets tests in `crates/huginn/presentation/tests/settings.rs`
 construct a `UiConfig::default()` without crossing a crate boundary.
 The binary's `Config::load` simply does `ui: huginn_presentation::settings::UiConfig`,
-and `ui_settings::persist_seeded` takes `&UiConfig` from the same module.
-**There is no circular import** because the only direction is
+and `ui_settings::persist_seeded` takes `&UiConfig` from the same module. **There is no circular import** because the only direction is
 `apps/huginn` → `huginn-presentation`.
 
 ### `crates/huginn/presentation/src/state.rs` (MODIFIED)
@@ -287,11 +285,9 @@ state.rs needs to change** because we are not extending
    across overlay replacement. `settings_is_pending()` compares the active
    overlay ID with `settings_apply`.
 
-   `settings_focus_epoch` is bumped on dialog open, on close
-   (Esc, Enter, `(+)` add), and on apply success/failure so the input
+   `settings_focus_epoch` is bumped on dialog open, on close (Esc, Enter, `(+)` add), and on apply success/failure so the input
    lease can invalidate queued keys/pastes that belonged to a previous
-   lease — mirroring the `workflow_focus` precedent
-   (`terminal.rs:691–713`).
+   lease — mirroring the `workflow_focus` precedent (`terminal.rs:691–713`).
 
 2. **Extend `Ui` with two new fields** (beside the existing
    `contributions` and `state`):
@@ -310,8 +306,7 @@ state.rs needs to change** because we are not extending
    Extend the existing `state.plugin_dialog.take(); state.workflow.take();`
    block at `state.rs:675–676` to also clear `state.settings` and bump
    `settings_focus_epoch`. The precedence chain
-   `Modal > Settings > PluginDialog > completion` is enforced here
-   (REQ-12).
+   `Modal > Settings > PluginDialog > completion` is enforced here (REQ-12).
 
 #### Host short-circuit in `Ui::dispatch_command` (line 367)
 
@@ -354,6 +349,7 @@ pub fn dispatch_command(&self, line: &str) -> bool {
 ```
 
 Notes on the patch:
+
 - We copy `line` into `trimmed` so the original `line` argument is
   untouched for callers (matches the current function's `let line =
   line.trim();` style at line 368).
@@ -470,8 +466,7 @@ Five edits:
    immediately, while an already-submitted write may still complete.
 
 5. **`draw_frame`** (`terminal.rs:482`): add a settings rendering arm
-   between the `workflow` arm (line 528) and the `plugin_dialog` arm
-   (line 530). Pseudocode is in §Render Layout below.
+   between the `workflow` arm (line 528) and the `plugin_dialog` arm (line 530). Pseudocode is in §Render Layout below.
 
 ### `crates/huginn/presentation/src/lib.rs` (MODIFIED)
 
@@ -653,8 +648,7 @@ pub fn with_settings(
 
 `activate()` then passes both into `terminal::Ratatui`, which forwards
 them to `Ui::new`. The `UiConfig` flowing through every hop (main →
-RatatuiPlugin → Ratatui → Ui::new → dispatch_command) is the
-**same** type imported from `huginn_presentation::settings`. **No
+RatatuiPlugin → Ratatui → Ui::new → dispatch_command) is the **same** type imported from `huginn_presentation::settings`. **No
 trait adapter, no snapshot type, no conversion function**.
 
 ### `apps/huginn/config.example.toml` (MODIFIED)
@@ -684,16 +678,16 @@ defaults. Mirrors the locked D1 shape.
 
 Navigation keys (input is consumed by the new arm of `Driver::input`):
 
-| Key | Action | Notes |
-|---|---|---|
-| `Esc` | dismiss + close | Notice `Settings discarded` when idle, or `Settings closed; the started write may still complete` when pending; never falls through to cancel-turn. |
-| `←` / `BackTab` | `dialog.prev_tab()` | wrap-around `integrations → theme` |
-| `→` / `Tab` | `dialog.next_tab()` | wrap-around `integrations → theme` |
-| `↑` | `dialog.select_prev()` | wrap-around within current tab |
-| `↓` | `dialog.select_next()` | wrap-around within current tab |
-| `Enter` on `(+)` | close + notice `Add provider not implemented yet` | no persistence call |
-| `Enter` on other rows | `Effect::ApplySettings` → `apply_settings_at(ticket)` | Queue one background write and mark its overlay ID pending; ordered receipts close on success or show `last_error` on failure only for the current ID. |
-| Any key except dismissal while pending | consume without editing or submitting | Prevent duplicate Enter writes; Esc can still close. |
+| Key                                    | Action                                                | Notes                                                                                                                                                  |
+|----------------------------------------|-------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Esc`                                  | dismiss + close                                       | Notice `Settings discarded` when idle, or `Settings closed; the started write may still complete` when pending; never falls through to cancel-turn.    |
+| `←` / `BackTab`                        | `dialog.prev_tab()`                                   | wrap-around `integrations → theme`                                                                                                                     |
+| `→` / `Tab`                            | `dialog.next_tab()`                                   | wrap-around `integrations → theme`                                                                                                                     |
+| `↑`                                    | `dialog.select_prev()`                                | wrap-around within current tab                                                                                                                         |
+| `↓`                                    | `dialog.select_next()`                                | wrap-around within current tab                                                                                                                         |
+| `Enter` on `(+)`                       | close + notice `Add provider not implemented yet`     | no persistence call                                                                                                                                    |
+| `Enter` on other rows                  | `Effect::ApplySettings` → `apply_settings_at(ticket)` | Queue one background write and mark its overlay ID pending; ordered receipts close on success or show `last_error` on failure only for the current ID. |
+| Any key except dismissal while pending | consume without editing or submitting                 | Prevent duplicate Enter writes; Esc can still close.                                                                                                   |
 
 On a failed receipt for the current overlay ID, REQ-07 requires Settings to stay open
 with its working copy intact. `SettingsDialog::last_error` stores the
@@ -824,14 +818,14 @@ and the `plugin_dialog` arm (line 530). Layout uses
 - **Body** (`Constraint::Min(1)`): a `Block::bordered()` titled
   `Settings` containing the items of the active tab. Each row is
   formatted as:
-  - `Pick`: `> name` (or ` ` if not selected), trailing space + `✓` when
-    `checked`.
-  - `Bool`: `> label` (or ` `), trailing space + `✓` when checked, no
-    trailing mark when unchecked.
-  - `Cycle`: `> label: value` (or ` `), trailing space + `✓` when the cycle
-    value matches the working copy's projected default — for `toasts`
-    that means `info` and `3` only.
-  - `Action`: `> (+) Add provider…`.
+    - `Pick`: `> name` (or ` ` if not selected), trailing space + `✓` when
+      `checked`.
+    - `Bool`: `> label` (or ` `), trailing space + `✓` when checked, no
+      trailing mark when unchecked.
+    - `Cycle`: `> label: value` (or ` `), trailing space + `✓` when the cycle
+      value matches the working copy's projected default — for `toasts`
+      that means `info` and `3` only.
+    - `Action`: `> (+) Add provider…`.
 - **Footer** (`Constraint::Length(1)`): literal text
   `↑↓ select · ←→ section · ↵ apply · esc close`.
 
@@ -896,20 +890,20 @@ value in the label (built in `snapshot()`) so the user sees
 
 ## Error Paths
 
-| Failure | Behavior |
-|---|---|
-| Persistence closure returns `Err(_)` | The ordered receipt clears its matching pending state. If its overlay ID is still current, Settings stays open with its working copy intact and `last_error` in the modal body; the user can retry or dismiss. Otherwise the error does not affect the current overlay. |
-| Esc dismisses Settings during a pending write | Close immediately without cancelling the turn. The submitted write may complete; its receipt cannot close or set an error on a replacement overlay. |
-| Canonical `config.toml` is absent and `Config::load` selected the legacy file | `ui_settings::persist_seeded` seeds the canonical document from that same legacy path, then patches `[ui]`. Provider, model, database settings, and comments survive; the legacy file is untouched. |
-| `config.toml` and a legacy seed are both absent | `ui_settings::persist_seeded` creates the file with the new `[ui]` table. Atomic via tmp+rename. |
-| Selected target or seed exists but is unparseable | `toml_edit` returns a parser error. `persist_seeded` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact. |
-| Permission denied on write | The writer returns the I/O error. `persist_seeded` propagates. The error is shown in the modal body; Settings stays open with its working copy intact. |
-| User starts the binary with a malformed config | `Config::load` returns the error at startup. The dialog never opens; the process exits with the diagnostic. |
-| `Esc` in settings while a turn is streaming | The settings branch handles Esc and returns. The cancel-turn branch is never reached. The stream continues. (REQ-13.) |
-| `Esc` in settings while an approval modal arrives in the same focus tick | Modal preempts settings (REQ-12): `request_decision` at `state.rs:675` clears `state.settings` first. The user never sees the settings dialog after the modal closes. |
-| `(+)` Add provider in `integrations` | `handle_add_provider()` returns `true`; the driver closes the dialog and shows the notice `Add provider not implemented yet`. No persistence call. (REQ-14.) |
-| User runs binary with `--line-mode` | `dispatch_command` is unreachable from the line prompt. `refresh_completion` is unreachable. The dialog never opens. (REQ-15.) |
-| Catalog is refreshed while modal/dialog is open | `refresh_completion` early-returns preserving the palette's generation (line 430). The catalog stays consistent with whatever already renders. |
+| Failure                                                                       | Behavior                                                                                                                                                                                                                                                                |
+|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Persistence closure returns `Err(_)`                                          | The ordered receipt clears its matching pending state. If its overlay ID is still current, Settings stays open with its working copy intact and `last_error` in the modal body; the user can retry or dismiss. Otherwise the error does not affect the current overlay. |
+| Esc dismisses Settings during a pending write                                 | Close immediately without cancelling the turn. The submitted write may complete; its receipt cannot close or set an error on a replacement overlay.                                                                                                                     |
+| Canonical `config.toml` is absent and `Config::load` selected the legacy file | `ui_settings::persist_seeded` seeds the canonical document from that same legacy path, then patches `[ui]`. Provider, model, database settings, and comments survive; the legacy file is untouched.                                                                     |
+| `config.toml` and a legacy seed are both absent                               | `ui_settings::persist_seeded` creates the file with the new `[ui]` table. Atomic via tmp+rename.                                                                                                                                                                        |
+| Selected target or seed exists but is unparseable                             | `toml_edit` returns a parser error. `persist_seeded` propagates it via `anyhow::Context`. The error is shown in the modal body; Settings stays open with its working copy intact.                                                                                       |
+| Permission denied on write                                                    | The writer returns the I/O error. `persist_seeded` propagates. The error is shown in the modal body; Settings stays open with its working copy intact.                                                                                                                  |
+| User starts the binary with a malformed config                                | `Config::load` returns the error at startup. The dialog never opens; the process exits with the diagnostic.                                                                                                                                                             |
+| `Esc` in settings while a turn is streaming                                   | The settings branch handles Esc and returns. The cancel-turn branch is never reached. The stream continues. (REQ-13.)                                                                                                                                                   |
+| `Esc` in settings while an approval modal arrives in the same focus tick      | Modal preempts settings (REQ-12): `request_decision` at `state.rs:675` clears `state.settings` first. The user never sees the settings dialog after the modal closes.                                                                                                   |
+| `(+)` Add provider in `integrations`                                          | `handle_add_provider()` returns `true`; the driver closes the dialog and shows the notice `Add provider not implemented yet`. No persistence call. (REQ-14.)                                                                                                            |
+| User runs binary with `--line-mode`                                           | `dispatch_command` is unreachable from the line prompt. `refresh_completion` is unreachable. The dialog never opens. (REQ-15.)                                                                                                                                          |
+| Catalog is refreshed while modal/dialog is open                               | `refresh_completion` early-returns preserving the palette's generation (line 430). The catalog stays consistent with whatever already renders.                                                                                                                          |
 
 ## Testing Strategy
 
@@ -924,17 +918,17 @@ a `SettingsDialog::new(&UiConfig::default())` and exercises
 navigation, working-copy updates, and `apply` with a mocked `save`
 closure.
 
-| Test | Asserts | REQ |
-|---|---|---|
-| `settings_tab_cycling` | `next_tab()` cycles through `[theme, indicators, sound, toasts, integrations]` with wrap-around; `prev_tab()` is the inverse. | REQ-03 |
-| `settings_item_cycling` | `select_next()` wraps at the last item of the active tab; `select_prev()` wraps at index 0. | REQ-04 |
-| `settings_toggle_advances_cycle` | On `toasts.level` row, `toggle_selected()` advances the cycle `info → warn → error → info`. | REQ-05 |
-| `settings_apply_invokes_closure` | `apply(&mut save)` calls the closure exactly once with the projected `UiConfig`. | REQ-07 |
-| `touching_a_cycle_overrides_only_that_value` | Editing theme or toast values leaves loaded integration entries unchanged in `projected_ui_config()`. | REQ-07, REQ-14 |
-| `settings_apply_failure_keeps_dialog` | When `save` returns `Err(anyhow!("disk full"))`, the dialog retains its working copy and `last_error == Some("disk full".into())`. | REQ-07 |
-| `settings_esc_does_not_invoke_closure` | `discard()` does not call `save`. | REQ-06, REQ-08 |
-| `settings_add_provider_shows_notice` | When the active tab is `integrations` and `selected` is on `(+)` row, `handle_add_provider()` returns `true`. The `apply` path is not invoked. | REQ-14 |
-| `settings_snapshot_items_match_locked_d6` | For each of the five tabs, `snapshot().items` matches the spec's locked content (13 theme rows, 3 indicators rows, 1 sound row, 2 toast rows, 1 integration row). | REQ-05 |
+| Test                                         | Asserts                                                                                                                                                           | REQ            |
+|----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
+| `settings_tab_cycling`                       | `next_tab()` cycles through `[theme, indicators, sound, toasts, integrations]` with wrap-around; `prev_tab()` is the inverse.                                     | REQ-03         |
+| `settings_item_cycling`                      | `select_next()` wraps at the last item of the active tab; `select_prev()` wraps at index 0.                                                                       | REQ-04         |
+| `settings_toggle_advances_cycle`             | On `toasts.level` row, `toggle_selected()` advances the cycle `info → warn → error → info`.                                                                       | REQ-05         |
+| `settings_apply_invokes_closure`             | `apply(&mut save)` calls the closure exactly once with the projected `UiConfig`.                                                                                  | REQ-07         |
+| `touching_a_cycle_overrides_only_that_value` | Editing theme or toast values leaves loaded integration entries unchanged in `projected_ui_config()`.                                                             | REQ-07, REQ-14 |
+| `settings_apply_failure_keeps_dialog`        | When `save` returns `Err(anyhow!("disk full"))`, the dialog retains its working copy and `last_error == Some("disk full".into())`.                                | REQ-07         |
+| `settings_esc_does_not_invoke_closure`       | `discard()` does not call `save`.                                                                                                                                 | REQ-06, REQ-08 |
+| `settings_add_provider_shows_notice`         | When the active tab is `integrations` and `selected` is on `(+)` row, `handle_add_provider()` returns `true`. The `apply` path is not invoked.                    | REQ-14         |
+| `settings_snapshot_items_match_locked_d6`    | For each of the five tabs, `snapshot().items` matches the spec's locked content (13 theme rows, 3 indicators rows, 1 sound row, 2 toast rows, 1 integration row). | REQ-05         |
 
 The mock closure is a `FnMut(&UiConfig) -> anyhow::Result<()>` that
 pushes into `Vec<UiConfig>` behind an `Arc<Mutex<...>>` so tests can
@@ -946,58 +940,57 @@ Exercises the host short-circuit in `Ui::dispatch_command` and the
 catalog entry in `Ui::refresh_completion`. **No plugin registration
 needed** — the test asserts host behavior directly.
 
-| Test | Asserts | REQ |
-|---|---|---|
-| `dispatch_opens_settings_dialog` | `Ui::dispatch_command("/settings")` returns `true`, populates `state.settings`, and the editor is cleared via the `try_send` guard (no prompt). | REQ-01 |
-| `dispatch_opens_settings_with_trailing_whitespace` | `dispatch_command("/settings   ")` returns `true` and opens the dialog. | REQ-01 |
-| `dispatch_does_not_invoke_prompt_sender` | Opening `/settings` does **not** call the prompt sender. The test wires a sender and asserts the receiver is empty after Enter. | REQ-01 |
-| `dispatch_settings_consumes_when_modal_open` | With `state.modal = Some(_)`, `dispatch_command("/settings")` returns `true` (consumed) but the modal is not displaced and `state.settings` stays `None`. | REQ-01, REQ-12 |
-| `refresh_completion_lists_settings` | `Ui::refresh_completion(model_configured=false)` emits a catalog including `/settings` with description `TUI settings`. | REQ-16 |
-| `refresh_completion_lists_settings_even_when_model_unconfigured` | Same as above with `model_configured=true` — `/settings` is unconditional. | REQ-16 |
+| Test                                                             | Asserts                                                                                                                                                   | REQ            |
+|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
+| `dispatch_opens_settings_dialog`                                 | `Ui::dispatch_command("/settings")` returns `true`, populates `state.settings`, and the editor is cleared via the `try_send` guard (no prompt).           | REQ-01         |
+| `dispatch_opens_settings_with_trailing_whitespace`               | `dispatch_command("/settings   ")` returns `true` and opens the dialog.                                                                                   | REQ-01         |
+| `dispatch_does_not_invoke_prompt_sender`                         | Opening `/settings` does **not** call the prompt sender. The test wires a sender and asserts the receiver is empty after Enter.                           | REQ-01         |
+| `dispatch_settings_consumes_when_modal_open`                     | With `state.modal = Some(_)`, `dispatch_command("/settings")` returns `true` (consumed) but the modal is not displaced and `state.settings` stays `None`. | REQ-01, REQ-12 |
+| `refresh_completion_lists_settings`                              | `Ui::refresh_completion(model_configured=false)` emits a catalog including `/settings` with description `TUI settings`.                                   | REQ-16         |
+| `refresh_completion_lists_settings_even_when_model_unconfigured` | Same as above with `model_configured=true` — `/settings` is unconditional.                                                                                | REQ-16         |
 
 ### Integration test in `crates/huginn/presentation/tests/preemption.rs` (NEW)
 
 Exercises the precedence chain via `Ui`. Only the **mock** plugin
 dialog path is used; no plugin-api changes are involved.
 
-| Test | Asserts | REQ |
-|---|---|---|
-| `settings_modal_preempts_by_approval` | With `state.settings` set, calling `request_decision` clears `settings` and renders the approval modal. Once the approval resolves, `settings` stays `None`. | REQ-12 |
-| `settings_preempts_plugin_dialog` | With `state.settings` set, dispatching a plugin command that returns `CommandResult::Dialog(...)` clears `settings` and renders the plugin dialog. | REQ-12 |
-| `settings_esc_does_not_cancel_turn` | With `state.turn_cancel = Some(token)` and `state.settings` set, calling the input handler with `KeyCode::Esc` does not call `token.cancel()`. The dialog closes. | REQ-13 |
+| Test                                  | Asserts                                                                                                                                                           | REQ    |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
+| `settings_modal_preempts_by_approval` | With `state.settings` set, calling `request_decision` clears `settings` and renders the approval modal. Once the approval resolves, `settings` stays `None`.      | REQ-12 |
+| `settings_preempts_plugin_dialog`     | With `state.settings` set, dispatching a plugin command that returns `CommandResult::Dialog(...)` clears `settings` and renders the plugin dialog.                | REQ-12 |
+| `settings_esc_does_not_cancel_turn`   | With `state.turn_cancel = Some(token)` and `state.settings` set, calling the input handler with `KeyCode::Esc` does not call `token.cancel()`. The dialog closes. | REQ-13 |
 
 ### Integration test in `crates/huginn/presentation/tests/pty.rs` (ADD)
 
 Add a PTY fixture mode that renders the **host-opened** settings
 dialog (no plugin registration). The new fixture uses the
-host `/settings` and mirrors the `extension` mode already present
-(line 552 in `pty.rs`).
+host `/settings` and mirrors the `extension` mode already present (line 552 in `pty.rs`).
 
-| Test | Asserts | REQ |
-|---|---|---|
-| `settings_pty_render_header_and_marker` | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `> one-dark ✓`. | REQ-02, REQ-05 |
-| `settings_pty_esc_does_not_cancel_running_turn` | Open `/settings`, press Esc, the status bar shows `Settings discarded`, and an active turn keeps streaming. | REQ-13 |
+| Test                                            | Asserts                                                                                                                                                                     | REQ            |
+|-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
+| `settings_pty_render_header_and_marker`         | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `> one-dark ✓`. | REQ-02, REQ-05 |
+| `settings_pty_esc_does_not_cancel_running_turn` | Open `/settings`, press Esc, the status bar shows `Settings discarded`, and an active turn keeps streaming.                                                                 | REQ-13         |
 
 ### Unit tests in `apps/huginn/tests/ui_settings.rs` (NEW)
 
 The TOML round-trip family, exercising `ui_settings::persist_seeded` against
 the `UiConfig` from `huginn_presentation::settings`.
 
-| Test | Asserts | REQ |
-|---|---|---|
-| `config_load_no_ui_section` | `Config::load` on a `config.toml` with no `[ui]` returns `UiConfig::default()`. | REQ-10 |
-| `config_load_partial_ui_section` | `[ui.theme]\nname = "dracula"` loads with `theme.name == "dracula"` and all other sub-tables default-filled. | REQ-10 |
-| `config_load_with_inner_unknown_key` | `[ui]\nunknown_user_key = true\n[ui.theme]\nname = "dracula"` loads without error. | REQ-11 |
-| `persist_round_trip_byte_stable_outside_ui` | A fixture with `[provider]`, `[model]`, and a hand-written comment, after `persist_seeded(&UiConfig { theme: { name: "catppuccin" }, .. }, path, None)`, has `[provider]`, `[model]`, and the comment byte-identical to the input. | REQ-09 |
-| `legacy_load_then_apply_preserves_configuration` | With only the legacy file present, `Config::load(None)` selects it. Apply through the seeded callback creates the canonical file, preserves provider, model, database settings, comments, and integration entries, saves the edited UI value, and leaves the legacy file byte-identical. The next load selects the canonical file. | REQ-07, REQ-09, REQ-10 |
-| `persist_creates_missing_file` | Calling `persist_seeded` on a path that does not exist with no seed creates the file with the new `[ui]` table. | REQ-09 |
-| `persist_preserves_unknown_inner_keys` | The round-trip with `unknown_user_key = true` under `[ui]` keeps the key in the output. | REQ-11 |
-| `persist_atomic_write_failure_preserves_original` | (Optional, deferred) Stub test ensuring the original file survives a forced write failure. | — |
+| Test                                              | Asserts                                                                                                                                                                                                                                                                                                                            | REQ                    |
+|---------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------|
+| `config_load_no_ui_section`                       | `Config::load` on a `config.toml` with no `[ui]` returns `UiConfig::default()`.                                                                                                                                                                                                                                                    | REQ-10                 |
+| `config_load_partial_ui_section`                  | `[ui.theme]\nname = "dracula"` loads with `theme.name == "dracula"` and all other sub-tables default-filled.                                                                                                                                                                                                                       | REQ-10                 |
+| `config_load_with_inner_unknown_key`              | `[ui]\nunknown_user_key = true\n[ui.theme]\nname = "dracula"` loads without error.                                                                                                                                                                                                                                                 | REQ-11                 |
+| `persist_round_trip_byte_stable_outside_ui`       | A fixture with `[provider]`, `[model]`, and a hand-written comment, after `persist_seeded(&UiConfig { theme: { name: "catppuccin" }, .. }, path, None)`, has `[provider]`, `[model]`, and the comment byte-identical to the input.                                                                                                 | REQ-09                 |
+| `legacy_load_then_apply_preserves_configuration`  | With only the legacy file present, `Config::load(None)` selects it. Apply through the seeded callback creates the canonical file, preserves provider, model, database settings, comments, and integration entries, saves the edited UI value, and leaves the legacy file byte-identical. The next load selects the canonical file. | REQ-07, REQ-09, REQ-10 |
+| `persist_creates_missing_file`                    | Calling `persist_seeded` on a path that does not exist with no seed creates the file with the new `[ui]` table.                                                                                                                                                                                                                    | REQ-09                 |
+| `persist_preserves_unknown_inner_keys`            | The round-trip with `unknown_user_key = true` under `[ui]` keeps the key in the output.                                                                                                                                                                                                                                            | REQ-11                 |
+| `persist_atomic_write_failure_preserves_original` | (Optional, deferred) Stub test ensuring the original file survives a forced write failure.                                                                                                                                                                                                                                         | —                      |
 
 ### Catalog test in `crates/huginn/presentation/tests/completion.rs` (ADD)
 
-| Test | Asserts | REQ |
-|---|---|---|
+| Test                               | Asserts                                                                                                                                                                                             | REQ    |
+|------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
 | `settings_host_completion_catalog` | After constructing `Ui` with the host `/settings` catalog entry, the `/`-completion catalog lists `/settings` (description `TUI settings`) alongside `/quit`. **No plugin registration is needed.** | REQ-16 |
 
 > **Removed test.** The previously-listed
@@ -1110,8 +1103,7 @@ subsystem must explicitly modify the `ui-settings` capability.
 - **No live sound/toast/indicator toggling.** `[ui.sound]`,
   `[ui.toasts]`, `[ui.indicators]` are persisted but not consumed by
   their subsystems in v1. Subscribers are follow-up changes.
-- **`run` mode stays in line prompt.** The modal is TUI-only
-  (chat frontend). `--line-mode` users cannot open settings because
+- **`run` mode stays in line prompt.** The modal is TUI-only (chat frontend). `--line-mode` users cannot open settings because
   `dispatch_command` is not reached from the line prompt and
   `refresh_completion` is not called.
 - **`(+) Add provider…` is a TODO.** Selecting it shows a notice. It

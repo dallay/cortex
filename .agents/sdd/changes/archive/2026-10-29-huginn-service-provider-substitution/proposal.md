@@ -11,11 +11,13 @@ Permitir sustituir servicios sin reiniciar Huginn, con garantías para consumido
 ## Alcance
 
 ### Incluye
+
 - Sustitución transaccional en `huginn-core`, con publicación y rollback.
 - Ownership, dependientes y leases cooperativas con drenaje acotado.
 - Rebind del loop productivo; tests para model y session store.
 
 ### Excluye
+
 - Catálogo, carga dinámica, hot reload, ABI estable, WASM o component model.
 - Migración de plugins o datos; cambios TUI/UX o de aprobación.
 
@@ -32,21 +34,21 @@ Extender el kernel: mantener ownership/generaciones, activar alternativas median
 
 ## Áreas afectadas
 
-| Área | Impacto |
-|---|---|
-| `crates/huginn/core/src/{kernel.rs,lib.rs}` | Slots y sustitución. |
-| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` y adapter leased. |
-| `crates/huginn/runtime/src/composition.rs` | Builders públicos `build`, `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards`; helper compartido privado. |
-| `apps/huginn/src/main.rs` | Composición y readiness. |
-| Tests Huginn; arquitectura/ADR-0003 | Rebind y límites. |
+| Área                                           | Impacto                                                                                                                                             |
+|------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `crates/huginn/core/src/{kernel.rs,lib.rs}`    | Slots y sustitución.                                                                                                                                |
+| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` y adapter leased.                                                                                          |
+| `crates/huginn/runtime/src/composition.rs`     | Builders públicos `build`, `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards`; helper compartido privado. |
+| `apps/huginn/src/main.rs`                      | Composición y readiness.                                                                                                                            |
+| Tests Huginn; arquitectura/ADR-0003            | Rebind y límites.                                                                                                                                   |
 
 ## Riesgos
 
-| Riesgo | Mitigación |
-|---|---|
-| `Arc` retenidos no se revocan | Garantía solo con leases. |
-| Drenaje/rollback incorrectos | Definir orden y probar dos servicios. |
-| Conflicto con PR #508 | No tocar catálogo ni carga de componentes. |
+| Riesgo                        | Mitigación                                 |
+|-------------------------------|--------------------------------------------|
+| `Arc` retenidos no se revocan | Garantía solo con leases.                  |
+| Drenaje/rollback incorrectos  | Definir orden y probar dos servicios.      |
+| Conflicto con PR #508         | No tocar catálogo ni carga de componentes. |
 
 ## Plan de rollback
 

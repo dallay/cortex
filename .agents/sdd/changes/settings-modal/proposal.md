@@ -37,22 +37,21 @@ selection on Esc — without touching any runtime subsystem.
 3. **Five fixed tabs with these concrete items** (the visible
    content the user signs off on per the locked D6):
 
-   - **theme** — 13 named themes rendered as single-select rows.
-     Persisted as a single `name` field. Items: `one-dark` (✓
-     default), `one-light`, `catppuccin`, `catppuccin-latte`,
-     `tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`,
-     `gruvbox-light`, `terminal`, `solarized`, `solarized-light`.
-   - **indicators** — 3 boolean toggles: `scrollbar=on ✓`,
-     `breadcrumbs=on ✓`, `line_numbers=on ✓`. Each renders a `✓`
-     when on, blank when off.
-   - **sound** — 1 boolean toggle: `bell=off ✓`.
-   - **toasts** — 1 cycle picker (level) + 1 cycle picker
-     (duration_secs). Level cycles `info ✓ → warn → error`.
-     Duration cycles `3s ✓ → 5s → 10s → off`.
-   - **integrations** — empty list + a single `(+) Add provider…`
-     row that is a documented TODO: selecting it emits a notice
-     `Add provider not implemented yet` and does not mutate
-     state.
+    - **theme** — 13 named themes rendered as single-select rows.
+      Persisted as a single `name` field. Items: `one-dark` (✓
+      default), `one-light`, `catppuccin`, `catppuccin-latte`,
+      `tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`,
+      `gruvbox-light`, `terminal`, `solarized`, `solarized-light`.
+    - **indicators** — 3 boolean toggles: `scrollbar=on ✓`,
+      `breadcrumbs=on ✓`, `line_numbers=on ✓`. Each renders a `✓`
+      when on, blank when off.
+    - **sound** — 1 boolean toggle: `bell=off ✓`.
+    - **toasts** — 1 cycle picker (level) + 1 cycle picker (duration_secs). Level cycles `info ✓ → warn → error`.
+      Duration cycles `3s ✓ → 5s → 10s → off`.
+    - **integrations** — empty list + a single `(+) Add provider…`
+      row that is a documented TODO: selecting it emits a notice
+      `Add provider not implemented yet` and does not mutate
+      state.
 
    Navigation: `←/→` (or `Tab`/`BackTab`) switches tabs; `↑/↓`
    moves the per-tab selection; `Enter` applies; `Esc` discards.
@@ -69,8 +68,7 @@ selection on Esc — without touching any runtime subsystem.
 5. **View snapshot and rendering.** `View::snapshot`
    (`terminal.rs:367`) gains a `settings: Option<(title, tabs,
    active_tab, items, selected)>` field. `draw_frame`
-   (`terminal.rs:482`) renders a header line with the tab list
-   (active tab inverted), a body with the items rendered as
+   (`terminal.rs:482`) renders a header line with the tab list (active tab inverted), a body with the items rendered as
    `▶ name ✓` rows (active line reverse-video), and a one-line
    footer `←/→ tabs · ↑/↓ select · Enter apply · Esc discard`.
 
@@ -103,19 +101,19 @@ selection on Esc — without touching any runtime subsystem.
    in the locked D1.
 
 9. **Tests.**
-   - `crates/huginn/presentation/tests/settings.rs` — non-interactive
-     test of the dialog state machine: tab cycling,
-     selection cycling, `apply` builds a `UiConfig` matching the
-     working copy, `esc` does not mutate.
-   - `crates/huginn/presentation/tests/pty.rs` — a render test for
-     the header + items + marker + footer.
-   - `apps/huginn/tests/config_compat.rs` (or a new
-     `tests/ui_settings.rs`) — round-trip test:
-     `Config::load` → patch `[ui]` via toml_edit → unrelated
-     keys untouched, comments preserved.
-   - `crates/huginn/presentation/tests/plugins.rs` — `/settings`
-     appears in the `/`-completion catalog alongside `/help`,
-     `/compact`, `/summarize`, `/quit`.
+    - `crates/huginn/presentation/tests/settings.rs` — non-interactive
+      test of the dialog state machine: tab cycling,
+      selection cycling, `apply` builds a `UiConfig` matching the
+      working copy, `esc` does not mutate.
+    - `crates/huginn/presentation/tests/pty.rs` — a render test for
+      the header + items + marker + footer.
+    - `apps/huginn/tests/config_compat.rs` (or a new
+      `tests/ui_settings.rs`) — round-trip test:
+      `Config::load` → patch `[ui]` via toml_edit → unrelated
+      keys untouched, comments preserved.
+    - `crates/huginn/presentation/tests/plugins.rs` — `/settings`
+      appears in the `/`-completion catalog alongside `/help`,
+      `/compact`, `/summarize`, `/quit`.
 
 ### Out of scope (v1)
 
@@ -123,15 +121,13 @@ These are explicitly **not** part of this change. Locking them out
 in writing so future readers don't misread the dialog as a real
 control surface:
 
-- **Live theme application.** Persisting `[ui.theme]` does
-  **not** switch the rendered palette. The theme picker only
+- **Live theme application.** Persisting `[ui.theme]` does **not** switch the rendered palette. The theme picker only
   writes the file.
 - **No live sound/toast/indicator toggling.** `[ui.sound]`,
   `[ui.toasts]`, `[ui.indicators]` are persisted but not
   consumed by their subsystems in v1. Subscribers are
   follow-up changes.
-- **`run` mode stays in line prompt.** The modal is TUI-only
-  (chat frontend). `--line-mode` users cannot open settings.
+- **`run` mode stays in line prompt.** The modal is TUI-only (chat frontend). `--line-mode` users cannot open settings.
 - **`(+) Add provider…` is a TODO.** Selecting it shows a
   notice. It does not create an entry, prompt for a name, or
   read provider state.
@@ -198,17 +194,17 @@ unknown inner keys), that is the right phase to surface it.
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| `Config` has `#[serde(default, deny_unknown_fields)]` at the struct level but `ui` deserialization must be tolerant of inner unknowns written by users. Today a user-typed `unknown = true` under `[ui]` would break `Config::load`. | Medium | The `ui` field uses `#[serde(default)]` and the inner sub-structs also derive `Default`. We make `ui` deliberately **not** `deny_unknown_fields` even though `Config` is — confirmed in `config.rs:7`. The test suite adds a fixture with `[ui] unknown_key = true` to confirm it still loads. |
-| `toml_edit` is not currently a workspace dependency; `apps/huginn` only depends on `toml` (`Cargo.toml:29`). Adding it touches the root `Cargo.toml` and `apps/huginn/Cargo.toml`. | Low | Reserved decision for the `design` phase: either add `toml_edit.workspace = true` at root or pull it transitively. The proposal just commits to the approach. |
-| `/settings` falls through and is sent to the model as a prompt because `dispatch_command` returns `false`. | Medium | Host short-circuit is in `Ui::dispatch_command` (not just `Driver::input`), matching the `/quit` precedent at `state.rs:400–416`. Test asserts that `/settings` clears the editor without calling `try_send`. |
-| Approval modal arrives while settings is open and the wrong one wins (or both stay open). | Medium | `request_decision` already disposes of `plugin_dialog` and `workflow` at `state.rs:675–676`; the change extends that to also dispose of `settings`, in the same locked-D8 precedence: `Modal > Settings > PluginDialog > completion`. |
-| `Esc` in settings is misrouted to `cancel turn` (`terminal.rs:905–909`). | Medium | The settings branch is its own arm in `Driver::input`, returns `true` after clearing `settings`; it never reaches the cancel-turn path. Test asserts `Esc` in settings does **not** cancel the running turn. |
-| `apply` overwrites hand-written keys outside `[ui]`. | Medium | The persistence helper uses `toml_edit::DocumentMut::patch`, replacing only the `[ui]` table. Round-trip test loads a fixture with `[provider]`, `[model]`, custom comments, applies `[ui.theme]`, asserts the bytes outside `[ui]` are identical. |
-| `(+) Add provider…` selected in `integrations` crashes or hangs. | Low | Spec says the only effect is a notice `Add provider not implemented yet`. No I/O, no channel send, no file read. |
-| `SettingsDialog::apply` writes through the closure while holding the `Ui` mutex; if the closure does I/O it could stall. | Low | The closure is invoked under the UI mutex the same way `choose_plugin_dialog` is. A slow disk would still block the UI; we accept the same trade-off as today and document it. A future change could move it to a background task. |
-| Five tabs of mostly-TODO items look like an unimplemented UI. | High | This is the intended v1 contract (a shell for follow-ups). Out-of-scope list above is the canonical reference; the spec names the contract explicitly so future readers do not misinterpret persistence as live behavior. |
+| Risk                                                                                                                                                                                                                                 | Likelihood | Mitigation                                                                                                                                                                                                                                                                                     |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Config` has `#[serde(default, deny_unknown_fields)]` at the struct level but `ui` deserialization must be tolerant of inner unknowns written by users. Today a user-typed `unknown = true` under `[ui]` would break `Config::load`. | Medium     | The `ui` field uses `#[serde(default)]` and the inner sub-structs also derive `Default`. We make `ui` deliberately **not** `deny_unknown_fields` even though `Config` is — confirmed in `config.rs:7`. The test suite adds a fixture with `[ui] unknown_key = true` to confirm it still loads. |
+| `toml_edit` is not currently a workspace dependency; `apps/huginn` only depends on `toml` (`Cargo.toml:29`). Adding it touches the root `Cargo.toml` and `apps/huginn/Cargo.toml`.                                                   | Low        | Reserved decision for the `design` phase: either add `toml_edit.workspace = true` at root or pull it transitively. The proposal just commits to the approach.                                                                                                                                  |
+| `/settings` falls through and is sent to the model as a prompt because `dispatch_command` returns `false`.                                                                                                                           | Medium     | Host short-circuit is in `Ui::dispatch_command` (not just `Driver::input`), matching the `/quit` precedent at `state.rs:400–416`. Test asserts that `/settings` clears the editor without calling `try_send`.                                                                                  |
+| Approval modal arrives while settings is open and the wrong one wins (or both stay open).                                                                                                                                            | Medium     | `request_decision` already disposes of `plugin_dialog` and `workflow` at `state.rs:675–676`; the change extends that to also dispose of `settings`, in the same locked-D8 precedence: `Modal > Settings > PluginDialog > completion`.                                                          |
+| `Esc` in settings is misrouted to `cancel turn` (`terminal.rs:905–909`).                                                                                                                                                             | Medium     | The settings branch is its own arm in `Driver::input`, returns `true` after clearing `settings`; it never reaches the cancel-turn path. Test asserts `Esc` in settings does **not** cancel the running turn.                                                                                   |
+| `apply` overwrites hand-written keys outside `[ui]`.                                                                                                                                                                                 | Medium     | The persistence helper uses `toml_edit::DocumentMut::patch`, replacing only the `[ui]` table. Round-trip test loads a fixture with `[provider]`, `[model]`, custom comments, applies `[ui.theme]`, asserts the bytes outside `[ui]` are identical.                                             |
+| `(+) Add provider…` selected in `integrations` crashes or hangs.                                                                                                                                                                     | Low        | Spec says the only effect is a notice `Add provider not implemented yet`. No I/O, no channel send, no file read.                                                                                                                                                                               |
+| `SettingsDialog::apply` writes through the closure while holding the `Ui` mutex; if the closure does I/O it could stall.                                                                                                             | Low        | The closure is invoked under the UI mutex the same way `choose_plugin_dialog` is. A slow disk would still block the UI; we accept the same trade-off as today and document it. A future change could move it to a background task.                                                             |
+| Five tabs of mostly-TODO items look like an unimplemented UI.                                                                                                                                                                        | High       | This is the intended v1 contract (a shell for follow-ups). Out-of-scope list above is the canonical reference; the spec names the contract explicitly so future readers do not misinterpret persistence as live behavior.                                                                      |
 
 ## Success criteria
 

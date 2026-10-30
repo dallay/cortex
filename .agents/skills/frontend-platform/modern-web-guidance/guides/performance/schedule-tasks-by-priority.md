@@ -3,6 +3,7 @@ When building complex web applications, tasks have different levels of urgency. 
 ### Scheduling tasks by priority
 
 Use `scheduler.postTask()` to schedule tasks with one of three priorities:
+
 - `user-blocking`: Tasks that block user interaction (e.g., input handling, critical rendering).
 - `user-visible`: Tasks visible to the user but not blocking (default).
 - `background`: Tasks that are not time-critical (e.g., analytics, prefetching).

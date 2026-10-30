@@ -313,7 +313,7 @@ tests/
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                          | Problem                            | Solution                  |
-| ------------------------------------- | ---------------------------------- | ------------------------- |
+|---------------------------------------|------------------------------------|---------------------------|
 | Long test files                       | Hard to maintain, slow to navigate | Split by feature, use POM |
 | Tests depend on execution order       | Flaky, hard to debug               | Keep tests independent    |
 | Testing multiple features in one test | Hard to debug failures             | One feature per test      |

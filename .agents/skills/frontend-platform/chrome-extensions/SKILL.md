@@ -157,6 +157,7 @@ Use `chrome.alarms` instead of `setTimeout`/`setInterval`. See `references/exten
 When using Google sign-in, the OAuth client_id is tied to a specific extension ID. The ID changes between unpacked development and the Chrome Web Store.
 
 To stabilize the ID during development, add a `"key"` field to manifest.json:
+
 1. Pack the extension once (chrome://extensions → Pack)
 2. Extract the public key from the .crx
 3. Add `"key": "MIIBIjANBgkqh..."` to manifest.json
@@ -197,6 +198,7 @@ await chrome.action.setBadgeText({ text: '5' });
 #### 12. `activeTab` only works on direct user gestures — not from side panels
 
 `activeTab` grants temporary access to the current tab ONLY when triggered by:
+
 - Clicking the extension action icon
 - A context menu item
 - A keyboard shortcut from the `commands` API
@@ -247,6 +249,7 @@ chrome.action.setBadgeText({ text: 'REC' }); // TypeError
 ```
 
 **The only APIs available in offscreen documents are:**
+
 - `chrome.runtime.sendMessage` / `chrome.runtime.onMessage`
 - `chrome.runtime.getURL`
 - Standard Web APIs (DOM, fetch, MediaRecorder, Canvas, Web Audio, etc.)
@@ -370,6 +373,7 @@ const all     = await chrome.windows.getAll({ populate: true });
 ### Always Manifest V3
 
 Never generate Manifest V2 code.
+
 - `background.service_worker` not `background.scripts`
 - `chrome.action` not `chrome.browserAction`
 - `chrome.scripting.executeScript` not `chrome.tabs.executeScript`
@@ -395,6 +399,7 @@ a single doc instead of scrambling at publish time.
 #### When to create CHROMEWEBSTORE.md
 
 Create it the moment any of these happen:
+
 - The user says they want to publish an extension
 - The user asks to "prepare for the store" or "get ready to publish"
 - You're building a new extension that will clearly end up on the store
@@ -406,6 +411,7 @@ before generating the file.
 #### When to update CHROMEWEBSTORE.md
 
 Update it whenever:
+
 - **User-facing changes**: Bump the "Last Updated" date, update the feature list in
   descriptions, and add an entry to Version History
 - **manifest.json changes**: If permissions, host_permissions, or content_scripts changed,
@@ -421,6 +427,7 @@ Update it whenever:
 #### How to fill it out
 
 For each section, pull information from the actual project files:
+
 1. Read `manifest.json` to extract name, version, description, permissions, host_permissions
 2. Scan the codebase for data collection (storage, fetch calls, analytics)
 3. Check for icon files and their dimensions
@@ -443,6 +450,7 @@ for guidance on generating a privacy policy.
 
 Before submission, run through `references/webstore/review-checklist.md`. The most common
 first-submission failures:
+
 - Every permission and host_permission must have a specific justification (not "needed to work")
 - Privacy policy URL must be live and match the data use disclosure form
 - At least 1 screenshot at 1280×800 or 640×400
@@ -460,53 +468,30 @@ searching again").
 
 For detailed API patterns and publishing guidance, read the relevant file BEFORE writing code or content:
 
-| Topic | Reference |
-|-------|-----------|
-| Side panels | `references/extensions/side-panel.md` |
-| Content scripts & DOM | `references/extensions/content-scripts.md` |
-| Popups | `references/extensions/popup-ui.md` |
-| Service worker lifetime | `references/extensions/service-worker.md` |
-| Code execution & CSP | `references/extensions/csp-sandbox.md` |
-| API calls | `references/extensions/api-calling.md` |
-| Declarative Net Request | `references/extensions/declarative-net-request.md` |
-| Chrome Prompt API | `references/extensions/prompt-api.md` |
-| DevTools panels | `references/extensions/devtools.md` |
-| Authentication | `references/extensions/auth-identity.md` |
-| Context menus | `references/extensions/context-menus.md` |
-| Omnibox | `references/extensions/omnibox.md` |
-| Storage | `references/extensions/storage.md` |
-| Tab & window management | `references/extensions/tab-management.md` |
-| Tab/desktop capture | `references/extensions/media-capture.md` |
-| Message passing | `references/extensions/message-passing.md` |
-| Icons | `references/extensions/icons.md` |
-| CHROMEWEBSTORE.md template | `references/webstore/chromewebstore-template.md` |
-| Privacy policy guidance | `references/webstore/privacy-policy.md` |
-| Pre-publish review checklist | `references/webstore/review-checklist.md` |
-| Store listing tips & rejections | `references/webstore/store-listing.md` |
+| Topic                           | Reference                                          |
+|---------------------------------|----------------------------------------------------|
+| Side panels                     | `references/extensions/side-panel.md`              |
+| Content scripts & DOM           | `references/extensions/content-scripts.md`         |
+| Popups                          | `references/extensions/popup-ui.md`                |
+| Service worker lifetime         | `references/extensions/service-worker.md`          |
+| Code execution & CSP            | `references/extensions/csp-sandbox.md`             |
+| API calls                       | `references/extensions/api-calling.md`             |
+| Declarative Net Request         | `references/extensions/declarative-net-request.md` |
+| Chrome Prompt API               | `references/extensions/prompt-api.md`              |
+| DevTools panels                 | `references/extensions/devtools.md`                |
+| Authentication                  | `references/extensions/auth-identity.md`           |
+| Context menus                   | `references/extensions/context-menus.md`           |
+| Omnibox                         | `references/extensions/omnibox.md`                 |
+| Storage                         | `references/extensions/storage.md`                 |
+| Tab & window management         | `references/extensions/tab-management.md`          |
+| Tab/desktop capture             | `references/extensions/media-capture.md`           |
+| Message passing                 | `references/extensions/message-passing.md`         |
+| Icons                           | `references/extensions/icons.md`                   |
+| CHROMEWEBSTORE.md template      | `references/webstore/chromewebstore-template.md`   |
+| Privacy policy guidance         | `references/webstore/privacy-policy.md`            |
+| Pre-publish review checklist    | `references/webstore/review-checklist.md`          |
+| Store listing tips & rejections | `references/webstore/store-listing.md`             |
 
 ## Output Checklist
 
-Verify EVERY item before delivering:
-
-- [ ] `manifest_version: 3` — no V2 APIs anywhere
-- [ ] All icon files referenced in manifest exist as real files with correct dimensions — or icons are omitted
-- [ ] Side panel has an explicit open trigger (not just a manifest declaration)
-- [ ] Code execution uses sandbox/blob/srcdoc — no `eval()` in extension pages
-- [ ] `tabs` permission declared if `tab.url` or `tab.title` is accessed
-- [ ] All code uses `async`/`await` — no `.then()` chains
-- [ ] Content scripts batch DOM updates with `requestAnimationFrame`
-- [ ] Service worker stores NO state in global variables — uses `chrome.storage`
-- [ ] No inline scripts or event handlers in HTML
-- [ ] Context menu actions show user confirmation
-- [ ] `"action": {}` (or more) present in manifest if using `chrome.action.*` APIs
-- [ ] If reading/scripting tabs from a side panel: use `tabs` + `host_permissions` (NOT `activeTab`)
-- [ ] DevTools panel paths in `chrome.devtools.panels.create()` are relative to extension root
-- [ ] Offscreen documents use ONLY `chrome.runtime` messaging — no `chrome.downloads`, `chrome.action`, etc.
-- [ ] All image refs in `chrome.notifications`, `chrome.action.setIcon`, etc. point to real files (or use data URLs)
-- [ ] Tab/desktop capture uses state locking to prevent double-start errors
-- [ ] `chrome.desktopCapture.chooseDesktopMedia` passes `targetTab` with `tabs` permission
-- [ ] `chrome.windows` calls use `getAll`/`getLastFocused`/`getCurrent` — NOT `.query()` (it doesn't exist)
-- [ ] `sidePanel.setPanelBehavior` uses `openPanelOnActionClick` — NOT `openPanelOnActionIconClick`
-- [ ] Error handling on all async operations
-- [ ] `host_permissions` scoped to specific domains (not `<all_urls>` unless needed)
-- [ ] `return true` in `onMessage` listeners with async responses
+Verify every item in the [output checklist](./references/output-checklist.md) before delivering.

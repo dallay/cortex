@@ -5,6 +5,7 @@ The HTML-in-Canvas API allows rendering real DOM directly inside a canvas elemen
 ## How to implement
 
 ### WebGL and WebGPU
+
 When using WebGL or WebGPU, follow these steps:
 
 1. Check if HTML-in-Canvas is supported in the browser:
@@ -169,6 +170,7 @@ if ('requestPaint' in HTMLCanvasElement.prototype) {
 2. Create a custom geometry and material for the HTML content.
 
 3. Pass the DOM element into THREE.HTMLTexture:
+
 ```js
   material.map = new THREE.HTMLTexture(element);
   mesh = new THREE.Mesh( geometry, material );

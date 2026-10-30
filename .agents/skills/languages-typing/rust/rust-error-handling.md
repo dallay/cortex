@@ -1,47 +1,47 @@
 # Skill: rust-error-handling
 
-Patrones de error handling para Rust, adaptados para el monorepo Cortex.
+Rust error-handling patterns adapted for the Cortex monorepo.
 
-> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtrada y adaptada.
+> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtered and adapted.
 
-## Propósito
+## Purpose
 
-Estandarizar el manejo de errores en todo el codebase, respetando el patrón
-de domain-driven errors establecido con CortexError.
+Standardize error handling across the codebase while following the
+domain-driven error pattern established with `CortexError`.
 
-## Arquitectura de Errores en Cortex
+## Error Architecture in Cortex
 
   ```
   shared-kernel (sin deps)
-    └── CortexError (error wrapper con Box<dyn Error>)
+    └── CortexError (error wrapper with Box<dyn Error>)
         ├── ProviderError
         ├── NotFoundError
         ├── RateLimitedError
         └── AllProvidersExhaustedError
 
   rook-core (domain)
-    └── Define ports con CortexResult<T>
+    └── Defines ports with CortexResult<T>
 
   transport-axum (infrastructure)
-    └── Adapta errores de providers a CortexError
+    └── Adapts provider errors to CortexError
 
   apps/rook (application)
-    └── Maneja errores, logging, respuesta HTTP
+    └── Handles errors, logging, and HTTP responses
   ```
 
-Este patrón es MEJOR que anyhow para código de biblioteca/domain porque:
+This pattern is BETTER than anyhow for library/domain code because:
 
-1. Errores tipados que callers pueden matchear
+1. Typed errors that callers can match
 2. Domain-specific error types
-3. Integración con el sistema de fallback
+3. Integration with the fallback system
 
-## Reglas Incluidas
+## Included Rules
 
 ### 1. err-thiserror-lib
 
-> Usa thiserror para errores tipados en crates de biblioteca.
+> Use thiserror for typed errors in library crates.
 
-Ya lo usamos bien en shared-kernel. Mantener este padrão.
+We already use it correctly in shared-kernel. Keep following this pattern.
 
  ```rust
 #[derive(Debug, thiserror::Error)]
@@ -52,11 +52,11 @@ Ya lo usamos bien en shared-kernel. Mantener este padrão.
   }
   ```
 
-**NO usar anyhow en crates de dominio.** Anyhow es para aplicación/binaries.
+**Do NOT use anyhow in domain crates.** Anyhow is for applications/binaries.
 
 ### 2. err-from-impl
 
-> Implementa From<E> para conversiones automáticas.
+> Implement `From<E>` for automatic conversions.
 
   ```rust
   impl From<std::io::Error> for CortexError {
@@ -66,13 +66,13 @@ Ya lo usamos bien en shared-kernel. Mantener este padrão.
   }
   ```
 
-Esto permite `?` operator automáticamente.
+This enables the `?` operator automatically.
 
-### 3. err-no-unwrap-prod ⚠️ CRÍTICO
+### 3. err-no-unwrap-prod ⚠️ CRITICAL
 
-> Evita unwrap() en código de producción.
+> Avoid `.unwrap()` in production code.
 
-Encontrado en provider implementations y adapters.
+Found in provider implementations and adapters.
 
   ```rust
   // BAD
@@ -88,15 +88,15 @@ Encontrado en provider implementations y adapters.
   }
   ```
 
-Excepciones válidas:
+Valid exceptions:
 
 - Tests
-- After explicit check (e.g., `if let Some(x) = v { x.unwrap() }`)
-- Const/static con compile-time guarantee
+- After an explicit check (e.g., `if let Some(x) = v { x.unwrap() }`)
+- Const/static values with a compile-time guarantee
 
 ### 4. err-question-mark
 
-> Usa `?` operator para clean propagation.
+> Use the `?` operator for clean error propagation.
 
  ```rust
  // BAD
@@ -115,12 +115,12 @@ Excepciones válidas:
  }
  ```
 
-Combinar con context para mejores mensajes:
+Combine with context for better messages:
 
  ```rust
  use anyhow::{Context, Result};
 
- // Solo en application code, no en domain
+ // Application code only, not domain code
  fn load_user(path: &Path) -> Result<User> {
      let content = std::fs::read_to_string(path)
          .with_context(|| format!("failed to read user from {}", path.display()))?;
@@ -131,22 +131,22 @@ Combinar con context para mejores mensajes:
 
 ### 5. err-result-over-panic
 
-> Prefiere Result<T, E> sobre panic para errores recuperables.
+> Prefer `Result<T, E>` over panics for recoverable errors.
 
 Decision guide:
 
-| Situación                          | Use                                |
- |------------------------------------|------------------------------------|
-| Provider no disponible             | `Result`                           |
+| Situation                          | Use                                  |
+ |------------------------------------|--------------------------------------|
+| Provider unavailable               | `Result`                             |
 | Rate limited                       | `Result` (CortexError::rate_limited) |
-| Index out of bounds (user data)    | `Result`                           |
-| Index out of bounds (internal bug) | `panic!` con expect                |
-| Invariant violated (program bug)   | `panic!`                           |
-| Unreachable code                   | `unreachable!()`                   |
+| Index out of bounds (user data)    | `Result`                             |
+| Index out of bounds (internal bug) | `panic!` with expect                 |
+| Invariant violated (program bug)   | `panic!`                             |
+| Unreachable code                   | `unreachable!()`                     |
 
 ### 6. err-source-chain
 
-> Preserva error chains con #[source].
+> Preserve error chains with `#[source]`.
 
  ```rust
  #[derive(Debug, thiserror::Error)]
@@ -166,28 +166,28 @@ Decision guide:
  }
  ```
 
-**Importante:** El uso de #[source] preserva el error chain completo,
-útil para debugging y logging.
+**Important:** Using `#[source]` preserves the complete error chain,
+which is useful for debugging and logging.
 
-## Anti-Patterns a Evitar
+## Anti-Patterns to Avoid
 
  ```rust
- // ❌ NO USAR anyhow en domain layer
- // (apps/rook puede usar anyhow, domain NO)
+ // ❌ DO NOT USE anyhow in the domain layer
+ // (apps/rook may use anyhow; the domain layer may NOT)
 
- // ❌ NO crear errores como Strings
+ // ❌ DO NOT create errors as strings
  fn bad() -> Result<(), String> {
      Err("something went wrong".to_string())
  }
 
- // ❌ NO usar Box<dyn Error> sin tipo
+ // ❌ DO NOT use untyped Box<dyn Error>
  fn bad() -> Result<(), Box<dyn std::error::Error>> {
-     // Caller no puede matchear específicamente
+     // The caller cannot match a specific error
  }
 
-// ✅ USAR CortexError con tipos domain-specific
+// ✅ USE CortexError with domain-specific types
   fn good() -> CortexResult<Response> {
-     // Callers pueden hacer:
+     // Callers can match on the error:
      // match err {
      //     e if e.is_rate_limited() => handle_rate_limit(e),
      //     _ => handle_generic_error(e),
@@ -195,13 +195,13 @@ Decision guide:
  }
  ```
 
-## Archivos Relacionados
+## Related Files
 
-- `crates/domain/shared-kernel/src/error.rs` — CortexError y variants
-- `crates/domain/rook-core/src/` — Ports con CortexResult
+- `crates/domain/shared-kernel/src/error.rs` — CortexError and variants
+- `crates/domain/rook-core/src/` — Ports using CortexResult
 - `crates/infrastructure/providers-*/src/` — Provider implementations
 
 ## See Also
 
-- rust-api-design — Para diseño de APIs
-- rust-anti-patterns — Anti-patterns a evitar
+- rust-api-design — For API design
+- rust-anti-patterns — Anti-patterns to avoid

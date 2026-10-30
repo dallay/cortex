@@ -115,7 +115,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Lint markdown
-        run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+        run: pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"
+      - name: Validate skills
+        run: node scripts/validate-skills.mjs
+      - name: Test skills validator
+        run: node --test scripts/validate-skills.test.mjs
+      - name: Test pinned-tag resolver
+        run: bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh
 
   doctor:
     name: Test (Doctor)

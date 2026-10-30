@@ -7,6 +7,7 @@ The `Temporal` API provides dedicated types for these partial concepts: `Tempora
 ## Implementation Examples
 
 ### Monthly Expirations (Credit Cards, Billing Cycles)
+
 Use `Temporal.PlainYearMonth` to represent a year and a month.
 
 ```javascript
@@ -31,6 +32,7 @@ if (duration.sign < 0) {
 ```
 
 ### Annual Recurring Dates (Birthdays, Renewals)
+
 Use `Temporal.PlainMonthDay` to represent a month and a day without a year.
 
 ```javascript
@@ -48,6 +50,7 @@ const birthdayThisYear = birthday.toPlainDate({ year: today.year });
 ```
 
 ### Wall-Clock Time (Alarms, Store Hours)
+
 Use `Temporal.PlainTime` to represent a time of day without a date.
 
 ```javascript

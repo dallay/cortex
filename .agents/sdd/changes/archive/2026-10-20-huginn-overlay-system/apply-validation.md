@@ -272,8 +272,8 @@ incluidos comandos UI. La nueva PTY falló antes del fix. Ahora los comandos UI
 se ejecutan durante streaming; enviar un prompt conversacional sigue requiriendo
 que no haya turno activo. No se cambian autoridad, payloads ni Approval.
 
-Se sustituyeron wildcards de consumo por variantes explícitas en Output(Event),
-las dos validaciones de OverlayKind y el wrapper PublicationFault(ProviderAction).
+Se sustituyeron wildcards de consumo por variantes explícitas en Output (Event),
+las dos validaciones de OverlayKind y el wrapper PublicationFault (ProviderAction).
 La proyección UiState y el router ya tenían matches exhaustivos. Ejemplos y
 fixtures conservan semántica; no se toca Rook ni los runners.
 
@@ -285,8 +285,7 @@ fixtures conservan semántica; no se toca Rook ni los runners.
 - `UNTESTED`: prueba manual del usuario y Verify/QA independientes; se delegan
   después con sus propios informes. No se ejecuta Archive.
 - Dos pruebas opt-in permanecen ignoradas por sus runners: interoperabilidad con
-  binario pre-rename (`CORTEX_AGENT_LEGACY_BIN`) y almacén de secretos del SO
-  (Keychain/Secret Service). No se contabilizan aprobadas ni se escriben entradas
+  binario pre-rename (`CORTEX_AGENT_LEGACY_BIN`) y almacén de secretos del SO (Keychain/Secret Service). No se contabilizan aprobadas ni se escriben entradas
   de credenciales externas para activarlas.
 - La receta audit incorpora `|| true`; su exit no acredita por sí solo seguridad.
   Se conserva esta limitación del gate real; ejecución directa sin máscara exit 0.

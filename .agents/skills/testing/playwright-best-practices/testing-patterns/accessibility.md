@@ -352,7 +352,7 @@ export default defineConfig({
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                  | Problem                      | Solution                                   |
-| ----------------------------- | ---------------------------- | ------------------------------------------ |
+|-------------------------------|------------------------------|--------------------------------------------|
 | Testing a11y only on homepage | Misses issues on other pages | Test all critical user flows               |
 | Ignoring all violations       | No value from tests          | Address or explicitly exclude known issues |
 | Only automated testing        | Misses many a11y issues      | Combine with manual testing                |

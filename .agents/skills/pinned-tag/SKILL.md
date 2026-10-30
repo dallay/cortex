@@ -1,84 +1,104 @@
 ---
 name: pinned-tag
 description: Use when fixing "Unpinned tag for a non-immutable Action" warnings or when pinning dependencies to specific git versions.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+allowed-tools: Read Edit Write Glob Grep Bash
 license: Apache-2.0
 metadata:
   author: yuniel
-  version: "1.1"
+  version: "2.0"
 ---
 
-# Pinned Tag Management Skill
+# Pinned Tag Management
 
-Skill for managing "pinned tags" and commit SHAs, primarily for GitHub Actions security.
+Resolve a mutable tag to the immutable commit SHA that GitHub Actions should
+execute, and apply the result to a workflow without breaking the build.
 
-## Overview
+## When to use
 
-This skill helps locate and validate tags in remote repositories using `git ls-remote --tags`,
-resolving the specific commit SHA for a tag (including annotated tags), and providing patches to pin
-dependencies. It specifically targets **GitHub Actions** security best practices by encouraging the
-use of full commit SHAs instead of mutable tags.
+- A security scan reports "Unpinned tag for a non-immutable Action".
+- You are adding a third-party Action and must pin it from the start.
+- You need to refresh an existing pin after an upstream release.
 
-## When to Use
+## Non-negotiables
 
-- You need to fix "Unpinned tag for a non-immutable Action in workflow" security alerts.
-- You want to ensure reproducibility by pinning a GitHub Action or dependency to a specific commit
-  SHA.
-- You need to verify if a tag exists before updating a manifest or CI workflow.
+- **Pin Actions to the full 40-character commit SHA**, never to a branch or a
+  tag. Tags and branches are mutable references controlled by the upstream
+  repository.
+- **Keep the tag in a trailing comment** (`# v4.2.2`) so reviewers can tell what
+  the pin means. Dependabot and Renovate use that comment to update the pin.
+- **Resolve the exact ref.** Do not filter with a loose pattern and pick the
+  last line: `sort` orders the whole line, whose first field is a random SHA, so
+  it does not deterministically prefer the peeled `^{}` ref.
+- **Never invent a SHA.** If the ref cannot be resolved, stop and report it.
 
-## Critical Patterns
+## Resolve a SHA
 
-- **Immutability for Actions**: For GitHub Actions, always prefer the full 40-character commit SHA
-  over a tag name. Tags are mutable and can be moved, leading to security risks or broken builds.
-- **Annotated vs Lightweight Tags**:
-    - **Annotated Tags**: `git ls-remote` returns two entries. The one ending in `^{}` is the "
-      peeled" reference pointing directly to the commit object. **ALWAYS use this one**.
-    - **Lightweight Tags**: Return only one entry, which is the commit SHA.
-    - **Selection Logic**: When resolving, always sort the results and take the last one to ensure
-      `^{}` is preferred over the tag object SHA.
-- **Verification**: Always verify the resolved SHA belongs to the expected tag before applying
-  changes.
+Use the script in this skill instead of ad-hoc pipelines:
 
-## Commands
+```bash
+# Read-only resolution (one network round trip)
+.agents/skills/pinned-tag/scripts/resolve-action-sha.sh \
+  https://github.com/actions/checkout.git v4
+# -> 11d5960a326750d5838078e36cf38b85af677262
 
-1. **Resolve Tag to SHA (GitHub Actions Friendly)**:
-   ```bash
-   # Example: Resolve 'v2' tag for actions/checkout
-   # This command ensures that for annotated tags, the commit SHA (peeled tag ^{}) is selected
-   # by sorting and taking the last entry (where ^{} alphabetically follows the base tag).
-   git ls-remote --tags https://github.com/actions/checkout.git | rg "refs/tags/v2(\^\{\})?$" | sort | tail -n 1 | awk '{print $1}'
-   ```
+# Verify that the SHA is a commit, not a tag object, tree or blob
+.agents/skills/pinned-tag/scripts/resolve-action-sha.sh \
+  https://github.com/actions/checkout.git v4 --verify
+```
 
-2. **List all remote tags**:
-   ```bash
-   git ls-remote --tags https://github.com/owner/repo.git
-   ```
+The script matches `refs/tags/<tag>` and `refs/tags/<tag>^{}` exactly, prefers
+the peeled ref for annotated tags, rejects values that are not 40 hex
+characters, and with `--verify` shallow-fetches the tag into a temporary
+repository to confirm the object type and that the fetched commit equals the
+resolved SHA.
 
-3. **Check for specific tag existence**:
-   ```bash
-   git ls-remote --tags https://github.com/owner/repo.git | rg "refs/tags/v1.2.3"
-   ```
+If you must do it by hand, keep the matching exact and the precedence explicit:
 
-## Workflow for GitHub Actions
+```bash
+refs=$(git ls-remote --tags https://github.com/owner/repo.git \
+  "refs/tags/v1" "refs/tags/v1^{}")
+sha=$(printf '%s\n' "$refs" | awk -v ref='refs/tags/v1^{}' '$2 == ref { print $1 }')
+[ -n "$sha" ] || sha=$(printf '%s\n' "$refs" | awk -v ref='refs/tags/v1' '$2 == ref { print $1 }')
+printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{40}$'
+```
 
-1. **Identify the Action**: Find the `uses: owner/repo@tag` line in the workflow YAML.
-2. **Resolve SHA**: Run `git ls-remote --tags https://github.com/owner/repo.git` filtered by the
-   tag.
-3. **Apply Patch**: Replace the tag with the SHA and add the tag name as a comment for readability.
-    - *Before*: `uses: actions/checkout@v3`
-    - *After*: `uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3`
+Avoid `rg` in these snippets: it is not guaranteed to be installed, while
+`awk` and `grep` are available in the supported environments.
+
+## Apply the pin
+
+1. Find `uses: owner/repo@ref` in the workflow.
+2. Resolve the SHA for that exact tag.
+3. Replace the ref and append the tag as a comment:
+
+```yaml
+# Before
+- uses: actions/checkout@v4
+# After
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+```
+
+4. Re-run the workflow. A pin that no longer matches the expected inputs is a
+   real failure; do not "fix" it by returning to the tag.
 
 ## Limitations
 
-- Cannot access private repositories without proper credentials (SSH/Token).
-- Some actions may not use standard semver tags; always double-check the remote refs.
+- Private repositories need credentials (`GIT_ASKPASS`, an SSH agent or a
+  token-backed URL). Do not paste tokens into workflow files or commands.
+- Local tags can differ from the remote. Always resolve against the remote URL
+  that the workflow actually uses.
+- `git ls-remote` shows refs, not object types; use `--verify` when the tag was
+  not created by a release process you trust.
+- A tag can be moved after pinning. Pinning limits the blast radius; it does not
+  make upstream code trustworthy.
 
-## Commit Policy
+## Commit policy
 
-- This skill does NOT create commits automatically without explicit permission.
-- Suggested commit message: `sec(ci): pin <action-name> to commit SHA for immutability`
+- Do not commit without explicit permission.
+- Suggested message: `sec(ci): pin <action-name> to commit SHA for immutability`
 
 ## Resources
 
-- [GitHub Security Best Practices for Actions](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
-- Tools: `git`, `rg`, `awk`
+- [GitHub: security hardening for GitHub Actions](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+- [GitHub: managing custom actions](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/manage-custom-actions)
+- `scripts/resolve-action-sha.sh` and `scripts/resolve-action-sha.test.sh`
