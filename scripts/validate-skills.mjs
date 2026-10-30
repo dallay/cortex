@@ -48,7 +48,7 @@ const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
 const MAX_SKILL_BYTES = 65_536;
 const MAX_SKILL_OUTPUT_BYTES = 16_384;
-const LINK_PATTERN = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
+const LINK_PATTERN = /!?\[[^\]]*\]\(\s*(<[^>]+>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\s*\)/g;
 
 // Mirrors the JSON envelope built by crates/huginn/runtime/src/skills.rs.
 const LOAD_SKILL_ENVELOPE = {
@@ -63,13 +63,25 @@ const LOAD_SKILL_ENVELOPE = {
 
 function findSkillFiles(root) {
   const found = [];
+  const symlinks = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name.startsWith('.')) continue;
     const path = join(root, entry.name);
-    if (entry.isDirectory()) found.push(...findSkillFiles(path));
-    else if (entry.name === 'SKILL.md') found.push(path);
+    if (entry.isSymbolicLink()) {
+      symlinks.push(path);
+      continue;
+    }
+    if (entry.name.startsWith('.')) {
+      continue;
+    }
+    if (entry.isDirectory()) {
+      const nested = findSkillFiles(path);
+      found.push(...nested.files);
+      symlinks.push(...nested.symlinks);
+    } else if (entry.name === 'SKILL.md') {
+      found.push(path);
+    }
   }
-  return found.sort();
+  return {files: found.sort(), symlinks};
 }
 
 function parseFrontmatter(text) {
@@ -129,10 +141,23 @@ export function analyzeSkills(root = SKILLS_ROOT, repoRoot = REPO_ROOT) {
   const skills = [];
   const names = new Map();
   const repositoryRoot = resolve(repoRoot);
+  const {files, symlinks} = findSkillFiles(root);
+  for (const path of symlinks) {
+    errors.push(`${relative(repositoryRoot,
+        path)}: symlinked entries are not supported under the skills root`);
+  }
 
-  for (const file of findSkillFiles(root)) {
-    const text = readFileSync(file, 'utf8');
+  const decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
+  for (const file of files) {
     const where = relative(repositoryRoot, file);
+    const bytes = readFileSync(file);
+    let text;
+    try {
+      text = decoder.decode(bytes);
+    } catch {
+      errors.push(`${where}: SKILL.md is not valid UTF-8`);
+      continue;
+    }
     const directory = basename(dirname(file));
     const depth = relative(root, dirname(file)).split(sep).filter(Boolean).length;
     const discoverable = depth === 1;
@@ -142,7 +167,7 @@ export function analyzeSkills(root = SKILLS_ROOT, repoRoot = REPO_ROOT) {
     const record = { where, name: directory, discoverable, loadable, outputBytes };
     skills.push(record);
 
-    if (Buffer.byteLength(text) > MAX_SKILL_BYTES) {
+    if (bytes.byteLength > MAX_SKILL_BYTES) {
       errors.push(`${where}: SKILL.md exceeds ${MAX_SKILL_BYTES} bytes`);
     }
     if (!discoverable) {

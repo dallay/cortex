@@ -1,7 +1,13 @@
 'use strict';
 
 import assert from 'node:assert/strict';
-import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, it} from 'node:test';
@@ -91,6 +97,34 @@ describe('validateSkills', () => {
     assert.match(errors, /broken local link "references\/missing\.md"/);
     assert.doesNotMatch(errors, /present\.md/);
   });
+
+  it('validates a local link destination with one balanced parenthesized group',
+      () => {
+        const root = fixture({
+          'one/SKILL.md': skill('one',
+              {body: '[setup](references/setup(v2).md)\n'}),
+          'one/references/setup(v2).md': '# Setup v2\n',
+        });
+        assert.deepEqual(validateSkills(root), []);
+      });
+
+  it('rejects malformed UTF-8 and continues validating later skills', () => {
+    const root = fixture(
+        {'bad/SKILL.md': skill('bad'), 'good/SKILL.md': skill('good')});
+    writeFileSync(join(root, 'bad/SKILL.md'),
+        Buffer.from([0x2d, 0x2d, 0x2d, 0xff]));
+    const result = analyzeSkills(root);
+    assert.match(result.errors.join('\n'), /bad\/SKILL\.md:.*UTF-8/);
+    assert.equal(result.skills.some(({name}) => name === 'good'), true);
+  });
+
+  it('reports symlinked skill directories instead of silently skipping them',
+      () => {
+        const root = fixture({'target/SKILL.md': skill('target')});
+        symlinkSync(join(root, 'target'), join(root, 'linked'));
+        assert.match(validateSkills(root).join('\n'),
+            /linked: symlinked entries are not supported/);
+      });
 
   it('resolves links written from the repository root', () => {
     const root = fixture({
