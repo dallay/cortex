@@ -1362,6 +1362,58 @@ mod tests {
     }
 
     #[test]
+    fn spending_budget_roundtrips_through_stamp_trusted_headers() {
+        let budget = rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("budget-key"),
+            amount_micros_usd: 5_000_000,
+            request_limit_micros_usd: 500_000,
+            window: rook_core::SpendingBudgetWindow::Daily,
+        };
+        let subject = Subject {
+            kind: AuthKind::ApiKey,
+            id: "budget-key".to_string(),
+            label: "Budgeted".to_string(),
+            scopes: vec!["chat:read".to_string()],
+            allowed_models: Vec::new(),
+            allowed_providers: Vec::new(),
+            spending_budget: Some(budget.clone()),
+            tier: ApiKeyTier::Free,
+        };
+        let mut headers = HeaderMap::new();
+
+        stamp_trusted_headers(
+            &mut headers,
+            "550e8400-e29b-41d4-a716-446655440000",
+            AuthTier::ClientApi,
+            &subject,
+        );
+
+        assert_eq!(
+            extract_spending_budget_from_headers(&headers).expect("a valid trusted context"),
+            Some(budget)
+        );
+    }
+
+    #[test]
+    fn spending_budget_is_not_extracted_for_other_auth_kinds() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-authz-auth-kind", HeaderValue::from_static("jwt"));
+        headers.insert(
+            "x-authz-spending-budget",
+            HeaderValue::from_static(
+                r#"{"api_key_id":"budget-key","amount_micros_usd":5000000,"request_limit_micros_usd":500000,"window":"daily"}"#,
+            ),
+        );
+
+        assert!(
+            extract_spending_budget_from_headers(&headers)
+                .expect("a valid trusted context")
+                .is_none(),
+            "only API key subjects may carry a spending budget"
+        );
+    }
+
+    #[test]
     fn removes_client_supplied_trusted_headers_before_stamping_subject() {
         let mut headers = HeaderMap::new();
         headers.insert("x-authz-auth-id", HeaderValue::from_static("spoofed"));
@@ -1586,9 +1638,11 @@ mod tests {
 
     #[test]
     fn client_api_policy_rejects_when_bucket_is_empty() {
+        // Use a dedicated credential: the rate limiter buckets by API key id,
+        // so sharing a credential with another test exhausts this bucket early.
         let config = AuthzConfig::new(
             vec![ApiKeyCredential::new(
-                "key_1",
+                "key_rate_limit_empty",
                 "Production Key",
                 "sk-live",
                 ["chat:read"],

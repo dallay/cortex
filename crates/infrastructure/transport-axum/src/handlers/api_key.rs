@@ -413,6 +413,61 @@ mod tests {
     }
 
     #[test]
+    fn api_key_record_response_dto_preserves_the_spending_budget() {
+        let mut record = make_test_record();
+        record.spending_budget = Some(rook_core::SpendingBudget {
+            api_key_id: ApiKeyId::new("key-123"),
+            amount_micros_usd: 4_000_000,
+            request_limit_micros_usd: 500_000,
+            window: rook_core::SpendingBudgetWindow::Monthly,
+        });
+
+        let dto = ApiKeyRecordResponseDto::from(&record);
+
+        assert_eq!(
+            dto.spending_budget
+                .expect("the budget reaches the response"),
+            rook_core::SpendingBudgetRequest {
+                amount_micros_usd: 4_000_000,
+                request_limit_micros_usd: 500_000,
+                window: rook_core::SpendingBudgetWindow::Monthly,
+            }
+        );
+    }
+
+    #[test]
+    fn update_request_distinguishes_an_absent_budget_from_an_explicit_clear() {
+        let absent: UpdateApiKeyRequestDto = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(absent.spending_budget.is_none());
+
+        let cleared: UpdateApiKeyRequestDto =
+            serde_json::from_value(serde_json::json!({ "spendingBudget": null })).unwrap();
+        assert!(
+            cleared
+                .spending_budget
+                .is_some_and(|budget| budget.is_none()),
+            "an explicit null must clear the budget instead of keeping it"
+        );
+
+        let updated: UpdateApiKeyRequestDto = serde_json::from_value(serde_json::json!({
+            "spendingBudget": {
+                "amountMicrosUsd": 4_000_000,
+                "requestLimitMicrosUsd": 500_000,
+                "window": "monthly"
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            updated.spending_budget.expect("the budget is present"),
+            Some(rook_core::SpendingBudgetRequest {
+                amount_micros_usd: 4_000_000,
+                request_limit_micros_usd: 500_000,
+                window: rook_core::SpendingBudgetWindow::Monthly,
+            })
+        );
+    }
+
+    #[test]
     fn test_pagination_params_default() {
         assert_eq!(default_limit(), 20);
     }

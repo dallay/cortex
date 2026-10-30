@@ -117,6 +117,104 @@ async fn test_get_api_key_not_found() {
     assert_eq!(err.status, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn test_spending_budget_round_trip_through_the_handlers() {
+    let (usecases, _) = setup_common();
+
+    let create_req = CreateApiKeyRequestDto {
+        label: "Budgeted Key".to_string(),
+        scopes: vec!["chat:read".to_string()],
+        tier: "free".to_string(),
+        expires_at: None,
+        allowed_models: vec![],
+        allowed_providers: vec![],
+        spending_budget: Some(rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 25_000_000,
+            request_limit_micros_usd: 2_000_000,
+            window: rook_core::SpendingBudgetWindow::Monthly,
+        }),
+    };
+
+    let (status, Json(created_resp)) = create_api_key(State(usecases.clone()), Json(create_req))
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::CREATED);
+    let key_id = created_resp.key.id;
+    assert_eq!(
+        created_resp
+            .key
+            .spending_budget
+            .expect("the budget is returned"),
+        rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 25_000_000,
+            request_limit_micros_usd: 2_000_000,
+            window: rook_core::SpendingBudgetWindow::Monthly,
+        }
+    );
+
+    let Json(get_resp) = get_api_key(State(usecases.clone()), Path(key_id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(
+        get_resp.spending_budget.expect("the budget is persisted"),
+        rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 25_000_000,
+            request_limit_micros_usd: 2_000_000,
+            window: rook_core::SpendingBudgetWindow::Monthly,
+        }
+    );
+
+    // An update that omits the budget keeps the stored budget.
+    let Json(updated_resp) = update_api_key(
+        State(usecases.clone()),
+        Path(key_id.clone()),
+        Json(UpdateApiKeyRequestDto {
+            label: Some("Renamed Key".to_string()),
+            scopes: None,
+            tier: None,
+            is_active: None,
+            expires_at: None,
+            allowed_models: None,
+            allowed_providers: None,
+            spending_budget: None,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        updated_resp
+            .spending_budget
+            .expect("an omitted budget keeps the stored budget"),
+        rook_core::SpendingBudgetRequest {
+            amount_micros_usd: 25_000_000,
+            request_limit_micros_usd: 2_000_000,
+            window: rook_core::SpendingBudgetWindow::Monthly,
+        }
+    );
+
+    // An explicit null clears the budget.
+    let Json(cleared_resp) = update_api_key(
+        State(usecases.clone()),
+        Path(key_id.clone()),
+        Json(UpdateApiKeyRequestDto {
+            label: None,
+            scopes: None,
+            tier: None,
+            is_active: None,
+            expires_at: None,
+            allowed_models: None,
+            allowed_providers: None,
+            spending_budget: Some(None),
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        cleared_resp.spending_budget.is_none(),
+        "an explicit null clears the budget"
+    );
+}
+
 fn setup_common() -> (Arc<rook_usecases::RookUsecases>, Arc<FakeApiKeyRepository>) {
     #[derive(Default)]
     struct DummyUserRepo;
