@@ -10,8 +10,8 @@ Outlined below are the most important guidelines for building successful address
 
 Make the most of the elements and attributes built for creating forms:
 
--   `<form>`, `<input>`, `<label>`, and `<button>`
--   `type`, `autocomplete`, and `inputmode`
+- `<form>`, `<input>`, `<label>`, and `<button>`
+- `type`, `autocomplete`, and `inputmode`
 
 These enable built-in browser functionality, improve accessibility, and add meaning to markup.
 

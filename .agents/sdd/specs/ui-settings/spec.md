@@ -109,9 +109,9 @@ The system SHALL render the following concrete items per tab. Each item's workin
   `bell`.
 
 - **toasts** — 2 cycle pickers:
-  - `level` cycles in order: `info` (✓ default) → `warn` → `error` → `info`.
-  - `duration_secs` cycles in order: `3` (✓ default) → `5` → `10` → `off` → `3`.
-  The rendered row shows the current cycle value, e.g. `level: info` and `duration: 3s`. `→` on a cycle picker row advances the cycle; `←` moves backward (or, implementation choice, also advances — the **observable contract** is that `↵` on a cycle row commits the currently displayed value).
+    - `level` cycles in order: `info` (✓ default) → `warn` → `error` → `info`.
+    - `duration_secs` cycles in order: `3` (✓ default) → `5` → `10` → `off` → `3`.
+      The rendered row shows the current cycle value, e.g. `level: info` and `duration: 3s`. `→` on a cycle picker row advances the cycle; `←` moves backward (or, implementation choice, also advances — the **observable contract** is that `↵` on a cycle row commits the currently displayed value).
 
 - **integrations** — an empty list, followed by the single row `(+) Add provider…`. No other integrations rows are rendered in v1.
 

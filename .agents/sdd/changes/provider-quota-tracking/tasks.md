@@ -2,14 +2,14 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | 750–950 |
-| 400-line budget risk | High |
-| Chained PRs recommended | No (entrega solicitada en una PR ordinaria) |
-| Suggested split | Una PR: coste → contrato backend → dashboard → verificación |
-| Delivery strategy | single-pr |
-| Chain strategy | single-pr |
+| Field                   | Value                                                       |
+|-------------------------|-------------------------------------------------------------|
+| Estimated changed lines | 750–950                                                     |
+| 400-line budget risk    | High                                                        |
+| Chained PRs recommended | No (entrega solicitada en una PR ordinaria)                 |
+| Suggested split         | Una PR: coste → contrato backend → dashboard → verificación |
+| Delivery strategy       | single-pr                                                   |
+| Chain strategy          | single-pr                                                   |
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -20,9 +20,9 @@ El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack c
 
 ### Suggested Work Units
 
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | Costes completos, resumen backend veraz y dashboard localizado con tendencias y refresco. | PR única | Base=`main`; issue/Linear=#132. Inicio: agregado `cost_usd`; fin: criterios técnicos y verificaciones de las fases completados. |
+| Unit | Goal                                                                                      | Likely PR | Notes                                                                                                                           |
+|------|-------------------------------------------------------------------------------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------|
+| 1    | Costes completos, resumen backend veraz y dashboard localizado con tendencias y refresco. | PR única  | Base=`main`; issue/Linear=#132. Inicio: agregado `cost_usd`; fin: criterios técnicos y verificaciones de las fases completados. |
 
 ## Project Test Mode and Runners
 

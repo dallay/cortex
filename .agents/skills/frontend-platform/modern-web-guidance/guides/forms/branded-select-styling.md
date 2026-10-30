@@ -12,8 +12,8 @@ To implement branded select styling:
 2. **Structure the custom button (Optional):** Define a `<button>` element directly inside the `<select>` to replace the default trigger. Use the `<selectedcontent>` element inside this button to represent the text or content of the currently selected option.
 3. **Style the Picker List:** Use the `::picker(select)` pseudo-element to apply typography, background colors, borders, and shadows to the dropdown list. The browser renders this in the top-layer, making `z-index` conflicts a thing of the past.
 4. **Style Internal Icons:**
-   - Use `select::picker-icon` to style or replace the arrow icon.
-   - Use `option::checkmark` to style the checkmark indicator next to the active option.
+    - Use `select::picker-icon` to style or replace the arrow icon.
+    - Use `option::checkmark` to style the checkmark indicator next to the active option.
 5. **Style Options:** Apply styles to `<option>` elements for hover states, padding, and layout.
 
 ## Example Code: Branded Courier Select
@@ -102,7 +102,6 @@ For browsers that do not yet support `appearance: base-select`, the `<select>` e
 
 - **Non-Text Content Ignored**: Older browsers strip HTML tags (like `<svg>` or `<div>`) inside `<option>` tags and render only the text nodes. Ensure the text content of the `<option>` is readable and meaningful on its own.
 - **HTML Structure Handling**: Standard parsers may ignore the `<button>` and `<selectedcontent>` tags inside `<select>` or treat them as invalid. No heavy JavaScript polyfills are strictly required for progressive enhancement if you view standard text as a readable fallback.
-
 
 ```javascript
 document.addEventListener("DOMContentLoaded", () => {

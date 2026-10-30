@@ -3,6 +3,7 @@ Synchronizing UI state with a scrollable container's snap position traditionally
 ## Implementation
 
 ### 1. Configure Scroll Snap in CSS
+
 The container must have `scroll-snap-type` defined, and have children with `scroll-snap-align` for the browser to track snap targets. In a long article with a table of contents, you can use this to snap section headers to the top of the viewport.
 
 ```css
@@ -19,6 +20,7 @@ h2 {
 ```
 
 ### 2. Listen for Snap Changes
+
 Use the `scrollsnapchange` event on the scroll container to react when the user finishes scrolling and the browser snaps to a new element. In our TOC demo, we use this to highlight the active link in the sidebar.
 
 ```html
@@ -46,7 +48,6 @@ main.addEventListener('scrollsnapchange', (event) => {
 });
 ```
 
-
 ## Accessibility
 
 Caution: While Scroll Snap Events make it possible to visually synchronize other content to the state of the scroller, it does not automatically expose that information programmatically. Relationships between elements, active states, and live content must be reflected in the Accessibility Tree.
@@ -54,7 +55,6 @@ Caution: While Scroll Snap Events make it possible to visually synchronize other
 For a table of contents, ensure the sidebar links use `aria-current="true"` or `aria-current="location"` when they are active.
 
 In addition, be careful when using the `mandatory` value for `scroll-snap-type`, as it can cause content in-between snap-points to become inaccessible when longer than the screen.
-
 
 ## Fallback strategies
 

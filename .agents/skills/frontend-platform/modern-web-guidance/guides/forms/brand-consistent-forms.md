@@ -81,7 +81,9 @@ For browsers that do not support `accent-color`, the form controls fall back to 
 You MUST use the `@supports not` rule to apply custom fallback styles only when `accent-color` is not supported. This ensures you leverage the simplicity of `accent-color` for modern browsers while guaranteeing a consistent branded experience for older ones.
 
 #### 1. HTML Structure
+
 Ensure your labels wrap the text in a `<span>` to allow for sibling selectors in CSS:
+
 ```html
 <label for="subscribe-fallback">
   <input type="checkbox" id="subscribe-fallback" class="visually-hidden" checked>
@@ -90,7 +92,9 @@ Ensure your labels wrap the text in a `<span>` to allow for sibling selectors in
 ```
 
 #### 2. CSS Fallback
+
 Apply custom styles within a `@supports not` block:
+
 ```css
 /* Fallback for older browsers without accent-color */
 @supports not (accent-color: var(--brand-color)) {
@@ -239,6 +243,7 @@ Apply custom styles within a `@supports not` block:
 To make the progress fill move with the thumb on a range slider in Webkit browsers (without `accent-color`), you can use a CSS variable and a small amount of JavaScript.
 
 1. **Update CSS**: Use a CSS variable for the gradient stop:
+
 ```css
 input[type="range"]::-webkit-slider-runnable-track {
   background: linear-gradient(to right, var(--brand-color) var(--progress, 0%), #ccc var(--progress, 0%));
@@ -246,6 +251,7 @@ input[type="range"]::-webkit-slider-runnable-track {
 ```
 
 2. **Add JavaScript**: Update the variable on the `input` event:
+
 ```javascript
 if (!CSS.supports('accent-color')) {
   const slider = document.getElementById('volume');

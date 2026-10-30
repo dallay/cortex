@@ -390,7 +390,7 @@ test("reconnects after connection loss", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                          | Problem                       | Solution                           |
-| ------------------------------------- | ----------------------------- | ---------------------------------- |
+|---------------------------------------|-------------------------------|------------------------------------|
 | Not waiting for WebSocket ready       | Messages sent too early       | Wait for `readyState === 1`        |
 | Testing against real WebSocket server | Flaky, timing-dependent       | Mock WebSocket messages            |
 | Ignoring connection state             | Tests pass but feature broken | Test connected/disconnected states |

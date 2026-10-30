@@ -4,15 +4,15 @@ While `overflow: hidden` is a "blunt instrument" that almost always clips conten
 
 Specify exactly where clipping occurs with `overflow: clip` and `overflow-clip-margin`. You can align the boundary precisely with inner box-model edges or extend the clipping boundary beyond the element's box by a specified offset (a safety margin). This modern approach is highly performant and eliminates the legacy requirement of adding extra wrapper containers with custom padding and negative margins just to let visual effects (like prominent child element shadows) render unclipped.
 
-Replaced elements (`<img>`, `<video>`, `<canvas>`, etc.) default to `overflow: clip` and `overflow-clip-margin: content-box`, giving you control to cleanly contain images that use `object-fit` or `border-radius`. 
+Replaced elements (`<img>`, `<video>`, `<canvas>`, etc.) default to `overflow: clip` and `overflow-clip-margin: content-box`, giving you control to cleanly contain images that use `object-fit` or `border-radius`.
 
 ## How to Implement
 
 1. **Apply `overflow: clip`**: Ensure the target element has `overflow: clip` enabled. Setting `overflow: clip` is **mandatory** on block layout containers for `overflow-clip-margin` to take effect. If `overflow` is set to `hidden`, `auto`, or `scroll`, the `overflow-clip-margin` property is ignored by the browser. `overflow: clip` prevents all scrolling (both user-initiated and programmatic via JavaScript).
 2. **Align to a Box-Edge**: Use keywords to precisely align the clipping boundary to inner box-model edges:
-   - `content-box`: Clips content exactly where the content area begins, leaving the padding area completely clean. Content stops right at the padding's edge. Excellent for nested layout modules.
-   - `padding-box` (Default): Clips content at the inner edge of the border.
-   - `border-box`: Clips content at the outer edge of the border, allowing content to sit under or partially overlap a translucent border.
+    - `content-box`: Clips content exactly where the content area begins, leaving the padding area completely clean. Content stops right at the padding's edge. Excellent for nested layout modules.
+    - `padding-box` (Default): Clips content at the inner edge of the border.
+    - `border-box`: Clips content at the outer edge of the border, allowing content to sit under or partially overlap a translucent border.
 3. **Define a Specified Offset (The Bleed)**: Provide a length value (e.g., `15px` or `5px`) to create a safety zone before cutting pixels. This allows prominent child element shadows to render unclipped past the boundary edge without expanding layout geometry.
 4. **Combine Box-Edge and Offset**: Specify both a box edge and a length offset simultaneously (e.g., `content-box 15px`) to offset from a specific box edge.
 
@@ -112,6 +112,7 @@ Supported by: Firefox 148 (Feb 2026).
 Unsupported in: Chrome, Edge, and Safari.
 
 For target environments lacking native support for `overflow: clip` or `overflow-clip-margin`, progressive enhancement fallback strategies depend directly on the visual intent:
+
 - Fallback to `overflow: hidden` as the base experience to guarantee core boundaries are maintained.
 - Fallback to `overflow: visible` on elements where drop-shadows or external corner badges must not be truncated.
 

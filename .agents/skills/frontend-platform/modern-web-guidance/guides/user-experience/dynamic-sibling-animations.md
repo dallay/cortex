@@ -16,7 +16,7 @@ Use the `sibling-index()` property on the `animation-delay` property so that the
 }
 ```
 
-**MANDATORY:** Respect user preferences by disabling the animation for users who prefer reduced motion. 
+**MANDATORY:** Respect user preferences by disabling the animation for users who prefer reduced motion.
 
 ```css
 @media (prefers-reduced-motion: reduce){
@@ -29,7 +29,7 @@ Use the `sibling-index()` property on the `animation-delay` property so that the
 
 ## Fallback strategies
 
-sibling-count() and sibling-index() has limited availability.
+sibling-count () and sibling-index () has limited availability.
 Supported by: Chrome 138 (Jun 2025), Edge 138 (Jun 2025), and Safari 26.2 (Dec 2025).
 Unsupported in: Firefox.
 

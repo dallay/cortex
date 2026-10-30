@@ -1,37 +1,37 @@
 # Skill: rust-testing
 
-Patrones de testing para Rust, adaptados para el monorepo Cortex.
+Rust testing patterns adapted for the Cortex monorepo.
 
 > Based on [rust-skills](https://github.com/leonardomso/rust-skills) — testing rules.
 
-## Propósito
+## Purpose
 
-Estandarizar cómo escribimos tests en todo el monorepo Cortex.
-Tests bien escritos son la primera línea de defensa contra regresiones.
+Standardize how we write tests across the Cortex monorepo.
+Well-written tests are the first line of defense against regressions.
 
-## Filosofia
+## Philosophy
 
-> Tests son código también. Aplicamos las mismas reglas de calidad.
+> Tests are code too. Apply the same quality standards.
 
-- Tests claros y legibles
-- Un assertion por test cuando sea posible
-- Nombres descriptivos que explican el comportamiento
+- Clear, readable tests
+- One assertion per test when possible
+- Descriptive names that explain the behavior
 - Arrange-Act-Assert pattern
 
-## Reglas de Testing
+## Testing Rules
 
 ### 1. test-descriptive-names
 
-> Nombres de tests deben describir el comportamiento, no el método.
+> Test names should describe behavior, not the method.
 
  ```rust
- // ❌ Incorrecto - describe implementación
+ // ❌ Incorrect - describes implementation
  #[test]
  fn test_handle_request_valid_input() {
      // ...
  }
 
- // ✅ Correcto - describe comportamiento
+ // ✅ Correct - describes behavior
  #[test]
  fn returns_error_when_provider_timeout_exceeds_limit() {
      // ...
@@ -45,10 +45,10 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 2. test-one-assertion
 
-> Prebe un assertion principal por test. Múltiples assertions válidas.
+> Prefer one primary assertion per test. Multiple related assertions are valid.
 
  ```rust
- // ✅ Correcto - un assertion claro
+ // ✅ Correct - one clear assertion
  #[test]
  fn provider_config_validates_timeout_range() {
      let result = ProviderConfig::new(Duration::from_secs(u64::MAX));
@@ -56,7 +56,7 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
      assert!(result.is_err());
  }
 
- // ✅ También válido - assertions relacionados
+ // ✅ Also valid - related assertions
  #[test]
  fn parses_completion_response_with_usage() {
      let response = parse_response(JSON_RESPONSE);
@@ -69,7 +69,7 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 3. test-doc-tests
 
-> Incluye doctests para funcionalidad pública.
+> Include doctests for public functionality.
 
  ```rust
  /// Creates a new provider configuration.
@@ -89,10 +89,10 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 4. test-setup-teardown
 
-> Usa setup y teardown cuando múltiples tests comparten estado.
+> Use setup and teardown when multiple tests share state.
 
  ```rust
- // ✅ Correcto - setup en el test mismo
+ // ✅ Correct - setup in the test itself
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -120,10 +120,10 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 5. test-error-paths
 
-> Siempre testa los paths de error, no solo el happy path.
+> Always test error paths, not only the happy path.
 
  ```rust
- // ✅ Correcto - testa ambos paths
+ // ✅ Correct - test both paths
  #[test]
  fn validate_provider_id_rejects_empty() {
      let result = ProviderId::from_str("");
@@ -139,16 +139,16 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 6. test-mocking
 
-> Usa traits para hacer mock de dependencias externas.
+> Use traits to mock external dependencies.
 
  ```rust
- // ✅ Correcto - trait permite mock
+ // ✅ Correct - trait allows mocking
  #[async_trait]
  pub trait ProviderPort: Send + Sync {
      async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError>;
  }
 
- // Mock implementation para tests
+ // Mock implementation for tests
  #[cfg(test)]
  struct MockProvider {
      response: Result<CompletionResponse, ProviderError>,
@@ -176,7 +176,7 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 7. test-property-based
 
-> Considera property-based testing para funciones con invariantes.
+> Consider property-based testing for functions with invariants.
 
  ```rust
  use proptest::prelude::*;
@@ -195,7 +195,7 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
 
 ### 8. test-benchmarks
 
-> Incluye benchmarks para código crítico.
+> Include benchmarks for critical code.
 
  ```rust
  #![feature(test)]
@@ -215,21 +215,21 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
  }
  ```
 
-## Integration Tests vs Unit Tests
+## Integration Tests vs. Unit Tests
 
 ### Unit Tests
 
-- En archivos `mod tests` o `tests/` al lado del código
-- Testean una sola unit (función, método, struct)
-- Rápidos, sin I/O
-- Mocks de dependencias
+- In `mod tests` or `tests/` files next to the code
+- Test a single unit (function, method, or struct)
+- Fast, with no I/O
+- Mock dependencies
 
 ### Integration Tests
 
-- En `tests/` directory del crate
-- Testean interacción entre múltiples components
-- Pueden usar I/O real (o mocks completos)
-- Testean ports y adapters
+- In the crate's `tests/` directory
+- Test interactions between multiple components
+- May use real I/O (or complete mocks)
+- Test ports and adapters
 
  ```rust
  // tests/integration/router.rs
@@ -239,11 +239,11 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
      let cache = InMemoryCache::default();
      let router = Router::with_cache(providers(), cache);
 
-     // First call - misses cache
+     // First call - cache miss
      let result = router.route(request()).await;
      assert!(result.is_ok());
 
-     // Second call - hits cache
+     // Second call - cache hit
      let cached = router.route(request()).await;
      assert!(cached.is_ok());
  }
@@ -264,28 +264,28 @@ Tests bien escritos son la primera línea de defensa contra regresiones.
  # Benchmarks
  cargo bench -p rook-core
 
- # With --test-threads=1 para tests que comparten estado
+ # With --test-threads=1 for tests that share state
  cargo test -- --test-threads=1
  ```
 
 ## Coverage
 
  ```bash
- # Instalar tarpaulin
+ # Install tarpaulin
  cargo install cargo-tarpaulin
 
  # Run coverage
  cargo tarpaulin --out Xml --output-dir coverage/
  ```
 
-## Archivos Relacionados
+## Related Files
 
-- rust-api-design — Para diseñar APIs testables
-- rust-async-patterns — Para tests async
-- rust-error-handling — Para tests de error paths
+- rust-api-design — For designing testable APIs
+- rust-async-patterns — For async tests
+- rust-error-handling — For error-path tests
 
 ## See Also
 
 - [Testing Rust](https://doc.rust-lang.org/book/ch11-00-testing.html)
 - [proptest book](https://altsysrq.github.io/proptest-book/)
-- rstest — Para parametric tests
+- rstest — For parameterized tests

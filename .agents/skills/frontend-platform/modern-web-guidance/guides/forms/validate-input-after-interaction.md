@@ -10,10 +10,10 @@ The `:user-invalid` pseudo-class allows you to defer the error state until the u
 
 ### Implementation Strategy
 
-1.  **HTML Constraint**: DO use standard HTML5 attributes like `type="email"`, `pattern`, and `required` to trigger the browser's built-in validation logic.
-2.  **Visual Feedback**: DO use `:user-invalid` to apply error styling only after interaction.
-3.  **Positive Reinforcement**: DO optionally use `:user-valid` to give a green "success" indicator once the requirements are met.
-4.  **Graceful Recovery**: As soon as the user corrects the input to a valid format, `:user-invalid` stops matching, removing the error state immediately.
+1. **HTML Constraint**: DO use standard HTML5 attributes like `type="email"`, `pattern`, and `required` to trigger the browser's built-in validation logic.
+2. **Visual Feedback**: DO use `:user-invalid` to apply error styling only after interaction.
+3. **Positive Reinforcement**: DO optionally use `:user-valid` to give a green "success" indicator once the requirements are met.
+4. **Graceful Recovery**: As soon as the user corrects the input to a valid format, `:user-invalid` stops matching, removing the error state immediately.
 
 ## Implementation Guide
 
@@ -236,12 +236,12 @@ UserInvalidFallback.init(form);
 
 ## Other Considerations
 
-1.  **Accessibility**:
-    *   MANDATORY: Use `aria-describedby` to link the rules list to the input.
-    *   DO NOT: Hide rules lists entirely until the input is valid; users need to know what to type!
-2.  **Pattern Attribute Limits**: MANDATORY: The `pattern` attribute performs a full match (implied `^...$`). Ensure your password regex accounts for the entire string.
-3.  **Validation Strictness**: DO note that the browser's default `type="email"` validation is quite permissive (e.g., `user@localserver` might pass). If you need stricter validation, you may need to use a more robust validation library or a custom validation function alongside `type="email"`.
-4.  **Focus Management**: MANDATORY: If a user submits the form with an invalid field, the browser will automatically focus the first invalid field. Your `:user-invalid` styles will apply immediately because a submission attempt counts as an interaction.
+1. **Accessibility**:
+    * MANDATORY: Use `aria-describedby` to link the rules list to the input.
+    * DO NOT: Hide rules lists entirely until the input is valid; users need to know what to type!
+2. **Pattern Attribute Limits**: MANDATORY: The `pattern` attribute performs a full match (implied `^...$`). Ensure your password regex accounts for the entire string.
+3. **Validation Strictness**: DO note that the browser's default `type="email"` validation is quite permissive (e.g., `user@localserver` might pass). If you need stricter validation, you may need to use a more robust validation library or a custom validation function alongside `type="email"`.
+4. **Focus Management**: MANDATORY: If a user submits the form with an invalid field, the browser will automatically focus the first invalid field. Your `:user-invalid` styles will apply immediately because a submission attempt counts as an interaction.
 5. **Consistent ARIA Experience**: Native `:user-invalid` does not automatically sync with ARIA attributes. Add the following JavaScript to keep `aria-invalid` in sync with the visual state:
 
 ```javascript

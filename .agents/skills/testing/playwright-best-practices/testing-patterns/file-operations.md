@@ -365,7 +365,7 @@ test("verify JSON export", async ({ page }, testInfo) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                          | Problem                         | Solution                                      |
-| ------------------------------------- | ------------------------------- | --------------------------------------------- |
+|---------------------------------------|---------------------------------|-----------------------------------------------|
 | Not waiting for download              | Race condition, test fails      | Always use `waitForEvent("download")`         |
 | Hardcoded download paths              | Conflicts in parallel runs      | Use `testInfo.outputPath()`                   |
 | Skipping content verification         | Download might be empty/corrupt | Verify file content when possible             |

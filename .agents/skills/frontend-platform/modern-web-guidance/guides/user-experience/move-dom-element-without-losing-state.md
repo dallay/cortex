@@ -36,11 +36,11 @@ class MyCustomElement extends HTMLElement {
 
 ### Fallback strategies
 
-moveBefore() has limited availability.
+moveBefore () has limited availability.
 Supported by: Chrome 133 (Feb 2025), Edge 133 (Feb 2025), and Firefox 144 (Oct 2025).
 Unsupported in: Safari.
 
-Since `moveBefore()` is a progressive enhancement, you MUST use feature detection before calling it, falling back to traditional `insertBefore()` or `appendChild()` operations for older browsers. 
+Since `moveBefore()` is a progressive enhancement, you MUST use feature detection before calling it, falling back to traditional `insertBefore()` or `appendChild()` operations for older browsers.
 
 ```javascript
 const targetParent = document.getElementById('target-container');

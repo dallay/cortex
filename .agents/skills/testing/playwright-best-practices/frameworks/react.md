@@ -15,8 +15,7 @@
 
 ### Testing Context and Global State
 
-**Use when**: Verifying React context (theme, auth, locale) and state management (Redux, Zustand) produce correct UI changes.
-**Avoid when**: You want to assert on raw state objects—test the UI, not internal state.
+**Use when**: Verifying React context (theme, auth, locale) and state management (Redux, Zustand) produce correct UI changes. **Avoid when**: You want to assert on raw state objects—test the UI, not internal state.
 
 ```typescript
 import { test, expect } from '@playwright/test';
@@ -72,8 +71,7 @@ test.describe('auth state', () => {
 
 ### React Router Navigation
 
-**Use when**: Testing client-side routing with React Router v6+—route transitions, URL parameters, protected routes, browser history.
-**Avoid when**: Server-side routing (Next.js App Router—see [nextjs.md](nextjs.md)).
+**Use when**: Testing client-side routing with React Router v6+—route transitions, URL parameters, protected routes, browser history. **Avoid when**: Server-side routing (Next.js App Router—see [nextjs.md](nextjs.md)).
 
 ```typescript
 import { test, expect } from '@playwright/test';
@@ -147,8 +145,7 @@ test.describe('client routing', () => {
 
 ### Testing Hooks Through UI
 
-**Use when**: Verifying custom hooks produce correct UI behavior—Playwright cannot call hooks directly.
-**Avoid when**: Hook logic is pure computation—use unit tests instead.
+**Use when**: Verifying custom hooks produce correct UI behavior—Playwright cannot call hooks directly. **Avoid when**: Hook logic is pure computation—use unit tests instead.
 
 ```typescript
 import { test, expect } from '@playwright/test';
@@ -324,8 +321,7 @@ test.describe('portal components', () => {
 
 ### Error Boundaries
 
-**Use when**: Verifying error boundaries catch rendering errors and show fallback UI.
-**Avoid when**: Testing error handling in event handlers or async code—error boundaries only catch render errors.
+**Use when**: Verifying error boundaries catch rendering errors and show fallback UI. **Avoid when**: Testing error handling in event handlers or async code—error boundaries only catch render errors.
 
 ```typescript
 import { test, expect } from '@playwright/test';
@@ -371,8 +367,7 @@ test.describe('error boundary', () => {
 
 ### Component Testing (Experimental)
 
-**Use when**: Testing complex interactive components in isolation—data tables, form wizards, rich editors. Needs real browser but not full app.
-**Avoid when**: Component depends heavily on backend data or routing—use E2E instead.
+**Use when**: Testing complex interactive components in isolation—data tables, form wizards, rich editors. Needs real browser but not full app. **Avoid when**: Component depends heavily on backend data or routing—use E2E instead.
 
 ```typescript
 // playwright-ct.config.ts
@@ -461,12 +456,12 @@ export default defineConfig({
 
 ### CRA vs Vite Differences
 
-| Aspect | Create React App | Vite |
-|---|---|---|
-| Default port | `3000` | `5173` |
-| Build output | `build/` | `dist/` |
+| Aspect           | Create React App             | Vite                           |
+|------------------|------------------------------|--------------------------------|
+| Default port     | `3000`                       | `5173`                         |
+| Build output     | `build/`                     | `dist/`                        |
 | Serve production | `npx serve -s build -l 3000` | `npx vite preview --port 5173` |
-| Env var prefix | `REACT_APP_*` | `VITE_*` |
+| Env var prefix   | `REACT_APP_*`                | `VITE_*`                       |
 
 ## Framework Tips
 
@@ -511,15 +506,15 @@ test('no unmounted state warnings', async ({ page }) => {
 
 ## Anti-Patterns
 
-| Don't | Problem | Do Instead |
-|---|---|---|
-| `page.evaluate(() => store.getState())` | Couples tests to implementation | Assert on UI: `expect(badge).toHaveText('3')` |
-| Import components in E2E tests | E2E runs in Node, not browser | Use `@playwright/experimental-ct-react` for components |
-| `page.waitForTimeout(500)` after state changes | Timing varies across machines | `expect(locator).toHaveText('value')` auto-retries |
-| `page.locator('.MuiButton-root')` | Class names change between versions | `page.getByRole('button', { name: 'Submit' })` |
-| Test every component with CT | Overhead for simple components | CT for complex widgets, unit tests for logic, E2E for flows |
-| Skip keyboard navigation tests | Accessibility regressions common | Test Tab, Enter, Escape, Arrow interactions |
-| Assert on `__REACT_FIBER__` internals | Not stable across versions | Only interact with rendered DOM |
+| Don't                                          | Problem                             | Do Instead                                                  |
+|------------------------------------------------|-------------------------------------|-------------------------------------------------------------|
+| `page.evaluate(() => store.getState())`        | Couples tests to implementation     | Assert on UI: `expect(badge).toHaveText('3')`               |
+| Import components in E2E tests                 | E2E runs in Node, not browser       | Use `@playwright/experimental-ct-react` for components      |
+| `page.waitForTimeout(500)` after state changes | Timing varies across machines       | `expect(locator).toHaveText('value')` auto-retries          |
+| `page.locator('.MuiButton-root')`              | Class names change between versions | `page.getByRole('button', { name: 'Submit' })`              |
+| Test every component with CT                   | Overhead for simple components      | CT for complex widgets, unit tests for logic, E2E for flows |
+| Skip keyboard navigation tests                 | Accessibility regressions common    | Test Tab, Enter, Escape, Arrow interactions                 |
+| Assert on `__REACT_FIBER__` internals          | Not stable across versions          | Only interact with rendered DOM                             |
 
 ## Related
 

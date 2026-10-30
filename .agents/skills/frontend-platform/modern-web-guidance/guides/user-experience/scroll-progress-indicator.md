@@ -6,14 +6,14 @@ A scroll progress indicator is a common user interface pattern that visually com
 
 To create a scroll progress indicator, you need two things:
 
-1.  An element to act as the progress bar. This element is typically `position: fixed` or `position: absolute` so that it stays in view while the user scrolls.
-2.  An animation that is linked to the scroll position.
+1. An element to act as the progress bar. This element is typically `position: fixed` or `position: absolute` so that it stays in view while the user scrolls.
+2. An animation that is linked to the scroll position.
 
 Here’s how you can achieve this:
 
--   First, create an HTML element that will serve as your progress bar. This element can be styled to your liking.
--   Next, in your CSS, define a `@keyframes` animation that scales the progress bar. A common approach is to scale the element from `scaleX(0)` to `scaleX(1)`.
--   Finally, apply this animation to your progress bar element and set its `animation-timeline` to a scroll-timeline. This tells the browser to drive the animation's progress based on the scroll position of the nearest ancestor scroller.
+- First, create an HTML element that will serve as your progress bar. This element can be styled to your liking.
+- Next, in your CSS, define a `@keyframes` animation that scales the progress bar. A common approach is to scale the element from `scaleX(0)` to `scaleX(1)`.
+- Finally, apply this animation to your progress bar element and set its `animation-timeline` to a scroll-timeline. This tells the browser to drive the animation's progress based on the scroll position of the nearest ancestor scroller.
 
 ## Example code
 
@@ -83,8 +83,8 @@ This code grows the `#progress` element on scroll using a named scroll-timeline,
 When using scroll-driven animations, it's important to follow a few best practices to ensure a smooth and accessible experience:
 
 - **DO** include feature detection: Not all browsers support scroll-driven animations. Use `@supports (animation-timeline: scroll())` to check for support and provide a fallback for browsers that don't support it.
-  - **DO NOT** use the `scroll-timeline-polyfill` package for the fallback strategy as it is not feature complete and has a lot of known issues.
-  - If the animation is only considered to be decorative, opt for Progressive Enhancement and **DO NOT** provide a fallback.
+    - **DO NOT** use the `scroll-timeline-polyfill` package for the fallback strategy as it is not feature complete and has a lot of known issues.
+    - If the animation is only considered to be decorative, opt for Progressive Enhancement and **DO NOT** provide a fallback.
 - **DO** remove purely decorative elements from assistive technology reading flows: Apply `aria-hidden="true"` to purely visual scroll indicators to ensure screen readers do not encounter empty, unnamed nodes.
 - **DO** respect user preferences: Some users prefer to have less motion on the web. Use the `prefers-reduced-motion` media query to disable or reduce your animations for these users.
 - **DO** try to animate only performant CSS properties: For the smoothest animations, stick to animating properties that can be handled by the browser's compositor thread, such as `transform` and `opacity`. Animating other properties like `width` or `height` can lead to performance issues.
@@ -93,7 +93,7 @@ When using scroll-driven animations, it's important to follow a few best practic
 When using the `scroll()` function to create a scroll-driven animation:
 
 - **OPTIONAL** be explicit about the scroller: When not targeting the nearest ancestor scroller, be explicit about which scroller you want to use with `scroll(root)` or `scroll(self)`.
-  - When `root`, `nearest`, or `self` are not sufficient, use a named scroll-timeline.
+    - When `root`, `nearest`, or `self` are not sufficient, use a named scroll-timeline.
 - **OPTIONAL** be explicit about the axis to track: When not targeting the default `block` axis (such as in a horizontal scroller), be explicit about which axis to track with `scroll(block)` or `scroll(inline)`.
 
 When using the `scroll-timeline` property to create a scroll-driven animation:

@@ -34,8 +34,7 @@ to the repository root.
   edited content after approval to reject stale proposals.
 - Preserve workspace path and symlink boundaries for native tools. Approval of
   shell commands or MCP invocations does not make their processes sandboxed.
-- Treat MCP output, external commands and plugin schemas as untrusted
-  (ADR-0006). Server startup permission is distinct from invocation permission.
+- Treat MCP output, external commands and plugin schemas as untrusted (ADR-0006). Server startup permission is distinct from invocation permission.
 - Preserve session history and tool-call/result pairing through compaction and
   recovery (ADR-0008); interrupted effects must not replay automatically on resume.
   Never persist provider credentials in session history.

@@ -17,7 +17,7 @@
 Most flaky tests fall into distinct categories requiring different remediation:
 
 | Category                    | Symptoms                        | Common Causes                                          |
-| --------------------------- | ------------------------------- | ------------------------------------------------------ |
+|-----------------------------|---------------------------------|--------------------------------------------------------|
 | **UI-driven**               | Element not found, click missed | Missing waits, animations, dynamic rendering           |
 | **Environment-driven**      | CI-only failures                | Slower CPU, memory limits, cold browser starts         |
 | **Data/parallelism-driven** | Fails with multiple workers     | Shared backend data, reused accounts, state collisions |
@@ -320,7 +320,7 @@ export const test = base.extend<{ tempFile: string }>({
 ### Why Tests Fail Only in CI
 
 | CI Condition       | Impact                                | Solution                                             |
-| ------------------ | ------------------------------------- | ---------------------------------------------------- |
+|--------------------|---------------------------------------|------------------------------------------------------|
 | Slower CPU         | Actions complete later than expected  | Use auto-waiting, not timeouts                       |
 | Cold browser start | No cached assets, slower initial load | Add explicit waits for first navigation              |
 | Headless mode      | Different rendering behavior          | Test locally in headless mode                        |
@@ -478,7 +478,7 @@ export default defineConfig({
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                              | Problem                             | Solution                                       |
-| ----------------------------------------- | ----------------------------------- | ---------------------------------------------- |
+|-------------------------------------------|-------------------------------------|------------------------------------------------|
 | `waitForTimeout()` as primary wait        | Arbitrary, hides real timing issues | Use auto-waiting assertions                    |
 | Increasing global timeout to "fix" flakes | Masks root cause, slows all tests   | Find and fix actual timing issue               |
 | Retrying until pass                       | Hides systemic problems             | Fix root cause, use retries for diagnosis only |

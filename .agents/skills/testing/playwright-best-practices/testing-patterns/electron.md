@@ -495,7 +495,7 @@ export const test = base.extend({
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                          | Problem                      | Solution                                     |
-| ------------------------------------- | ---------------------------- | -------------------------------------------- |
+|---------------------------------------|------------------------------|----------------------------------------------|
 | Not closing ElectronApplication       | Resource leaks               | Always call `electronApp.close()` in cleanup |
 | Hardcoded executable paths            | Breaks cross-platform        | Use platform detection                       |
 | Testing packaged app without building | Outdated code                | Build before testing or test dev mode        |

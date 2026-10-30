@@ -133,11 +133,11 @@ test('page with JS animations', async ({ page }) => {
 
 **Use when**: Minor rendering differences from anti-aliasing, font hinting, or sub-pixel rendering cause false failures.
 
-| Option | Controls | Typical Value |
-|---|---|---|
-| `maxDiffPixels` | Absolute pixel count that can differ | `100` for pages, `10` for components |
-| `maxDiffPixelRatio` | Fraction of total pixels (0-1) | `0.01` (1%) for pages |
-| `threshold` | Per-pixel color tolerance (0-1) | `0.2` for most UIs, `0.1` for design systems |
+| Option              | Controls                             | Typical Value                                |
+|---------------------|--------------------------------------|----------------------------------------------|
+| `maxDiffPixels`     | Absolute pixel count that can differ | `100` for pages, `10` for components         |
+| `maxDiffPixelRatio` | Fraction of total pixels (0-1)       | `0.01` (1%) for pages                        |
+| `threshold`         | Per-pixel color tolerance (0-1)      | `0.2` for most UIs, `0.1` for design systems |
 
 ```typescript
 test('control panel allows minor variance', async ({ page }) => {
@@ -505,33 +505,33 @@ export default defineConfig({
 
 ## Decision Guide
 
-| Scenario | Approach | Rationale |
-|---|---|---|
-| Key landing/marketing pages | Full page, `fullPage: true` | Catches layout shifts, spacing, overall harmony |
-| Individual components | Element screenshot | Isolated, fast, immune to unrelated changes |
-| Page with dynamic content | Full page + `mask` | Covers layout while ignoring volatile content |
-| Design system library | Element per variant, zero threshold | Pixel-perfect enforcement |
-| Responsive verification | Screenshot per viewport | Catches breakpoint bugs |
-| Cross-browser consistency | Separate snapshots per browser | Browsers render differently |
-| CI pipeline | Docker container, Linux-only snapshots | Consistent rendering |
-| Threshold: design system | `threshold: 0`, `maxDiffPixels: 0` | Zero tolerance |
-| Threshold: content pages | `maxDiffPixelRatio: 0.01`, `threshold: 0.2` | Minor anti-aliasing variance |
-| Threshold: charts/graphs | `maxDiffPixels: 200`, `threshold: 0.3` | Anti-aliasing on curves varies |
+| Scenario                    | Approach                                    | Rationale                                       |
+|-----------------------------|---------------------------------------------|-------------------------------------------------|
+| Key landing/marketing pages | Full page, `fullPage: true`                 | Catches layout shifts, spacing, overall harmony |
+| Individual components       | Element screenshot                          | Isolated, fast, immune to unrelated changes     |
+| Page with dynamic content   | Full page + `mask`                          | Covers layout while ignoring volatile content   |
+| Design system library       | Element per variant, zero threshold         | Pixel-perfect enforcement                       |
+| Responsive verification     | Screenshot per viewport                     | Catches breakpoint bugs                         |
+| Cross-browser consistency   | Separate snapshots per browser              | Browsers render differently                     |
+| CI pipeline                 | Docker container, Linux-only snapshots      | Consistent rendering                            |
+| Threshold: design system    | `threshold: 0`, `maxDiffPixels: 0`          | Zero tolerance                                  |
+| Threshold: content pages    | `maxDiffPixelRatio: 0.01`, `threshold: 0.2` | Minor anti-aliasing variance                    |
+| Threshold: charts/graphs    | `maxDiffPixels: 200`, `threshold: 0.3`      | Anti-aliasing on curves varies                  |
 
 ## Anti-Patterns
 
-| Don't | Problem | Do Instead |
-|---|---|---|
-| Visual test every page | Massive maintenance, constant false failures | Pick 5-10 key pages and critical components |
-| Skip masking dynamic content | Screenshots differ every run, permanently flaky | Use `mask` for all volatile elements |
-| Run across macOS, Linux, Windows | Font rendering differs, snapshots never match | Standardize on Linux via Docker |
-| Skip Docker in CI | OS updates shift rendering silently | Pin specific Playwright Docker image |
-| Blindly run `--update-snapshots` | Accepts unintentional regressions | Always review diff in HTML report first |
-| Skip `animations: 'disabled'` | CSS transitions create random diffs | Set globally in config |
-| Replace functional assertions with visual tests | Diffs don't tell you *what* broke | Visual tests complement, never replace |
-| Commit snapshots from different platforms | Tests fail for everyone | All team members use same Docker container |
-| Set threshold too high (`0.1`) | 10% pixel change passes, defeats purpose | Start with `0.01`, adjust per-test |
-| Full page on infinite scroll pages | Page height nondeterministic | Element screenshots on above-the-fold content |
+| Don't                                           | Problem                                         | Do Instead                                    |
+|-------------------------------------------------|-------------------------------------------------|-----------------------------------------------|
+| Visual test every page                          | Massive maintenance, constant false failures    | Pick 5-10 key pages and critical components   |
+| Skip masking dynamic content                    | Screenshots differ every run, permanently flaky | Use `mask` for all volatile elements          |
+| Run across macOS, Linux, Windows                | Font rendering differs, snapshots never match   | Standardize on Linux via Docker               |
+| Skip Docker in CI                               | OS updates shift rendering silently             | Pin specific Playwright Docker image          |
+| Blindly run `--update-snapshots`                | Accepts unintentional regressions               | Always review diff in HTML report first       |
+| Skip `animations: 'disabled'`                   | CSS transitions create random diffs             | Set globally in config                        |
+| Replace functional assertions with visual tests | Diffs don't tell you *what* broke               | Visual tests complement, never replace        |
+| Commit snapshots from different platforms       | Tests fail for everyone                         | All team members use same Docker container    |
+| Set threshold too high (`0.1`)                  | 10% pixel change passes, defeats purpose        | Start with `0.01`, adjust per-test            |
+| Full page on infinite scroll pages              | Page height nondeterministic                    | Element screenshots on above-the-fold content |
 
 ## Troubleshooting
 
@@ -626,6 +626,7 @@ export default defineConfig({
 **Cause**: Visual tests for every page, browser, viewport.
 
 **Fix**: Be selective. Visual test only high-risk pages:
+
 - Landing and marketing pages
 - Design system components
 - Complex layouts (dashboards, data tables)

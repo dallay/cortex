@@ -417,7 +417,7 @@ test("CSP blocks inline scripts", async ({ page }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern               | Problem               | Solution                      |
-| -------------------------- | --------------------- | ----------------------------- |
+|----------------------------|-----------------------|-------------------------------|
 | Testing only happy path    | Misses security holes | Test malicious inputs         |
 | Hardcoded test credentials | Security risk         | Use environment variables     |
 | Skipping auth tests in dev | Bugs reach production | Test auth in all environments |

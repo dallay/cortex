@@ -440,7 +440,7 @@ teardown("cleanup", async ({ request }) => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern               | Problem                | Solution                            |
-| -------------------------- | ---------------------- | ----------------------------------- |
+|----------------------------|------------------------|-------------------------------------|
 | Too many browser projects  | Slow CI, expensive     | Focus on critical browsers          |
 | Missing setup dependencies | Tests fail randomly    | Declare all dependencies explicitly |
 | Duplicated configuration   | Hard to maintain       | Extract shared config               |

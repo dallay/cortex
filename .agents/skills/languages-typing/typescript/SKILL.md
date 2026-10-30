@@ -1,7 +1,7 @@
 ---
 name: typescript
 description: Use when writing TypeScript code with types, interfaces, or generics.
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash, WebFetch, WebSearch, Task
+allowed-tools: Read Edit Write Glob Grep Bash WebFetch WebSearch Task
 ---
 
 # TypeScript Best Practices

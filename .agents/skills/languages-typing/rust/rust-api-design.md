@@ -1,21 +1,21 @@
 # Skill: rust-api-design
 
-Patrones de diseño de API para Rust, adaptados para el monorepo Cortex.
+Rust API design patterns adapted for the Cortex monorepo.
 
-> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtrada y adaptada.
+> Based on [rust-skills](https://github.com/leonardomso/rust-skills) — filtered and adapted.
 
-## Propósito
+## Purpose
 
-Estandarizar cómo diseñamos APIs públicas en los crates de Cortex,
-respetando la arquitectura hexagonal y los patrones establecidos.
+Standardize how we design public APIs in Cortex crates while respecting
+hexagonal architecture and established patterns.
 
-## Reglas Incluidas
+## Included Rules
 
 ### 1. api-sealed-trait
 
-> Usa traits sellados para controlar implementación externa.
+> Use sealed traits to control external implementations.
 
-En Cortex ya lo hacemos con ProviderPort. Es la forma correcta.
+In Cortex, `ProviderPort` already follows this pattern. This is the correct approach.
 
  ```rust
  mod private {
@@ -26,23 +26,23 @@ pub trait ProviderPort: private::Sealed {
       async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse>;
   }
 
- // Solo providers internos pueden implementar
+ // Only internal providers can implement this
  impl private::Sealed for OpenAiProvider {}
  impl ProviderPort for OpenAiProvider { ... }
  ```
 
-**Aplicar a:** Nuevos traits públicos que no deban ser implementables externamente.
+**Apply to:** New public traits that should not be implementable externally.
 
 ### 2. api-newtype-safety
 
-> Usa newtypes para prevenir mixing de valores semánticamente diferentes.
+> Use newtypes to prevent mixing semantically different values.
 
-Ya lo hacemos bien en shared-kernel:
+We already follow this pattern in shared-kernel:
 
-- `ProviderId`, `ModelId`, `RequestId` — todos newtypes de u64/String
+- `ProviderId`, `ModelId`, and `RequestId` — all newtypes over `u64`/`String`
 
  ```rust
- // GOOD — Ya establecido
+ // GOOD — Established pattern
  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
  pub struct ProviderId(pub u64);
 
@@ -50,13 +50,13 @@ Ya lo hacemos bien en shared-kernel:
  pub struct ModelId(pub String);
  ```
 
-**Aplicar a:** Nuevos tipos que puedan confundirse entre sí.
+**Apply to:** New types that could be confused with one another.
 
 ### 3. api-must-use
 
-> Marca tipos y funciones con #[must_use] cuando ignorar resultados es bug.
+> Mark types and functions with `#[must_use]` when ignoring their results is a bug.
 
-Crucial para builders yResult types.
+Crucial for builders and `Result` types.
 
  ```rust
  #[must_use = "builders do nothing unless consumed"]
@@ -68,34 +68,34 @@ Crucial para builders yResult types.
  }
  ```
 
-En Cortex: Apply a builders en transport-axum y any Result que no deba ignorarse.
+In Cortex: Apply this to builders in `transport-axum` and any `Result` that must not be ignored.
 
 ### 4. api-common-traits
 
-> Implementa traits estándar (Debug, Clone, PartialEq, etc.) para tipos públicos.
+> Implement standard traits (`Debug`, `Clone`, `PartialEq`, etc.) for public types.
 
-Guía de derivación:
+Derivation guide:
 
-| Trait       | Cuándo derivar                     |
+| Trait       | When to derive                     |
  |-------------|------------------------------------|
-| `Debug`     | Siempre para tipos públicos        |
-| `Clone`     | Tipo puede duplicarse              |
-| `Copy`      | Tipos pequeños, simples            |
-| `PartialEq` | Comparación tiene sentido          |
-| `Eq`        | Total equality, sin floating-point |
-| `Hash`      | Para HashMap keys                  |
+| `Debug`     | Always for public types            |
+| `Clone`     | The type can be duplicated         |
+| `Copy`      | Small, simple types                |
+| `PartialEq` | Equality comparison is meaningful  |
+| `Eq`        | Total equality, without floats     |
+| `Hash`      | For `HashMap` keys                 |
 
  ```rust
- // Mínimo para tipos de dominio
+ // Minimum for domain types
  #[derive(Debug, Clone, PartialEq)]
  pub struct CompletionRequest { ... }
  ```
 
 ### 5. api-default-impl
 
-> Implementa Default para tipos con valores sensibles por defecto.
+> Implement `Default` for types with sensible default values.
 
-Útil para configuración y estados.
+Useful for configuration and state.
 
  ```rust
  impl Default for HealthStatus {
@@ -111,7 +111,7 @@ Guía de derivación:
 
 ### 6. api-non-exhaustive
 
-> Usa `#[non_exhaustive]` en enums/structs públicos para forward compatibility.
+> Use `#[non_exhaustive]` on public enums and structs for forward compatibility.
 
  ```rust
  #[non_exhaustive]
@@ -119,10 +119,10 @@ Guía de derivación:
      OpenAi,
      Anthropic,
      Ollama,
-     // Future providers pueden agregarse sin breaking change
+     // Future providers can be added without a breaking change
  }
 
- // Consumidores DEBEN usar wildcard
+ // Consumers MUST use a wildcard
  match provider.kind() {
      ProviderKind::OpenAi => { ... },
      ProviderKind::Anthropic => { ... },
@@ -130,37 +130,37 @@ Guía de derivación:
  }
  ```
 
-**Aplicar a:** Enums públicos que puedan evolucionar (ProviderKind, etc.)
+**Apply to:** Public enums that may evolve (`ProviderKind`, etc.).
 
 ### 7. api-parse-dont-validate
 
-> Parsea en tipos validados en los boundaries.
+> Parse into validated types at boundaries.
 
-El patrón correcto: validar una vez al entry point, usar tipos internamente.
+The correct pattern is to validate once at the entry point and use typed values internally.
 
  ```rust
- // BAD — Validación scattering
+ // BAD — Scattered validation
  fn handle_request(email: &str) {
      if !is_valid_email(email) { return Err(...); }
-     store_email(email); // ¿Validó alguien más?
+     store_email(email); // Did someone else validate this?
  }
 
- // GOOD — Parse en boundary
+ // GOOD — Parse at the boundary
  fn handle_request(raw: &str) -> Result<()> {
-     let email = Email::parse(raw)?; // Validado UNA vez
-     store_email(&email); // Tipo seguro aquí
+     let email = Email::parse(raw)?; // Validated ONCE
+     store_email(&email); // Type-safe here
  }
  ```
 
-En Cortex: applies a parsing de requests en transport-axum adapters.
+In Cortex: Apply this when parsing requests in `transport-axum` adapters.
 
-## Archivos Relacionados
+## Related Files
 
 - `crates/domain/shared-kernel/src/id.rs` — Newtypes existentes
-- `crates/domain/rook-core/src/ports.rs` — Traits de dominio
+- `crates/domain/rook-core/src/ports.rs` — Domain traits
 - `crates/infrastructure/transport-axum/src/` — Adapters
 
 ## See Also
 
-- rust-anti-patterns — Anti-patterns a evitar
-- rust-async-patterns — Patrones async
+- rust-anti-patterns — Anti-patterns to avoid
+- rust-async-patterns — Async patterns

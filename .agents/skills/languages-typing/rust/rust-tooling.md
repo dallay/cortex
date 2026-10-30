@@ -1,294 +1,239 @@
 # Skill: rust-tooling
 
-Herramientas del ecosistema Rust que usamos en el monorepo Cortex.
+Rust ecosystem tools used in the Cortex monorepo.
 
 > Based on [rust-skills](https://github.com/leonardomso/rust-skills) — tool rules.
 
-## Propósito
+## Purpose
 
-Documentar las herramientas que usamos y cómo configurarlas.
-El tooling correcto hace todo el equipo más productivo.
+Document the tools we use and how to configure them. The source of truth
+for tasks is `justfile`; this document explains usage without duplicating recipes.
 
 ## Herramientas Principales
 
 ### 1. just
 
-Task runner para automatizar workflows.
+The repository's canonical task runner. **We do not use `cargo-make`** or `make`.
 
- ```bash
- # Install
- cargo install cargo-make
+```bash
+# Install (standalone tool, not a Cargo subcommand)
+cargo install just
+# or: https://github.com/casey/just#installation
 
- # Run specific task
- just test          # Ejecuta tests
- just fmt           # Formatea código
- just clippy        # Linting
- just ci-local      # CI completo localmente
- ```
+# Descubrir recetas
+just --list
 
-Configuración en `Justfile`:
+# Recetas habituales
+just fmt          # cargo fmt --all
+just fmt-check    # check without writing changes
+just clippy       # workspace, all-targets, -D warnings
+just check        # cargo check --workspace
+just test         # cargo test --workspace --all-features
+just coverage     # cargo llvm-cov --workspace --html
+just audit        # cargo audit --no-fetch
+just ci-local     # full validation before a PR
+```
 
- ```makefile
- # Formatea todo
- fmt:
-     cargo fmt --all
-
- # Clippy con deny warnings
- clippy:
-     cargo clippy --all-features -- -D warnings
-
- # Tests
- test:
-     cargo test --all
-
- # CI local completo
- ci-local: fmt clippy check test doc audit
-     @echo "CI local passed!"
- ```
+Recipes live in `justfile`. Do not add a `Makefile` or equivalent recipes
+elsewhere; if a new task is needed, add it there and document it in
+`docs/development.md` when the workflow changes.
 
 ### 2. cargo-watch
 
-Recarga automática en desarrollo.
+Automatic reload during development.
 
- ```bash
- # Install
- cargo install cargo-watch
+```bash
+cargo install cargo-watch
 
- # Watch and run tests
- cargo watch -x test
-
- # Watch and run clippy
- cargo watch -x clippy
-
- # Watch multiple commands
- cargo watch -s "cargo check" -s "cargo test"
- ```
+cargo watch -x test
+cargo watch -x clippy
+cargo watch -s "cargo check" -s "cargo test"
+```
 
 ### 3. cargo-expand
 
-Macro expansion para debugging.
+Macro expansion for debugging.
 
- ```bash
- # Install
- cargo install cargo-expand
+```bash
+cargo install cargo-expand
 
- # Expand macros
- cargo expand -p rook-usecases
+cargo expand -p rook-usecases
+cargo expand test::my_test_function
+```
 
- # Expand specific function
- cargo expand test::my_test_function
- ```
-
-Útil para:
-
-- Entender qué generan las macros
-- Debug macro errors
-- Aprender de macros populares (like `async_trait`)
+Useful for understanding macro output, debugging expansion errors, and
+learning from crates such as `async_trait`.
 
 ### 4. cargo-flamegraph
 
-Profiling de performance.
+Performance profiling.
 
- ```bash
- # Install
- cargo install cargo-flamegraph
+```bash
+cargo install cargo-flamegraph
 
- # Generate flamegraph
- cargo flamegraph --bin rook
+cargo flamegraph --bin rook
+cargo flamegraph --bin rook --timeout 10
+```
 
- # Con timeout
- cargo flamegraph --bin rook --timeout 10
- ```
+Use it with a representative workload and save the result with the change when
+claiming a performance improvement.
 
-### 5. tarpaulin
+### 5. cargo-llvm-cov
 
-Code coverage.
+Code coverage. This is the repository's and CI's coverage tool.
 
- ```bash
- # Install
- cargo install cargo-tarpaulin
+```bash
+# Install
+cargo install cargo-llvm-cov
+rustup component add llvm-tools-preview
 
- # Run coverage
- cargo tarpaulin --out Html
+# Workspace HTML coverage
+cargo llvm-cov --workspace --html
 
- # Cobertura por crate
- cargo tarpaulin -p shared-kernel -p rook-core --out Xml
- ```
+# Text summary
+cargo llvm-cov --workspace
+
+# CI gate: 87% line coverage
+cargo llvm-cov --workspace --all-features --fail-under-lines 87 \
+  --lcov --output-path coverage/rust-lcov.info
+```
+
+`just coverage` and `just coverage-text` wrap the first two commands. **We do not use
+`cargo-tarpaulin`**: it does not support the complete workspace with the current
+features and targets in the same way.
 
 ### 6. cargo-audit
 
-Security auditing de dependencias.
+Dependency security auditing. This is a blocking CI gate.
 
- ```bash
- # Install
- cargo install cargo-audit
+```bash
+cargo install cargo-audit
 
- # Audit
- cargo audit
+cargo audit
+cargo audit --db ~/.cargo/advisory-db
+```
 
- # Con advisory database
- cargo audit --db ~/.cargo/advisory-db
- ```
+`just audit` runs `cargo audit --no-fetch`; `just ci-audit` is the CI step.
+A failed audit blocks the PR: do not silence it with `--ignore` without a
+reviewed justification and a time limit.
 
 ### 7. cargo-outdated
 
-Check para actualizaciones de dependencias.
+Update checks.
 
- ```bash
- # Install
- cargo install cargo-outdated
+```bash
+cargo install cargo-outdated
 
- # Check outdated
- cargo outdated
+cargo outdated
+cargo outdated --direct
+```
 
- # Direct mode
- cargo outdated --direct
- ```
+`just outdated` uses `-r` (the full workspace).
 
-### 8. tomlq
+### 8. cargo-udeps
 
-Query TOML files desde CLI.
+Unused dependencies. Requires nightly.
 
- ```bash
- # Install
- cargo install tomlq
+```bash
+cargo install cargo-udeps --locked
+cargo +nightly udeps --workspace
+```
 
- # Read value
- tomlq '.workspace.package.name' Cargo.toml
-
- # Read array
- tomlq '.workspace.dependencies' Cargo.toml
- ```
-
-Útil para scripts de CI y validation.
+`just unused` wraps the recipe.
 
 ## rust-analyzer
 
-Language Server para IDEs.
+Language Server for IDEs. It is not configured in `rust-toolchain.toml`; use
+the editor settings or a project `rust-analyzer.json`/`settings.json`.
 
-### Configuración en `rust-toolchain.toml`:
+Recommended configuration:
 
- ```toml
- [tool.rust-analyzer]
-cargo.features = "all"
-rustfmt = { path = "path/to/rustfmt" }
-
-[tool.rust-analyzer.check]
-targets = ["x86_64-unknown-linux-gnu"]
- ```
-
-### Commands útiles (Vim/Neovim con coc-rust-analyzer):
-
- ```
- :RustExpandMacro
- :RustRunnables
- :RustHoverRange
- :RustDocs
- ```
-
-## Editor Integration
-
-### VSCode
-
- ```json
- {
-  "rust-analyzer.checkOnSave.command": "clippy",
+```json
+{
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--all-targets", "--", "-D", "warnings"],
   "rust-analyzer.cargo.features": "all",
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true
   }
 }
- ```
-
-### Neovim
-
- ```lua
- -- rust-tools.nvim
- local opts = {
-     tools = {
-         runnables = true,
-         inlay_hints = true,
-     },
-     server = {
-         settings = {
-             ["rust-analyzer"] = {
-                 cargo = {
-                     allFeatures = true,
-                 },
-             },
-         },
-     },
- }
 ```
 
-## Scripts de Desarrollo
+Useful Neovim commands:
 
-### pre-commit hook
+```text
+:RustExpandMacro
+:RustRunnables
+:RustHoverRange
+:RustDocs
+```
 
- ```bash
- # .git/hooks/pre-commit
- #!/bin/sh
- cargo fmt --check
- cargo clippy -- -D warnings
- cargo test --quiet
- ```
+## Development Scripts
 
-### CI Pipeline Order
+### pre-commit
 
-El orden correcto de checks (importante):
+The repository uses `lefthook` (see `lefthook.yml`), not manual hooks in
+`.git/hooks`. Do not write hooks that duplicate `just fmt-check` or `just clippy`.
 
- ```makefile
- ci-local:
-     just fmt       # 1. Format first
-     just clippy    # 2. Linting
-     cargo check    # 3. Compilation
-     just test      # 4. Tests
-     cargo doc      # 5. Documentation
-     cargo audit    # 6. Security
- ```
+### CI Order
 
-**Por qué este orden:**
+`just ci-local` runs the steps in approximately this order:
 
-1. `fmt` es rápido y falla claro
-2. `clippy` atrapa bugs antes de runtime
-3. `check` asegura compilación
-4. `test` verifica comportamiento
-5. `doc` asegura que la docs compilan
-6. `audit` es el más lento, se hace al final
+```text
+1. fmt-check      # fast, fails clearly
+2. clippy         # catch bugs before runtime
+3. check          # compilation
+4. test           # behavior
+5. doc            # compile documentation
+6. audit/security # slowest, last
+```
+
+See `just --list` and `justfile` for the exact order; recipes are the
+source of truth.
 
 ## Debugging Tools
 
 ### LLDB
 
- ```bash
- # En macOS
- lldb target/debug/rook
+```bash
+lldb target/debug/rook
 
- # Commands
- (lldb) breakpoint set --name process_request
- (lldb) run
- (lldb) bt  # backtrace
- (lldb) frame variable
- ```
+(lldb) breakpoint set --name process_request
+(lldb) run
+(lldb) bt
+(lldb) frame variable
+```
 
 ### cargo-geiger
 
-Count unsafe code usage.
+Counts `unsafe` usage. The workspace sets `unsafe_code = "deny"`, so its
+value here is auditing dependencies, not our code.
 
- ```bash
- cargo install cargo-geiger
- cargo geiger -p rook --manifest-path Cargo.toml
- ```
+```bash
+cargo install cargo-geiger
+cargo geiger --manifest-path Cargo.toml
+```
 
-## Archivos Relacionados
+## Non-Rust CI Tools
 
-- rust-linting.md — Configuración de lints
-- rust-testing.md — Testing patterns
-- Justfile — Task definitions
+| Herramienta         | Uso                                       | Receta             |
+|---------------------|-------------------------------------------|--------------------|
+| `gitleaks`          | Secret detection                          | `just ci-gitleaks` |
+| `semgrep`           | Static analysis (Rust, Docker, Actions)   | `just ci-semgrep`  |
+| `trivy`             | Image and filesystem vulnerabilities      | `just ci-trivy`    |
+| `markdownlint-cli2` | Canonical Markdown                        | `just ci-lint`     |
+
+## Related Files
+
+- [rust-linting.md](rust-linting.md) — Lint configuration
+- [rust-testing.md](rust-testing.md) — Testing patterns
+- `justfile` — Task definitions
+- `docs/development.md` — Development workflow and requirements
 
 ## See Also
 
 - [Rust Toolchain](https://rust-lang.github.io/rustup/)
-- [crates.io](https://crates.io) — Buscar herramientas
+- [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
+- [crates.io](https://crates.io) — Find tools
 - [rust-analyzer docs](https://rust-analyzer.github.io/)

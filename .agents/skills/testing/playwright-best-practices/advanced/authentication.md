@@ -40,8 +40,7 @@ await context.storageState({ path: ".auth/session.json" });
 
 ### Storage State Reuse
 
-**Use when**: You need authenticated tests and want to avoid logging in before every test.
-**Avoid when**: Tests require completely fresh sessions, or you are testing the login flow itself.
+**Use when**: You need authenticated tests and want to avoid logging in before every test. **Avoid when**: Tests require completely fresh sessions, or you are testing the login flow itself.
 
 `storageState` serializes cookies and localStorage to a JSON file. Load it in any browser context to start authenticated instantly.
 
@@ -91,8 +90,7 @@ test("authenticated user sees home page", async ({ page }) => {
 
 ### Global Setup Authentication
 
-**Use when**: You want to authenticate once before the entire test suite runs.
-**Avoid when**: Different tests need different users, or your tokens expire faster than your suite runs.
+**Use when**: You want to authenticate once before the entire test suite runs. **Avoid when**: Different tests need different users, or your tokens expire faster than your suite runs.
 
 ```typescript
 // global-setup.ts
@@ -134,8 +132,7 @@ Add `.auth/` to `.gitignore`. Auth state files contain session tokens and should
 
 ### Per-Worker Authentication
 
-**Use when**: Each parallel worker needs its own authenticated session to avoid race conditions for tests that modify server-side state.
-**Avoid when**: Tests are read-only and a modifying shared session is safe, you can use a single shared account.
+**Use when**: Each parallel worker needs its own authenticated session to avoid race conditions for tests that modify server-side state. **Avoid when**: Tests are read-only and a modifying shared session is safe, you can use a single shared account.
 
 > **Sharded runs**: `parallelIndex` resets per shard, so different shards can have workers with the same index. To avoid collisions, include the shard identifier in the username (e.g., `worker-${SHARD_INDEX}-${parallelIndex}@example.com`) by passing a `SHARD_INDEX` environment variable from your CI matrix.
 
@@ -187,8 +184,7 @@ test("update display name", async ({ authenticatedContext }) => {
 
 ### Multiple Roles
 
-**Use when**: Your app has role-based access control and you need to test different permission levels.
-**Avoid when**: Your app has a single user role.
+**Use when**: Your app has role-based access control and you need to test different permission levels. **Avoid when**: Your app has a single user role.
 
 ```typescript
 // global-setup.ts — authenticate all roles
@@ -344,8 +340,7 @@ test("admin sees remove button, guest does not", async ({ loginAs }) => {
 
 ### OAuth/SSO Mocking
 
-**Use when**: Your app authenticates via a third-party OAuth provider and you cannot hit the real provider in tests.
-**Avoid when**: You have a dedicated test tenant on the OAuth provider.
+**Use when**: Your app authenticates via a third-party OAuth provider and you cannot hit the real provider in tests. **Avoid when**: You have a dedicated test tenant on the OAuth provider.
 
 A typical OAuth flow works like this:
 
@@ -407,8 +402,7 @@ test("bypass OAuth entirely via API session injection", async ({
 
 ### MFA Handling
 
-**Use when**: Your app requires two-factor authentication (TOTP, SMS, email codes).
-**Avoid when**: MFA is optional and you can disable it for test accounts.
+**Use when**: Your app requires two-factor authentication (TOTP, SMS, email codes). **Avoid when**: MFA is optional and you can disable it for test accounts.
 
 **Strategy 1**: Generate real TOTP codes from a shared secret.
 
@@ -455,8 +449,7 @@ test("login with TOTP two-factor auth", async ({ page }) => {
 
 ### Session Refresh
 
-**Use when**: Your tokens expire during long test runs.
-**Avoid when**: Your test suite runs quickly and tokens outlast the entire run.
+**Use when**: Your tokens expire during long test runs. **Avoid when**: Your test suite runs quickly and tokens outlast the entire run.
 
 ```typescript
 // fixtures/auth-with-refresh.ts
@@ -505,8 +498,7 @@ export { expect } from "@playwright/test";
 
 ### Login Page Object
 
-**Use when**: Multiple test files need to log in and you want consistent, maintainable login logic.
-**Avoid when**: You use `storageState` everywhere and never navigate through the login UI in tests.
+**Use when**: Multiple test files need to log in and you want consistent, maintainable login logic. **Avoid when**: You use `storageState` everywhere and never navigate through the login UI in tests.
 
 ```typescript
 // page-objects/LoginPage.ts
@@ -608,8 +600,7 @@ test.describe("login page", () => {
 
 ### API-Based Login
 
-**Use when**: You want the fastest possible authentication without any browser interaction.
-**Avoid when**: You are specifically testing the login UI.
+**Use when**: You want the fastest possible authentication without any browser interaction. **Avoid when**: You are specifically testing the login UI.
 
 API login is typically 5-10x faster than UI login.
 
@@ -681,8 +672,7 @@ export { expect } from "@playwright/test";
 
 ### Unauthenticated Tests
 
-**Use when**: Testing the login page, signup flow, password reset, public pages, or redirect behavior for unauthenticated users.
-**Avoid when**: The test requires a logged-in user.
+**Use when**: Testing the login page, signup flow, password reset, public pages, or redirect behavior for unauthenticated users. **Avoid when**: The test requires a logged-in user.
 
 When your config sets a default `storageState`, you must explicitly clear it for unauthenticated tests.
 
@@ -731,7 +721,7 @@ test.describe("unauthenticated access", () => {
 ## Decision Guide
 
 | Scenario                         | Approach                       | Speed    | Isolation      | When to Choose                                                 |
-| -------------------------------- | ------------------------------ | -------- | -------------- | -------------------------------------------------------------- |
+|----------------------------------|--------------------------------|----------|----------------|----------------------------------------------------------------|
 | Most tests need auth             | Global setup + `storageState`  | Fastest  | Shared session | Default for nearly every project                               |
 | Tests modify user state          | Per-worker fixture             | Fast     | Per worker     | Tests update profile, change settings, or mutate data          |
 | Multiple user roles              | Per-project `storageState`     | Fastest  | Per role       | App has admin/member/guest roles                               |
@@ -758,7 +748,7 @@ Need to test the login page itself?
 ## Anti-Patterns
 
 | Don't Do This                                                             | Problem                                     | Do This Instead                                                           |
-| ------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+|---------------------------------------------------------------------------|---------------------------------------------|---------------------------------------------------------------------------|
 | Log in via UI before every test                                           | Adds 2-5 seconds per test                   | Use `storageState` to skip login entirely                                 |
 | Share a single auth state file across parallel workers that mutate state  | Race conditions                             | Use per-worker fixtures with `{ scope: 'worker' }`                        |
 | Hardcode credentials in test files                                        | Security risk                               | Use environment variables and `.env` files                                |

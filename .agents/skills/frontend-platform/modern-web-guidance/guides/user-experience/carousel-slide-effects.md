@@ -6,49 +6,49 @@ Carousel slide effects are a great way to add visual interest to a carousel. As 
 
 Here’s how to create carousel slide effects:
 
-1.  **Create a scroller:** This element will act as the container for your carousel slides. In this example it uses `overflow-x: scroll` to allow horizontal scrolling.
+1. **Create a scroller:** This element will act as the container for your carousel slides. In this example it uses `overflow-x: scroll` to allow horizontal scrolling.
 
-    ```html
-    <ul class="scroller">
-      <li class="entry">1</li>
-      <li class="entry">2</li>
-      <li class="entry">3</li>
-      …
-    </ul>
-    ```
+   ```html
+   <ul class="scroller">
+     <li class="entry">1</li>
+     <li class="entry">2</li>
+     <li class="entry">3</li>
+     …
+   </ul>
+   ```
 
-    ```css
-    .scroller {
-      overflow-x: scroll;
-    }
-    ```
+   ```css
+   .scroller {
+     overflow-x: scroll;
+   }
+   ```
 
-2.  **Define the animation:** Create a CSS animation that defines the different states of your slides as they traverse the scrollport. You can define keyframes for any part of the animation. For example, you can define a state for when the slides are in the center of the scrollport by including a `50%` keyframe. In this example, the `scale` property makes the slides grow as they approach the center and shrink as they move away.
+2. **Define the animation:** Create a CSS animation that defines the different states of your slides as they traverse the scrollport. You can define keyframes for any part of the animation. For example, you can define a state for when the slides are in the center of the scrollport by including a `50%` keyframe. In this example, the `scale` property makes the slides grow as they approach the center and shrink as they move away.
 
-    ```css
-    @keyframes animate {
-      0% {
-        scale: 0.5;
-      }
-      50% {
-        scale: 1;
-      }
-      100% {
-        scale: 0.5;
-      }
-    }
-    ```
+   ```css
+   @keyframes animate {
+     0% {
+       scale: 0.5;
+     }
+     50% {
+       scale: 1;
+     }
+     100% {
+       scale: 0.5;
+     }
+   }
+   ```
 
-3.  **Apply the animation and `view-timeline`:** Attach the animation to the carousel slides and link it to a `view-timeline` that tracks the element as it scrolls through the container.
+3. **Apply the animation and `view-timeline`:** Attach the animation to the carousel slides and link it to a `view-timeline` that tracks the element as it scrolls through the container.
 
-    ```css
-    .scroller > * {
-      animation: animate auto linear both;
-      animation-timeline: view(inline);
-    }
-    ```
+   ```css
+   .scroller > * {
+     animation: animate auto linear both;
+     animation-timeline: view(inline);
+   }
+   ```
 
-    By default, `view()` tracks the element on the `block` axis. If you need to track it on the `inline` axis, you can use `view(inline)`.
+   By default, `view()` tracks the element on the `block` axis. If you need to track it on the `inline` axis, you can use `view(inline)`.
 
 ## Example code
 
@@ -110,9 +110,9 @@ This code animates the carousel items of a horizontal scroller on scroll using a
 When using scroll-driven animations, it's important to follow a few best practices to ensure a smooth and accessible experience:
 
 - **DO** include feature detection: Not all browsers support scroll-driven animations. Use `@supports ((animation-timeline: view()) and (animation-range: entry))` to check for support and provide a fallback for browsers that don't support it.
-  - The `(animation-range: entry)` check **MUST** be included here, to filter out browsers with only partial support.
-  - **DO NOT** use the `scroll-timeline-polyfill` package for the fallback strategy as it is not feature complete and has a lot of known issues.
-  - If the animation is only considered to be decorative, opt for Progressive Enhancement and **DO NOT** provide a fallback.
+    - The `(animation-range: entry)` check **MUST** be included here, to filter out browsers with only partial support.
+    - **DO NOT** use the `scroll-timeline-polyfill` package for the fallback strategy as it is not feature complete and has a lot of known issues.
+    - If the animation is only considered to be decorative, opt for Progressive Enhancement and **DO NOT** provide a fallback.
 - **DO** respect user preferences: Some users prefer to have less motion on the web. Use the `prefers-reduced-motion` media query to disable or reduce your animations for these users.
 - **DO** try to animate only performant CSS properties: For the smoothest animations, stick to animating properties that can be handled by the browser's compositor thread, such as `transform` and `opacity`. Animating other properties like `width` or `height` can lead to performance issues.
 - **DO** use the correct declaration order: When using the `animation` shorthand property, declare `animation-timeline` and `animation-range` *after* it to prevent the shorthand from resetting the timeline.

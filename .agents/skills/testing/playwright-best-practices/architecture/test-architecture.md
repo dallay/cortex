@@ -15,7 +15,7 @@
 ## Decision Matrix
 
 | Scenario                    | Recommended Type | Rationale                                     |
-| --------------------------- | ---------------- | --------------------------------------------- |
+|-----------------------------|------------------|-----------------------------------------------|
 | Login / auth flow           | E2E              | Cross-page, cookies, redirects, session state |
 | Form submission             | Component        | Isolated validation logic, error states       |
 | CRUD operations             | API              | Data integrity matters more than UI           |
@@ -349,7 +349,7 @@ Total: 24 tests, ~22 seconds. API tests catch most regressions. Component tests 
 ## Common Mistakes
 
 | Anti-Pattern                              | Problem                                                  | Better Approach                                                |
-| ----------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+|-------------------------------------------|----------------------------------------------------------|----------------------------------------------------------------|
 | E2E for every validation rule             | 30-second browser test for something API covers in 200ms | API test for validation, one component test for error display  |
 | No API tests, all E2E                     | Slow suite, flaky from UI timing, hard to diagnose       | API tests for data/logic, E2E for critical paths only          |
 | Component tests mocking everything        | Tests pass but app broken because mocks drift            | Mock only external boundaries; API tests verify real contracts |

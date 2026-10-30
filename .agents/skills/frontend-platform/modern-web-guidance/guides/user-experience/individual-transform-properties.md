@@ -5,6 +5,7 @@ The individual CSS transform properties (`translate`, `rotate`, and `scale`) all
 ### Key Implementation Details
 
 Individual transform properties are always applied in a **fixed order**, regardless of their order in your CSS:
+
 1. `translate`
 2. `rotate`
 3. `scale`

@@ -28,7 +28,7 @@ Components reference semantic CSS variable tokens. Change the variables to chang
 Every color follows the `name` / `name-foreground` convention. The base variable is for backgrounds, `-foreground` is for text/icons on that background.
 
 | Variable                                     | Purpose                          |
-| -------------------------------------------- | -------------------------------- |
+|----------------------------------------------|----------------------------------|
 | `--background` / `--foreground`              | Page background and default text |
 | `--card` / `--card-foreground`               | Card surfaces                    |
 | `--primary` / `--primary-foreground`         | Primary buttons and actions      |

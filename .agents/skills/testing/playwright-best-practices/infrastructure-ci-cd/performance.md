@@ -436,7 +436,7 @@ test("lighthouse audit", async ({ page }) => {
 ## Performance Checklist
 
 | Optimization                   | Impact     |
-| ------------------------------ | ---------- |
+|--------------------------------|------------|
 | Enable `fullyParallel`         | High       |
 | Reuse authentication           | High       |
 | Mock heavy APIs                | High       |

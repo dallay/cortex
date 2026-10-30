@@ -21,12 +21,12 @@ If the request is empty or contains only whitespace:
 
 1. Ask: “What would you like to create or update: a PRD, ADR, TRD, guide, reference, or another document?”
 2. Present these options with a brief explanation:
-   - **PRD:** product requirements; problem, users, goals, and scope.
-   - **ADR:** a record of an architecture decision and its consequences.
-   - **TRD:** technical requirements, contracts, constraints, and validation.
-   - **Guide:** instructions for use, development, operations, or deployment.
-   - **Reference:** API, configuration, architecture, or another technical reference.
-   - **Another document:** lets the user describe what they need.
+    - **PRD:** product requirements; problem, users, goals, and scope.
+    - **ADR:** a record of an architecture decision and its consequences.
+    - **TRD:** technical requirements, contracts, constraints, and validation.
+    - **Guide:** instructions for use, development, operations, or deployment.
+    - **Reference:** API, configuration, architecture, or another technical reference.
+    - **Another document:** lets the user describe what they need.
 3. STOP and wait for the response. Do not choose an option for the user, draft a document, or create files before receiving it.
 
 If arguments are present, identify what they already specify. Do not repeat questions that have been answered. If the document type is missing, recommend the most suitable type and confirm the choice. If the topic or scope is missing, ask for that information.
@@ -65,11 +65,11 @@ After each question, STOP and wait for the response.
 
 - Write only after approval. Limit changes to the document and the indexes or links needed to find it.
 - Follow existing templates. When no applicable template exists, use the following minimum coverage:
-  - **PRD:** problem, users, goals, scope and exclusions, requirements, verifiable acceptance criteria, metrics, dependencies, and risks.
-  - **ADR:** status, date, scope, context, alternatives, decision, consequences, and references. Use proposed status unless the user explicitly accepts the decision or there is verifiable evidence that it has already been accepted.
-  - **TRD:** context and relationship to a PRD, if one exists; technical requirements; limits and contracts; data; security; performance; failure handling and recovery; observability; validation; and deployment or migration when applicable.
-  - **Guide:** audience, prerequisites, verifiable steps, expected results, and troubleshooting.
-  - **Reference:** scope, contracts, parameters, default values, constraints, safe examples, and verifiable sources.
+    - **PRD:** problem, users, goals, scope and exclusions, requirements, verifiable acceptance criteria, metrics, dependencies, and risks.
+    - **ADR:** status, date, scope, context, alternatives, decision, consequences, and references. Use proposed status unless the user explicitly accepts the decision or there is verifiable evidence that it has already been accepted.
+    - **TRD:** context and relationship to a PRD, if one exists; technical requirements; limits and contracts; data; security; performance; failure handling and recovery; observability; validation; and deployment or migration when applicable.
+    - **Guide:** audience, prerequisites, verifiable steps, expected results, and troubleshooting.
+    - **Reference:** scope, contracts, parameters, default values, constraints, safe examples, and verifiable sources.
 - Do not create supporting documents only because they appear in this coverage. Explain when sections do not apply; do not add artificial content.
 - Mark unresolved questions explicitly. If missing information blocks the document's validity, ask before continuing. Do not present a draft as approved.
 - Distinguish implemented behavior from proposed behavior.

@@ -172,7 +172,7 @@ Para detalles completos de arquitectura Docker y troubleshooting, ver [dev/READM
 
 ### `just ci` — gates locales de PR
 
-`just ci` ejecuta en secuencia y detiene el proceso ante el primer fallo. Incluye los gates bloqueantes aplicables a una PR: instalación congelada de dependencias, contratos CI, pruebas de doctor e issue labeler, build del dashboard, markdown, formato, Clippy, arquitectura de Huginn, compilación, suites Rust y frontend, documentación, auditoría de dependencias, escáneres de seguridad, cobertura y E2E.
+`just ci` ejecuta en secuencia y detiene el proceso ante el primer fallo. Incluye los gates bloqueantes aplicables a una PR: instalación congelada de dependencias, contratos CI, pruebas de doctor e issue labeler, build del dashboard, markdown y catálogo de skills, formato, Clippy, arquitectura de Huginn, compilación, suites Rust y frontend, documentación, auditoría de dependencias, escáneres de seguridad, cobertura y E2E.
 
 ```bash
 # Suite local de PR, recomendada antes de abrir o actualizar un PR
@@ -238,8 +238,9 @@ lefthook run pre-commit
 ## Documentación
 
 ```bash
-# Lint de markdown
-pnpm exec markdownlint-cli2 "docs/**/*.md" "*.md"
+# Lint de markdown y validación del catálogo de skills
+pnpm exec markdownlint-cli2 "docs/**/*.md" "*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"
+node scripts/validate-skills.mjs
 
 # Verificar links internos
 # (usar herramienta preferida del equipo)

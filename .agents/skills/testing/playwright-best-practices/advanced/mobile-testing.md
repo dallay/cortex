@@ -395,7 +395,7 @@ test.describe("visual regression", () => {
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern                | Problem                   | Solution                         |
-| --------------------------- | ------------------------- | -------------------------------- |
+|-----------------------------|---------------------------|----------------------------------|
 | Only testing one viewport   | Misses responsive bugs    | Test multiple breakpoints        |
 | Ignoring touch events       | Features broken on mobile | Test tap, swipe, long press      |
 | Hardcoded viewport in tests | Can't test multiple sizes | Use `page.setViewportSize()`     |

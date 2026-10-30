@@ -25,15 +25,15 @@
 
 ### Changes
 
-| Component                                 | Change                                                                                  |
-|-------------------------------------------|------------------------------------------------------------------------------------------|
-| `apps/agent/src/terminal.rs`              | Number approval requests per turn, print `Action:` and `Effect:` headers, show `different from #N` for repeats, and reword `Approve once?` to `Approve this exact change?` |
-| `apps/agent/src/main.rs`                  | Reset the per-turn approval counter when a new user prompt starts; add a `/compact` chat command that runs the loop's existing compaction with a confirmation prompt |
-| `apps/agent/src/terminal.rs`              | Provide a `Policy::reset_turn()` helper invoked by the CLI before each new turn         |
-| `apps/agent/tests/cli.rs`                 | New test covering two approvals in one turn (deny + confirm `different from #1`)        |
-| `docs/agent/implementation-specification.md` | Update approval UX section to describe the new headers and `/compact` flow            |
-| `docs/agent/linux-daily-use.md`          | Mention `/compact` as a manual trigger                                                    |
-| `docs/agent/validation.md`                | Note the change in the local Ollama record                                                |
+| Component                                    | Change                                                                                                                                                                     |
+|----------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `apps/agent/src/terminal.rs`                 | Number approval requests per turn, print `Action:` and `Effect:` headers, show `different from #N` for repeats, and reword `Approve once?` to `Approve this exact change?` |
+| `apps/agent/src/main.rs`                     | Reset the per-turn approval counter when a new user prompt starts; add a `/compact` chat command that runs the loop's existing compaction with a confirmation prompt       |
+| `apps/agent/src/terminal.rs`                 | Provide a `Policy::reset_turn()` helper invoked by the CLI before each new turn                                                                                            |
+| `apps/agent/tests/cli.rs`                    | New test covering two approvals in one turn (deny + confirm `different from #1`)                                                                                           |
+| `docs/agent/implementation-specification.md` | Update approval UX section to describe the new headers and `/compact` flow                                                                                                 |
+| `docs/agent/linux-daily-use.md`              | Mention `/compact` as a manual trigger                                                                                                                                     |
+| `docs/agent/validation.md`                   | Note the change in the local Ollama record                                                                                                                                 |
 
 ### Does NOT Change
 
@@ -68,10 +68,10 @@
 2. **Stable `Effect:` line derived from the action.** The first line of the `preview` is a `Directory:` for `native.shell` and the diff header `--- README.md / +++ README.md` for `native.write_file`/`native.edit_file`. MCP previews already identify server and tool. We render a single `Effect:` line — kept short — derived from the first non-empty line of the preview when the action is `native.*`. This avoids parsing the full preview and adds a second visible signal for action and target alongside the action name itself.
 
 3. **`/compact` reuses the existing real-model summarization.** The CLI recognizes `/compact` (and keeps `/summarize` as a deprecated alias) before calling `implementation.0.run(...)`. The handler:
-   - prints `Compact session now? Older history will be summarized; originals stay in the database. [y/N]`;
-   - reads a confirmation from the same `Input` used for approvals;
-   - on yes, calls a new `LoopService::compact_now(&mut session, &policy, &output, cancellation)` method that performs the same `summary_request` already executed in `StandardLoop::context()`, including the `Event::Compacted` emission and SQLite save;
-   - on no, returns to the prompt and continues.
+    - prints `Compact session now? Older history will be summarized; originals stay in the database. [y/N]`;
+    - reads a confirmation from the same `Input` used for approvals;
+    - on yes, calls a new `LoopService::compact_now(&mut session, &policy, &output, cancellation)` method that performs the same `summary_request` already executed in `StandardLoop::context()`, including the `Event::Compacted` emission and SQLite save;
+    - on no, returns to the prompt and continues.
 
    No new provider call path. No new request shape. The same model, the same system prompt, the same 1024-token `max_tokens` for the summary. The automatic path still triggers at the conservative byte threshold; `/compact` is a manual trigger that asks the same summarizer to run now.
 
@@ -111,23 +111,23 @@ impl Policy {
 
 ## 4. Alternatives Considered
 
-| Alternative                                      | Why Not Chosen                                                                       |
-|--------------------------------------------------|----------------------------------------------------------------------------------------|
-| Add an `ApprovalRequest` field `attempt: u32`     | Cross-crate contract change for a UI concern; the per-turn counter belongs to the policy |
-| Track diff hashes server-side                    | Bigger change for the same outcome; hashes add no information the human can act on    |
-| Auto-retry denial as a hard rule in the loop     | The user explicitly preferred transparent retry with a new approval, not a silent rule  |
-| Add `/compact` as a CLI subcommand instead        | A slash command in `chat` matches Goose UX and keeps the same prompt context          |
-| Run compaction in a worker that always shows progress | The current `Compacted` event is sufficient; a progress bar is out of scope           |
+| Alternative                                           | Why Not Chosen                                                                           |
+|-------------------------------------------------------|------------------------------------------------------------------------------------------|
+| Add an `ApprovalRequest` field `attempt: u32`         | Cross-crate contract change for a UI concern; the per-turn counter belongs to the policy |
+| Track diff hashes server-side                         | Bigger change for the same outcome; hashes add no information the human can act on       |
+| Auto-retry denial as a hard rule in the loop          | The user explicitly preferred transparent retry with a new approval, not a silent rule   |
+| Add `/compact` as a CLI subcommand instead            | A slash command in `chat` matches Goose UX and keeps the same prompt context             |
+| Run compaction in a worker that always shows progress | The current `Compacted` event is sufficient; a progress bar is out of scope              |
 
 ---
 
 ## 5. Risks
 
-| Risk                                              | Mitigation                                                                 |
-|---------------------------------------------------|------------------------------------------------------------------------------|
-| Re-asking for confirmation distracts the user     | Numbering and the `different from #N` line make repetition explicit, not opaque |
-| `/compact` summary consumes tokens and time      | The existing summarizer is bounded by `max_tokens=1024` and the provider timeouts |
-| Resetting the counter at the wrong time           | The CLI calls `reset_turn()` exactly once per new turn, before `run(...)` is invoked |
+| Risk                                                         | Mitigation                                                                                   |
+|--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| Re-asking for confirmation distracts the user                | Numbering and the `different from #N` line make repetition explicit, not opaque              |
+| `/compact` summary consumes tokens and time                  | The existing summarizer is bounded by `max_tokens=1024` and the provider timeouts            |
+| Resetting the counter at the wrong time                      | The CLI calls `reset_turn()` exactly once per new turn, before `run(...)` is invoked         |
 | Reusing the `Input` reader for `/compact` blocks other input | The reader runs in a detached thread; we treat the line as confirmation, not as a new prompt |
 
 ---

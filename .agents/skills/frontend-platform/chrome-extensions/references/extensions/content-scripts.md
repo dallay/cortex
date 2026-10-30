@@ -3,6 +3,7 @@
 ## Two Ways to Inject
 
 ### 1. Static (manifest declaration)
+
 ```json
 {
   "content_scripts": [{
@@ -15,6 +16,7 @@
 ```
 
 ### 2. Programmatic (from service worker or popup)
+
 ```js
 // Requires "scripting" permission and host access
 chrome.scripting.executeScript({
@@ -33,6 +35,7 @@ chrome.scripting.executeScript({
 ```
 
 Use `activeTab` permission for on-click injection (no host_permissions needed):
+
 ```json
 {
   "permissions": ["activeTab", "scripting"]
@@ -42,6 +45,7 @@ Use `activeTab` permission for on-click injection (no host_permissions needed):
 ## Isolated World
 
 Content scripts run in an isolated world:
+
 - They share the DOM with the page but NOT JavaScript variables
 - They can access chrome.runtime messaging APIs
 - The page's CSP does NOT restrict content script code
@@ -105,8 +109,8 @@ async function highlightEmails(elements) {
 
 ## `run_at` Timing
 
-| Value | When |
-|-------|------|
-| `document_start` | Before DOM is constructed (useful for blocking) |
-| `document_idle` | After DOM is ready but before all resources load (default, recommended) |
-| `document_end` | After DOM is complete but before images/subframes |
+| Value            | When                                                                    |
+|------------------|-------------------------------------------------------------------------|
+| `document_start` | Before DOM is constructed (useful for blocking)                         |
+| `document_idle`  | After DOM is ready but before all resources load (default, recommended) |
+| `document_end`   | After DOM is complete but before images/subframes                       |

@@ -413,9 +413,12 @@ ci-semgrep:
     uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep scan --config p/rust --config p/dockerfile --config p/github-actions --severity ERROR --sarif --output "$report" .
     jq -e '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length == 0' "$report"
 
-# Lint markdown files with markdownlint-cli2
-ci-lint: (_ci-header "markdown-lint...")
-    @pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
+# Lint markdown files and validate the Agent Skills catalogue
+ci-lint: (_ci-header "markdown-lint + skills...")
+    @pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"
+    @node scripts/validate-skills.mjs
+    @node --test scripts/validate-skills.test.mjs
+    @bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh
 
 # Verify Rust code formatting matches rustfmt rules
 ci-fmt: (_ci-header "fmt-check...")
@@ -540,14 +543,15 @@ ci-ci:
     echo "${Y}  CI (no E2E) — fail-fast on first error${N}"
     echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
     echo ""
-    run_step "1/8 markdown-lint"   pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md"
-    run_step "2/8 fmt-check"       cargo fmt --all -- --check
-    run_step "3/8 clippy"          cargo clippy --workspace --all-targets -- -D warnings
-    run_step "4/8 cargo check"     cargo check --workspace
-    run_step "5/8 cargo test"      cargo test --workspace --all-features
-    run_step "6/8 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
-    run_step "7/8 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
-    run_step "8/8 cargo audit"     just ci-audit
+    run_step "1/9 markdown-lint"    bash -c 'pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"'
+    run_step "2/9 skills validation"  bash -c 'node scripts/validate-skills.mjs && node --test scripts/validate-skills.test.mjs && bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh'
+    run_step "3/9 fmt-check"       cargo fmt --all -- --check
+    run_step "4/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
+    run_step "5/9 cargo check"     cargo check --workspace
+    run_step "6/9 cargo test"      cargo test --workspace --all-features
+    run_step "7/9 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
+    run_step "8/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
+    run_step "9/9 cargo audit"     just ci-audit
     TOTAL=$(( SECONDS - TOTAL_START ))
     echo ""
     echo "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"

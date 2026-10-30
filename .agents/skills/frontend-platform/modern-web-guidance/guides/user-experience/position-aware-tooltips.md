@@ -83,7 +83,6 @@ If you need to change properties on the container itself (like `margin` or `back
 1. Apply `container-type: anchored` to the outer positioned element.
 2. Target the inner element inside the `@container` block.
 
-
 ```css
 @container anchored(fallback: flip-block) {
   .tooltip-content {
@@ -97,7 +96,6 @@ If you need to change properties on the container itself (like `margin` or `back
 
 - **Prefer logical fallbacks**: Use keywords like `flip-block` and `flip-inline` in `position-try-fallbacks` for simpler queries that handle RTL and different writing modes automatically.
 - **Use pseudo-elements for arrows**: Tooltip arrows are purely decorative and are perfect candidates for `::before` or `::after`, which can be styled via anchored container queries without extra DOM.
-
 
 ## Fallback strategies
 
