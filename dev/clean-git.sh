@@ -86,30 +86,29 @@ cleanup_remote_refs() {
 
 cleanup_git_objects() {
     info "==> Limpiando reflogs y objetos inalcanzables"
-    # Expire reflogs per-ref instead of using --all. `--all` also expires
-    # refs/stash, which drops the stash stack and makes `git gc --prune=now`
-    # delete the stashed commits. Stashes are user work-in-progress, so they
-    # are never touched here.
-    local ref
-    while IFS= read -r ref; do
-        [[ -z "$ref" ]] && continue
-        git reflog expire --expire=30.days --expire-unreachable=now "$ref"
-    done < <(git for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags)
+    # `git reflog expire --all` also expires refs/stash, and --expire-unreachable
+    # prunes stash entries that are not ancestors of the current stash tip.
+    # The following `git gc --prune=now` would then delete the stashed commits,
+    # losing user work-in-progress.
+    #
+    # Strategy: preserve the stash reflog by hand, expire everything else, then
+    # restore the stash reflog before garbage collection.
+    local stash_log stash_backup=""
+    stash_log="$(git rev-parse --git-path logs/refs/stash)"
+    if [[ -s "$stash_log" ]]; then
+        stash_backup="$(mktemp)"
+        cp "$stash_log" "$stash_backup"
+    fi
 
-    # HEAD reflog is tracked separately from the refs above.
-    git reflog expire --expire=30.days --expire-unreachable=now HEAD
+    # --all tolerates refs that live only in packed-refs and have no reflog.
+    # Expiring per-ref fails with "points nowhere" for those.
+    git reflog expire --expire=30.days --expire-unreachable=now --all
 
-    # Protect the stash stack from the prune below. refs/stash points to the
-    # newest stash, but `git stash list` reads the refs/stash reflog. If that
-    # reflog is missing, recreate it so the stash stays visible.
-    # The ref must be deleted and recreated because `git update-ref` with an
-    # unchanged value does not write a reflog entry.
-    if git rev-parse --verify --quiet refs/stash >/dev/null && [[ -z "$(git stash list)" ]]; then
-        local stash_commit
-        stash_commit="$(git rev-parse refs/stash)"
-        git update-ref -d refs/stash
-        git update-ref --create-reflog -m "clean-git: restore stash reflog" "refs/stash" "$stash_commit"
-        warn "    reflog de refs/stash restaurado"
+    if [[ -n "$stash_backup" ]]; then
+        mkdir -p "$(dirname "$stash_log")"
+        cp "$stash_backup" "$stash_log"
+        rm -f "$stash_backup"
+        info "    pila de stashes preservada"
     fi
 
     git gc --prune=now --quiet
