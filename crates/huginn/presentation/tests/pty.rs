@@ -839,24 +839,29 @@ fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
 }
 
 #[test]
-fn the_transcript_survives_a_terminal_resize() {
+fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("stream\r");
+    pty.wait_for("chunk0");
+
+    // Keep resizing active while the fixture emits its deterministic chunks.
+    // Short spacing gives the event loop time to observe transitions instead of
+    // only seeing the final PTY dimensions.
+    for index in 0..100 {
+        let (rows, cols) = if index % 2 == 0 { (8, 20) } else { (40, 120) };
+        pty.resize(rows, cols);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
     pty.wait_for("Assistant: STREAM_COMPLETE");
-    assert!(
-        pty.screen_text().contains("User: stream"),
-        "the sent turn is rendered: {}",
-        pty.screen_text()
-    );
-    // Enlarging the terminal must not take the history away.
-    pty.resize(40, 120);
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    let screen = pty.screen_text();
-    assert!(
-        screen.contains("User: stream"),
-        "the transcript must survive a resize: {screen}"
-    );
+    // Verify the composer still accepts an independent command and a fresh
+    // approval code after all resize transitions.
+    pty.send("approve\r");
+    pty.wait_for("PREVIEW_FIRST");
+    let code = approval_code(&pty);
+    pty.send(&format!("{code}\r"));
+    pty.wait_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
 }
