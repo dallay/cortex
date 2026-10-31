@@ -59,10 +59,21 @@ impl AgentLoop for Engine {
             ));
             return Ok(());
         }
+        let gated_resize_stream = std::env::args().nth(1).as_deref() == Some("resize-stream");
         for index in 0..40 {
+            let marker = gated_resize_stream && index % 4 == 0;
             tokio::select! {
                 _ = cancel.cancelled() => { session.interrupted = true; return Err(huginn_core::AgentError::Cancelled); },
-                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text { text: format!("chunk{index} ") }),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text { text: format!("{}chunk{index} ", if marker { "\n" } else { "" }) }),
+            }
+            if marker {
+                let signal = format!("resize-{index}");
+                while !std::path::Path::new(&signal).exists() {
+                    tokio::select! {
+                        _ = cancel.cancelled() => { session.interrupted = true; return Err(huginn_core::AgentError::Cancelled); },
+                        _ = tokio::time::sleep(Duration::from_millis(10)) => {},
+                    }
+                }
             }
         }
         session
