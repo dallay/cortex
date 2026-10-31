@@ -840,44 +840,34 @@ fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
 
 #[test]
 fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
-    let mut pty = start("normal", true);
+    let root = tempfile::tempdir().unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("resize-stream");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
     pty.wait_for("Huginn");
     pty.send("stream\r");
-    pty.wait_for("chunk0");
 
-    // The fixture emits 40 chunks over roughly 800 ms. Keep each resize
-    // transition spaced within that window, and synchronize halfway through on
-    // a later chunk to prove the storm is still overlapping active streaming.
-    for resize_index in 0..50 {
-        let (rows, cols) = if resize_index % 2 == 0 {
-            (8, 20)
-        } else {
-            (40, 120)
-        };
-        pty.resize(rows, cols);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    // The fixture pauses after each marker until this batch of resizes is done.
+    // Subsequent chunks arrive between batches, regardless of scheduler delays.
+    for index in (0..40).step_by(4) {
+        pty.wait_for(&format!("chunk{index}"));
+        for resize_index in 0..10 {
+            let (rows, cols) = if resize_index % 2 == 0 {
+                (8, 20)
+            } else {
+                (40, 120)
+            };
+            pty.resize(rows, cols);
+            pty.wait_for("Compose");
+        }
+        assert!(
+            !pty.output().contains("Assistant: STREAM_COMPLETE"),
+            "all 100 resizes must finish before streaming completes:\n{}",
+            pty.output()
+        );
+        std::fs::write(root.path().join(format!("resize-{index}")), "").unwrap();
     }
-    pty.wait_output_for("chunk20");
-    assert!(
-        !pty.output().contains("Assistant: STREAM_COMPLETE"),
-        "the first 50 resizes must overlap active streaming:\n{}",
-        pty.output()
-    );
-    for resize_index in 50..100 {
-        let (rows, cols) = if resize_index % 2 == 0 {
-            (8, 20)
-        } else {
-            (40, 120)
-        };
-        pty.resize(rows, cols);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    pty.wait_output_for("chunk30");
-    assert!(
-        !pty.output().contains("Assistant: STREAM_COMPLETE"),
-        "all 100 resizes must finish before streaming completes:\n{}",
-        pty.output()
-    );
 
     pty.wait_for("Assistant: STREAM_COMPLETE");
     let screen = pty.screen_text();
