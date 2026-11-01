@@ -10,6 +10,7 @@
 
 pub mod codec;
 pub mod error;
+pub mod extraction;
 pub mod model;
 pub mod ports;
 
