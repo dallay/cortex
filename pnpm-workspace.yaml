@@ -13,7 +13,7 @@ onlyBuiltDependencies:
 
 overrides:
   nanoid@3: 6.0.2
-  postcss: 8.5.31
+  postcss: 8.5.32
   source-map-js: 1.2.2
   vue: 3.6.0-rc.13
   '@vue/compiler-core': 3.6.0-rc.13
