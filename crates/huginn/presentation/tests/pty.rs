@@ -839,24 +839,49 @@ fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
 }
 
 #[test]
-fn the_transcript_survives_a_terminal_resize() {
-    let mut pty = start("normal", true);
+fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("resize-stream");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
     pty.wait_for("Huginn");
     pty.send("stream\r");
+
+    // The fixture pauses after each marker until this batch of resizes is done.
+    // Subsequent chunks arrive between batches, regardless of scheduler delays.
+    for index in (0..40).step_by(4) {
+        pty.wait_for(&format!("chunk{index}"));
+        for resize_index in 0..10 {
+            let (rows, cols) = if resize_index % 2 == 0 {
+                (8, 20)
+            } else {
+                (40, 120)
+            };
+            pty.resize(rows, cols);
+            pty.wait_for("Compose");
+        }
+        assert!(
+            !pty.output().contains("Assistant: STREAM_COMPLETE"),
+            "all 100 resizes must finish before streaming completes:\n{}",
+            pty.output()
+        );
+        std::fs::write(root.path().join(format!("resize-{index}")), "").unwrap();
+    }
+
     pty.wait_for("Assistant: STREAM_COMPLETE");
-    assert!(
-        pty.screen_text().contains("User: stream"),
-        "the sent turn is rendered: {}",
-        pty.screen_text()
-    );
-    // Enlarging the terminal must not take the history away.
-    pty.resize(40, 120);
-    std::thread::sleep(std::time::Duration::from_millis(400));
     let screen = pty.screen_text();
     assert!(
         screen.contains("User: stream"),
-        "the transcript must survive a resize: {screen}"
+        "the committed user transcript must remain visible after 100 streaming resizes:\n{screen}"
     );
+    // Verify the composer still accepts an independent command and a fresh
+    // approval code after all resize transitions.
+    pty.send("approve\r");
+    pty.wait_for("PREVIEW_FIRST");
+    let code = approval_code(&pty);
+    pty.send(&format!("{code}\r"));
+    pty.wait_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
 }
