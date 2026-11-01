@@ -3,6 +3,41 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
+## Automatización PTY Ratatui — DALLAY-665
+
+**Estado: cobertura automatizada ampliada; no es certificación de terminales nativos.**
+
+El test `composer_and_fresh_approval_work_after_100_streaming_resizes` usa el
+fixture determinista `tui-fixture` y `portable-pty` para cambiar 100 veces entre
+20x8 y 120x40 mientras llegan fragmentos de una respuesta. Luego verifica que
+el composer admite otro comando y que una aprobación requiere y acepta un código
+fresco. El helper reconstruye la pantalla visible, no el transcript lógico completo;
+por eso este caso no afirma ausencia de duplicación fuera del viewport. No certifica
+Terminal.app, iTerm2, SSH ni tmux.
+
+Ejecución focal en Linux x86_64 (`uname -a`: Linux 7.0.14-26-pve):
+
+```sh
+cargo test -p huginn-presentation --features test-driver --test pty composer_and_fresh_approval_work_after_100_streaming_resizes -- --exact --nocapture
+```
+
+Resultado focal observado: 1 test aprobado en 1.04 s. Por separado, la suite PTY
+completa aprobó 41 tests en ejecución serial (16.47 s), y también pasó
+`cargo test -p huginn-presentation --features test-driver` (suite completa, incluido
+PTY: 41 tests más las suites unitarias/integración). Toolchain
+Rust/Cargo 1.99.1. Versiones fijadas en `crates/huginn/presentation/Cargo.toml`:
+Ratatui 0.30.2, Crossterm 0.29.0 y portable-pty 0.9.0. El fixture usa salida
+simulada; no accede a un modelo real. La compilación reporta un warning deprecado
+preexistente en `src/event/test_support.rs:20` y warnings de asignación en
+`tests/event.rs:201-204`.
+
+Este test no mide tokens por segundo: sus fragmentos deterministas no representan
+tokens del proveedor. Tampoco mide latencia input-a-estado ni cubre 10 000 líneas
+lógicas. No se publican umbrales de rendimiento sin un benchmark representativo.
+La matriz de 100 cambios valida secuencia funcional y autorización posterior, no
+certifica que cada resize haya generado un frame distinto. Las métricas de 100 tok/s,
+ráfaga 10x, 10k líneas y latencia quedan pendientes de un benchmark reproducible.
+
 ## Cadena de hooks, registro y guards — 2026-10-27
 
 **Estado: Ready para abrir la cadena de PRs; no es aprobación de merge.**
