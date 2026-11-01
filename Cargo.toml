@@ -34,6 +34,12 @@ members = [
     "crates/huginn/reference-extension",
     "crates/huginn/rust-outline-component",
     "crates/huginn/outline-bindings",
+    "crates/muninn/core",
+    "crates/muninn/application",
+    "crates/muninn/neo4j",
+    "crates/muninn/providers",
+    "crates/muninn/bridge",
+    "apps/muninn",
 ]
 
 [workspace.package]

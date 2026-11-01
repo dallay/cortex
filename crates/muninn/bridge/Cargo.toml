@@ -1,0 +1,25 @@
+[package]
+name = "muninn-bridge"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "TCK HTTP bridge (conformance adapter) delegating to the real Muninn API"
+
+[dependencies]
+muninn-application = { path = "../application" }
+muninn-core = { path = "../core" }
+axum.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

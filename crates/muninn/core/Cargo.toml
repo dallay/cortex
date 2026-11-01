@@ -1,0 +1,18 @@
+[package]
+name = "muninn-core"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Muninn domain model and ports (Rust port of neo4j-labs/agent-memory)"
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

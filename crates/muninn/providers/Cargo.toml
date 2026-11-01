@@ -1,0 +1,23 @@
+[package]
+name = "muninn-providers"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Embedding and LLM provider adapters for Muninn"
+
+[dependencies]
+muninn-core = { path = "../core" }
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+wiremock = "0.6"
+
+[lints]
+workspace = true

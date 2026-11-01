@@ -1,0 +1,27 @@
+[package]
+name = "muninn"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Muninn: persistent graph memory for AI agents (Rust port of neo4j-labs/agent-memory)"
+
+[[bin]]
+name = "muninn"
+path = "src/main.rs"
+
+[dependencies]
+muninn-application = { path = "../../crates/muninn/application" }
+muninn-bridge = { path = "../../crates/muninn/bridge" }
+muninn-core = { path = "../../crates/muninn/core" }
+muninn-neo4j = { path = "../../crates/muninn/neo4j" }
+muninn-providers = { path = "../../crates/muninn/providers" }
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
