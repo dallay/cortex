@@ -8,10 +8,12 @@ pub mod bolt;
 pub mod client;
 pub mod maintenance;
 pub mod queries;
+pub mod query;
 pub mod schema;
 pub mod short_term;
 
 pub use client::{Neo4jClient, Neo4jConfig};
 pub use maintenance::Neo4jMaintenance;
+pub use query::Neo4jCypherQuery;
 pub use schema::{SchemaManager, DEFAULT_VECTOR_DIMENSIONS};
 pub use short_term::Neo4jShortTermStore;
