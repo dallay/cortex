@@ -13,6 +13,7 @@ use huginn_core::{
 };
 use huginn_plugin_api::v1::{CommandResult, DialogHandle, ToolResult, View};
 use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{mpsc, oneshot, Notify};
 
@@ -94,6 +95,25 @@ impl Editor {
     }
 }
 
+const LARGE_PASTE_MIN_LINES: usize = 3;
+const LARGE_PASTE_MIN_CHARS: usize = 150;
+
+struct PendingPaste {
+    marker: String,
+    text: String,
+    range: Range<usize>,
+}
+
+fn previous_character_range(text: &str, cursor: usize) -> Option<Range<usize>> {
+    let (start, _) = text[..cursor].char_indices().next_back()?;
+    Some(start..cursor)
+}
+
+fn next_character_range(text: &str, cursor: usize) -> Option<Range<usize>> {
+    let character = text[cursor..].chars().next()?;
+    Some(cursor..cursor + character.len_utf8())
+}
+
 /// Full approval preview for the permission modal.
 ///
 /// Numbered header, action, optional `Effect:` summary and the complete
@@ -161,6 +181,7 @@ pub struct UiState {
     connection_attachment: Option<uuid::Uuid>,
     pub editor: Editor,
     pub completion: Completion,
+    pending_pastes: Vec<PendingPaste>,
     pub files: Vec<String>,
     pub files_ready: bool,
     completion_editor: Option<(String, usize, bool)>,
@@ -285,6 +306,243 @@ impl UiState {
     }
     pub fn conversation(&mut self, text: String) {
         self.conversation.push(safe(&text));
+    }
+
+    pub(crate) fn insert_editor_text(&mut self, text: &str) {
+        let text = safe(text);
+        if !text.is_empty() {
+            self.insert_sanitized_editor_text(&text);
+        }
+    }
+
+    pub(crate) fn insert_pasted_text(&mut self, text: &str) {
+        let text = safe(text);
+        if text.is_empty() {
+            return;
+        }
+        let line_count = text.matches('\n').count() + 1;
+        if line_count < LARGE_PASTE_MIN_LINES && text.chars().count() <= LARGE_PASTE_MIN_CHARS {
+            self.insert_sanitized_editor_text(&text);
+            return;
+        }
+        let marker = format!("[Pasted ~{line_count} lines]");
+        let range = self.insert_sanitized_editor_text(&marker);
+        self.pending_pastes.push(PendingPaste {
+            marker,
+            text,
+            range,
+        });
+        self.pending_pastes
+            .sort_by_key(|pending| pending.range.start);
+    }
+
+    pub(crate) fn submitted_editor_text(&self) -> String {
+        let mut text = self.editor.text.clone();
+        for pending in self.pending_pastes.iter().rev() {
+            if text.get(pending.range.clone()) == Some(pending.marker.as_str()) {
+                text.replace_range(pending.range.clone(), &pending.text);
+            }
+        }
+        text
+    }
+
+    pub(crate) fn clear_editor(&mut self) {
+        self.editor = Editor::default();
+        self.pending_pastes.clear();
+    }
+
+    pub(crate) fn backspace_editor(&mut self) {
+        if let Some(index) = self.pending_pastes.iter().position(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor <= pending.range.end
+        }) {
+            self.remove_pending_paste(index);
+            return;
+        }
+        let Some(range) = previous_character_range(&self.editor.text, self.editor.cursor) else {
+            return;
+        };
+        self.remove_editor_range(range);
+    }
+
+    pub(crate) fn delete_editor(&mut self) {
+        if let Some(index) = self.pending_pastes.iter().position(|pending| {
+            pending.range.start <= self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.remove_pending_paste(index);
+            return;
+        }
+        let Some(range) = next_character_range(&self.editor.text, self.editor.cursor) else {
+            return;
+        };
+        self.remove_editor_range(range);
+    }
+
+    pub(crate) fn move_editor_left(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start < cursor && cursor <= pending.range.end)
+        {
+            self.editor.cursor = pending.range.start;
+            return;
+        }
+        self.editor.left();
+        if let Some(pending) = self.pending_pastes.iter().find(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.editor.cursor = pending.range.start;
+        }
+    }
+
+    pub(crate) fn move_editor_right(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start <= cursor && cursor < pending.range.end)
+        {
+            self.editor.cursor = pending.range.end;
+            return;
+        }
+        self.editor.right();
+        if let Some(pending) = self.pending_pastes.iter().find(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.editor.cursor = pending.range.end;
+        }
+    }
+
+    pub(crate) fn move_editor_vertical(&mut self, down: bool) {
+        self.editor.vertical(down);
+        self.normalize_editor_cursor();
+    }
+
+    pub(crate) fn move_editor_home(&mut self) {
+        self.editor.home();
+        self.normalize_editor_cursor();
+    }
+
+    pub(crate) fn move_editor_end(&mut self) {
+        self.editor.end();
+        self.normalize_editor_cursor();
+    }
+
+    fn normalize_editor_cursor(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start < cursor && cursor < pending.range.end)
+        {
+            let distance_to_start = cursor - pending.range.start;
+            let distance_to_end = pending.range.end - cursor;
+            self.editor.cursor = if distance_to_start < distance_to_end {
+                pending.range.start
+            } else {
+                pending.range.end
+            };
+        }
+    }
+
+    pub(crate) fn materialize_all_pastes(&mut self) {
+        while !self.pending_pastes.is_empty() {
+            let index = self.pending_pastes.len() - 1;
+            self.materialize_paste(index);
+        }
+    }
+
+    fn insert_sanitized_editor_text(&mut self, text: &str) -> Range<usize> {
+        self.materialize_paste_at_cursor();
+        let start = self.editor.cursor;
+        self.shift_pastes_for_insert(start, text.len());
+        let end = start + text.len();
+        self.editor.text.insert_str(start, text);
+        self.editor.cursor = end;
+        start..end
+    }
+
+    fn materialize_paste_at_cursor(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(index) = self
+            .pending_pastes
+            .iter()
+            .position(|pending| pending.range.start < cursor && cursor < pending.range.end)
+        {
+            self.materialize_paste(index);
+        }
+    }
+
+    fn materialize_paste(&mut self, index: usize) {
+        let pending = self.pending_pastes.remove(index);
+        let start = pending.range.start;
+        let end = pending.range.end;
+        if self.editor.text.get(pending.range.clone()) != Some(pending.marker.as_str()) {
+            return;
+        }
+
+        let cursor = self.editor.cursor;
+        self.editor
+            .text
+            .replace_range(pending.range.clone(), &pending.text);
+        let removed = end - start;
+        let inserted = pending.text.len();
+        if cursor <= start {
+            self.editor.cursor = cursor;
+        } else if cursor >= end {
+            self.editor.cursor = start + inserted + cursor - end;
+        } else {
+            self.editor.cursor = start + inserted;
+        }
+        self.shift_pastes_after_replace(end, removed, inserted);
+    }
+
+    fn remove_editor_range(&mut self, range: Range<usize>) {
+        self.shift_pastes_for_delete(&range);
+        self.editor.text.replace_range(range.clone(), "");
+        self.editor.cursor = range.start;
+    }
+
+    fn remove_pending_paste(&mut self, index: usize) {
+        let pending = self.pending_pastes.remove(index);
+        if self.editor.text.get(pending.range.clone()) == Some(pending.marker.as_str()) {
+            self.remove_editor_range(pending.range);
+        }
+    }
+
+    fn shift_pastes_for_insert(&mut self, at: usize, inserted: usize) {
+        for pending in &mut self.pending_pastes {
+            if at <= pending.range.start {
+                pending.range.start += inserted;
+                pending.range.end += inserted;
+            }
+        }
+    }
+
+    fn shift_pastes_for_delete(&mut self, range: &Range<usize>) {
+        let removed = range.end - range.start;
+        for pending in &mut self.pending_pastes {
+            if range.end <= pending.range.start {
+                pending.range.start -= removed;
+                pending.range.end -= removed;
+            }
+        }
+    }
+
+    fn shift_pastes_after_replace(&mut self, old_end: usize, removed: usize, inserted: usize) {
+        for pending in &mut self.pending_pastes {
+            if pending.range.start >= old_end {
+                if inserted >= removed {
+                    let delta = inserted - removed;
+                    pending.range.start += delta;
+                    pending.range.end += delta;
+                } else {
+                    let delta = removed - inserted;
+                    pending.range.start -= delta;
+                    pending.range.end -= delta;
+                }
+            }
+        }
     }
 
     /// Show the user's own turn right away. A slow model must not hide what
