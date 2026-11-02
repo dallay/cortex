@@ -41,7 +41,11 @@ members = [
     "crates/muninn/bridge",
     "crates/muninn/mcp",
     "apps/muninn",
+    "crates/muninn/c1-exporter",
 ]
+
+[patch.crates-io]
+candle-core = { path = "third_party/candle-core" }
 
 [workspace.package]
 version = "0.0.1"
