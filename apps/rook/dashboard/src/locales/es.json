@@ -284,6 +284,7 @@
 			"usageUnavailable": "Algunas mediciones de uso no están disponibles; revisa la disponibilidad de cada período.",
 			"rateLimited": "Rate limits observados 7 d",
 			"observedRateLimits": "Solicitudes enrutadas observadas, no cuota de cuenta",
+			"localWarningLabel": "Advertencia local sobre tráfico enrutado",
 			"connections": "{configured} configuradas · {active} activas",
 			"refresh": "Actualizar",
 			"stale": "Se muestran datos anteriores",
@@ -307,6 +308,29 @@
 				"critical": "Se superó el umbral local de error",
 				"unknown": "Estado no disponible",
 				"not_configured": "No hay conexiones configuradas"
+			},
+			"upstream": {
+				"title": "Observaciones reportadas por el proveedor",
+				"availability": {
+					"available": "Disponible",
+					"not_reported": "Sin observaciones upstream capturadas",
+					"unavailable": "No disponible"
+				},
+				"freshness": {
+					"fresh": "Fresca",
+					"stale": "Vencida",
+					"unknown_expiry": "Vigencia desconocida"
+				},
+				"scope": "Alcance",
+				"window": "Ventana",
+				"limit": "Límite",
+				"remaining": "Restante",
+				"ageSeconds": "hace {seconds}s",
+				"resetAt": "Se restablece",
+				"source": "Fuente",
+				"connection": "Conexión",
+				"notReported": "No se capturaron observaciones upstream para este proveedor.",
+				"disclaimer": "Estos valores son observaciones reportadas por el proveedor, no actividad de Cortex ni garantías de toda la cuenta."
 			}
 		},
 		"form": {

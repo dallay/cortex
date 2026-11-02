@@ -32,7 +32,10 @@ pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
 pub use manage_providers::ManageProviders;
-pub use rook_core::{ModelCatalogPort, RegistryError, SessionRepositoryPort, UsageRecorderPort};
+pub use rook_core::{
+    ModelCatalogPort, QuotaObservationRecorderPort, RegistryError, SessionRepositoryPort,
+    UsageRecorderPort,
+};
 pub use route_request::RouteRequest;
 pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
@@ -54,6 +57,7 @@ pub struct RookUsecases {
     pub manage_connections: Option<ManageConnections>,
     pub manage_api_keys: Option<ManageApiKeys>,
     pub usage_recorder: Option<Arc<dyn UsageRecorderPort>>,
+    pub quota_observation_reader: Option<Arc<dyn QuotaObservationRecorderPort>>,
     pub bootstrap_status: BootstrapStatus,
     pub ensure_admin_user: EnsureAdminUser,
     pub set_admin_password: SetAdminPassword,
@@ -98,6 +102,7 @@ impl RookUsecases {
             manage_connections,
             manage_api_keys,
             usage_recorder,
+            quota_observation_reader: None,
             bootstrap_status,
             ensure_admin_user,
             set_admin_password,
@@ -108,6 +113,15 @@ impl RookUsecases {
             model_catalog,
             fallback_router,
         }
+    }
+
+    /// Wire the reader for upstream quota observations into transport handlers.
+    pub fn with_quota_observation_reader(
+        mut self,
+        reader: Arc<dyn QuotaObservationRecorderPort>,
+    ) -> Self {
+        self.quota_observation_reader = Some(reader);
+        self
     }
 
     /// Revoke a session given its token_hash (from the raw cookie value).

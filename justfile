@@ -295,6 +295,21 @@ clean:
     cargo clean
     cargo llvm-cov clean --workspace
 
+# Clean local Git state: stale worktrees, merged branches, remote-tracking refs, and unreachable objects
+clean-git:
+    @./dev/clean-git.sh
+
+# Report local disk usage of build artifacts, Git objects, and tool caches
+disk-usage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    printf 'Filesystem:\n'
+    df -h . | tail -n 1
+    printf '\nRepository directories:\n'
+    du -sh .git target node_modules 2>/dev/null || true
+    printf '\nTool caches:\n'
+    du -sh "$HOME/.cache" "$HOME/.cargo/registry" "$HOME/.gradle" "$HOME/.local/share/pnpm" "$HOME/.rustup" 2>/dev/null || true
+
 # Git push with arguments and clean target artifacts on success
 push *args:
     git push "$@" && just clean

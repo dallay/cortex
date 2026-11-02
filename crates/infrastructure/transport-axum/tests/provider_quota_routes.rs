@@ -10,8 +10,9 @@ use axum::{
 };
 use chrono::Utc;
 use rook_core::{
-    CortexResult, CostBreakdown, Pagination, ProviderConnection, ProviderKind, UsageEntry,
-    UsageFilters, UsageRecorderPort, UsageSummary,
+    CortexResult, CostBreakdown, Pagination, ProviderConnection, ProviderKind, QuotaObservation,
+    QuotaObservationQuery, QuotaObservationRecorderPort, UsageEntry, UsageFilters,
+    UsageRecorderPort, UsageSummary,
 };
 use tower::ServiceExt;
 use transport_axum::provider_dto::CredentialsInput;
@@ -30,6 +31,42 @@ fn provider_credentials_reject_mixed_api_key_and_oauth_fields() {
     });
 
     assert!(serde_json::from_value::<CredentialsInput>(mixed).is_err());
+}
+
+#[derive(Clone, Default)]
+struct FakeQuotaObservationReader {
+    observations: Vec<QuotaObservation>,
+    fail: bool,
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for FakeQuotaObservationReader {
+    async fn record_observation(&self, _: QuotaObservation) -> CortexResult<()> {
+        Ok(())
+    }
+    async fn list_observations(
+        &self,
+        _: Option<shared_kernel::ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        if self.fail {
+            Err(rook_core::CortexError::provider("observation read failure"))
+        } else {
+            Ok(self.observations.clone())
+        }
+    }
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        if self.fail {
+            Err(rook_core::CortexError::provider("observation read failure"))
+        } else {
+            Ok(rook_core::reduce_latest_observations(
+                self.observations.clone(),
+                query,
+            ))
+        }
+    }
 }
 
 // Contract fixture: the URL and handler are the same as the mounted production route.
@@ -197,6 +234,94 @@ async fn get_provider_quota_returns_json_with_explicit_usage_coverage_and_source
     assert_eq!(openai["last7d"]["availability"], "no_data");
     assert_eq!(openai["localWarningLevel"], "not_configured");
     assert_eq!(openai["connectionCount"], 0);
+}
+
+#[tokio::test]
+async fn get_provider_quota_exposes_upstream_observations_separately_with_provenance_and_age() {
+    let mut usecases = test_usecases(vec![api_key_connection(ProviderKind::OpenAI, "upstream")]);
+    Arc::get_mut(&mut usecases).unwrap().usage_recorder =
+        Some(Arc::new(FakeUsageRecorder::default()));
+    let connection_id = usecases.manage_connections.as_ref().unwrap();
+    let connection = connection_id.list().await.unwrap().remove(0);
+    let observed_at = Utc::now() - chrono::Duration::seconds(12);
+    let observation = QuotaObservation {
+        provider_kind: ProviderKind::OpenAI,
+        provider: connection.provider_runtime_id,
+        connection_id: Some(connection.id),
+        metric: "requests".to_string(),
+        source: "response_headers".to_string(),
+        scope: Some("workspace".to_string()),
+        window: Some("1m".to_string()),
+        limit: Some(100.0),
+        remaining: Some(42.0),
+        reset_at: Some(Utc::now() + chrono::Duration::minutes(1)),
+        reset_after_milliseconds: None,
+        observed_at,
+    };
+    Arc::get_mut(&mut usecases)
+        .unwrap()
+        .quota_observation_reader = Some(Arc::new(FakeQuotaObservationReader {
+        observations: vec![observation],
+        fail: false,
+    }));
+
+    let json = quota_json(usecases).await;
+    let openai = provider_item(&json, ProviderKind::OpenAI);
+    assert_eq!(
+        openai["rateLimitObservation"]["source"],
+        "recorded_routed_request_status"
+    );
+    assert_eq!(openai["upstreamObservations"]["availability"], "available");
+    let upstream = &openai["upstreamObservations"]["observations"][0];
+    assert_eq!(upstream["metric"], "requests");
+    assert_eq!(upstream["source"], "response_headers");
+    assert_eq!(upstream["scope"], "workspace");
+    assert_eq!(upstream["window"], "1m");
+    assert_eq!(upstream["limit"], 100.0);
+    assert_eq!(upstream["remaining"], 42.0);
+    assert_eq!(upstream["freshness"], "fresh");
+    assert!(upstream["ageSeconds"].as_i64().unwrap() >= 0);
+}
+
+#[tokio::test]
+async fn get_provider_quota_marks_absent_upstream_observations_not_reported() {
+    let mut usecases = test_usecases(vec![]);
+    Arc::get_mut(&mut usecases).unwrap().usage_recorder =
+        Some(Arc::new(FakeUsageRecorder::default()));
+    Arc::get_mut(&mut usecases)
+        .unwrap()
+        .quota_observation_reader = Some(Arc::new(FakeQuotaObservationReader::default()));
+    let json = quota_json(usecases).await;
+    assert_eq!(
+        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["availability"],
+        "not_reported"
+    );
+    assert_eq!(
+        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["observations"],
+        serde_json::json!([])
+    );
+}
+
+#[tokio::test]
+async fn get_provider_quota_marks_failed_upstream_observation_read_unavailable() {
+    let mut usecases = test_usecases(vec![]);
+    Arc::get_mut(&mut usecases).unwrap().usage_recorder =
+        Some(Arc::new(FakeUsageRecorder::default()));
+    Arc::get_mut(&mut usecases)
+        .unwrap()
+        .quota_observation_reader = Some(Arc::new(FakeQuotaObservationReader {
+        observations: vec![],
+        fail: true,
+    }));
+    let json = quota_json(usecases).await;
+    assert_eq!(
+        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["availability"],
+        "unavailable"
+    );
+    assert_eq!(
+        provider_item(&json, ProviderKind::OpenAI)["usageAvailability"],
+        "no_data"
+    );
 }
 
 #[tokio::test]
