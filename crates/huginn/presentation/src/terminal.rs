@@ -38,7 +38,7 @@ static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter, Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 type Screen = Terminal<HostBackend>;
 
@@ -990,15 +990,26 @@ Enter save Esc close"
                 );
             return last_scroll;
         }
-        let [tail, composer] = Layout::vertical([
-            Constraint::Min(1),
-            Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 {
-                3
-            } else {
-                4
-            }),
-        ])
-        .areas(area);
+        let editor_width = area.width.saturating_sub(2).max(1);
+        // Reuse wrapped rows for both sizing and rendering; do not add another
+        // full-draft pass to the frame loop.
+        let editor_lines = wrapped(&view.editor.text, editor_width);
+        let minimum_composer_height = if !view.completion.items.is_empty() && area.height < 8 {
+            3
+        } else {
+            4
+        };
+        let max_composer_height = (frame.area().height / 3)
+            .max(6)
+            .saturating_add(2)
+            .min(area.height.saturating_sub(1));
+        let requested_composer_height =
+            u16::try_from(editor_lines.len().saturating_add(2)).unwrap_or(u16::MAX);
+        let composer_height = requested_composer_height
+            .max(minimum_composer_height)
+            .min(max_composer_height);
+        let [tail, composer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
         let popup_height = if view.completion.items.is_empty() {
             0
         } else {
@@ -1007,7 +1018,7 @@ Enter save Esc close"
                 .min(tail.height)
         };
         let [tail, popup] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
+            Layout::vertical([Constraint::Min(1), Constraint::Length(popup_height)]).areas(tail);
         // The transcript is rendered by the app: history first, then the text
         // still in flight, windowed to the area and to the scroll position.
         let mut lines = view
@@ -1015,7 +1026,9 @@ Enter save Esc close"
             .iter()
             .flat_map(|block| wrapped(block, tail.width))
             .collect::<Vec<String>>();
-        lines.extend(wrapped(&view.tail, tail.width));
+        if !view.tail.is_empty() {
+            lines.extend(wrapped(&view.tail, tail.width));
+        }
         let height = usize::from(tail.height);
         let scroll = view.history_scroll.min(lines.len().saturating_sub(height));
         let start = lines.len().saturating_sub(height + scroll);
@@ -1058,14 +1071,12 @@ Enter save Esc close"
             let mut selection = ListState::default().with_selected(Some(view.completion.selected));
             frame.render_stateful_widget(list, popup, &mut selection);
         }
-        let editor_width = composer.width.saturating_sub(2).max(1);
         let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
         let row = before.len().saturating_sub(1);
         let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
-        let lines = wrapped(&view.editor.text, editor_width);
         frame.render_widget(
             Paragraph::new(
-                lines
+                editor_lines
                     .into_iter()
                     .skip(offset)
                     .collect::<Vec<_>>()
@@ -1074,7 +1085,7 @@ Enter save Esc close"
             .block(Block::bordered().title(if view.busy {
                 "Compose next prompt — Esc cancels turn"
             } else {
-                "Huginn — Enter sends / Alt+Enter newline / /help"
+                "Huginn — Enter sends / Shift+Enter newline / /help"
             })),
             composer,
         );
@@ -1233,7 +1244,7 @@ Enter save Esc close"
             return;
         }
         if let Event::Paste(text) = &event {
-            state.editor.insert(text);
+            state.insert_pasted_text(text);
             let crate::state::UiState {
                 editor, completion, ..
             } = &mut *state;
@@ -1274,6 +1285,9 @@ Enter save Esc close"
                 }
                 KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
                     let execute = key.code == KeyCode::Enter;
+                    // Completion replaces byte ranges in the visible draft.
+                    // Expand paste spans first so that it cannot orphan source text.
+                    state.materialize_all_pastes();
                     let crate::state::UiState {
                         editor, completion, ..
                     } = &mut *state;
@@ -1284,7 +1298,7 @@ Enter save Esc close"
                             let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
                             drop(state);
                             self.ui.dispatch_handle(&command, line[boundary..].trim());
-                            self.ui.lock().editor = Editor::default();
+                            self.ui.lock().clear_editor();
                             return;
                         }
                         _ => {}
@@ -1315,14 +1329,15 @@ Enter save Esc close"
                     .modifiers
                     .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
             {
-                state.editor.insert("\n")
+                state.insert_editor_text("\n")
             }
-            KeyCode::Char('j') if ctrl => state.editor.insert("\n"),
+            KeyCode::Char('j') if ctrl => state.insert_editor_text("\n"),
             KeyCode::Enter => {
-                let line = if state.editor.text.trim_start().starts_with("/skill:") {
-                    state.editor.text.clone()
+                let draft = state.submitted_editor_text();
+                let line = if draft.trim_start().starts_with("/skill:") {
+                    draft
                 } else {
-                    state.editor.text.trim().to_string()
+                    draft.trim().to_string()
                 };
                 if line.is_empty() {
                     return;
@@ -1333,7 +1348,7 @@ Enter save Esc close"
                 }
                 drop(state);
                 if self.ui.dispatch_command(&line) {
-                    self.ui.lock().editor = Editor::default();
+                    self.ui.lock().clear_editor();
                     return;
                 }
                 let mut state = self.ui.lock();
@@ -1347,7 +1362,7 @@ Enter save Esc close"
                 } else {
                     return;
                 }
-                state.editor = Editor::default();
+                state.clear_editor();
             }
             KeyCode::PageUp => {
                 // Scroll the transcript up; the composer keeps its own focus.
@@ -1357,10 +1372,10 @@ Enter save Esc close"
                 state.history_scroll = state.history_scroll.saturating_sub(HISTORY_PAGE);
             }
             KeyCode::Char(ch) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                state.editor.insert(&ch.to_string())
+                state.insert_editor_text(&ch.to_string())
             }
-            KeyCode::Backspace => state.editor.backspace(),
-            KeyCode::Delete => state.editor.delete(),
+            KeyCode::Backspace => state.backspace_editor(),
+            KeyCode::Delete => state.delete_editor(),
             KeyCode::Left => state.editor.left(),
             KeyCode::Right => state.editor.right(),
             KeyCode::Up => state.editor.vertical(false),
@@ -1653,6 +1668,90 @@ mod tests {
                 "height={height}: {output}"
             );
         }
+    }
+
+    #[test]
+    fn multiline_composer_grows_to_show_the_complete_draft_before_scrolling() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor = Editor {
+            text: "first line\nsecond line\nthird line".into(),
+            cursor: "first line\nsecond line\nthird line".len(),
+        };
+
+        let output = frame_text(&view, 80, 24);
+
+        for line in ["first line", "second line", "third line"] {
+            assert!(
+                output.contains(line),
+                "multiline draft missing {line:?}: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn composer_cap_keeps_a_transcript_row_at_the_minimum_viewport() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.history = vec!["HIST".into()];
+        view.editor.text = (0..10)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let output = frame_text(&view, 20, 8);
+
+        assert!(
+            output.contains("HIST"),
+            "reserved transcript row is empty: {output}"
+        );
+        assert_eq!(
+            output.matches('│').count(),
+            8,
+            "composer should use 6 rows: {output}"
+        );
+        for index in 6..10 {
+            let line = format!("draft-{index:02}");
+            assert!(
+                output.contains(&line),
+                "visible composer line missing {line}: {output}"
+            );
+        }
+        assert!(
+            !output.contains("draft-00"),
+            "old rows should scroll within the composer: {output}"
+        );
+    }
+
+    #[test]
+    fn composer_cap_applies_to_text_rows_and_includes_its_block_borders() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor.text = (0..20)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let output = frame_text(&view, 80, 24);
+
+        assert_eq!(
+            output.matches('│').count(),
+            16,
+            "composer should show 8 text rows: {output}"
+        );
+        for index in 12..20 {
+            let line = format!("draft-{index:02}");
+            assert!(
+                output.contains(&line),
+                "visible composer line missing {line}: {output}"
+            );
+        }
+        assert!(
+            !output.contains("draft-00"),
+            "older rows should scroll within the composer: {output}"
+        );
     }
 
     fn test_view(overlay: OverlayView) -> View {

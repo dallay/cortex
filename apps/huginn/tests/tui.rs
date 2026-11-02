@@ -9,7 +9,7 @@ use std::{
 };
 use support::Pty;
 
-const TUI_READY_FOOTER: &str = "Huginn — Enter sends / Alt+Enter newline / /help";
+const TUI_READY_FOOTER: &str = "Huginn — Enter sends / Shift+Enter newline / /help";
 
 fn command(workspace: &Path, db: &Path) -> CommandBuilder {
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));

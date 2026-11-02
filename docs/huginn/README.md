@@ -287,8 +287,16 @@ The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 |----------|--------|
 | `Ctrl+C` | Cancel current request |
 | `Ctrl+L` | Clear screen |
-| `Ctrl+Enter` | Send message |
+| `Enter` / `Ctrl+Enter` | Send message |
+| `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | Insert a newline |
 | `↑/↓` | History navigation |
+
+El composer crece con el borrador hasta un límite basado en la altura del
+terminal. Si el texto ocupa más filas, el composer desplaza las filas anteriores
+y mantiene visible el cursor. Los pegados de al menos tres líneas o más de 150
+caracteres se muestran como `[Pasted ~N lines]`; Huginn conserva y envía el texto
+original, no el marcador. Un pegado que supera el límite de entrada de 64 KiB se
+descarta.
 
 ---
 

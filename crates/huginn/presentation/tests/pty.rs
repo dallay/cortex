@@ -47,6 +47,96 @@ fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
 }
 
 #[test]
+fn large_paste_shows_a_compact_placeholder_and_submits_the_original_text() {
+    const FIRST: &str = "first-line-one\nfirst-line-two\nfirst-line-three";
+    const SECOND: &str = "second-line-one\nsecond-line-two\nsecond-line-three\nsecond-line-four";
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send(&format!("\x1b[200~{FIRST}\x1b[201~"));
+    pty.wait_for("[Pasted ~3 lines]");
+    pty.send(" with context ");
+    pty.wait_for("with context");
+    pty.send(&format!("\x1b[200~{SECOND}\x1b[201~"));
+    pty.wait_for("[Pasted ~4 lines]");
+    let draft = pty.screen_text();
+    assert!(
+        draft.contains("[Pasted ~3 lines]"),
+        "first paste missing: {draft}"
+    );
+    assert!(
+        draft.contains("[Pasted ~4 lines]"),
+        "second paste missing: {draft}"
+    );
+    for line in [
+        "first-line-one",
+        "first-line-two",
+        "first-line-three",
+        "second-line-one",
+        "second-line-two",
+        "second-line-three",
+        "second-line-four",
+    ] {
+        assert!(
+            !draft.contains(line),
+            "large paste content should stay behind its placeholder: {draft}"
+        );
+    }
+
+    pty.send("\r");
+    pty.wait_for("User: first-line-one");
+    let transcript = pty.screen_text();
+    assert!(
+        !transcript.contains("[Pasted ~"),
+        "the internal placeholder must not be sent to the model: {transcript}"
+    );
+    for line in [
+        "first-line-two",
+        "first-line-three",
+        "with context",
+        "second-line-one",
+        "second-line-two",
+        "second-line-three",
+    ] {
+        assert!(
+            transcript.contains(line),
+            "submitted prompt must include {line:?}: {transcript}"
+        );
+    }
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn shift_enter_grows_the_composer_and_submits_all_typed_lines() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("typed-line-one\x1b[13;2utyped-line-two\x1b[13;2utyped-line-three");
+    pty.wait_for("typed-line-three");
+
+    let draft = pty.screen_text();
+    for line in ["typed-line-one", "typed-line-two", "typed-line-three"] {
+        assert!(
+            draft.contains(line),
+            "multiline draft line should remain visible: {draft}"
+        );
+    }
+
+    pty.send("\r");
+    pty.wait_for("User: typed-line-one");
+    let transcript = pty.screen_text();
+    for line in ["typed-line-two", "typed-line-three"] {
+        assert!(
+            transcript.contains(line),
+            "submitted prompt must include {line:?}: {transcript}"
+        );
+    }
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn secret_form_masks_keys_and_pastes_and_async_error_does_not_echo_credentials() {
     const SENTINEL: &str = "P03_SENTINEL_MUST_NEVER_ECHO";
     let mut pty = start("secret-form", true);
