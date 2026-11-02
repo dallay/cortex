@@ -14,9 +14,9 @@ use muninn_core::model::{
     ToolCall, ToolStats,
 };
 use muninn_core::ports::{
-    ConversationStep, EntityUpdate, GraphMaintenance, KeyedMessage, LongTermStore, MessageRecord,
-    OwnerScope, ReasoningStore, RelatedEntity, Scored, ScoredMessage, ScoredTrace, SessionQuery,
-    ShortTermStore, StepContext, StepRecord, TraceQuery, TraceRecord,
+    ConversationStep, EmbeddingIdentity, EntityUpdate, GraphMaintenance, KeyedMessage,
+    LongTermStore, MessageRecord, OwnerScope, ReasoningStore, RelatedEntity, Scored, ScoredMessage,
+    ScoredTrace, SessionQuery, ShortTermStore, StepContext, StepRecord, TraceQuery, TraceRecord,
 };
 use muninn_core::query::{CypherQuery, CypherResult};
 use muninn_core::{MemoryError, MemoryResult};
@@ -63,6 +63,10 @@ struct SearchEmbedder;
 
 #[async_trait]
 impl muninn_core::ports::Embedder for SearchEmbedder {
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        EmbeddingIdentity::new("bridge:test:fixed-vector:v1", 1)
+    }
+
     async fn embed(&self, _: &str) -> MemoryResult<Vec<f64>> {
         Ok(vec![1.0])
     }
@@ -78,6 +82,10 @@ struct FailOnSecondEmbedder(Arc<AtomicUsize>);
 
 #[async_trait]
 impl muninn_core::ports::Embedder for FailOnSecondEmbedder {
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        EmbeddingIdentity::new("bridge:test:fixed-vector:v1", 1)
+    }
+
     async fn embed(&self, _: &str) -> MemoryResult<Vec<f64>> {
         if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
             Ok(vec![1.0])
@@ -251,6 +259,22 @@ impl ShortTermStore for UnreachableStore {
         _: f64,
         _: &Metadata,
     ) -> MemoryResult<Vec<ScoredMessage>> {
+        let _ = (embedding, session_id, user_identifier);
+        panic!("short-term application must use identity-aware search")
+    }
+
+    async fn search_messages_with_identity(
+        &self,
+        embedding: &[f64],
+        identity: &EmbeddingIdentity,
+        session_id: Option<&str>,
+        user_identifier: &OwnerScope,
+        _: i64,
+        _: f64,
+        _: &Metadata,
+    ) -> MemoryResult<Vec<ScoredMessage>> {
+        assert_eq!(identity.key(), "bridge:test:fixed-vector:v1");
+        assert_eq!(identity.dimensions(), 1);
         let Self::Search { owner, session } = self else {
             unreachable!()
         };
@@ -800,6 +824,10 @@ async fn operation_key_replay_does_not_call_embedding_provider_again() {
     );
     assert_eq!(embedding_calls.load(Ordering::SeqCst), 1);
     assert_eq!(calls.lock().unwrap().appended.len(), 1);
+    assert_eq!(
+        calls.lock().unwrap().appended[0].2.embedding_identity,
+        Some(EmbeddingIdentity::new("bridge:test:fixed-vector:v1", 1).unwrap())
+    );
 }
 
 #[tokio::test]
@@ -996,6 +1024,72 @@ async fn multi_tenant_short_term_routes_reject_invalid_scope_before_store() {
                 "{method}"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn bulk_add_rejects_malformed_payloads_before_store_access() {
+    let id = Uuid::new_v4().to_string();
+    let too_many = serde_json::Value::Array(
+        (0..101)
+            .map(|_| serde_json::json!({"role":"user","content":"x"}))
+            .collect(),
+    );
+    let cases = [
+        serde_json::json!({"conversation_id":id}),
+        serde_json::json!({"conversation_id":id,"messages":"not-a-list"}),
+        serde_json::json!({"conversation_id":id,"messages":too_many}),
+        serde_json::json!({"conversation_id":id,"messages":[null]}),
+        serde_json::json!({"conversation_id":id,"messages":[{}]}),
+        serde_json::json!({"conversation_id":id,"messages":[{"role":"alien","content":"x"}]}),
+        serde_json::json!({"conversation_id":id,"messages":[{"role":"user"}]}),
+        serde_json::json!({"conversation_id":id,"messages":[{"role":"user","content":"x","metadata":[]}]}),
+    ];
+    for args in cases {
+        assert_eq!(
+            post(state(None, None), "bulk_add_messages", &args.to_string()).await,
+            StatusCode::BAD_REQUEST,
+            "{args}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn delete_message_with_unparseable_id_returns_false_without_store_access() {
+    let response = request(
+        state(None, None),
+        "delete_message",
+        r#"{"message_id":"not-a-uuid"}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value, serde_json::json!({"deleted":false}));
+}
+
+#[tokio::test]
+async fn invalid_bridge_arguments_fail_before_short_term_store_access() {
+    let cases = [
+        (
+            "add_message",
+            serde_json::json!({"session_id":"s","role":"alien","content":"x"}),
+        ),
+        ("get_conversation", serde_json::json!({})),
+        (
+            "search_messages",
+            serde_json::json!({"query":"x","metadata_filters":[]}),
+        ),
+        ("create_conversation", serde_json::json!({"session_id":"s"})),
+    ];
+    for (method, args) in cases {
+        assert_eq!(
+            post(state(None, None), method, &args.to_string()).await,
+            StatusCode::BAD_REQUEST,
+            "{method}: {args}"
+        );
     }
 }
 
