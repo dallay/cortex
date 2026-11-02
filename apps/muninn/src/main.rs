@@ -50,6 +50,8 @@ enum EmbeddingProvider {
     Openai,
     /// Deterministic hash vectors (TCK `MockEmbedder`); no semantics.
     Hash,
+    /// Local verified MiniLM CPU/F32 bundle (requires minilm-cpu feature).
+    Minilm,
     /// Disable embeddings; semantic search returns nothing.
     None,
 }
@@ -69,6 +71,9 @@ struct EmbeddingArgs {
         default_value = "text-embedding-3-small"
     )]
     embedding_model: String,
+    /// Immutable remote model/configuration identity; required for semantic persistence.
+    #[arg(long, env = "NAM_EMBEDDING__IDENTITY")]
+    embedding_identity: Option<String>,
     #[arg(long, env = "NAM_EMBEDDING__DIMENSIONS", default_value_t = 1536)]
     embedding_dimensions: usize,
     #[arg(
@@ -79,6 +84,11 @@ struct EmbeddingArgs {
     embedding_base_url: String,
     #[arg(long, env = "NAM_EMBEDDING__API_KEY", hide_env_values = true)]
     embedding_api_key: Option<String>,
+    /// Existing local artifact cache; never downloaded implicitly.
+    #[arg(long, env = "NAM_EMBEDDING__BUNDLE_PATH")]
+    embedding_bundle_path: Option<std::path::PathBuf>,
+    #[arg(long, env = "NAM_EMBEDDING__BUNDLE_ID")]
+    embedding_bundle_id: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -100,15 +110,47 @@ enum Command {
 
 fn embedder(args: &EmbeddingArgs) -> Result<Option<Arc<dyn Embedder>>> {
     Ok(match args.embedding_provider {
+        EmbeddingProvider::Minilm => minilm_embedder(args)?,
         EmbeddingProvider::None => None,
         EmbeddingProvider::Hash => Some(Arc::new(HashEmbedder::new(args.embedding_dimensions))),
-        EmbeddingProvider::Openai => Some(Arc::new(OpenAiEmbedder::new(
-            &args.embedding_base_url,
-            args.embedding_api_key.clone(),
-            &args.embedding_model,
-            args.embedding_dimensions,
-        )?)),
+        EmbeddingProvider::Openai => {
+            let identity = args.embedding_identity.as_ref().context("remote embeddings require --embedding-identity pinning model revision and preprocessing")?;
+            Some(Arc::new(
+                OpenAiEmbedder::new(
+                    &args.embedding_base_url,
+                    args.embedding_api_key.clone(),
+                    &args.embedding_model,
+                    args.embedding_dimensions,
+                )?
+                .with_identity(muninn_core::ports::EmbeddingIdentity::new(
+                    identity,
+                    args.embedding_dimensions,
+                )?)?,
+            ))
+        }
     })
+}
+
+fn minilm_embedder(args: &EmbeddingArgs) -> Result<Option<Arc<dyn Embedder>>> {
+    let path = args
+        .embedding_bundle_path
+        .as_ref()
+        .context("MiniLM requires a local bundle path")?;
+    let bundle = args
+        .embedding_bundle_id
+        .as_ref()
+        .context("MiniLM requires an explicit bundle id")?;
+    #[cfg(feature = "minilm-cpu")]
+    {
+        Ok(Some(Arc::new(muninn_providers::MiniLmEmbedder::load(
+            path, bundle,
+        )?)))
+    }
+    #[cfg(not(feature = "minilm-cpu"))]
+    {
+        let _ = (path, bundle);
+        bail!("MiniLM bundle support requires building with --features minilm-cpu")
+    }
 }
 
 async fn connect(args: &Neo4jArgs, dimensions: usize) -> Result<Neo4jClient> {
@@ -134,7 +176,12 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     let embedder = embedder(&cli.embedding)?;
-    let client = connect(&cli.neo4j, cli.embedding.embedding_dimensions)
+    let dimensions = embedder
+        .as_ref()
+        .map_or(cli.embedding.embedding_dimensions, |provider| {
+            provider.dimensions()
+        });
+    let client = connect(&cli.neo4j, dimensions)
         .await
         .context("Neo4j initialisation failed")?;
 
@@ -178,5 +225,124 @@ async fn main() -> Result<()> {
             axum::serve(listener, app).await?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_cli(arguments: &[&str]) -> Cli {
+        Cli::try_parse_from(arguments).expect("synthetic CLI arguments must parse")
+    }
+
+    #[test]
+    fn hash_and_none_provider_selections_are_explicit() {
+        let hash = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--embedding-provider",
+            "hash",
+            "--embedding-dimensions",
+            "2",
+            "bridge",
+        ]);
+        let provider = embedder(&hash.embedding).unwrap().unwrap();
+        assert_eq!(provider.dimensions(), 2);
+        assert_eq!(
+            provider.identity().unwrap().key(),
+            "muninn:tck:sha256-bytes:v1"
+        );
+
+        let disabled = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--embedding-provider",
+            "none",
+            "bridge",
+        ]);
+        assert!(embedder(&disabled.embedding).unwrap().is_none());
+    }
+
+    #[test]
+    fn remote_provider_uses_the_supplied_immutable_identity() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--embedding-provider",
+            "openai",
+            "--embedding-model",
+            "model-revision-7",
+            "--embedding-identity",
+            "openai:model-revision-7:preprocess-v1:pool-v1",
+            "--embedding-dimensions",
+            "2",
+            "bridge",
+        ]);
+        let provider = embedder(&cli.embedding).unwrap().unwrap();
+        assert_eq!(provider.dimensions(), 2);
+        assert_eq!(
+            provider.identity().unwrap().key(),
+            "openai:model-revision-7:preprocess-v1:pool-v1"
+        );
+    }
+
+    #[test]
+    fn remote_provider_requires_explicit_revision_identity() {
+        let cli = Cli::try_parse_from([
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "bridge",
+        ])
+        .unwrap();
+        let error = match embedder(&cli.embedding) {
+            Ok(_) => panic!("mutable model alias must not identify persisted vectors"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity"));
+    }
+
+    #[test]
+    fn minilm_requires_explicit_local_bundle_before_connecting() {
+        let cli = Cli::try_parse_from([
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--embedding-provider",
+            "minilm",
+            "bridge",
+        ])
+        .expect("MiniLM must be selectable explicitly");
+        let error = match embedder(&cli.embedding) {
+            Ok(_) => panic!("missing bundle must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("bundle"));
+    }
+
+    #[cfg(not(feature = "minilm-cpu"))]
+    #[test]
+    fn local_bundle_is_rejected_when_minilm_support_is_not_compiled() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--embedding-provider",
+            "minilm",
+            "--embedding-bundle-path",
+            "/synthetic/cache",
+            "--embedding-bundle-id",
+            "synthetic-bundle",
+            "bridge",
+        ]);
+        let error = match embedder(&cli.embedding) {
+            Ok(_) => panic!("feature-off build must not load a model"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("minilm-cpu"));
     }
 }
