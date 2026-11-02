@@ -7,7 +7,7 @@ const path = require('node:path');
 const { evaluateRequiredChecks } = require('./ci-required.cjs');
 
 const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'), 'utf8');
-const categories = ['backend', 'doctor', 'frontend', 'docker', 'github', 'docs', 'labeler'];
+const categories = ['backend', 'doctor', 'frontend', 'docker', 'github', 'docs', 'labeler', 'muninn_c1'];
 
 function jobBlock(id) {
   const block = workflow.match(new RegExp(`^  ${id}:\\n([\\s\\S]*?)(?=^  [\\w-]+:|$(?![\\s\\S]))`, 'm'));
@@ -116,7 +116,23 @@ const routeCases = [
   ['.github/scripts/make-shell', ['backend', 'github']],
   ['Makefile', ['backend', 'github']],
   ['scripts/setup-codegraph.sh', ['backend', 'github']],
-  ['.github/ci-path-filters.json', ['github']],
+  ['.github/ci-path-filters.json', ['github', 'muninn_c1']],
+  ['dev/muninn/product_tck.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/tests/test_product_tck.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/c1_runner.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/c1_attempt_plan.json', ['backend', 'muninn_c1']],
+  ['dev/muninn/api_inventory.py', ['backend']],
+  ['dev/muninn/tests/test_api_baseline_profiles.py', ['backend', 'muninn_c1']],
+  ['crates/muninn/c1-exporter/src/lib.rs', ['backend', 'muninn_c1']],
+  ['crates/muninn/application/tests/short_term_flows.rs', ['backend', 'muninn_c1']],
+  ['apps/muninn/src/main.rs', ['backend', 'muninn_c1']],
+  ['third_party/candle-core/src/lib.rs', ['backend', 'muninn_c1']],
+  ['docs/muninn/evidence/artifact-lock.json', ['docs', 'muninn_c1']],
+  ['docs/muninn/specs/tck-baseline.csv', ['docs', 'muninn_c1']],
+  ['docs/muninn/reference-tck.md', ['docs']],
+  ['.agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl', ['docs', 'muninn_c1']],
+  ['.github/workflows/ci.yml', ['github', 'muninn_c1']],
+  ['apps/rook/src/main.rs', ['backend']],
   ['.github/ci-quality-policy.json', ['github']],
   // El paquete completo incluye el dashboard: se aceptan controles backend adicionales.
   ['apps/rook/dashboard/src/main.tsx', ['frontend', 'backend']],
@@ -150,7 +166,7 @@ for (const [file, expected] of routeCases) {
       for (const key of ['backend', 'frontend', 'docker', 'github']) assert.equal(selected[key], 'false');
     }
     for (const eventName of ['push', 'pull_request']) {
-      for (const id of ['doctor', 'build-dashboard', 'fmt', 'markdown', 'test-labeler', 'clippy', 'check', 'test', 'test-frontend', 'coverage', 'coverage-frontend', 'test-e2e', 'doc', 'audit', 'trivy-fs', 'semgrep-pr', 'sonar']) {
+      for (const id of ['doctor', 'build-dashboard', 'fmt', 'markdown', 'test-labeler', 'clippy', 'check', 'test', 'test-muninn-c1', 'test-frontend', 'coverage', 'coverage-frontend', 'test-e2e', 'doc', 'audit', 'trivy-fs', 'semgrep-pr', 'sonar']) {
         const applicable = condition(id, selected, eventName);
         const outcome = evaluateRequiredChecks({
           eventName, sonarTokenPresent: true, changes: selected, results: { [id]: 'skipped' },
@@ -195,11 +211,24 @@ it('espera el quality gate con 300 segundos y conserva ambas coberturas', () => 
   assert.match(sonar, /-Dsonar\.qualitygate\.wait=true/);
   assert.match(sonar, /-Dsonar\.qualitygate\.timeout=300/);
   assert.match(sonar, /pnpm exec vitest run --coverage/);
-  assert.match(sonar, /cargo llvm-cov --workspace --all-features --lcov --output-path coverage\/rust-lcov\.info/);
+  assert.match(sonar, /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
   const scan = sonar.slice(sonar.indexOf('      - name: SonarQube Scan'));
   assert.doesNotMatch(scan, /^        if:/m);
   assert.doesNotMatch(workflow, /pull_request_target/);
   assert.match(sonar, /permissions:\n      contents: read\n    steps:/);
+});
+
+it('mantiene el umbral Rust de 87% e incluye los paquetes de producto Muninn', () => {
+  const coverage = jobBlock('coverage');
+  assert.match(coverage, /cargo llvm-cov clean --workspace/);
+  assert.match(coverage, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+  assert.match(coverage, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov\.info/);
+  const sonar = jobBlock('sonar');
+  assert.match(sonar, /cargo llvm-cov clean --workspace/);
+  assert.match(sonar, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+  assert.match(sonar, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+  assert.match(sonar, /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
 });
 
 it('Gitleaks dispone del historial completo sin persistir credenciales', () => {
@@ -263,4 +292,57 @@ it('conecta cada dependencia de Required con el runner sin perder resultados', (
     assert.ok(block.includes(`RESULT_${key}: \${{ needs.${id}.result }}`), id);
     assert.ok(runner.includes(`'${key}'`), id);
   }
+});
+
+it('combina cobertura default de providers y app en el mismo gate Rust de 87%', () => {
+  const root = path.resolve(__dirname, '../..');
+  const local = fs.readFileSync(path.join(root, 'justfile'), 'utf8');
+  const recipe = local.split('ci-coverage-rust:\n')[1].split('\n# ')[0];
+  for (const block of [jobBlock('coverage'), jobBlock('sonar'), recipe]) {
+    assert.match(block, /cargo llvm-cov clean --workspace/);
+    assert.match(block, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+    assert.match(block, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+    assert.match(block, /cargo llvm-cov report[^\n]*--lcov/);
+    assert.doesNotMatch(block, /cargo llvm-cov report[^\n]*--exclude/);
+  }
+  assert.match(jobBlock('coverage'), /cargo llvm-cov report --fail-under-lines 87 --lcov/);
+  assert.match(recipe, /cargo llvm-cov report --fail-under-lines 87 --lcov/);
+});
+
+it('ejecuta Muninn en default features además del gate C1 opt-in', () => {
+  const command = /cargo test --locked -p muninn-providers -p muninn/;
+  assert.match(jobBlock('test'), command);
+  assert.match(jobBlock('test-multi'), command);
+  const justfile = fs.readFileSync(path.resolve(__dirname, '../../justfile'), 'utf8');
+  assert.match(justfile, /cargo test --locked -p muninn-providers -p muninn/);
+  assert.match(justfile, /run_step "Muninn C1 opt-in tests" just ci-muninn-c1/);
+});
+
+it('filtra el job C1 por materiales propios, usa caché y cancela ejecuciones obsoletas', () => {
+  const c1 = jobBlock('test-muninn-c1');
+  assert.match(c1, /^    runs-on: macos-15$/m);
+  assert.match(c1, /needs: \[changes\]/);
+  assert.match(c1, /needs\.changes\.outputs\.muninn_c1 == 'true'/);
+  assert.match(c1, /timeout-minutes: 45/);
+  assert.match(c1, /concurrency:/);
+  assert.match(c1, /cancel-in-progress: true/);
+  assert.match(c1, /Swatinem\/rust-cache@/);
+  assert.match(c1, /cargo test --locked -p muninn-c1-exporter --features cpu-f32 --target aarch64-apple-darwin/);
+  assert.match(c1, /cargo test --locked -p muninn-providers -p muninn --features minilm-cpu --target aarch64-apple-darwin/);
+  assert.match(c1, /permissions:\n      contents: read/);
+  assert.match(jobBlock('changes'), /muninn_c1: \$\{\{ steps\.filter\.outputs\.muninn_c1 \}\}/);
+});
+
+it('attesta solo en main protegido después del test C1 y limita permisos al job privilegiado', () => {
+  const attest = jobBlock('attest-muninn-c1');
+  assert.match(attest, /needs: \[changes, test-muninn-c1\]/);
+  assert.match(attest, /github\.event_name == 'push'/);
+  assert.match(attest, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(attest, /github\.ref_protected == true/);
+  assert.match(attest, /needs\.changes\.outputs\.muninn_c1 == 'true'/);
+  assert.match(attest, /permissions:\n      contents: read\n      id-token: write\n      attestations: write/);
+  const c1Test = jobBlock('test-muninn-c1');
+  assert.match(c1Test, /permissions:\n      contents: read/);
+  assert.doesNotMatch(c1Test, /id-token: write|attestations: write/);
+  assert.doesNotMatch(jobBlock('required'), /^      - attest-muninn-c1\s*$/m);
 });

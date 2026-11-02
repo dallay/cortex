@@ -9,6 +9,7 @@ const EXPECTED = [
   { job: 'clippy', when: (c) => c.backend || c.github },
   { job: 'check', when: (c) => c.backend || c.github },
   { job: 'test', when: (c) => c.backend || c.github },
+  { job: 'test-muninn-c1', when: (c) => c.muninnC1 },
   { job: 'test-frontend', when: (c) => c.frontendTests },
   { job: 'coverage', when: (c) => c.backend || c.github },
   { job: 'coverage-frontend', when: (c) => c.frontend || c.github },
@@ -25,12 +26,13 @@ function evaluateRequiredChecks(input) {
   const changes = input.changes || {};
   const errors = [];
   const selected = {};
-  for (const key of ['backend', 'doctor', 'frontend', 'docker', 'github', 'docs', 'labeler']) {
+  for (const key of ['backend', 'doctor', 'frontend', 'docker', 'github', 'docs', 'labeler', 'muninn_c1']) {
     if (!Object.hasOwn(changes, key) || (changes[key] !== 'true' && changes[key] !== 'false')) {
       errors.push(`changes.${key}: expected true or false, got ${String(changes[key])}`);
     }
     selected[key] = changes[key] === 'true';
   }
+  selected.muninnC1 = selected.muninn_c1;
   selected.frontendTests = selected.frontend || selected.github;
   selected.pullRequest = input.eventName === 'pull_request';
 
