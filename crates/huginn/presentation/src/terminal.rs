@@ -1383,6 +1383,7 @@ Enter save Esc close"
                         editor, completion, ..
                     } = &mut *state;
                     match completion.accept(editor, execute) {
+                        None => return,
                         Some(Acceptance::Inserted) => return,
                         Some(Acceptance::Command(Some(command))) => {
                             let line = state.editor.text.trim().to_string();
@@ -1392,7 +1393,7 @@ Enter save Esc close"
                             self.ui.lock().clear_editor();
                             return;
                         }
-                        _ => {}
+                        Some(Acceptance::Command(None)) => {}
                     }
                 }
                 _ => {}

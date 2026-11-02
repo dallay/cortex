@@ -203,17 +203,24 @@ fn kitty_keyboard_protocol_uses_shift_enter_without_modify_other_keys_fallback()
 
     pty.send("\r");
     pty.wait_for("User: kitty-line-one");
+    let submitted_prompt_output_end = pty.output().len();
     pty.wait_for("Assistant: STREAM_COMPLETE");
     pty.send("\x03");
     let output = pty.finish(true);
 
+    let push = output
+        .find("\x1b[>7u")
+        .expect("Kitty protocol was requested");
+    let pop = output
+        .find("\x1b[<1u")
+        .expect("Kitty protocol flags were popped");
     assert!(
-        output.contains("\x1b[>7u"),
-        "Kitty protocol was not requested"
+        push < submitted_prompt_output_end,
+        "Kitty flags were pushed after prompt rendering"
     );
     assert!(
-        output.contains("\x1b[<1u"),
-        "Kitty protocol flags were not popped"
+        submitted_prompt_output_end < pop,
+        "Kitty flags were popped before prompt rendering completed"
     );
     assert!(
         !output.contains("\x1b[>4;2m"),
@@ -622,6 +629,22 @@ fn command_palette_tab_completes_and_enter_dispatches_fuzzy_selection() {
 }
 
 #[test]
+fn enter_accepting_host_command_completion_still_dispatches_builtin() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("/h");
+    pty.wait_for("Commands");
+    pty.wait_for("› /help");
+
+    pty.send("\r");
+    pty.wait_for("Help — Esc closes");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Help — Esc closes");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn file_enter_completes_without_sending_and_preserves_textual_reference() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("guide file.md"), "NEVER_ATTACH_CONTENT").unwrap();
@@ -638,6 +661,51 @@ fn file_enter_completes_without_sending_and_preserves_textual_reference() {
     pty.send("\r");
     pty.wait_for("STREAM_COMPLETE");
     pty.wait_for("User: mira @\"guide file.md\"");
+    assert!(!pty.output().contains("NEVER_ATTACH_CONTENT"));
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn enter_after_large_paste_refreshes_file_completion_before_submitting() {
+    const PASTE: &str = "pasted-line-one\npasted-line-two\npasted-line-three";
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("guide.md"), "NEVER_ATTACH_CONTENT").unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.send(&format!("\x1b[200~{PASTE}\x1b[201~"));
+    pty.wait_for("[Pasted ~3 lines]");
+    pty.send(" @gmd");
+    pty.wait_for("guide.md");
+
+    let before_enter = pty.output().len();
+    pty.send("\r");
+    pty.wait_for_output_change(before_enter);
+    let after_first_enter = pty.screen_text();
+    assert!(
+        !after_first_enter.contains("User:"),
+        "stale completion range must not submit the draft: {after_first_enter}"
+    );
+    assert!(
+        after_first_enter.contains("guide.md"),
+        "completion should refresh after paste materialization: {after_first_enter}"
+    );
+
+    pty.send("\r");
+    pty.wait_for("@guide.md");
+    assert!(
+        !pty.screen_text().contains("User:"),
+        "accepting the file completion must not submit it"
+    );
+    pty.send("\r");
+    pty.wait_for("User: pasted-line-one");
+    let transcript = pty.screen_text();
+    assert!(transcript.contains("@guide.md"), "{transcript}");
+    assert!(!transcript.contains("@gmd"), "{transcript}");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
     assert!(!pty.output().contains("NEVER_ATTACH_CONTENT"));
     pty.send("\x03");
     pty.finish(true);

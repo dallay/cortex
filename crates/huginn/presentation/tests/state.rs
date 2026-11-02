@@ -1560,7 +1560,8 @@ mod paste_marker_tests {
 
         assert_eq!(paste::pending_paste_count(&state), 0);
         assert!(!paste::visible_text(&state).contains("[Pasted ~"));
-        assert!(paste::submitted_text(&state).contains(FIRST));
+        assert_eq!(paste::visible_text(&state), format!("{FIRST}!"));
+        assert_eq!(paste::submitted_text(&state), format!("{FIRST}!"));
     }
 
     #[test]
