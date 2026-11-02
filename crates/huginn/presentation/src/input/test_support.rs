@@ -1,5 +1,5 @@
 //! Feature-gated access to input framing without reading the host terminal.
-use super::{Event, Lease, Reader};
+use super::{Event, KeyboardProtocolReply, Lease, Reader};
 
 pub const PASTE_LIMIT: usize = super::PASTE_LIMIT;
 
@@ -10,6 +10,12 @@ pub struct PasteState {
 }
 
 pub struct Parser(super::Parser);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolReply {
+    KittyFlags(u8),
+    DeviceAttributes,
+}
 
 impl Default for Parser {
     fn default() -> Self {
@@ -30,6 +36,16 @@ impl Parser {
 
     pub fn feed(&mut self, byte: u8, owner: Lease, current: Lease) -> Option<(Event, Lease)> {
         self.0.feed(byte, owner, current)
+    }
+
+    pub fn take_protocol_reply(&mut self) -> Option<ProtocolReply> {
+        self.0
+            .keyboard_protocol_reply
+            .take()
+            .map(|reply| match reply {
+                KeyboardProtocolReply::KittyFlags(flags) => ProtocolReply::KittyFlags(flags),
+                KeyboardProtocolReply::DeviceAttributes => ProtocolReply::DeviceAttributes,
+            })
     }
 
     pub fn focus(&mut self, lease: Lease) {

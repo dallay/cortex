@@ -1483,3 +1483,151 @@ mod lock_tests {
         );
     }
 }
+
+#[cfg(feature = "test-driver")]
+mod paste_marker_tests {
+    use huginn_presentation::state::{test_support as paste, UiState};
+
+    const FIRST: &str = "first-line-one\nfirst-line-two\nfirst-line-three";
+    const SECOND: &str = "second-line-one\nsecond-line-two\nsecond-line-three";
+
+    #[test]
+    fn short_paste_remains_literal() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, "first line\nsecond line");
+
+        assert_eq!(paste::visible_text(&state), "first line\nsecond line");
+        assert_eq!(paste::submitted_text(&state), "first line\nsecond line");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn long_single_line_paste_uses_a_one_line_placeholder() {
+        let mut state = UiState::default();
+        let pasted = "x".repeat(151);
+        paste::paste_text(&mut state, &pasted);
+
+        assert_eq!(paste::visible_text(&state), "[Pasted ~1 lines]");
+        assert_eq!(paste::submitted_text(&state), pasted);
+        assert_eq!(paste::pending_paste_count(&state), 1);
+    }
+
+    #[test]
+    fn deleting_text_between_large_pastes_preserves_both_original_payloads() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, "X");
+        paste::paste_text(&mut state, SECOND);
+        paste::set_cursor(&mut state, "[Pasted ~3 lines]X".len());
+
+        paste::backspace(&mut state);
+
+        assert_eq!(
+            paste::visible_text(&state),
+            "[Pasted ~3 lines][Pasted ~3 lines]"
+        );
+        assert_eq!(paste::submitted_text(&state), format!("{FIRST}{SECOND}"));
+        assert_eq!(paste::pending_paste_count(&state), 2);
+    }
+
+    #[test]
+    fn horizontal_navigation_treats_pending_paste_as_one_segment() {
+        let mut state = UiState::default();
+        paste::insert_text(&mut state, "before");
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, "after");
+        let marker_start = "before".len();
+        let marker_end = marker_start + "[Pasted ~3 lines]".len();
+        paste::set_cursor(&mut state, marker_end + "after".len());
+
+        for _ in 0.."after".len() {
+            paste::move_left(&mut state);
+        }
+        paste::move_left(&mut state);
+        assert_eq!(paste::cursor(&state), marker_start);
+
+        paste::move_right(&mut state);
+        assert_eq!(paste::cursor(&state), marker_end);
+    }
+
+    #[test]
+    fn inserting_inside_pending_marker_materializes_the_original_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::insert_text(&mut state, "!");
+
+        assert_eq!(paste::pending_paste_count(&state), 0);
+        assert!(!paste::visible_text(&state).contains("[Pasted ~"));
+        assert!(paste::submitted_text(&state).contains(FIRST));
+    }
+
+    #[test]
+    fn backspace_after_pending_paste_removes_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+
+        paste::backspace(&mut state);
+
+        assert_eq!(paste::visible_text(&state), "");
+        assert_eq!(paste::submitted_text(&state), "");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn delete_before_pending_paste_removes_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::set_cursor(&mut state, 0);
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), "");
+        assert_eq!(paste::submitted_text(&state), "");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn backspace_inside_pending_marker_removes_only_that_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " after");
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::backspace(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " after");
+        assert_eq!(paste::submitted_text(&state), " after");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn delete_inside_pending_marker_removes_only_that_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " after");
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " after");
+        assert_eq!(paste::submitted_text(&state), " after");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn deleting_one_of_two_pending_pastes_keeps_the_other_payload_attached() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " ");
+        paste::paste_text(&mut state, SECOND);
+        paste::set_cursor(&mut state, 0);
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " [Pasted ~3 lines]");
+        assert_eq!(paste::submitted_text(&state), format!(" {SECOND}"));
+        assert_eq!(paste::pending_paste_count(&state), 1);
+    }
+}

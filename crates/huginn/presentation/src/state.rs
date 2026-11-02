@@ -352,10 +352,12 @@ impl UiState {
     }
 
     pub(crate) fn backspace_editor(&mut self) {
-        let Some(range) = previous_character_range(&self.editor.text, self.editor.cursor) else {
+        if let Some(index) = self.pending_pastes.iter().position(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor <= pending.range.end
+        }) {
+            self.remove_pending_paste(index);
             return;
-        };
-        self.materialize_pastes_intersecting(&range);
+        }
         let Some(range) = previous_character_range(&self.editor.text, self.editor.cursor) else {
             return;
         };
@@ -363,14 +365,84 @@ impl UiState {
     }
 
     pub(crate) fn delete_editor(&mut self) {
-        let Some(range) = next_character_range(&self.editor.text, self.editor.cursor) else {
+        if let Some(index) = self.pending_pastes.iter().position(|pending| {
+            pending.range.start <= self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.remove_pending_paste(index);
             return;
-        };
-        self.materialize_pastes_intersecting(&range);
+        }
         let Some(range) = next_character_range(&self.editor.text, self.editor.cursor) else {
             return;
         };
         self.remove_editor_range(range);
+    }
+
+    pub(crate) fn move_editor_left(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start < cursor && cursor <= pending.range.end)
+        {
+            self.editor.cursor = pending.range.start;
+            return;
+        }
+        self.editor.left();
+        if let Some(pending) = self.pending_pastes.iter().find(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.editor.cursor = pending.range.start;
+        }
+    }
+
+    pub(crate) fn move_editor_right(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start <= cursor && cursor < pending.range.end)
+        {
+            self.editor.cursor = pending.range.end;
+            return;
+        }
+        self.editor.right();
+        if let Some(pending) = self.pending_pastes.iter().find(|pending| {
+            pending.range.start < self.editor.cursor && self.editor.cursor < pending.range.end
+        }) {
+            self.editor.cursor = pending.range.end;
+        }
+    }
+
+    pub(crate) fn move_editor_vertical(&mut self, down: bool) {
+        self.editor.vertical(down);
+        self.normalize_editor_cursor();
+    }
+
+    pub(crate) fn move_editor_home(&mut self) {
+        self.editor.home();
+        self.normalize_editor_cursor();
+    }
+
+    pub(crate) fn move_editor_end(&mut self) {
+        self.editor.end();
+        self.normalize_editor_cursor();
+    }
+
+    fn normalize_editor_cursor(&mut self) {
+        let cursor = self.editor.cursor;
+        if let Some(pending) = self
+            .pending_pastes
+            .iter()
+            .find(|pending| pending.range.start < cursor && cursor < pending.range.end)
+        {
+            let distance_to_start = cursor - pending.range.start;
+            let distance_to_end = pending.range.end - cursor;
+            self.editor.cursor = if distance_to_start < distance_to_end {
+                pending.range.start
+            } else {
+                pending.range.end
+            };
+        }
     }
 
     pub(crate) fn materialize_all_pastes(&mut self) {
@@ -396,16 +468,6 @@ impl UiState {
             .pending_pastes
             .iter()
             .position(|pending| pending.range.start < cursor && cursor < pending.range.end)
-        {
-            self.materialize_paste(index);
-        }
-    }
-
-    fn materialize_pastes_intersecting(&mut self, range: &Range<usize>) {
-        if let Some(index) = self
-            .pending_pastes
-            .iter()
-            .position(|pending| range.start < pending.range.end && range.end > pending.range.start)
         {
             self.materialize_paste(index);
         }
@@ -439,6 +501,13 @@ impl UiState {
         self.shift_pastes_for_delete(&range);
         self.editor.text.replace_range(range.clone(), "");
         self.editor.cursor = range.start;
+    }
+
+    fn remove_pending_paste(&mut self, index: usize) {
+        let pending = self.pending_pastes.remove(index);
+        if self.editor.text.get(pending.range.clone()) == Some(pending.marker.as_str()) {
+            self.remove_editor_range(pending.range);
+        }
     }
 
     fn shift_pastes_for_insert(&mut self, at: usize, inserted: usize) {
@@ -1720,60 +1789,6 @@ impl Interaction for Ui {
         self.lock()
             .project_ui_event(crate::event::EventKind::Diagnostic, text);
         self.dirty.notify_one();
-    }
-}
-
-#[cfg(test)]
-mod paste_tests {
-    use super::UiState;
-
-    #[test]
-    fn short_paste_remains_literal() {
-        let mut state = UiState::default();
-        state.insert_pasted_text("first line\nsecond line");
-
-        assert_eq!(state.editor.text, "first line\nsecond line");
-        assert_eq!(state.submitted_editor_text(), "first line\nsecond line");
-    }
-
-    #[test]
-    fn long_single_line_paste_uses_a_one_line_placeholder() {
-        let mut state = UiState::default();
-        let pasted = "x".repeat(151);
-        state.insert_pasted_text(&pasted);
-
-        assert_eq!(state.editor.text, "[Pasted ~1 lines]");
-        assert_eq!(state.submitted_editor_text(), pasted);
-    }
-
-    #[test]
-    fn deleting_text_between_large_pastes_preserves_both_original_payloads() {
-        let first = "first-line-one\nfirst-line-two\nfirst-line-three";
-        let second = "second-line-one\nsecond-line-two\nsecond-line-three";
-        let mut state = UiState::default();
-        state.insert_pasted_text(first);
-        let first_end = state.pending_pastes[0].range.end;
-        state.insert_editor_text("X");
-        state.insert_pasted_text(second);
-        state.editor.cursor = first_end + 1;
-
-        state.backspace_editor();
-
-        assert_eq!(state.editor.text, "[Pasted ~3 lines][Pasted ~3 lines]");
-        assert_eq!(state.submitted_editor_text(), format!("{first}{second}"));
-    }
-
-    #[test]
-    fn editing_inside_a_paste_placeholder_materializes_the_original_text() {
-        let pasted = "first-line-one\nfirst-line-two\nfirst-line-three";
-        let mut state = UiState::default();
-        state.insert_pasted_text(pasted);
-        state.editor.cursor -= 1;
-
-        state.insert_editor_text("!");
-
-        assert!(state.pending_pastes.is_empty());
-        assert_eq!(state.submitted_editor_text(), format!("{pasted}!"));
     }
 }
 

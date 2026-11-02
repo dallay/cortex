@@ -288,15 +288,19 @@ The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 | `Ctrl+C` | Cancel current request |
 | `Ctrl+L` | Clear screen |
 | `Enter` / `Ctrl+Enter` | Send message |
-| `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | Insert a newline |
+| `Shift+Enter` (terminales compatibles) / `Alt+Enter` / `Ctrl+J` | Insert a newline |
 | `↑/↓` | History navigation |
 
 El composer crece con el borrador hasta un límite basado en la altura del
 terminal. Si el texto ocupa más filas, el composer desplaza las filas anteriores
-y mantiene visible el cursor. Los pegados de al menos tres líneas o más de 150
-caracteres se muestran como `[Pasted ~N lines]`; Huginn conserva y envía el texto
-original, no el marcador. Un pegado que supera el límite de entrada de 64 KiB se
-descarta.
+y mantiene visible el cursor. `Shift+Enter` requiere un terminal compatible con
+el protocolo de teclado extendido; `Alt+Enter` y `Ctrl+J` son alternativas.
+Los pegados de al menos tres líneas o más de 150 caracteres se muestran como
+`[Pasted ~N lines]`; al enviar un prompt normal, Huginn expande los marcadores
+y aplica `trim()`, que elimina whitespace al inicio y al final. Las invocaciones
+`/skill:` conservan su tratamiento existente. El contenido interno del pegado
+se conserva y el marcador no se envía. Un pegado que supera el límite de entrada
+de 64 KiB se descarta.
 
 ---
 

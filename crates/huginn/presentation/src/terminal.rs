@@ -5,6 +5,10 @@ use crate::{
     Connection, Interaction, Presentation,
 };
 use async_trait::async_trait;
+#[cfg(unix)]
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::{
     cursor::Show,
     event::{
@@ -36,9 +40,74 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
+#[cfg(unix)]
+static KEYBOARD_ENHANCEMENT_PUSHED: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter, Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+
+#[cfg(unix)]
+fn begin_keyboard_protocol() -> std::io::Result<()> {
+    KEYBOARD_ENHANCEMENT_PUSHED.store(true, Ordering::SeqCst);
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+    let mut stdout = std::io::stdout();
+    execute!(&mut stdout, PushKeyboardEnhancementFlags(flags))?;
+    stdout.write_all(b"\x1b[?u\x1b[c")?;
+    stdout.flush()
+}
+
+#[cfg(unix)]
+fn set_modify_other_keys(enabled: bool) -> std::io::Result<()> {
+    if enabled {
+        if KITTY_KEYBOARD_ACTIVE.load(Ordering::SeqCst)
+            || MODIFY_OTHER_KEYS_ACTIVE.swap(true, Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        std::io::stdout().write_all(b"\x1b[>4;2m")?;
+    } else if MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
+        std::io::stdout().write_all(b"\x1b[>4;0m")?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_keyboard_protocol_reply(
+    reply: crate::input::KeyboardProtocolReply,
+) -> std::io::Result<()> {
+    match reply {
+        crate::input::KeyboardProtocolReply::KittyFlags(flags) if flags > 0 => {
+            KITTY_KEYBOARD_ACTIVE.store(true, Ordering::SeqCst);
+            set_modify_other_keys(false)
+        }
+        crate::input::KeyboardProtocolReply::KittyFlags(_) => {
+            KITTY_KEYBOARD_ACTIVE.store(false, Ordering::SeqCst);
+            set_modify_other_keys(true)
+        }
+        crate::input::KeyboardProtocolReply::DeviceAttributes => {
+            set_modify_other_keys(!KITTY_KEYBOARD_ACTIVE.load(Ordering::SeqCst))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restore_keyboard_protocol() {
+    let mut stdout = std::io::stdout();
+    if MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = stdout.write_all(b"\x1b[>4;0m");
+    }
+    if KEYBOARD_ENHANCEMENT_PUSHED.swap(false, Ordering::SeqCst) {
+        let _ = execute!(&mut stdout, PopKeyboardEnhancementFlags);
+    }
+    KITTY_KEYBOARD_ACTIVE.store(false, Ordering::SeqCst);
+    let _ = stdout.flush();
+}
 
 type Screen = Terminal<HostBackend>;
 
@@ -183,6 +252,8 @@ impl TerminalGuard {
                     return;
                 }
                 if OWNER.load(Ordering::SeqCst) {
+                    #[cfg(unix)]
+                    restore_keyboard_protocol();
                     let _ = disable_raw_mode();
                     let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
                 }
@@ -200,6 +271,8 @@ impl TerminalGuard {
         if self.active.swap(false, Ordering::SeqCst) {
             #[cfg(unix)]
             crate::input::revoke();
+            #[cfg(unix)]
+            restore_keyboard_protocol();
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
             let _ = disable_raw_mode();
             OWNER.store(false, Ordering::SeqCst);
@@ -350,15 +423,24 @@ impl Ratatui {
             });
         }
         let done = CancellationToken::new();
+        drop(io);
+        #[cfg(unix)]
+        let input_generation = crate::input::begin();
+        #[cfg(unix)]
+        {
+            let _io = TERMINAL_IO
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            begin_keyboard_protocol()?;
+        }
         drivers.push((stop.clone(), done.clone()));
         drop(drivers);
-        drop(io);
         let cleanup_guard = guard.clone();
         let mut driver = Driver {
             connection,
             screen,
             #[cfg(unix)]
-            input_generation: crate::input::begin(),
+            input_generation,
             guard,
             ui: ui.clone(),
             standalone,
@@ -596,7 +678,11 @@ impl Driver {
         }
         #[cfg(unix)]
         {
-            Ok(crate::input::next(self.input_generation, focus)?)
+            let event = crate::input::next(self.input_generation, focus)?;
+            if let Some(reply) = crate::input::take_keyboard_protocol_reply() {
+                apply_keyboard_protocol_reply(reply)?;
+            }
+            Ok(event)
         }
         #[cfg(not(unix))]
         {
@@ -999,10 +1085,15 @@ Enter save Esc close"
         } else {
             4
         };
+        let reserved_popup_height = if view.completion.items.is_empty() {
+            0
+        } else {
+            3
+        };
         let max_composer_height = (frame.area().height / 3)
             .max(6)
             .saturating_add(2)
-            .min(area.height.saturating_sub(1));
+            .min(area.height.saturating_sub(1 + reserved_popup_height));
         let requested_composer_height =
             u16::try_from(editor_lines.len().saturating_add(2)).unwrap_or(u16::MAX);
         let composer_height = requested_composer_height
@@ -1015,7 +1106,7 @@ Enter save Esc close"
         } else {
             (view.completion.items.len() as u16 + 2)
                 .min(7)
-                .min(tail.height)
+                .min(tail.height.saturating_sub(1))
         };
         let [tail, popup] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(popup_height)]).areas(tail);
@@ -1085,7 +1176,7 @@ Enter save Esc close"
             .block(Block::bordered().title(if view.busy {
                 "Compose next prompt — Esc cancels turn"
             } else {
-                "Huginn — Enter sends / Shift+Enter newline / /help"
+                "Huginn — Enter sends / Shift+Enter (if supported) / /help"
             })),
             composer,
         );
@@ -1376,12 +1467,12 @@ Enter save Esc close"
             }
             KeyCode::Backspace => state.backspace_editor(),
             KeyCode::Delete => state.delete_editor(),
-            KeyCode::Left => state.editor.left(),
-            KeyCode::Right => state.editor.right(),
-            KeyCode::Up => state.editor.vertical(false),
-            KeyCode::Down => state.editor.vertical(true),
-            KeyCode::Home => state.editor.home(),
-            KeyCode::End => state.editor.end(),
+            KeyCode::Left => state.move_editor_left(),
+            KeyCode::Right => state.move_editor_right(),
+            KeyCode::Up => state.move_editor_vertical(false),
+            KeyCode::Down => state.move_editor_vertical(true),
+            KeyCode::Home => state.move_editor_home(),
+            KeyCode::End => state.move_editor_end(),
             _ => {}
         }
     }
@@ -1469,6 +1560,10 @@ mod tests {
     use super::*;
 
     fn frame_text(view: &View, width: u16, height: u16) -> String {
+        frame_text_and_cursor(view, width, height).0
+    }
+
+    fn frame_text_and_cursor(view: &View, width: u16, height: u16) -> (String, Position) {
         let mut terminal =
             Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal
@@ -1476,13 +1571,14 @@ mod tests {
                 Driver::render_frame(frame, view);
             })
             .unwrap();
-        terminal
+        let text = terminal
             .backend()
             .buffer()
             .content
             .iter()
             .map(|cell| cell.symbol())
-            .collect()
+            .collect();
+        (text, terminal.backend().cursor_position())
     }
 
     #[test]
@@ -1751,6 +1847,61 @@ mod tests {
         assert!(
             !output.contains("draft-00"),
             "older rows should scroll within the composer: {output}"
+        );
+    }
+
+    #[test]
+    fn composer_cursor_stays_visible_after_scroll() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor.text = (0..20)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let (_, cursor) = frame_text_and_cursor(&view, 80, 24);
+
+        assert_eq!(cursor, Position::new(9, 21));
+
+        view.editor.cursor = view.editor.text.find("\ndraft-15").unwrap() + 1 + "draft-15".len();
+        let (_, cursor) = frame_text_and_cursor(&view, 80, 24);
+
+        assert_eq!(cursor, Position::new(9, 21));
+    }
+
+    #[test]
+    fn completion_popup_keeps_an_item_and_transcript_row_at_minimum_viewport() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.history.push("history-visible".into());
+        view.editor.text = format!(
+            "/h\n{}",
+            (0..20)
+                .map(|index| format!("draft-{index:02}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        view.editor.cursor = 2;
+        view.completion.refresh(
+            &view.editor,
+            &[
+                crate::completion::CatalogCommand::host("/help", "Show help"),
+                crate::completion::CatalogCommand::host("/history", "Show history"),
+            ],
+            &[],
+        );
+        assert!(!view.completion.items.is_empty());
+
+        let output = frame_text(&view, 20, 8);
+
+        assert!(
+            output.contains("/help"),
+            "completion item is not visible: {output}"
+        );
+        assert!(
+            output.contains("history-visible"),
+            "transcript row is not visible: {output}"
         );
     }
 

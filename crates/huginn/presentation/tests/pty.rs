@@ -21,6 +21,13 @@ fn approval_code(pty: &Pty) -> String {
     code.to_string()
 }
 
+fn screen_row(screen: &str, fragment: &str) -> usize {
+    screen
+        .lines()
+        .position(|line| line.contains(fragment))
+        .unwrap_or_else(|| panic!("screen row missing {fragment:?}: {screen}"))
+}
+
 #[test]
 fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
     let mut pty = start("normal", true);
@@ -96,6 +103,7 @@ fn large_paste_shows_a_compact_placeholder_and_submits_the_original_text() {
         "second-line-one",
         "second-line-two",
         "second-line-three",
+        "second-line-four",
     ] {
         assert!(
             transcript.contains(line),
@@ -111,7 +119,9 @@ fn large_paste_shows_a_compact_placeholder_and_submits_the_original_text() {
 fn shift_enter_grows_the_composer_and_submits_all_typed_lines() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
-    pty.send("typed-line-one\x1b[13;2utyped-line-two\x1b[13;2utyped-line-three");
+    pty.send("\x1b[?1;2c");
+    pty.wait_output_for("\x1b[>4;2m");
+    pty.send("typed-line-one\x1b[27;2;13~typed-line-two\x1b[27;2;13~typed-line-three");
     pty.wait_for("typed-line-three");
 
     let draft = pty.screen_text();
@@ -121,6 +131,16 @@ fn shift_enter_grows_the_composer_and_submits_all_typed_lines() {
             "multiline draft line should remain visible: {draft}"
         );
     }
+    assert_ne!(
+        screen_row(&draft, "typed-line-one"),
+        screen_row(&draft, "typed-line-two"),
+        "Shift+Enter must put draft lines on separate screen rows: {draft}"
+    );
+    assert_ne!(
+        screen_row(&draft, "typed-line-two"),
+        screen_row(&draft, "typed-line-three"),
+        "Shift+Enter must put draft lines on separate screen rows: {draft}"
+    );
 
     pty.send("\r");
     pty.wait_for("User: typed-line-one");
@@ -131,9 +151,74 @@ fn shift_enter_grows_the_composer_and_submits_all_typed_lines() {
             "submitted prompt must include {line:?}: {transcript}"
         );
     }
+    assert_ne!(
+        screen_row(&transcript, "typed-line-one"),
+        screen_row(&transcript, "typed-line-two"),
+        "submitted lines must remain on separate screen rows: {transcript}"
+    );
+    assert_ne!(
+        screen_row(&transcript, "typed-line-two"),
+        screen_row(&transcript, "typed-line-three"),
+        "submitted lines must remain on separate screen rows: {transcript}"
+    );
     pty.wait_for("Assistant: STREAM_COMPLETE");
     pty.send("\x03");
-    pty.finish(true);
+    let output = pty.finish(true);
+    assert!(
+        output.contains("\x1b[>7u"),
+        "Kitty protocol was not requested"
+    );
+    assert!(
+        output.contains("\x1b[?u\x1b[c"),
+        "keyboard support was not queried"
+    );
+    assert!(
+        output.contains("\x1b[>4;2m"),
+        "modifyOtherKeys fallback was not enabled"
+    );
+    assert!(
+        output.contains("\x1b[>4;0m"),
+        "modifyOtherKeys was not restored"
+    );
+    assert!(
+        output.contains("\x1b[<1u"),
+        "Kitty protocol flags were not popped"
+    );
+}
+
+#[test]
+fn kitty_keyboard_protocol_uses_shift_enter_without_modify_other_keys_fallback() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[?7u");
+    pty.send("kitty-line-one\x1b[13;2ukitty-line-two");
+    pty.wait_for("kitty-line-two");
+
+    let draft = pty.screen_text();
+    assert_ne!(
+        screen_row(&draft, "kitty-line-one"),
+        screen_row(&draft, "kitty-line-two"),
+        "Kitty Shift+Enter must create separate draft rows: {draft}"
+    );
+
+    pty.send("\r");
+    pty.wait_for("User: kitty-line-one");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    let output = pty.finish(true);
+
+    assert!(
+        output.contains("\x1b[>7u"),
+        "Kitty protocol was not requested"
+    );
+    assert!(
+        output.contains("\x1b[<1u"),
+        "Kitty protocol flags were not popped"
+    );
+    assert!(
+        !output.contains("\x1b[>4;2m"),
+        "modifyOtherKeys fallback must stay disabled when Kitty is supported"
+    );
 }
 
 #[test]
@@ -468,6 +553,8 @@ fn panic_restores_raw_mode_and_cursor() {
     let output = pty.finish(false);
     assert!(output.contains("intentional PTY restoration"));
     assert!(output.contains("\x1b[?2004l"));
+    assert!(output.contains("\x1b[>7u"));
+    assert!(output.contains("\x1b[<1u"));
     assert!(format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"));
 }
 #[test]

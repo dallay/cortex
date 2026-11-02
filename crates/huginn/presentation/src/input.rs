@@ -12,6 +12,12 @@ const PASTE_LIMIT: usize = 64 * 1024;
 const END: &[u8] = b"\x1b[201~";
 type Lease = (u64, u64);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyboardProtocolReply {
+    KittyFlags(u8),
+    DeviceAttributes,
+}
+
 static INPUT: LazyLock<Mutex<Reader>> = LazyLock::new(|| Mutex::new(Reader::new()));
 
 pub fn begin() -> u64 {
@@ -42,6 +48,15 @@ pub fn take_overflow() -> bool {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     std::mem::take(&mut reader.parser.overflow)
+}
+
+pub fn take_keyboard_protocol_reply() -> Option<KeyboardProtocolReply> {
+    INPUT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .parser
+        .keyboard_protocol_reply
+        .take()
 }
 
 struct Reader {
@@ -159,6 +174,7 @@ struct Parser {
     discarded_control: bool,
     paste: Option<Paste>,
     overflow: bool,
+    keyboard_protocol_reply: Option<KeyboardProtocolReply>,
 }
 
 impl Parser {
@@ -171,11 +187,13 @@ impl Parser {
             discarded_control: false,
             paste: None,
             overflow: false,
+            keyboard_protocol_reply: None,
         }
     }
 
     fn revoke(&mut self) {
         self.revoked = true;
+        self.keyboard_protocol_reply = None;
         if let Some(paste) = self.paste.as_mut() {
             paste.text.zeroize();
             paste.discarded = true;
@@ -339,6 +357,16 @@ impl Parser {
             }
             return None;
         }
+        if let Some(reply) = keyboard_protocol_reply(bytes) {
+            match (self.keyboard_protocol_reply, reply) {
+                (Some(KeyboardProtocolReply::KittyFlags(_)), _) => {}
+                (_, KeyboardProtocolReply::DeviceAttributes)
+                | (_, KeyboardProtocolReply::KittyFlags(_)) => {
+                    self.keyboard_protocol_reply = Some(reply);
+                }
+            }
+            return Some(None);
+        }
         Some(sequence(bytes))
     }
 
@@ -411,8 +439,27 @@ fn character(bytes: &[u8]) -> Option<Event> {
     Some(key(code))
 }
 
-// The host consumes only keyboard/focus input (mouse tracking and enhanced
-// keyboard negotiation are not enabled). Unknown CSI reports are discarded.
+fn keyboard_protocol_reply(bytes: &[u8]) -> Option<KeyboardProtocolReply> {
+    let final_byte = *bytes.last()?;
+    let params = std::str::from_utf8(&bytes[2..bytes.len() - 1]).ok()?;
+    if final_byte == b'u' {
+        let flags = params.strip_prefix('?')?.parse().ok()?;
+        return Some(KeyboardProtocolReply::KittyFlags(flags));
+    }
+    if final_byte == b'c'
+        && params.strip_prefix('?').is_some_and(|params| {
+            params
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte == b';')
+        })
+    {
+        return Some(KeyboardProtocolReply::DeviceAttributes);
+    }
+    None
+}
+
+// The host consumes keyboard/focus input and protocol replies used for keyboard
+// negotiation. Unknown CSI reports are discarded instead of reaching the editor.
 fn sequence(bytes: &[u8]) -> Option<Event> {
     let final_byte = *bytes.last()?;
     let params = std::str::from_utf8(&bytes[2..bytes.len() - 1]).ok()?;
@@ -452,6 +499,7 @@ fn sequence(bytes: &[u8]) -> Option<Event> {
             127 => KeyCode::Backspace,
             value => KeyCode::Char(char::from_u32(value)?),
         },
+        b'~' if first == "27" => modified_other_key(parts.next()?.parse().ok()?)?,
         b'~' => match first {
             "1" | "7" => KeyCode::Home,
             "2" => KeyCode::Insert,
@@ -481,6 +529,16 @@ fn sequence(bytes: &[u8]) -> Option<Event> {
         _ => KeyEventKind::Press,
     };
     Some(Event::Key(KeyEvent::new_with_kind(code, modifiers, kind)))
+}
+
+fn modified_other_key(codepoint: u32) -> Option<KeyCode> {
+    Some(match codepoint {
+        9 => KeyCode::Tab,
+        13 => KeyCode::Enter,
+        27 => KeyCode::Esc,
+        127 => KeyCode::Backspace,
+        value => KeyCode::Char(char::from_u32(value)?),
+    })
 }
 
 #[cfg(feature = "test-driver")]
