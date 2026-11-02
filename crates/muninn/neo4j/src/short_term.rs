@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use muninn_core::codec::{deserialize_metadata, python_json_dumps, serialize_metadata};
 use muninn_core::model::{Conversation, Message, Metadata, SessionInfo};
 use muninn_core::ports::{
-    KeyedMessage, MessageRecord, OwnerScope, ScoredMessage, SessionQuery, ShortTermStore,
+    EmbeddingIdentity, KeyedMessage, MessageRecord, OwnerScope, ScoredMessage, SessionQuery,
+    ShortTermStore,
 };
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::{BoltMap, BoltNull, BoltType, Row};
@@ -134,6 +135,18 @@ fn record_to_bolt(record: &MessageRecord) -> BoltType {
     map.put("content".into(), record.content.as_str().into());
     map.put("embedding".into(), opt_vector(record.embedding.as_deref()));
     map.put(
+        "embedding_identity".into(),
+        opt_string(record.embedding_identity.as_ref().map(|i| i.key())),
+    );
+    map.put(
+        "embedding_dimensions".into(),
+        record
+            .embedding_identity
+            .as_ref()
+            .map(|i| BoltType::from(i.dimensions() as i64))
+            .unwrap_or(BoltType::Null(BoltNull)),
+    );
+    map.put(
         "timestamp".into(),
         record
             .timestamp
@@ -243,6 +256,7 @@ impl ShortTermStore for Neo4jShortTermStore {
         scope: &OwnerScope,
         message: &MessageRecord,
     ) -> MemoryResult<Message> {
+        validate_record_identity(message)?;
         if message.operation_key.is_some() != message.operation_payload.is_some() {
             return Err(MemoryError::invalid(
                 "operation_key and operation_payload must be provided together",
@@ -266,6 +280,18 @@ impl ShortTermStore for Neo4jShortTermStore {
                     ("role", message.role.as_str().into()),
                     ("content", message.content.as_str().into()),
                     ("embedding", opt_vector(message.embedding.as_deref())),
+                    (
+                        "embedding_identity",
+                        opt_string(message.embedding_identity.as_ref().map(|i| i.key())),
+                    ),
+                    (
+                        "embedding_dimensions",
+                        message
+                            .embedding_identity
+                            .as_ref()
+                            .map(|i| BoltType::from(i.dimensions() as i64))
+                            .unwrap_or(BoltType::Null(BoltNull)),
+                    ),
                     ("metadata", metadata_param(&message.metadata)),
                     (
                         "operation_key",
@@ -299,6 +325,9 @@ impl ShortTermStore for Neo4jShortTermStore {
         scope: &OwnerScope,
         messages: &[MessageRecord],
     ) -> MemoryResult<Vec<Message>> {
+        for message in messages {
+            validate_record_identity(message)?;
+        }
         if messages.is_empty() {
             return Ok(Vec::new());
         }
@@ -433,21 +462,61 @@ impl ShortTermStore for Neo4jShortTermStore {
         threshold: f64,
         metadata_filters: &Metadata,
     ) -> MemoryResult<Vec<ScoredMessage>> {
+        let _ = (
+            embedding,
+            session_id,
+            scope,
+            limit,
+            threshold,
+            metadata_filters,
+        );
+        Err(MemoryError::invalid(
+            "embedding identity is required for search",
+        ))
+    }
+
+    async fn search_messages_with_identity(
+        &self,
+        embedding: &[f64],
+        identity: &EmbeddingIdentity,
+        session_id: Option<&str>,
+        scope: &OwnerScope,
+        limit: i64,
+        threshold: f64,
+        metadata_filters: &Metadata,
+    ) -> MemoryResult<Vec<ScoredMessage>> {
+        if embedding.len() != identity.dimensions() || !embedding.iter().all(|v| v.is_finite()) {
+            return Err(MemoryError::invalid(
+                "embedding identity dimensions mismatch",
+            ));
+        }
+
         if session_id.is_some() {
             self.reject_legacy(session_id, None, None).await?;
         }
         let (clause, filter_params) = metadata_filter_clause(metadata_filters);
-        let cypher = match (session_id.is_some(), clause.is_empty()) {
-            (false, true) => q::SEARCH_MESSAGES_BY_EMBEDDING.to_owned(),
-            (true, true) => q::SEARCH_SESSION_MESSAGES_BY_EMBEDDING.to_owned(),
-            (false, false) => {
-                q::SEARCH_MESSAGES_WITH_METADATA_TEMPLATE.replace("{metadata_clause}", &clause)
-            }
-            (true, false) => q::SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE
-                .replace("{metadata_clause}", &clause),
+        let (ann, exact) = match (session_id.is_some(), clause.is_empty()) {
+            (false, true) => (q::SEARCH_MESSAGES_BY_EMBEDDING, q::SEARCH_MESSAGES_EXACT),
+            (true, true) => (
+                q::SEARCH_SESSION_MESSAGES_BY_EMBEDDING,
+                q::SEARCH_MESSAGES_EXACT_IN_SESSION,
+            ),
+            (false, false) => (
+                q::SEARCH_MESSAGES_WITH_METADATA_TEMPLATE,
+                q::SEARCH_MESSAGES_EXACT_FILTERED,
+            ),
+            (true, false) => (
+                q::SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE,
+                q::SEARCH_MESSAGES_EXACT_IN_SESSION_FILTERED,
+            ),
         };
         let mut params: Vec<(String, BoltType)> = vec![
             ("embedding".to_owned(), embedding.to_vec().into()),
+            ("embedding_identity".to_owned(), identity.key().into()),
+            (
+                "embedding_dimensions".to_owned(),
+                (identity.dimensions() as i64).into(),
+            ),
             ("limit".to_owned(), limit.into()),
             ("threshold".to_owned(), threshold.into()),
             ("owner_scope".to_owned(), scope.storage_key().into()),
@@ -456,14 +525,12 @@ impl ShortTermStore for Neo4jShortTermStore {
             params.push(("session_id".to_owned(), session.into()));
         }
         params.extend(filter_params);
-        let rows = match self.client.execute_dynamic(&cypher, params).await {
-            Ok(rows) => rows,
-            // No vector index yet means nothing has been embedded.
-            Err(MemoryError::Storage(message)) if message.contains("message_embedding_idx") => {
-                return Ok(Vec::new())
-            }
-            Err(err) => return Err(err),
-        };
+        let rows = search_with_exact_fallback(limit, |use_exact| {
+            let cypher = if use_exact { exact } else { ann }.replace("{metadata_clause}", &clause);
+            let params = params.clone();
+            async move { self.client.execute_dynamic(&cypher, params).await }
+        })
+        .await?;
         rows.iter()
             .map(|row| {
                 let score = Props::of(&row_values(row, &["score"])?)?
@@ -586,5 +653,147 @@ impl ShortTermStore for Neo4jShortTermStore {
             )
             .await
             .map(|_| ())
+    }
+}
+
+fn validate_record_identity(record: &MessageRecord) -> MemoryResult<()> {
+    match (&record.embedding, &record.embedding_identity) {
+        (Some(vector), Some(identity))
+            if vector.len() == identity.dimensions() && vector.iter().all(|v| v.is_finite()) =>
+        {
+            Ok(())
+        }
+        (None, None) => Ok(()),
+        _ => Err(MemoryError::invalid(
+            "embedding requires a matching identity",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    fn record() -> MessageRecord {
+        MessageRecord {
+            operation_key: None,
+            operation_payload: None,
+            id: Uuid::new_v4(),
+            role: "user".into(),
+            content: "text".into(),
+            embedding: Some(vec![1.0, 0.0]),
+            embedding_identity: Some(
+                EmbeddingIdentity::new("model-a:revision-1:mean:l2", 2).unwrap(),
+            ),
+            metadata: Metadata::new(),
+            timestamp: None,
+        }
+    }
+
+    #[test]
+    fn unidentified_legacy_vectors_cannot_be_written_as_current_vectors() {
+        let mut record = record();
+        assert!(validate_record_identity(&record).is_ok());
+        record.embedding_identity = None;
+        assert!(validate_record_identity(&record).is_err());
+        record.embedding = None;
+        assert!(validate_record_identity(&record).is_ok());
+    }
+
+    #[test]
+    fn invalid_vectors_and_dimension_mismatches_fail_closed() {
+        let mut record = record();
+        record.embedding = Some(vec![1.0]);
+        assert!(validate_record_identity(&record).is_err());
+        record.embedding = Some(vec![f64::NAN, 1.0]);
+        assert!(validate_record_identity(&record).is_err());
+    }
+
+    #[test]
+    fn batch_persistence_retains_distinct_same_dimension_spaces() {
+        let first = record();
+        let mut second = first.clone();
+        second.embedding_identity =
+            Some(EmbeddingIdentity::new("model-b:revision-1:mean:l2", 2).unwrap());
+        assert_ne!(record_to_bolt(&first), record_to_bolt(&second));
+    }
+}
+
+/// Replace underfilled ANN results. Errors must not trigger an exact scan.
+async fn search_with_exact_fallback<T, F, Fut>(limit: i64, mut execute: F) -> MemoryResult<Vec<T>>
+where
+    F: FnMut(bool) -> Fut,
+    Fut: std::future::Future<Output = MemoryResult<Vec<T>>>,
+{
+    let rows = execute(false).await?;
+    if (rows.len() as i64) < limit {
+        execute(true).await
+    } else {
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+    use std::future::ready;
+
+    #[tokio::test]
+    async fn sufficient_ann_does_not_execute_exact_query() {
+        let mut calls = Vec::new();
+        let result = search_with_exact_fallback(2, |exact| {
+            calls.push(exact);
+            ready(Ok(vec![3, 1]))
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, [false]);
+        assert_eq!(result, [3, 1]);
+    }
+
+    #[tokio::test]
+    async fn underfill_replaces_instead_of_merging_ann_rows() {
+        let mut calls = Vec::new();
+        let result = search_with_exact_fallback(2, |exact| {
+            calls.push(exact);
+            ready(Ok(if exact { vec![2, 3] } else { vec![1] }))
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, [false, true]);
+        assert_eq!(result, [2, 3]);
+    }
+
+    #[tokio::test]
+    async fn ann_errors_propagate_without_fallback() {
+        for error in [
+            MemoryError::storage("missing index"),
+            MemoryError::DimensionMismatch("query/index".into()),
+            MemoryError::storage("unavailable"),
+        ] {
+            let expected = error.to_string();
+            let mut error = Some(error);
+            let mut calls = Vec::new();
+            let result = search_with_exact_fallback::<i32, _, _>(2, |exact| {
+                calls.push(exact);
+                ready(Err(error.take().expect("ANN must not be retried")))
+            })
+            .await;
+            assert_eq!(calls, [false]);
+            assert_eq!(result.unwrap_err().to_string(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_errors_propagate_instead_of_returning_partial_ann() {
+        let result = search_with_exact_fallback(2, |exact| {
+            ready(if exact {
+                Err(MemoryError::storage("exact query failed"))
+            } else {
+                Ok(vec![1])
+            })
+        })
+        .await;
+        assert!(matches!(result, Err(MemoryError::Storage(_))));
     }
 }

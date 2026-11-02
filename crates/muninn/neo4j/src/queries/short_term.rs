@@ -57,6 +57,8 @@ CREATE (m:Message {
     role: $role,
     content: $content,
     embedding: $embedding,
+    embedding_identity: $embedding_identity,
+    embedding_dimensions: $embedding_dimensions,
     timestamp: CASE WHEN last IS NOT NULL AND last.timestamp >= datetime()
                     THEN last.timestamp + duration({microseconds: 1})
                     ELSE datetime()
@@ -95,6 +97,8 @@ CREATE (m:Message {
     role: msg.role,
     content: msg.content,
     embedding: msg.embedding,
+    embedding_identity: msg.embedding_identity,
+    embedding_dimensions: msg.embedding_dimensions,
     timestamp: CASE WHEN msg.timestamp IS NOT NULL
                     THEN datetime(msg.timestamp)
                     ELSE base + duration({microseconds: i})
@@ -127,39 +131,117 @@ ORDER BY m.timestamp ASC, m.id ASC
 LIMIT $limit
 ";
 
-/// Exact scoped search: candidate selection must not take a global ANN top-k
-/// before applying the namespace. Native scoped ANN acceptance is a separate gate.
+/// ANN global search with post-filtering.
+///
+/// Neo4j 5.26 does not support scoped predicates inside
+/// `db.index.vector.queryNodes`, so the index returns a global top-k and the
+/// namespace is applied afterwards in Cypher. The filter runs *after* the ANN
+/// call, so the query may return fewer than `$limit` results when many global
+/// candidates fall outside the namespace.
+///
+/// The vector index has fixed dimensions; Neo4j rejects a query vector whose
+/// length differs from the index configuration. Identity/dimension predicates
+/// run after ANN and cannot protect the procedure from that mismatch.
 pub const SEARCH_MESSAGES_BY_EMBEDDING: &str = "
+CALL db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE score >= $threshold
+WITH node AS m, score
 MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
-  AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
-WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
-WHERE score >= $threshold
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
 RETURN DISTINCT m, score
 ORDER BY score DESC
 LIMIT $limit
 ";
 
-/// Session-scoped exact search.
+/// Session-scoped ANN global search with post-filtering.
 ///
 /// Upstream accepts `session_id` but ignores it (SOURCE-CONFLICT with TCK
-/// SPEC-2.3.2); Muninn scores the session's own
-/// messages with the same cosine normalisation the vector index uses.
+/// SPEC-2.3.2); Muninn applies the session scope after the global top-k.
 pub const SEARCH_SESSION_MESSAGES_BY_EMBEDDING: &str = "
+CALL db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE score >= $threshold
+WITH node AS m, score
 MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
-  AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
-WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
-WHERE score >= $threshold
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
 RETURN m, score
 ORDER BY score DESC
 LIMIT $limit
 ";
 
-/// Upstream `SEARCH_MESSAGES_WITH_METADATA_TEMPLATE`.
+/// ANN global search with metadata and post-filtering.
+///
+/// The metadata predicate is evaluated inside the same post-ANN stage as the
+/// namespace, so both are applied to the global top-k rather than to a
+/// pre-filtered candidate set.
 pub const SEARCH_MESSAGES_WITH_METADATA_TEMPLATE: &str = "
+CALL db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE score >= $threshold
+WITH node AS m, score
 MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
+  AND m.metadata IS NOT NULL AND {metadata_clause}
+RETURN DISTINCT m, score
+ORDER BY score DESC
+LIMIT $limit
+";
+
+/// Session-scoped ANN global search with metadata and post-filtering.
+pub const SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE: &str = "
+CALL db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE score >= $threshold
+WITH node AS m, score
+MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
+WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
+  AND m.metadata IS NOT NULL AND {metadata_clause}
+RETURN m, score
+ORDER BY score DESC
+LIMIT $limit
+";
+
+/// Exact scoped fallback used only after a successful, underfilled ANN query.
+pub const SEARCH_MESSAGES_EXACT: &str = "
+MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
+WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
+  AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
+WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
+WHERE score >= $threshold
+RETURN DISTINCT m, score
+ORDER BY score DESC
+LIMIT $limit
+";
+
+pub const SEARCH_MESSAGES_EXACT_IN_SESSION: &str = "
+MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
+WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
+  AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
+WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
+WHERE score >= $threshold
+RETURN DISTINCT m, score
+ORDER BY score DESC
+LIMIT $limit
+";
+
+pub const SEARCH_MESSAGES_EXACT_FILTERED: &str = "
+MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
+WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
   AND m.metadata IS NOT NULL AND {metadata_clause}
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
@@ -169,14 +251,16 @@ ORDER BY score DESC
 LIMIT $limit
 ";
 
-pub const SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE: &str = "
+pub const SEARCH_MESSAGES_EXACT_IN_SESSION_FILTERED: &str = "
 MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
+  AND m.embedding_identity = $embedding_identity
+  AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
   AND m.metadata IS NOT NULL AND {metadata_clause}
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
 WHERE score >= $threshold
-RETURN m, score
+RETURN DISTINCT m, score
 ORDER BY score DESC
 LIMIT $limit
 ";
@@ -403,6 +487,8 @@ CREATE (m:Message {
     role: $role,
     content: $content,
     embedding: $embedding,
+    embedding_identity: $embedding_identity,
+    embedding_dimensions: $embedding_dimensions,
     timestamp: CASE WHEN last IS NOT NULL AND last.timestamp >= datetime()
                     THEN last.timestamp + duration({microseconds: 1})
                     ELSE datetime()
@@ -423,3 +509,44 @@ RETURN m
 }
 RETURN m
 ";
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    #[test]
+    fn ann_search_excludes_legacy_and_other_spaces_before_limit() {
+        for query in [
+            SEARCH_MESSAGES_BY_EMBEDDING,
+            SEARCH_SESSION_MESSAGES_BY_EMBEDDING,
+            SEARCH_MESSAGES_WITH_METADATA_TEMPLATE,
+            SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE,
+        ] {
+            let identity = query
+                .find("m.embedding_identity = $embedding_identity")
+                .unwrap();
+            // The ANN call runs first: Neo4j 5.26 cannot scope the index, so
+            // the namespace is applied to the global top-k afterwards.
+            let ann = query.find("db.index.vector.queryNodes").unwrap();
+            assert!(ann < identity, "ANN must precede the namespace filter");
+            assert!(identity < query.find("LIMIT $limit").unwrap());
+            assert!(query.contains("m.embedding_dimensions = $embedding_dimensions"));
+        }
+        assert!(CREATE_MESSAGE.contains("embedding_identity: $embedding_identity"));
+        assert!(CREATE_KEYED_MESSAGE.contains("embedding_identity: $embedding_identity"));
+        assert!(CREATE_MESSAGES_BATCH.contains("embedding_identity: msg.embedding_identity"));
+    }
+
+    /// The scoped search must use the ANN index, not a full scan.
+    #[test]
+    fn scoped_search_uses_the_vector_index() {
+        for query in [
+            SEARCH_MESSAGES_BY_EMBEDDING,
+            SEARCH_SESSION_MESSAGES_BY_EMBEDDING,
+            SEARCH_MESSAGES_WITH_METADATA_TEMPLATE,
+            SEARCH_SESSION_MESSAGES_WITH_METADATA_TEMPLATE,
+        ] {
+            assert!(query.contains("db.index.vector.queryNodes('message_embedding_idx'"));
+            assert!(!query.contains("vector.similarity.cosine"));
+        }
+    }
+}

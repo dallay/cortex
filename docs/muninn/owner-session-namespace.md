@@ -26,11 +26,26 @@ Una migración de datos requiere una operación explícita separada.
 
 ## Búsqueda y límites de aceptación
 
-La búsqueda actual calcula similitud coseno dentro del propietario antes de
-aplicar el límite. No toma candidatos de un top-k ANN global para filtrarlos
-después: ese orden puede ocultar resultados propios por actividad ajena.
-Esta implementación EXACT **no demuestra aceptación ANN nativa**, rendimiento
-acotado, aceptación MiniLM, procedencia C1 ni cierre del hito H1.
+La búsqueda intenta primero ANN global con `db.index.vector.queryNodes`, con
+`k = limit`. Cypher aplica los filtros de propietario, sesión opcional, identidad
+y dimensiones del embedding, metadata y umbral antes de devolver resultados.
+Si ese resultado filtrado contiene menos de `limit` filas, ejecuta una búsqueda
+exacta scoped y devuelve únicamente el resultado completo de esa consulta,
+limitado a `limit`. No mezcla ambas listas ni hace consultas por mensaje.
+
+El fallback calcula coseno sobre los mensajes que cumplen los filtros scoped.
+Evita que candidatos ajenos oculten resultados propios cuando ANN queda
+incompleto. Si ANN completa el límite, el ranking sigue siendo aproximado: no
+se garantiza equivalencia con la búsqueda exacta ni recall completo.
+
+Los errores ANN de índice, dimensiones o almacenamiento se propagan sin fallback.
+Los predicados de identidad y dimensiones posteriores a ANN no protegen al
+procedimiento frente a dimensiones distintas entre la consulta y el índice.
+No hay oversampling, paginación ni configuración adicional.
+
+El fallback puede recorrer todos los mensajes del scope y añade una segunda
+consulta cuando ANN queda incompleto. No demuestra rendimiento acotado,
+aceptación MiniLM, procedencia C1 ni cierre global del hito H1.
 
 La operación administrativa global `clear_all_data` conserva su control
 explícito en el bridge y no equivale a una operación cotidiana sin propietario.

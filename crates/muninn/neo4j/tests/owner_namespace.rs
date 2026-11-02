@@ -1,6 +1,8 @@
 //! Opt-in integration test against a fresh, synthetic Neo4j fixture only.
 use muninn_core::model::Metadata;
-use muninn_core::ports::{MessageRecord, OwnerScope, SessionQuery, ShortTermStore};
+use muninn_core::ports::{
+    EmbeddingIdentity, MessageRecord, OwnerScope, SessionQuery, ShortTermStore,
+};
 use muninn_neo4j::{Neo4jClient, Neo4jConfig, Neo4jShortTermStore, SchemaManager};
 use uuid::Uuid;
 
@@ -42,6 +44,7 @@ async fn owner_namespace_lifecycle() {
         role: "user".into(),
         content: "owner-a-only".into(),
         embedding: Some(vec![1.0, 0.0, 0.0]),
+        embedding_identity: Some(EmbeddingIdentity::new("test:model-a:v1", 3).unwrap()),
         metadata: std::iter::once(("tag".into(), serde_json::json!("scoped"))).collect(),
         timestamp: None,
     };
@@ -115,7 +118,15 @@ async fn owner_namespace_lifecycle() {
     };
     store.append_message(aid, &a, &weaker).await.unwrap();
     let hits = store
-        .search_messages(&[1.0, 0.0, 0.0], None, &a, 2, 0.0, &Metadata::new())
+        .search_messages_with_identity(
+            &[1.0, 0.0, 0.0],
+            &EmbeddingIdentity::new("test:model-a:v1", 3).unwrap(),
+            None,
+            &a,
+            2,
+            0.0,
+            &Metadata::new(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -126,7 +137,15 @@ async fn owner_namespace_lifecycle() {
     assert!(hits.iter().any(|hit| hit.message.id == weaker.id));
     let filters = std::iter::once(("tag".into(), serde_json::json!("scoped"))).collect();
     let hits = store
-        .search_messages(&[1.0, 0.0, 0.0], None, &a, 2, 0.0, &filters)
+        .search_messages_with_identity(
+            &[1.0, 0.0, 0.0],
+            &EmbeddingIdentity::new("test:model-a:v1", 3).unwrap(),
+            None,
+            &a,
+            2,
+            0.0,
+            &filters,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -134,6 +153,51 @@ async fn owner_namespace_lifecycle() {
         2,
         "metadata search must not select global candidates"
     );
+
+    assert!(store
+        .search_messages_with_identity(
+            &[1.0, 0.0, 0.0],
+            &EmbeddingIdentity::new("test:model-b:v1", 3).unwrap(),
+            Some(&session),
+            &a,
+            100,
+            0.0,
+            &Metadata::new(),
+        )
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .search_messages(
+            &[1.0, 0.0, 0.0],
+            Some(&session),
+            &a,
+            100,
+            0.0,
+            &Metadata::new(),
+        )
+        .await
+        .is_err());
+    client
+        .execute(
+            "MATCH (m:Message {id: $id}) REMOVE m.embedding_identity, m.embedding_dimensions",
+            vec![("id", record.id.to_string().into())],
+        )
+        .await
+        .unwrap();
+    let current = store
+        .search_messages_with_identity(
+            &[1.0, 0.0, 0.0],
+            &EmbeddingIdentity::new("test:model-a:v1", 3).unwrap(),
+            Some(&session),
+            &a,
+            100,
+            0.0,
+            &Metadata::new(),
+        )
+        .await
+        .unwrap();
+    assert!(!current.iter().any(|hit| hit.message.id == record.id));
     assert!(store.delete_message(record.id, &a, true).await.unwrap());
     let concurrent_session = Uuid::new_v4().to_string();
     let (one, two) = tokio::join!(
@@ -193,8 +257,9 @@ async fn owner_namespace_lifecycle() {
         .await
         .is_err());
     assert!(store
-        .search_messages(
+        .search_messages_with_identity(
             &[1.0, 0.0, 0.0],
+            &EmbeddingIdentity::new("test:model-a:v1", 3).unwrap(),
             Some(&legacy_session),
             &a,
             2,
@@ -260,6 +325,7 @@ async fn operation_key_replays_and_rejects_conflicts() {
         role: "user".into(),
         content: "missing payload".into(),
         embedding: None,
+        embedding_identity: None,
         metadata: Metadata::new(),
         timestamp: None,
         operation_key: Some("incomplete-keyed-record".into()),
@@ -282,6 +348,7 @@ async fn operation_key_replays_and_rejects_conflicts() {
         role: "user".into(),
         content: "same".into(),
         embedding: None,
+        embedding_identity: None,
         metadata: Metadata::new(),
         timestamp: None,
         operation_key: Some("operation-1".into()),
