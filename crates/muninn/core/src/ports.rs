@@ -11,11 +11,42 @@ use crate::model::{
     SessionInfo, ToolCall, ToolStats,
 };
 
+/// Stable identity of a vector space. The key must pin the model revision and
+/// preprocessing/pooling/normalization contract, not merely its dimensions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingIdentity {
+    key: String,
+    dimensions: usize,
+}
+
+impl EmbeddingIdentity {
+    pub fn new(key: impl Into<String>, dimensions: usize) -> MemoryResult<Self> {
+        let key = key.into();
+        if key.trim().is_empty() || dimensions == 0 || dimensions > i64::MAX as usize {
+            return Err(crate::MemoryError::invalid("invalid embedding identity"));
+        }
+        Ok(Self { key, dimensions })
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+    pub const fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
 /// Text embedding provider (`embeddings.base.Embedder`).
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Vector dimensions produced by this embedder.
     fn dimensions(&self) -> usize;
+
+    /// Unidentified providers remain usable directly, but cannot persist or search
+    /// short-term vectors. Implementations must explicitly identify their space.
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        Err(crate::MemoryError::invalid("embedder identity is required"))
+    }
 
     async fn embed(&self, text: &str) -> MemoryResult<Vec<f64>>;
 
@@ -37,6 +68,7 @@ pub struct MessageRecord {
     pub role: String,
     pub content: String,
     pub embedding: Option<Vec<f64>>,
+    pub embedding_identity: Option<EmbeddingIdentity>,
     pub metadata: Metadata,
     pub timestamp: Option<DateTime<Utc>>,
 }
@@ -50,6 +82,7 @@ impl MessageRecord {
             role: message.role.as_str().to_owned(),
             content: message.content.clone(),
             embedding,
+            embedding_identity: None,
             metadata: message.metadata.clone(),
             timestamp: message.timestamp,
         }
@@ -213,6 +246,22 @@ pub trait ShortTermStore: Send + Sync {
         limit: i64,
     ) -> MemoryResult<Vec<Conversation>>;
 
+    /// Identity-aware search must never fall back to an unidentified vector search.
+    #[allow(clippy::too_many_arguments)]
+    async fn search_messages_with_identity(
+        &self,
+        _embedding: &[f64],
+        _identity: &EmbeddingIdentity,
+        _session_id: Option<&str>,
+        _scope: &OwnerScope,
+        _limit: i64,
+        _threshold: f64,
+        _filters: &Metadata,
+    ) -> MemoryResult<Vec<ScoredMessage>> {
+        Err(MemoryError::invalid(
+            "store does not support embedding identity",
+        ))
+    }
     async fn search_messages(
         &self,
         embedding: &[f64],

@@ -125,6 +125,10 @@ impl ShortTermMemory {
                 return Ok(existing.message);
             }
         }
+        let embedding_identity = match (&self.embedder, options.generate_embedding) {
+            (Some(embedder), true) => Some(checked_identity(embedder.as_ref())?),
+            _ => None,
+        };
         let embedding = match (&self.embedder, options.generate_embedding) {
             (Some(embedder), true) => Some(embedder.embed(content).await?),
             _ => None,
@@ -136,6 +140,7 @@ impl ShortTermMemory {
             role: role.as_str().to_owned(),
             content: content.to_owned(),
             embedding,
+            embedding_identity,
             metadata: options.metadata,
             timestamp: None,
         };
@@ -203,6 +208,10 @@ impl ShortTermMemory {
     ) -> MemoryResult<Vec<Message>> {
         let mut created = Vec::with_capacity(messages.len());
         for batch in messages.chunks(batch_size.max(1)) {
+            let identity = match (&self.embedder, generate_embeddings) {
+                (Some(embedder), true) => Some(checked_identity(embedder.as_ref())?),
+                _ => None,
+            };
             let embeddings = match (&self.embedder, generate_embeddings) {
                 (Some(embedder), true) => {
                     let texts: Vec<String> = batch.iter().map(|m| m.content.clone()).collect();
@@ -215,7 +224,9 @@ impl ShortTermMemory {
                 .enumerate()
                 .map(|(index, message)| {
                     let embedding = embeddings.as_ref().and_then(|e| e.get(index).cloned());
-                    MessageRecord::from_new(message, embedding)
+                    let mut record = MessageRecord::from_new(message, embedding);
+                    record.embedding_identity = identity.clone();
+                    record
                 })
                 .collect();
             created.extend(
@@ -305,11 +316,18 @@ impl ShortTermMemory {
         if options.limit <= 0 {
             return Ok(Vec::new());
         }
+        let identity = embedder.identity()?;
+        if identity.dimensions() != embedder.dimensions() {
+            return Err(MemoryError::invalid(
+                "embedding identity dimensions mismatch",
+            ));
+        }
         let embedding = embedder.embed(query).await?;
         let hits = self
             .store
-            .search_messages(
+            .search_messages_with_identity(
                 &embedding,
+                &identity,
                 options.session_id.as_deref(),
                 &scope,
                 options.limit,
@@ -416,5 +434,55 @@ impl ShortTermMemory {
             }
         }
         Ok(parts.join("\n"))
+    }
+}
+
+fn checked_identity(
+    embedder: &dyn Embedder,
+) -> MemoryResult<muninn_core::ports::EmbeddingIdentity> {
+    let identity = embedder.identity()?;
+    if identity.dimensions() != embedder.dimensions() {
+        return Err(MemoryError::invalid(
+            "embedding identity dimensions mismatch",
+        ));
+    }
+    Ok(identity)
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use muninn_core::ports::EmbeddingIdentity;
+
+    struct Unidentified;
+    #[async_trait]
+    impl Embedder for Unidentified {
+        fn dimensions(&self) -> usize {
+            3
+        }
+        async fn embed(&self, _: &str) -> MemoryResult<Vec<f64>> {
+            panic!("identity must be checked before inference")
+        }
+    }
+
+    struct Mismatched;
+    #[async_trait]
+    impl Embedder for Mismatched {
+        fn dimensions(&self) -> usize {
+            3
+        }
+        fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+            EmbeddingIdentity::new("test:model:v1", 2)
+        }
+        async fn embed(&self, _: &str) -> MemoryResult<Vec<f64>> {
+            panic!("identity must be checked before inference")
+        }
+    }
+
+    #[test]
+    fn unidentified_and_dimension_mismatched_providers_fail_before_inference() {
+        assert!(checked_identity(&Unidentified).is_err());
+        assert!(checked_identity(&Mismatched).is_err());
     }
 }
