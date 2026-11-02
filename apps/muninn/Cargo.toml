@@ -10,6 +10,10 @@ description = "Muninn: persistent graph memory for AI agents (Rust port of neo4j
 name = "muninn"
 path = "src/main.rs"
 
+[features]
+default = []
+minilm-cpu = ["muninn-providers/minilm-cpu"]
+
 [dependencies]
 muninn-application = { path = "../../crates/muninn/application" }
 muninn-bridge = { path = "../../crates/muninn/bridge" }

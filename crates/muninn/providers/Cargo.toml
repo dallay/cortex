@@ -6,7 +6,13 @@ publish = false
 license = "Apache-2.0"
 description = "Embedding and LLM provider adapters for Muninn"
 
+[features]
+default = []
+minilm-cpu = ["dep:muninn-c1-exporter", "dep:tokio"]
+
 [dependencies]
+muninn-c1-exporter = { path = "../c1-exporter", optional = true, features = ["cpu-f32"] }
+tokio = { workspace = true, optional = true }
 muninn-core = { path = "../core" }
 async-trait.workspace = true
 reqwest.workspace = true

@@ -1,7 +1,7 @@
 //! Embedding providers.
 
 use async_trait::async_trait;
-use muninn_core::ports::Embedder;
+use muninn_core::ports::{Embedder, EmbeddingIdentity};
 use muninn_core::{MemoryError, MemoryResult};
 use serde::Deserialize;
 use serde_json::json;
@@ -50,6 +50,10 @@ impl Embedder for HashEmbedder {
         self.dimensions
     }
 
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        EmbeddingIdentity::new("muninn:tck:sha256-bytes:v1", self.dimensions)
+    }
+
     async fn embed(&self, text: &str) -> MemoryResult<Vec<f64>> {
         Ok(self.vector(text))
     }
@@ -65,6 +69,7 @@ pub struct OpenAiEmbedder {
     api_key: Option<String>,
     model: String,
     dimensions: usize,
+    identity: Option<EmbeddingIdentity>,
 }
 
 impl std::fmt::Debug for OpenAiEmbedder {
@@ -106,9 +111,22 @@ impl OpenAiEmbedder {
             http,
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             api_key,
+            identity: None,
             model: model.into(),
             dimensions,
         })
+    }
+
+    /// Configure a pinned deployment/revision and preprocessing contract. Mutable
+    /// remote model aliases alone do not establish a stable vector space.
+    pub fn with_identity(mut self, identity: EmbeddingIdentity) -> MemoryResult<Self> {
+        if identity.dimensions() != self.dimensions {
+            return Err(MemoryError::invalid(
+                "embedding identity dimensions mismatch",
+            ));
+        }
+        self.identity = Some(identity);
+        Ok(self)
     }
 
     async fn request(&self, inputs: &[String]) -> MemoryResult<Vec<Vec<f64>>> {
@@ -161,6 +179,12 @@ impl OpenAiEmbedder {
 
 #[async_trait]
 impl Embedder for OpenAiEmbedder {
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        self.identity
+            .clone()
+            .ok_or_else(|| MemoryError::invalid("remote embedding identity is required"))
+    }
+
     fn dimensions(&self) -> usize {
         self.dimensions
     }
@@ -240,5 +264,24 @@ mod tests {
             embedder.embed("a").await,
             Err(MemoryError::DimensionMismatch(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn hash_space_is_explicit_and_distinct_from_semantic_models() {
+        let identity = HashEmbedder::new(384).identity().unwrap();
+        assert_eq!(identity.key(), "muninn:tck:sha256-bytes:v1");
+        assert_eq!(identity.dimensions(), 384);
+    }
+
+    #[test]
+    fn remote_models_require_an_explicit_revision_identity() {
+        let embedder =
+            OpenAiEmbedder::new("https://example.invalid", None, "mutable-alias", 384).unwrap();
+        assert!(embedder.identity().is_err());
     }
 }
