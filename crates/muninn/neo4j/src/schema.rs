@@ -89,6 +89,8 @@ impl<'a> SchemaManager<'a> {
             .await
             .map_err(|err| MemoryError::storage(format!("constraint {name}: {err}")))?;
         }
+        self.run("CREATE CONSTRAINT conversation_owner_session IF NOT EXISTS FOR (c:Conversation) REQUIRE (c.owner_scope, c.session_id) IS UNIQUE").await?;
+        self.run("CREATE CONSTRAINT message_operation IF NOT EXISTS FOR (m:Message) REQUIRE (m.operation_conversation_id, m.operation_key) IS UNIQUE").await?;
         for (name, label, property) in INDEXES {
             self.run(&format!(
                 "CREATE INDEX {name} IF NOT EXISTS FOR (n:{label}) ON (n.{property})"

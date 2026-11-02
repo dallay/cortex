@@ -1,0 +1,24 @@
+{
+  "instructions": "You have access to a persistent graph memory backed by Neo4j.\n\nALWAYS at conversation start:\n  Call memory_get_context to load relevant memories for this session.\n\nDURING conversation:\n  When the user shares important facts, preferences, or decisions,\n  call memory_store_message to persist them. The server automatically\n  extracts entities and detects preferences from message content.\n\nWHEN the user asks what you remember:\n  Call memory_search with relevant keywords to find stored memories\n  across messages, entities, and preferences.\n\nWHEN the user shares a preference:\n  Call memory_add_preference with the appropriate category and\n  preference text to store it for future reference.\n\nWHEN you learn about a new entity (person, place, organization, etc.):\n  Call memory_add_entity with the entity name and POLE+O type.\n\nWHEN you learn a new fact:\n  Call memory_add_fact with subject, predicate, and object to store\n  the knowledge triple.\n\nEntity types follow POLE+O: Person, Object, Location, Event, Organization.\nEach type supports subtypes for finer classification (e.g., OBJECT:VEHICLE,\nLOCATION:ADDRESS).\n\nRelationships use UPPER_SNAKE_CASE (e.g., WORKS_AT, LIVES_IN, FOUNDED).\n\nFOR complex tasks:\n  Call memory_start_trace to begin recording your reasoning process.\n  Call memory_record_step for each significant decision or action.\n  Call memory_complete_trace when the task is finished.\n\nFOR entity management:\n  Use memory_get_entity for detailed entity info with graph relationships.\n  Use memory_create_relationship to link entities together.\n\nFOR exploring memory:\n  Use memory_get_conversation to retrieve full conversation history.\n  Use memory_list_sessions to see available conversation sessions.\n  Use memory_export_graph for visualization-ready graph data.\n\nFOR advanced queries:\n  Use graph_query to execute read-only Cypher queries against the\n  knowledge graph when the other tools don't cover your needs.\n",
+  "serverInfo": {
+    "name": "neo4j-agent-memory",
+    "version": "4.1.1"
+  },
+  "capabilities": {
+    "logging": {},
+    "prompts": {
+      "listChanged": false
+    },
+    "resources": {
+      "subscribe": false,
+      "listChanged": false
+    },
+    "tools": {
+      "listChanged": false
+    },
+    "extensions": {
+      "io.modelcontextprotocol/ui": {}
+    }
+  },
+  "protocolVersion": "2026-07-28"
+}

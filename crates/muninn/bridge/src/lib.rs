@@ -8,6 +8,8 @@
 //! `clear_all_data` wipes the whole graph, so it is refused unless the
 //! operator explicitly marks the backing database as disposable.
 
+mod long_term;
+mod reasoning;
 mod short_term;
 mod wire;
 
@@ -116,6 +118,14 @@ async fn dispatch(state: &BridgeState, method: &str, args: Args) -> BridgeResult
             json!({"ok": true, "protocol_version": PROTOCOL_VERSION}),
         )),
         "teardown" => Ok(Reply::NoContent),
+        "cypher_query" => {
+            let query = args.string("cypher")?;
+            let params = args.object("params")?;
+            let result = state.memory.cypher(&query, &params).await?;
+            Ok(Reply::Json(
+                json!({"columns": result.columns, "rows": result.rows}),
+            ))
+        }
         "clear_all_data" => {
             let maintenance = state.maintenance.as_ref().ok_or_else(|| {
                 BridgeError::Forbidden(
@@ -127,8 +137,17 @@ async fn dispatch(state: &BridgeState, method: &str, args: Args) -> BridgeResult
             maintenance.clear_all_data().await?;
             Ok(Reply::NoContent)
         }
-        _ => short_term::dispatch(state, method, &args)
-            .await
-            .unwrap_or_else(|| Err(BridgeError::UnknownMethod(method.to_owned()))),
+        _ => {
+            if let Some(result) = short_term::dispatch(state, method, &args).await {
+                return result;
+            }
+            if let Some(result) = long_term::dispatch(state, method, &args).await {
+                return result;
+            }
+            if let Some(result) = reasoning::dispatch(state, method, &args).await {
+                return result;
+            }
+            Err(BridgeError::UnknownMethod(method.to_owned()))
+        }
     }
 }

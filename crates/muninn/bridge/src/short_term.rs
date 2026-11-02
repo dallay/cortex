@@ -19,7 +19,12 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
             async {
                 let session_id = args.string("session_id")?;
                 let conversation = memory
-                    .get_conversation(&session_id, None, args.opt_i64("limit")?)
+                    .get_conversation(
+                        &session_id,
+                        None,
+                        args.opt_string("user_identifier")?.as_deref(),
+                        args.opt_i64("limit")?,
+                    )
                     .await?;
                 Ok(Reply::Json(wire::conversation(&conversation)))
             }
@@ -30,6 +35,7 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
                 let query = args.string("query")?;
                 let options = SearchMessagesOptions {
                     session_id: args.opt_string("session_id")?,
+                    user_identifier: args.opt_string("user_identifier")?,
                     limit: args.opt_i64("limit")?.unwrap_or(10),
                     threshold: args.opt_f64("threshold")?.unwrap_or(0.7),
                     metadata_filters: args.object("metadata_filters")?,
@@ -47,7 +53,9 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
                     limit: args.opt_i64("limit")?.unwrap_or(100),
                     ..SessionQuery::default()
                 };
-                let sessions = memory.list_sessions(&query).await?;
+                let sessions = memory
+                    .list_sessions(&query, args.opt_string("user_identifier")?.as_deref())
+                    .await?;
                 Ok(Reply::Json(Value::Array(
                     sessions.iter().map(wire::session).collect(),
                 )))
@@ -58,7 +66,15 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
             async {
                 // An unparsable id names no message: upstream returns False.
                 let deleted = match args.uuid("message_id") {
-                    Ok(id) => memory.delete_message(id, true).await?,
+                    Ok(id) => {
+                        memory
+                            .delete_message(
+                                id,
+                                args.opt_string("user_identifier")?.as_deref(),
+                                true,
+                            )
+                            .await?
+                    }
                     Err(_) => false,
                 };
                 Ok(Reply::Json(json!({ "deleted": deleted })))
@@ -67,7 +83,12 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         }
         "clear_session" => {
             async {
-                memory.clear_session(&args.string("session_id")?).await?;
+                memory
+                    .clear_session(
+                        &args.string("session_id")?,
+                        args.opt_string("user_identifier")?.as_deref(),
+                    )
+                    .await?;
                 Ok(Reply::NoContent)
             }
             .await
@@ -90,7 +111,9 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "list_conversations" => {
             async {
                 let limit = args.opt_i64("limit")?.unwrap_or(100);
-                let conversations = memory.list_conversations(None, limit).await?;
+                let conversations = memory
+                    .list_conversations(args.opt_string("user_identifier")?.as_deref(), limit)
+                    .await?;
                 Ok(Reply::Json(Value::Array(
                     conversations.iter().map(wire::conversation).collect(),
                 )))
@@ -100,11 +123,14 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "get_conversation_metadata" => {
             async {
                 let id = args.uuid("conversation_id")?;
-                let conversation = memory.get_conversation_by_id(id).await?.ok_or_else(|| {
-                    BridgeError::Memory(muninn_core::MemoryError::not_found(format!(
-                        "conversation {id}"
-                    )))
-                })?;
+                let conversation = memory
+                    .get_conversation_by_id(id, args.opt_string("user_identifier")?.as_deref())
+                    .await?
+                    .ok_or_else(|| {
+                        BridgeError::Memory(muninn_core::MemoryError::not_found(format!(
+                            "conversation {id}"
+                        )))
+                    })?;
                 Ok(Reply::Json(wire::conversation(&conversation)))
             }
             .await
@@ -112,7 +138,10 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "delete_conversation" => {
             async {
                 memory
-                    .delete_conversation(args.uuid("conversation_id")?)
+                    .delete_conversation(
+                        args.uuid("conversation_id")?,
+                        args.opt_string("user_identifier")?.as_deref(),
+                    )
                     .await?;
                 Ok(Reply::NoContent)
             }
@@ -135,7 +164,9 @@ async fn add_message(state: &BridgeState, args: &Args) -> BridgeResult {
     let role = parse_role(&args.string("role")?)?;
     let content = args.string("content")?;
     let options = AddMessageOptions {
+        operation_key: args.opt_string("operation_key")?,
         metadata: args.object("metadata")?,
+        user_identifier: args.opt_string("user_identifier")?,
         ..AddMessageOptions::default()
     };
     let message = state
@@ -174,7 +205,11 @@ async fn bulk_add_messages(state: &BridgeState, args: &Args) -> BridgeResult {
     let created = state
         .memory
         .short_term()
-        .bulk_add_messages(conversation_id, &messages)
+        .bulk_add_messages(
+            conversation_id,
+            &messages,
+            args.opt_string("user_identifier")?.as_deref(),
+        )
         .await?;
     Ok(Reply::Json(Value::Array(
         created.iter().map(wire::message).collect(),

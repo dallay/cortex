@@ -1,7 +1,11 @@
 //! Argument parsing and TCK wire shapes.
 
 use chrono::{DateTime, Utc};
-use muninn_core::model::{Conversation, Message, Metadata, SessionInfo};
+use muninn_core::model::{
+    AgentStep, Conversation, ConversationTrace, Entity, EntityGraph, EntityMention,
+    EntityProvenance, Fact, Message, Metadata, Preference, ReasoningStep, ReasoningTrace,
+    Relationship, SessionInfo, StepExplanation, ToolCall, ToolStats,
+};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -116,5 +120,176 @@ pub fn session(session: &SessionInfo) -> Value {
         "message_count": session.message_count,
         "created_at": datetime(&session.created_at),
         "updated_at": opt_datetime(session.updated_at.as_ref()),
+    })
+}
+
+// --- Long-term memory (`tck.adapters.base_adapter` shapes) ---
+
+pub fn entity(entity: &Entity) -> Value {
+    json!({
+        "id": entity.id,
+        "name": entity.name,
+        "type": entity.entity_type,
+        "subtype": entity.subtype,
+        "description": entity.description,
+        "embedding": entity.embedding,
+        "canonical_name": entity.canonical_name,
+        "created_at": datetime(&entity.created_at),
+        "updated_at": opt_datetime(entity.updated_at.as_ref()),
+        "confidence": entity.confidence,
+        "metadata": entity.metadata,
+    })
+}
+
+pub fn preference(preference: &Preference) -> Value {
+    json!({
+        "id": preference.id,
+        "category": preference.category,
+        "preference": preference.preference,
+        "context": preference.context,
+        "embedding": preference.embedding,
+    })
+}
+
+pub fn fact(fact: &Fact) -> Value {
+    json!({
+        "id": fact.id,
+        "subject": fact.subject,
+        "predicate": fact.predicate,
+        "object": fact.object,
+        "embedding": fact.embedding,
+    })
+}
+
+pub fn relationship(relationship: &Relationship) -> Value {
+    json!({
+        "id": relationship.id,
+        "source_id": relationship.source_id,
+        "target_id": relationship.target_id,
+        "relationship_type": relationship.relationship_type,
+        "properties": relationship.properties,
+    })
+}
+
+pub fn entity_history(entity_id: Uuid, mentions: &[EntityMention]) -> Value {
+    json!({
+        "entity_id": entity_id,
+        "mentions": mentions
+            .iter()
+            .map(|mention| json!({
+                "conversation_id": mention.conversation_id,
+                "message_id": mention.message_id,
+                "content": mention.content,
+                "timestamp": datetime(&mention.timestamp),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+pub fn entity_graph(graph: &EntityGraph) -> Value {
+    json!({
+        "nodes": graph
+            .nodes
+            .iter()
+            .map(|node| json!({
+                "id": node.id,
+                "name": node.name,
+                "type": node.entity_type,
+            }))
+            .collect::<Vec<_>>(),
+        "edges": graph
+            .edges
+            .iter()
+            .map(|edge| json!({
+                "id": edge.id,
+                "source": edge.source,
+                "target": edge.target,
+                "type": edge.relationship_type,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+// --- Reasoning memory (`tck.adapters.base_adapter` shapes) ---
+
+pub fn tool_call(call: &ToolCall) -> Value {
+    json!({
+        "id": call.id,
+        "tool_name": call.tool_name,
+        "arguments": call.arguments,
+        "result": call.result,
+        "status": call.status.as_str(),
+        "duration_ms": call.duration_ms,
+        "error": call.error,
+    })
+}
+
+pub fn step(step: &ReasoningStep) -> Value {
+    json!({
+        "id": step.id,
+        "trace_id": step.trace_id,
+        "step_number": step.step_number,
+        "thought": step.thought,
+        "action": step.action,
+        "observation": step.observation,
+        "tool_calls": step.tool_calls.iter().map(tool_call).collect::<Vec<_>>(),
+    })
+}
+
+pub fn trace(trace: &ReasoningTrace) -> Value {
+    json!({
+        "id": trace.id,
+        "session_id": trace.session_id,
+        "task": trace.task,
+        "steps": trace.steps.iter().map(step).collect::<Vec<_>>(),
+        "outcome": trace.outcome,
+        "success": trace.success,
+        "started_at": datetime(&trace.started_at),
+        "completed_at": opt_datetime(trace.completed_at.as_ref()),
+    })
+}
+
+pub fn tool_stats(stats: &ToolStats) -> Value {
+    json!({
+        "name": stats.name,
+        "total_calls": stats.total_calls,
+        "successful_calls": stats.successful_calls,
+        "failed_calls": stats.failed_calls,
+        "success_rate": stats.success_rate,
+        "avg_duration_ms": stats.avg_duration_ms,
+    })
+}
+
+pub fn agent_step(step: &AgentStep) -> Value {
+    json!({
+        "id": step.id,
+        "conversation_id": step.conversation_id,
+        "reasoning": step.reasoning,
+        "action_taken": step.action_taken,
+        "result": step.result,
+        "created_at": datetime(&step.created_at),
+    })
+}
+
+pub fn conversation_trace(trace: &ConversationTrace) -> Value {
+    json!({
+        "conversation_id": trace.conversation_id,
+        "steps": trace.steps.iter().map(agent_step).collect::<Vec<_>>(),
+        "tool_calls": trace.tool_calls.iter().map(tool_call).collect::<Vec<_>>(),
+    })
+}
+
+pub fn step_explanation(explanation: &StepExplanation) -> Value {
+    let mut value = agent_step(&explanation.step);
+    value["tool_calls"] = Value::Array(explanation.tool_calls.iter().map(tool_call).collect());
+    value["influenced_entities"] =
+        Value::Array(explanation.influenced_entities.iter().map(entity).collect());
+    value
+}
+
+pub fn entity_provenance(provenance: &EntityProvenance) -> Value {
+    json!({
+        "entity_id": provenance.entity_id,
+        "steps": provenance.steps.iter().map(agent_step).collect::<Vec<_>>(),
     })
 }

@@ -296,6 +296,147 @@ pub struct ToolStats {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+impl ToolStats {
+    /// Build stats from the counters aggregated on a `Tool` node.
+    ///
+    /// Every call that did not succeed counts as failed, matching upstream's
+    /// `total_calls - int(total_calls * success_rate)`.
+    pub fn from_counters(
+        name: String,
+        description: Option<String>,
+        total_calls: i64,
+        successful_calls: i64,
+        total_duration_ms: f64,
+        last_used_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        let successful_calls = successful_calls.clamp(0, total_calls.max(0));
+        let failed_calls = (total_calls - successful_calls).max(0);
+        let success_rate = if total_calls > 0 {
+            successful_calls as f64 / total_calls as f64
+        } else {
+            0.0
+        };
+        let avg_duration_ms = (total_calls > 0).then(|| total_duration_ms / total_calls as f64);
+        Self {
+            name,
+            description,
+            total_calls,
+            successful_calls,
+            failed_calls,
+            success_rate,
+            avg_duration_ms,
+            last_used_at,
+        }
+    }
+}
+
+/// One message that mentions an entity (`GET_ENTITY_MENTIONS`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityMention {
+    pub conversation_id: Uuid,
+    pub message_id: Uuid,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// A node of the entity graph projection (`GET_ENTITY_GRAPH`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityGraphNode {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub entity_type: String,
+}
+
+/// An edge of the entity graph projection (`GET_ENTITY_GRAPH`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityGraphEdge {
+    pub id: Uuid,
+    pub source: Uuid,
+    pub target: Uuid,
+    #[serde(rename = "type")]
+    pub relationship_type: String,
+}
+
+/// Nodes and edges of the whole entity graph, bounded by a node cap.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityGraph {
+    pub nodes: Vec<EntityGraphNode>,
+    pub edges: Vec<EntityGraphEdge>,
+}
+
+/// How a caller refers to an entity when recording a `TOUCHED` edge: by id,
+/// by `(name, type)` or by name only (`reasoning.record_tool_call`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityRef {
+    Id(String),
+    NameType { name: String, entity_type: String },
+    Name(String),
+}
+
+/// Flat reasoning step of the hosted (Platinum) model.
+///
+/// A hosted step is an ordinary [`ReasoningStep`]: `thought` holds
+/// `reasoning`, `action` holds `action_taken` and `observation` holds
+/// `result`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentStep {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub reasoning: String,
+    pub action_taken: String,
+    pub result: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl AgentStep {
+    pub fn from_step(conversation_id: Uuid, step: &ReasoningStep) -> Self {
+        Self {
+            id: step.id,
+            conversation_id,
+            reasoning: step.thought.clone().unwrap_or_default(),
+            action_taken: step.action.clone().unwrap_or_default(),
+            result: step.observation.clone(),
+            created_at: step.created_at,
+        }
+    }
+}
+
+/// Every hosted step recorded under a conversation, plus its tool calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationTrace {
+    pub conversation_id: Uuid,
+    pub steps: Vec<AgentStep>,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+/// One hosted step with its tool calls and the entities it touched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepExplanation {
+    pub step: AgentStep,
+    pub tool_calls: Vec<ToolCall>,
+    pub influenced_entities: Vec<Entity>,
+}
+
+/// Hosted steps that influenced an entity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityProvenance {
+    pub entity_id: Uuid,
+    pub steps: Vec<AgentStep>,
+}
+
+/// A reasoning step plus its parent trace's task and outcome
+/// (`reasoning.ReasoningStepWithContext`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReasoningStepWithContext {
+    pub step: ReasoningStep,
+    pub similarity: f64,
+    pub parent_task: String,
+    pub parent_outcome: Option<String>,
+    pub parent_success: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

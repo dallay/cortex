@@ -76,6 +76,72 @@ impl Neo4jClient {
         Ok(rows)
     }
 
+    /// Run a mutation with conflict checks before and after it, before commit.
+    ///
+    /// This rolls back writes when the post-check observes a conflict. It does
+    /// not serialize unrelated writers that do not use this protocol.
+    pub async fn execute_guarded(
+        &self,
+        guard: &str,
+        guard_params: Params,
+        cypher: &str,
+        params: Params,
+    ) -> MemoryResult<Vec<Row>> {
+        let mut txn = self.graph.start_txn().await.map_err(storage_error)?;
+        let result = async {
+            let mut guard_query = Query::new(guard.to_owned());
+            for (name, value) in guard_params {
+                guard_query = guard_query.param(name, value);
+            }
+            let mut before = txn
+                .execute(guard_query.clone())
+                .await
+                .map_err(storage_error)?;
+            if before
+                .next(txn.handle())
+                .await
+                .map_err(storage_error)?
+                .is_some()
+            {
+                return Err(MemoryError::invalid(
+                    "ambiguous legacy conversation requires explicit migration",
+                ));
+            }
+            let mut query = Query::new(cypher.to_owned());
+            for (name, value) in params {
+                query = query.param(name, value);
+            }
+            let mut stream = txn.execute(query).await.map_err(storage_error)?;
+            let mut rows = Vec::new();
+            while let Some(row) = stream.next(txn.handle()).await.map_err(storage_error)? {
+                rows.push(row);
+            }
+            let mut after = txn.execute(guard_query).await.map_err(storage_error)?;
+            if after
+                .next(txn.handle())
+                .await
+                .map_err(storage_error)?
+                .is_some()
+            {
+                return Err(MemoryError::invalid(
+                    "ambiguous legacy conversation requires explicit migration",
+                ));
+            }
+            Ok(rows)
+        }
+        .await;
+        match result {
+            Ok(rows) => {
+                txn.commit().await.map_err(storage_error)?;
+                Ok(rows)
+            }
+            Err(error) => {
+                txn.rollback().await.map_err(storage_error)?;
+                Err(error)
+            }
+        }
+    }
+
     /// Run a statement with dynamically named parameters.
     pub async fn execute_dynamic(
         &self,
@@ -137,4 +203,8 @@ impl Neo4jClient {
         let _ = txn.rollback().await;
         result
     }
+}
+
+fn storage_error(error: neo4rs::Error) -> MemoryError {
+    MemoryError::storage(error.to_string())
 }

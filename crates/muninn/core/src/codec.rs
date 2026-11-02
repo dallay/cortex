@@ -36,6 +36,26 @@ pub fn deserialize_metadata(raw: Option<&str>) -> Metadata {
         .unwrap_or_default()
 }
 
+/// Serialize an arbitrary JSON payload as upstream does for tool payloads.
+///
+/// Uses `json.dumps(value)`, or `None` for JSON null and for an empty object or
+/// array. Upstream `_serialize_json` returns `None` when the payload is
+/// `None`, `{}` or `[]`.
+pub fn serialize_json(value: &Value) -> Option<String> {
+    let empty = match value {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    };
+    (!empty).then(|| python_json_dumps(value))
+}
+
+/// Parse a stored JSON payload. Missing or invalid JSON yields `None`.
+pub fn deserialize_json(raw: Option<&str>) -> Option<Value> {
+    raw.and_then(|text| serde_json::from_str(text).ok())
+}
+
 fn write_value(out: &mut String, value: &Value) {
     match value {
         Value::Null => out.push_str("null"),

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use muninn_core::model::{Conversation, Message, MessageRole, Metadata, NewMessage, SessionInfo};
-use muninn_core::ports::{Embedder, MessageRecord, SessionQuery, ShortTermStore};
+use muninn_core::ports::{Embedder, MessageRecord, OwnerScope, SessionQuery, ShortTermStore};
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::Value;
 use uuid::Uuid;
@@ -14,6 +14,7 @@ const DEFAULT_CONVERSATION_LIMIT: i64 = 1000;
 /// Options for [`ShortTermMemory::add_message`].
 #[derive(Debug, Clone)]
 pub struct AddMessageOptions {
+    pub operation_key: Option<String>,
     pub conversation_id: Option<Uuid>,
     pub generate_embedding: bool,
     pub metadata: Metadata,
@@ -23,6 +24,7 @@ pub struct AddMessageOptions {
 impl Default for AddMessageOptions {
     fn default() -> Self {
         Self {
+            operation_key: None,
             conversation_id: None,
             generate_embedding: true,
             metadata: Metadata::new(),
@@ -33,6 +35,8 @@ impl Default for AddMessageOptions {
 
 #[derive(Debug, Clone)]
 pub struct SearchMessagesOptions {
+    /// Caller-provided owner scope, not authentication or authorization.
+    pub user_identifier: Option<String>,
     pub session_id: Option<String>,
     pub limit: i64,
     pub threshold: f64,
@@ -43,6 +47,7 @@ impl Default for SearchMessagesOptions {
     fn default() -> Self {
         Self {
             session_id: None,
+            user_identifier: None,
             limit: 10,
             threshold: 0.7,
             metadata_filters: Metadata::new(),
@@ -69,13 +74,16 @@ impl ShortTermMemory {
         }
     }
 
-    fn enforce_multi_tenant(&self, user_identifier: Option<&str>) -> MemoryResult<()> {
+    fn enforce_multi_tenant(&self, user_identifier: Option<&str>) -> MemoryResult<OwnerScope> {
+        if user_identifier.is_some_and(|owner| owner.trim().is_empty()) {
+            return Err(MemoryError::invalid("user_identifier must not be blank"));
+        }
         if self.multi_tenant && user_identifier.is_none() {
             return Err(MemoryError::invalid(
                 "multi_tenant is enabled but no user_identifier was supplied",
             ));
         }
-        Ok(())
+        OwnerScope::from_option(user_identifier)
     }
 
     pub async fn add_message(
@@ -85,20 +93,45 @@ impl ShortTermMemory {
         content: &str,
         options: AddMessageOptions,
     ) -> MemoryResult<Message> {
-        self.enforce_multi_tenant(options.user_identifier.as_deref())?;
+        let scope = self.enforce_multi_tenant(options.user_identifier.as_deref())?;
         let conversation_id = self
             .store
-            .ensure_conversation(
-                session_id,
-                options.conversation_id,
-                options.user_identifier.as_deref(),
-            )
+            .ensure_conversation(session_id, options.conversation_id, &scope)
             .await?;
+        let operation_payload = options.operation_key.as_ref().map(|_| {
+            serde_json::json!({
+                "role": role.as_str(), "content": content,
+                "metadata": options.metadata, "generate_embedding": options.generate_embedding,
+            })
+            .to_string()
+        });
+        if let (Some(operation_key), Some(payload)) = (
+            options.operation_key.as_deref(),
+            operation_payload.as_deref(),
+        ) {
+            if let Some(mut existing) = self
+                .store
+                .find_by_operation_key(conversation_id, &scope, operation_key)
+                .await?
+            {
+                if existing.operation_payload.as_deref() != Some(payload) {
+                    return Err(MemoryError::invalid(
+                        "operation_key conflicts with an existing payload or conversation scope",
+                    ));
+                }
+                // Match append_message's handling of metadata and return the
+                // persisted message without calling the embedding provider.
+                existing.message.metadata = options.metadata.clone();
+                return Ok(existing.message);
+            }
+        }
         let embedding = match (&self.embedder, options.generate_embedding) {
             (Some(embedder), true) => Some(embedder.embed(content).await?),
             _ => None,
         };
         let record = MessageRecord {
+            operation_key: options.operation_key,
+            operation_payload,
             id: Uuid::new_v4(),
             role: role.as_str().to_owned(),
             content: content.to_owned(),
@@ -106,7 +139,9 @@ impl ShortTermMemory {
             metadata: options.metadata,
             timestamp: None,
         };
-        self.store.append_message(conversation_id, &record).await
+        self.store
+            .append_message(conversation_id, &scope, &record)
+            .await
     }
 
     /// `add_messages_batch`: one transaction per `batch_size` messages.
@@ -118,16 +153,22 @@ impl ShortTermMemory {
         generate_embeddings: bool,
         user_identifier: Option<&str>,
     ) -> MemoryResult<Vec<Message>> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
         if messages.is_empty() {
             return Ok(Vec::new());
         }
-        self.enforce_multi_tenant(user_identifier)?;
         let conversation_id = self
             .store
-            .ensure_conversation(session_id, None, user_identifier)
+            .ensure_conversation(session_id, None, &scope)
             .await?;
-        self.append_batches(conversation_id, messages, batch_size, generate_embeddings)
-            .await
+        self.append_batches(
+            conversation_id,
+            &scope,
+            messages,
+            batch_size,
+            generate_embeddings,
+        )
+        .await
     }
 
     /// Bulk add to an existing conversation (`bulk_add_messages`).
@@ -135,10 +176,12 @@ impl ShortTermMemory {
         &self,
         conversation_id: Uuid,
         messages: &[NewMessage],
+        user_identifier: Option<&str>,
     ) -> MemoryResult<Vec<Message>> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
         if self
             .store
-            .get_conversation_by_id(conversation_id)
+            .get_conversation_by_id(conversation_id, &scope)
             .await?
             .is_none()
         {
@@ -146,13 +189,14 @@ impl ShortTermMemory {
                 "conversation {conversation_id}"
             )));
         }
-        self.append_batches(conversation_id, messages, 100, true)
+        self.append_batches(conversation_id, &scope, messages, 100, true)
             .await
     }
 
     async fn append_batches(
         &self,
         conversation_id: Uuid,
+        scope: &OwnerScope,
         messages: &[NewMessage],
         batch_size: usize,
         generate_embeddings: bool,
@@ -176,7 +220,7 @@ impl ShortTermMemory {
                 .collect();
             created.extend(
                 self.store
-                    .append_messages(conversation_id, &records)
+                    .append_messages(conversation_id, scope, &records)
                     .await?,
             );
         }
@@ -188,14 +232,16 @@ impl ShortTermMemory {
         &self,
         session_id: &str,
         conversation_id: Option<Uuid>,
+        user_identifier: Option<&str>,
         limit: Option<i64>,
     ) -> MemoryResult<Conversation> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
         let limit = limit
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_CONVERSATION_LIMIT);
         Ok(self
             .store
-            .get_conversation(session_id, conversation_id, Some(limit))
+            .get_conversation(session_id, conversation_id, &scope, Some(limit))
             .await?
             .unwrap_or_else(|| Conversation::empty(session_id)))
     }
@@ -206,17 +252,23 @@ impl ShortTermMemory {
         session_id: &str,
         user_identifier: Option<&str>,
     ) -> MemoryResult<Conversation> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
         self.store
-            .ensure_conversation(session_id, None, user_identifier)
+            .ensure_conversation(session_id, None, &scope)
             .await?;
-        self.get_conversation(session_id, None, None).await
+        self.get_conversation(session_id, None, user_identifier, None)
+            .await
     }
 
     pub async fn get_conversation_by_id(
         &self,
         conversation_id: Uuid,
+        user_identifier: Option<&str>,
     ) -> MemoryResult<Option<Conversation>> {
-        self.store.get_conversation_by_id(conversation_id).await
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store
+            .get_conversation_by_id(conversation_id, &scope)
+            .await
     }
 
     pub async fn list_conversations(
@@ -224,11 +276,19 @@ impl ShortTermMemory {
         user_identifier: Option<&str>,
         limit: i64,
     ) -> MemoryResult<Vec<Conversation>> {
-        self.store.list_conversations(user_identifier, limit).await
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store.list_conversations(&scope, limit).await
     }
 
-    pub async fn delete_conversation(&self, conversation_id: Uuid) -> MemoryResult<()> {
-        self.store.delete_conversation(conversation_id).await
+    pub async fn delete_conversation(
+        &self,
+        conversation_id: Uuid,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<()> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store
+            .delete_conversation(conversation_id, &scope)
+            .await
     }
 
     /// Semantic search. Each hit carries its score in `metadata.similarity`,
@@ -238,6 +298,7 @@ impl ShortTermMemory {
         query: &str,
         options: &SearchMessagesOptions,
     ) -> MemoryResult<Vec<Message>> {
+        let scope = self.enforce_multi_tenant(options.user_identifier.as_deref())?;
         let Some(embedder) = &self.embedder else {
             return Ok(Vec::new());
         };
@@ -250,6 +311,7 @@ impl ShortTermMemory {
             .search_messages(
                 &embedding,
                 options.session_id.as_deref(),
+                &scope,
                 options.limit,
                 options.threshold,
                 &options.metadata_filters,
@@ -267,16 +329,32 @@ impl ShortTermMemory {
             .collect())
     }
 
-    pub async fn list_sessions(&self, query: &SessionQuery) -> MemoryResult<Vec<SessionInfo>> {
-        self.store.list_sessions(query).await
+    pub async fn list_sessions(
+        &self,
+        query: &SessionQuery,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<Vec<SessionInfo>> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store.list_sessions(query, &scope).await
     }
 
-    pub async fn delete_message(&self, message_id: Uuid, cascade: bool) -> MemoryResult<bool> {
-        self.store.delete_message(message_id, cascade).await
+    pub async fn delete_message(
+        &self,
+        message_id: Uuid,
+        user_identifier: Option<&str>,
+        cascade: bool,
+    ) -> MemoryResult<bool> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store.delete_message(message_id, &scope, cascade).await
     }
 
-    pub async fn clear_session(&self, session_id: &str) -> MemoryResult<()> {
-        self.store.clear_session(session_id).await
+    pub async fn clear_session(
+        &self,
+        session_id: &str,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<()> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        self.store.clear_session(session_id, &scope).await
     }
 
     /// Context block for prompts (`ShortTermMemory.get_context`).
@@ -286,10 +364,25 @@ impl ShortTermMemory {
         session_id: Option<&str>,
         max_messages: usize,
     ) -> MemoryResult<String> {
+        self.get_context_scoped(query, session_id, max_messages, None)
+            .await
+    }
+
+    /// Build prompt context within a single owner namespace.
+    pub async fn get_context_scoped(
+        &self,
+        query: &str,
+        session_id: Option<&str>,
+        max_messages: usize,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<String> {
+        self.enforce_multi_tenant(user_identifier)?;
         let mut parts = Vec::new();
         if let Some(session_id) = session_id {
             let limit = i64::try_from(max_messages).unwrap_or(i64::MAX);
-            let conversation = self.get_conversation(session_id, None, Some(limit)).await?;
+            let conversation = self
+                .get_conversation(session_id, None, user_identifier, Some(limit))
+                .await?;
             if !conversation.messages.is_empty() {
                 parts.push("### Recent Conversation".to_owned());
                 let skip = conversation.messages.len().saturating_sub(max_messages);
@@ -301,8 +394,11 @@ impl ShortTermMemory {
         if self.embedder.is_some() {
             let options = SearchMessagesOptions {
                 limit: 5,
+                user_identifier: user_identifier.map(str::to_owned),
+                session_id: session_id.map(str::to_owned),
                 ..SearchMessagesOptions::default()
             };
+
             let relevant = self.search_messages(query, &options).await?;
             if !relevant.is_empty() {
                 parts.push("\n### Relevant Past Messages".to_owned());

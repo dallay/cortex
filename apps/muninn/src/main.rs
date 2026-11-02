@@ -9,7 +9,8 @@ use muninn_application::{MemoryClient, MemoryOptions, MemoryPorts};
 use muninn_bridge::BridgeState;
 use muninn_core::ports::{Embedder, GraphMaintenance};
 use muninn_neo4j::{
-    Neo4jClient, Neo4jConfig, Neo4jMaintenance, Neo4jShortTermStore, SchemaManager,
+    Neo4jClient, Neo4jConfig, Neo4jCypherQuery, Neo4jLongTermStore, Neo4jMaintenance,
+    Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
 };
 use muninn_providers::{HashEmbedder, OpenAiEmbedder};
 use tracing_subscriber::EnvFilter;
@@ -150,7 +151,10 @@ async fn main() -> Result<()> {
             let memory = Arc::new(MemoryClient::new(
                 MemoryPorts {
                     short_term: Arc::new(Neo4jShortTermStore::new(client.clone())),
+                    long_term: Arc::new(Neo4jLongTermStore::new(client.clone())),
+                    reasoning: Arc::new(Neo4jReasoningStore::new(client.clone())),
                     embedder,
+                    cypher_query: Some(Arc::new(Neo4jCypherQuery::new(client.clone()))),
                 },
                 &MemoryOptions::default(),
             ));

@@ -1,0 +1,17 @@
+[package]
+name = "muninn-mcp"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Muninn MCP stdio protocol and explicit tool registry"
+
+[[bin]]
+name = "muninn-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -3,15 +3,40 @@
 use async_trait::async_trait;
 use muninn_core::codec::{deserialize_metadata, python_json_dumps, serialize_metadata};
 use muninn_core::model::{Conversation, Message, Metadata, SessionInfo};
-use muninn_core::ports::{MessageRecord, ScoredMessage, SessionQuery, ShortTermStore};
+use muninn_core::ports::{
+    KeyedMessage, MessageRecord, OwnerScope, ScoredMessage, SessionQuery, ShortTermStore,
+};
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::{BoltMap, BoltNull, BoltType, Row};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::bolt::{column, opt_string, opt_vector, row_values, Props};
-use crate::client::Neo4jClient;
+use crate::client::{Neo4jClient, Params};
 use crate::queries::short_term as q;
+
+const LEGACY_CONFLICT: &str = "
+OPTIONAL MATCH (target:Conversation)
+WHERE ($id IS NOT NULL AND target.id = $id) OR
+      ($message IS NOT NULL AND EXISTS { MATCH (target)-[:HAS_MESSAGE]->(:Message {id: $message}) })
+WITH collect(target.session_id) AS sessions
+MATCH (c:Conversation)
+WHERE c.owner_scope IS NULL AND
+      (($session IS NOT NULL AND c.session_id = $session) OR
+       c.session_id IN sessions OR ($id IS NOT NULL AND c.id = $id))
+RETURN c LIMIT 1
+";
+
+fn legacy_params(session: Option<&str>, id: Option<Uuid>, message: Option<Uuid>) -> Params {
+    vec![
+        ("session", opt_string(session)),
+        ("id", opt_string(id.map(|v| v.to_string()).as_deref())),
+        (
+            "message",
+            opt_string(message.map(|v| v.to_string()).as_deref()),
+        ),
+    ]
+}
 
 #[derive(Clone)]
 pub struct Neo4jShortTermStore {
@@ -23,17 +48,22 @@ impl Neo4jShortTermStore {
         Self { client }
     }
 
-    async fn link_user(&self, user_identifier: &str, conversation_id: Uuid) -> MemoryResult<()> {
-        self.client
-            .execute(
-                q::LINK_USER_TO_CONVERSATION,
-                vec![
-                    ("user_identifier", user_identifier.into()),
-                    ("conversation_id", conversation_id.to_string().into()),
-                ],
-            )
-            .await
-            .map(|_| ())
+    async fn reject_legacy(
+        &self,
+        session: Option<&str>,
+        id: Option<Uuid>,
+        message: Option<Uuid>,
+    ) -> MemoryResult<()> {
+        let rows = self
+            .client
+            .execute(LEGACY_CONFLICT, legacy_params(session, id, message))
+            .await?;
+        if !rows.is_empty() {
+            return Err(MemoryError::invalid(
+                "ambiguous legacy conversation requires explicit migration",
+            ));
+        }
+        Ok(())
     }
 
     async fn load_messages(&self, conversation_id: Uuid, limit: i64) -> MemoryResult<Vec<Message>> {
@@ -151,62 +181,112 @@ impl ShortTermStore for Neo4jShortTermStore {
         &self,
         session_id: &str,
         conversation_id: Option<Uuid>,
-        user_identifier: Option<&str>,
+        scope: &OwnerScope,
     ) -> MemoryResult<Uuid> {
-        if let Some(id) = conversation_id {
-            return Ok(id);
-        }
+        let id = conversation_id.unwrap_or_else(Uuid::new_v4);
         let rows = self
             .client
-            .execute(
-                q::GET_CONVERSATION_BY_SESSION,
-                vec![("session_id", session_id.into())],
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(Some(session_id), conversation_id, None),
+                q::ENSURE_SCOPED_CONVERSATION,
+                vec![
+                    ("id", id.to_string().into()),
+                    ("explicit_id", conversation_id.is_some().into()),
+                    ("session_id", session_id.into()),
+                    ("owner_scope", scope.storage_key().into()),
+                    ("user_identifier", opt_string(scope.as_str())),
+                ],
             )
             .await?;
-        let id = if let Some(row) = rows.first() {
-            Props::of(&column(row, "c")?)?.uuid("id")?
-        } else {
-            let id = Uuid::new_v4();
-            self.client
-                .execute(
-                    q::CREATE_CONVERSATION,
-                    vec![
-                        ("id", id.to_string().into()),
-                        ("session_id", session_id.into()),
-                        ("title", BoltType::Null(BoltNull)),
-                    ],
-                )
-                .await?;
-            id
+        let row = rows.first().ok_or_else(|| {
+            MemoryError::invalid("conversation namespace conflict or ambiguous legacy conversation")
+        })?;
+        let node = column(row, "c")?;
+        Props::of(&node)?.uuid("id")
+    }
+
+    async fn find_by_operation_key(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+        operation_key: &str,
+    ) -> MemoryResult<Option<KeyedMessage>> {
+        let rows = self
+            .client
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(None, Some(conversation_id), None),
+                q::FIND_MESSAGE_BY_OPERATION_KEY,
+                vec![
+                    ("conversation_id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
+                    ("operation_key", operation_key.into()),
+                ],
+            )
+            .await?;
+        let Some(row) = rows.first() else {
+            return Ok(None);
         };
-        if let Some(user) = user_identifier {
-            self.link_user(user, id).await?;
-        }
-        Ok(id)
+        let node = column(row, "m")?;
+        let operation_payload = Props::of(&node)?.string("operation_payload");
+        let message = message_from_value(&node, Some(conversation_id))?;
+        Ok(Some(KeyedMessage {
+            message,
+            operation_payload,
+        }))
     }
 
     async fn append_message(
         &self,
         conversation_id: Uuid,
+        scope: &OwnerScope,
         message: &MessageRecord,
     ) -> MemoryResult<Message> {
+        if message.operation_key.is_some() != message.operation_payload.is_some() {
+            return Err(MemoryError::invalid(
+                "operation_key and operation_payload must be provided together",
+            ));
+        }
+        let cypher = if message.operation_key.is_some() {
+            q::CREATE_KEYED_MESSAGE.to_owned()
+        } else {
+            q::CREATE_MESSAGE.to_owned()
+        };
         let rows = self
             .client
-            .execute(
-                q::CREATE_MESSAGE,
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(None, Some(conversation_id), None),
+                &cypher,
                 vec![
                     ("conversation_id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
                     ("id", message.id.to_string().into()),
                     ("role", message.role.as_str().into()),
                     ("content", message.content.as_str().into()),
                     ("embedding", opt_vector(message.embedding.as_deref())),
                     ("metadata", metadata_param(&message.metadata)),
+                    (
+                        "operation_key",
+                        opt_string(message.operation_key.as_deref()),
+                    ),
+                    (
+                        "operation_payload",
+                        opt_string(message.operation_payload.as_deref()),
+                    ),
                 ],
             )
             .await?;
-        let row = rows
-            .first()
-            .ok_or_else(|| MemoryError::not_found(format!("conversation {conversation_id}")))?;
+        let row = rows.first().ok_or_else(|| {
+            if message.operation_key.is_some() {
+                MemoryError::invalid(
+                    "operation_key conflicts with an existing payload or conversation scope",
+                )
+            } else {
+                MemoryError::not_found(format!("conversation {conversation_id}"))
+            }
+        })?;
         let mut stored = message_from_value(&column(row, "m")?, Some(conversation_id))?;
         // Keep the caller's metadata object rather than its JSON round trip.
         stored.metadata = message.metadata.clone();
@@ -216,18 +296,30 @@ impl ShortTermStore for Neo4jShortTermStore {
     async fn append_messages(
         &self,
         conversation_id: Uuid,
+        scope: &OwnerScope,
         messages: &[MessageRecord],
     ) -> MemoryResult<Vec<Message>> {
         if messages.is_empty() {
             return Ok(Vec::new());
         }
+        if messages
+            .iter()
+            .any(|message| message.operation_key.is_some() || message.operation_payload.is_some())
+        {
+            return Err(MemoryError::invalid(
+                "operation_key is only supported for single-message appends",
+            ));
+        }
         let batch: Vec<BoltType> = messages.iter().map(record_to_bolt).collect();
         let rows = self
             .client
-            .execute(
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(None, Some(conversation_id), None),
                 q::CREATE_MESSAGES_BATCH,
                 vec![
                     ("conversation_id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
                     ("messages", BoltType::List(batch.into())),
                 ],
             )
@@ -251,19 +343,32 @@ impl ShortTermStore for Neo4jShortTermStore {
         &self,
         session_id: &str,
         conversation_id: Option<Uuid>,
+        scope: &OwnerScope,
         limit: Option<i64>,
     ) -> MemoryResult<Option<Conversation>> {
+        self.reject_legacy(Some(session_id), conversation_id, None)
+            .await?;
         let rows = match conversation_id {
             Some(id) => {
                 self.client
-                    .execute(q::GET_CONVERSATION, vec![("id", id.to_string().into())])
+                    .execute(
+                        q::GET_CONVERSATION_BY_ID_AND_SESSION,
+                        vec![
+                            ("id", id.to_string().into()),
+                            ("session_id", session_id.into()),
+                            ("owner_scope", scope.storage_key().into()),
+                        ],
+                    )
                     .await?
             }
             None => {
                 self.client
                     .execute(
                         q::GET_CONVERSATION_BY_SESSION,
-                        vec![("session_id", session_id.into())],
+                        vec![
+                            ("session_id", session_id.into()),
+                            ("owner_scope", scope.storage_key().into()),
+                        ],
                     )
                     .await?
             }
@@ -277,12 +382,18 @@ impl ShortTermStore for Neo4jShortTermStore {
     async fn get_conversation_by_id(
         &self,
         conversation_id: Uuid,
+        scope: &OwnerScope,
     ) -> MemoryResult<Option<Conversation>> {
+        self.reject_legacy(None, Some(conversation_id), None)
+            .await?;
         let rows = self
             .client
             .execute(
                 q::GET_CONVERSATION,
-                vec![("id", conversation_id.to_string().into())],
+                vec![
+                    ("id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
+                ],
             )
             .await?;
         match rows.first() {
@@ -293,7 +404,7 @@ impl ShortTermStore for Neo4jShortTermStore {
 
     async fn list_conversations(
         &self,
-        user_identifier: Option<&str>,
+        scope: &OwnerScope,
         limit: i64,
     ) -> MemoryResult<Vec<Conversation>> {
         let rows = self
@@ -301,7 +412,7 @@ impl ShortTermStore for Neo4jShortTermStore {
             .execute(
                 q::LIST_ALL_CONVERSATIONS,
                 vec![
-                    ("user_identifier", opt_string(user_identifier)),
+                    ("owner_scope", scope.storage_key().into()),
                     ("limit", limit.into()),
                 ],
             )
@@ -317,10 +428,14 @@ impl ShortTermStore for Neo4jShortTermStore {
         &self,
         embedding: &[f64],
         session_id: Option<&str>,
+        scope: &OwnerScope,
         limit: i64,
         threshold: f64,
         metadata_filters: &Metadata,
     ) -> MemoryResult<Vec<ScoredMessage>> {
+        if session_id.is_some() {
+            self.reject_legacy(session_id, None, None).await?;
+        }
         let (clause, filter_params) = metadata_filter_clause(metadata_filters);
         let cypher = match (session_id.is_some(), clause.is_empty()) {
             (false, true) => q::SEARCH_MESSAGES_BY_EMBEDDING.to_owned(),
@@ -335,6 +450,7 @@ impl ShortTermStore for Neo4jShortTermStore {
             ("embedding".to_owned(), embedding.to_vec().into()),
             ("limit".to_owned(), limit.into()),
             ("threshold".to_owned(), threshold.into()),
+            ("owner_scope".to_owned(), scope.storage_key().into()),
         ];
         if let Some(session) = session_id {
             params.push(("session_id".to_owned(), session.into()));
@@ -361,13 +477,18 @@ impl ShortTermStore for Neo4jShortTermStore {
             .collect()
     }
 
-    async fn list_sessions(&self, query: &SessionQuery) -> MemoryResult<Vec<SessionInfo>> {
+    async fn list_sessions(
+        &self,
+        query: &SessionQuery,
+        scope: &OwnerScope,
+    ) -> MemoryResult<Vec<SessionInfo>> {
         let rows = self
             .client
             .execute(
                 q::LIST_SESSIONS,
                 vec![
                     ("prefix", opt_string(query.prefix.as_deref())),
+                    ("owner_scope", scope.storage_key().into()),
                     ("limit", query.limit.into()),
                     ("offset", query.offset.into()),
                     ("order_by", query.order_by.as_str().into()),
@@ -406,34 +527,62 @@ impl ShortTermStore for Neo4jShortTermStore {
             .collect()
     }
 
-    async fn delete_message(&self, message_id: Uuid, _cascade: bool) -> MemoryResult<bool> {
+    async fn delete_message(
+        &self,
+        message_id: Uuid,
+        scope: &OwnerScope,
+        _cascade: bool,
+    ) -> MemoryResult<bool> {
+        self.reject_legacy(None, None, Some(message_id)).await?;
         // MENTIONS edges always go with the message: DETACH DELETE removes
         // them, entities stay (upstream `cascade=True` semantics).
         let rows = self
             .client
-            .execute(
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(None, None, Some(message_id)),
                 q::DELETE_MESSAGE,
-                vec![("id", message_id.to_string().into())],
+                vec![
+                    ("id", message_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
+                ],
             )
             .await?;
         Ok(!rows.is_empty())
     }
 
-    async fn clear_session(&self, session_id: &str) -> MemoryResult<()> {
+    async fn clear_session(&self, session_id: &str, scope: &OwnerScope) -> MemoryResult<()> {
+        self.reject_legacy(Some(session_id), None, None).await?;
         self.client
-            .execute(
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(Some(session_id), None, None),
                 q::DELETE_SESSION_DATA,
-                vec![("session_id", session_id.into())],
+                vec![
+                    ("session_id", session_id.into()),
+                    ("owner_scope", scope.storage_key().into()),
+                ],
             )
             .await
             .map(|_| ())
     }
 
-    async fn delete_conversation(&self, conversation_id: Uuid) -> MemoryResult<()> {
+    async fn delete_conversation(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+    ) -> MemoryResult<()> {
+        self.reject_legacy(None, Some(conversation_id), None)
+            .await?;
         self.client
-            .execute(
+            .execute_guarded(
+                LEGACY_CONFLICT,
+                legacy_params(None, Some(conversation_id), None),
                 q::DELETE_CONVERSATION,
-                vec![("id", conversation_id.to_string().into())],
+                vec![
+                    ("id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
+                ],
             )
             .await
             .map(|_| ())

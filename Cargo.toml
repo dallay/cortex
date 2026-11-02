@@ -39,6 +39,7 @@ members = [
     "crates/muninn/neo4j",
     "crates/muninn/providers",
     "crates/muninn/bridge",
+    "crates/muninn/mcp",
     "apps/muninn",
 ]
 
