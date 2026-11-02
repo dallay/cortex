@@ -3,14 +3,16 @@ use std::sync::Arc;
 use axum::{extract::State, Json};
 use chrono::{Duration, Utc};
 use rook_core::{
-    ConnectionId, ProviderConnection, ProviderKind, RequestStatus, UsageFilters, UsageSummary,
+    effective_reset_at, ConnectionId, ProviderConnection, ProviderKind, QuotaObservationQuery,
+    RequestStatus, UsageFilters, UsageSummary,
 };
 
 use crate::{
     provider_dto::{
         ProviderAccountQuotaResponse, ProviderQuotaSummaryResponse, ProviderQuotaThresholdResponse,
         ProviderQuotaTrendPointResponse, ProviderQuotaWindowResponse,
-        ProviderRateLimitObservationResponse, ProvidersQuotaResponse,
+        ProviderRateLimitObservationResponse, ProviderUpstreamObservationResponse,
+        ProviderUpstreamObservationsResponse, ProvidersQuotaResponse,
     },
     HttpError,
 };
@@ -42,18 +44,45 @@ pub async fn list_provider_quota(
         }
     })?;
     let generated_at = Utc::now();
-    let last_24h_start = Some(generated_at - Duration::hours(24));
-    let last_7d_start = Some(generated_at - Duration::days(7));
+    let upstream = match &usecases.quota_observation_reader {
+        Some(reader) => match reader
+            .latest_observations(&QuotaObservationQuery {
+                limit: QuotaObservationQuery::MAX_LIMIT,
+                ..QuotaObservationQuery::default()
+            })
+            .await
+        {
+            Ok(observations) => UpstreamQuotaObservations {
+                observations,
+                read_availability: "available",
+            },
+            Err(error) => {
+                tracing::warn!(%error, "failed to read upstream quota observations");
+                UpstreamQuotaObservations {
+                    observations: Vec::new(),
+                    read_availability: "unavailable",
+                }
+            }
+        },
+        None => UpstreamQuotaObservations {
+            observations: Vec::new(),
+            read_availability: "unavailable",
+        },
+    };
+    let windows = QuotaWindowBounds {
+        last_24h_start: Some(generated_at - Duration::hours(24)),
+        last_7d_start: Some(generated_at - Duration::days(7)),
+    };
     let mut items = Vec::new();
 
     for kind in all_provider_kinds() {
         let item = summarize_provider_kind(
             recorder,
             &connections,
+            &upstream,
             kind,
             generated_at,
-            last_24h_start,
-            last_7d_start,
+            &windows,
         )
         .await;
         items.push(item);
@@ -64,13 +93,28 @@ pub async fn list_provider_quota(
     }))
 }
 
+/// Latest upstream quota observations plus the availability of the read that produced them.
+///
+/// The availability is kept separate from the observation list so a failed or
+/// missing read is reported honestly instead of looking like "no limit".
+struct UpstreamQuotaObservations {
+    observations: Vec<rook_core::QuotaObservation>,
+    read_availability: &'static str,
+}
+
+/// Rolling window boundaries shared by every provider summary.
+struct QuotaWindowBounds {
+    last_24h_start: Option<chrono::DateTime<Utc>>,
+    last_7d_start: Option<chrono::DateTime<Utc>>,
+}
+
 async fn summarize_provider_kind(
     recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
     connections: &[ProviderConnection],
+    upstream: &UpstreamQuotaObservations,
     kind: ProviderKind,
     generated_at: chrono::DateTime<Utc>,
-    last_24h_start: Option<chrono::DateTime<Utc>>,
-    last_7d_start: Option<chrono::DateTime<Utc>>,
+    windows: &QuotaWindowBounds,
 ) -> ProviderQuotaSummaryResponse {
     let provider_connections = connections
         .iter()
@@ -90,13 +134,19 @@ async fn summarize_provider_kind(
     } else {
         (
             summarize_window(recorder, &ids, None, None).await,
-            summarize_window(recorder, &ids, last_24h_start, None).await,
-            summarize_window(recorder, &ids, last_7d_start, None).await,
+            summarize_window(recorder, &ids, windows.last_24h_start, None).await,
+            summarize_window(recorder, &ids, windows.last_7d_start, None).await,
             build_trend(recorder, &ids, generated_at)
                 .await
                 .unwrap_or_default(),
         )
     };
+    let upstream_observations = upstream_observations_for_kind(
+        &upstream.observations,
+        upstream.read_availability,
+        kind,
+        generated_at,
+    );
     let connection_count = provider_connections.len() as u32;
     let active_connection_count =
         provider_connections.iter().filter(|c| c.is_active).count() as u32;
@@ -108,7 +158,7 @@ async fn summarize_provider_kind(
         None
     };
     let connection_ratios = if has_available_rate_limit {
-        connection_rate_limit_ratios(recorder, &provider_connections, last_7d_start).await
+        connection_rate_limit_ratios(recorder, &provider_connections, windows.last_7d_start).await
     } else {
         vec![None; provider_connections.len()]
     };
@@ -148,6 +198,7 @@ async fn summarize_provider_kind(
             },
             ratio,
         },
+        upstream_observations,
         local_warning_level,
         all_time,
         last_24h,
@@ -499,6 +550,53 @@ fn classify_warning_level(conns: &[&ProviderConnection], ratios: &[Option<f32>])
         result
     }
 }
+fn upstream_observations_for_kind(
+    observations: &[rook_core::QuotaObservation],
+    read_availability: &'static str,
+    kind: ProviderKind,
+    now: chrono::DateTime<Utc>,
+) -> ProviderUpstreamObservationsResponse {
+    let observations = observations
+        .iter()
+        .filter(|observation| observation.provider_kind == kind)
+        .map(|observation| {
+            let reset_at = effective_reset_at(observation);
+            let freshness = match reset_at {
+                Some(reset_at) if now >= reset_at => "stale",
+                Some(_) => "fresh",
+                None => "unknown_expiry",
+            };
+            ProviderUpstreamObservationResponse {
+                connection_id: observation.connection_id.map(|id| id.to_string()),
+                metric: observation.metric.clone(),
+                source: observation.source.clone(),
+                scope: observation.scope.clone(),
+                window: observation.window.clone(),
+                limit: observation.limit,
+                remaining: observation.remaining,
+                observed_at: observation.observed_at,
+                age_seconds: now
+                    .signed_duration_since(observation.observed_at)
+                    .num_seconds()
+                    .max(0),
+                reset_at,
+                freshness,
+            }
+        })
+        .collect::<Vec<_>>();
+    let availability = if read_availability == "unavailable" {
+        "unavailable"
+    } else if observations.is_empty() {
+        "not_reported"
+    } else {
+        "available"
+    };
+    ProviderUpstreamObservationsResponse {
+        availability,
+        observations,
+    }
+}
+
 fn all_provider_kinds() -> [ProviderKind; 7] {
     [
         ProviderKind::OpenAI,
