@@ -1,0 +1,12 @@
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5 AS dependencies
+USER 7474:7474
+WORKDIR /tmp
+COPY requirements-oracle.txt /tmp/requirements-oracle.txt
+RUN python -m venv /tmp/venv \
+    && /tmp/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements-oracle.txt
+
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5
+COPY --from=dependencies /tmp/venv /opt/venv
+USER 7474:7474
+WORKDIR /harness
+ENTRYPOINT ["/opt/venv/bin/python"]

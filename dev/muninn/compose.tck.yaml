@@ -1,0 +1,42 @@
+name: muninn-tck-reference
+
+services:
+  neo4j:
+    extends:
+      file: compose.yaml
+      service: neo4j
+    networks: [oracle]
+
+  tck:
+    build:
+      context: .
+      dockerfile: Dockerfile.tck
+    user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 768m
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    tmpfs:
+      - /tmp:mode=1777,size=128m
+    secrets: [neo4j_auth]
+    volumes:
+      - "${MUNINN_REFERENCE_ROOT:?Define el directorio de referencias verificadas}:/references:ro"
+      - "./:/harness:ro"
+      - "./artifacts:/artifacts"
+    networks: [oracle]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    command: [--sources, /references, --profile, adapted, --output, /artifacts/tck-adapted]
+
+secrets:
+  neo4j_auth:
+    file: .cache/neo4j.auth
+
+networks:
+  oracle:
+    internal: true

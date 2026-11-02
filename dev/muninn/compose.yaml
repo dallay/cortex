@@ -1,0 +1,60 @@
+name: muninn-oracle
+
+services:
+  neo4j:
+    image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+    user: "7474:7474"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 2g
+    environment:
+      NEO4J_AUTH_FILE: /run/secrets/neo4j_auth
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    secrets: [neo4j_auth]
+    tmpfs:
+      - /data:uid=7474,gid=7474,mode=0700
+      - /logs:uid=7474,gid=7474,mode=0700
+    networks: [oracle]
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:7474]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  oracle:
+    profiles: [capture]
+    build:
+      context: .
+      dockerfile: Dockerfile.oracle
+    user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 512m
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    secrets: [neo4j_auth]
+    volumes:
+      - "${MUNINN_REFERENCE_ROOT:?Define el directorio de referencias verificadas}:/references:ro"
+      - "./:/harness:ro"
+      - "./artifacts:/artifacts"
+    networks: [oracle]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    command: [/harness/oracle.py, --sources, /references, --output, /artifacts/oracle-gm01.json]
+
+secrets:
+  neo4j_auth:
+    file: .cache/neo4j.auth
+
+networks:
+  oracle:
+    internal: true

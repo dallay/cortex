@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "numeric_contract_version": "minilm-cpu-f32-v1",
+  "corpus": "dev/muninn/fixtures/minilm-c1-v1-draft.json",
+  "artifact_bundle_id": "ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1",
+  "stages": [
+    {
+      "name": "rust-export",
+      "binary": "target/aarch64-apple-darwin/release/export_minilm_c1",
+      "argv": [
+        "{binary}",
+        "{root}/dev/muninn/.cache/minilm-artifacts",
+        "ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1",
+        "{corpus}",
+        "minilm-cpu-f32-v1"
+      ],
+      "files": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "docs/muninn/evidence/artifact-lock.json",
+        "dev/muninn/c1_build_record.py",
+        "dev/muninn/c1_provenance.py",
+        "dev/muninn/c1_runner.py",
+        "dev/muninn/c1_attempt_run.py",
+        "dev/muninn/c1_attempt_plan.json",
+        "dev/muninn/c1_manifest_build.py",
+        "dev/muninn/fixtures/minilm-c1-contract-cases.json",
+        "dev/muninn/fixtures/minilm-c1-identity-golden.json",
+        "dev/muninn/minilm_tokenizer_reference.py",
+        "dev/muninn/requirements-minilm-tokenizer.txt",
+        ".github/workflows/ci.yml"
+      ],
+      "source_trees": [
+        "crates/muninn/c1-exporter",
+        "third_party/candle-core"
+      ],
+      "toolchain": [
+        [
+          "package",
+          "muninn-c1-exporter"
+        ],
+        [
+          "feature",
+          "cpu-f32"
+        ],
+        [
+          "target",
+          "aarch64-apple-darwin"
+        ]
+      ],
+      "inputs": [
+        {
+          "role": "corpus",
+          "relative": "dev/muninn/fixtures/minilm-c1-v1-draft.json",
+          "delivery": "path"
+        }
+      ],
+      "outputs": [],
+      "consumed": [
+        {
+          "output": "stdout",
+          "role": "corpus",
+          "field": "input_sha256"
+        }
+      ],
+      "timeout": 1800,
+      "provenance": {
+        "record": "artifacts/muninn/c1/build-record.json",
+        "bundle": "artifacts/muninn/c1/attestation.jsonl",
+        "source_commit": "REQUIRED_PROTECTED_MAIN_COMMIT",
+        "toolchain": "REQUIRED_RUSTC_VERSION"
+      }
+    },
+    {
+      "name": "python-export",
+      "binary": "dev/muninn/tools/c1_python_exporter.sh",
+      "argv": [
+        "{binary}",
+        "--numeric-contract-version",
+        "minilm-cpu-f32-v1",
+        "--bundle",
+        "{root}/dev/muninn/.cache/minilm-artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1",
+        "--verification-log",
+        "{root}/.agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl",
+        "--input",
+        "{corpus}"
+      ],
+      "files": [
+        "dev/muninn/export_minilm_c1.py",
+        "dev/muninn/minilm_cpu_oracle.py",
+        "dev/muninn/c1_identity.py",
+        "dev/muninn/tools/c1_python_exporter.sh"
+      ],
+      "source_trees": [],
+      "toolchain": [
+        [
+          "python",
+          "3.13.18"
+        ]
+      ],
+      "inputs": [
+        {
+          "role": "corpus",
+          "relative": "dev/muninn/fixtures/minilm-c1-v1-draft.json",
+          "delivery": "path"
+        }
+      ],
+      "outputs": [],
+      "consumed": [
+        {
+          "output": "stdout",
+          "role": "corpus",
+          "field": "input_sha256"
+        }
+      ],
+      "timeout": 3600
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "runtime_id": "minilm-c1-host-macos-arm64-cpu-f32",
+  "numeric_contract_version": "minilm-cpu-f32-v1",
+  "bundle_id": "ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1",
+  "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+  "device": "cpu",
+  "dtype": "float32",
+  "dimensions": 384,
+  "normalization": "l2",
+  "similarity_function": "cosine",
+  "max_length": 256,
+  "truncation_side": "right",
+  "padding_side": "right",
+  "truncation_strategy": "longest_first",
+  "scope": "d1_encoder_only",
+  "excluded": [
+    "exact_retrieval",
+    "ann_retrieval",
+    "neo4j_scores",
+    "top_k",
+    "threshold_membership",
+    "product_quality"
+  ]
+}

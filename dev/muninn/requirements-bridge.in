@@ -1,0 +1,3 @@
+-r requirements-tck.txt
+# httpx del lock upstream, necesario para el HTTPBridgeAdapter oficial.
+httpx==0.28.1
