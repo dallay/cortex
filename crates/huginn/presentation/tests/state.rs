@@ -1,6 +1,6 @@
 use huginn_core::{
     ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Message, Role,
-    ScopedEventSink, Session,
+    ScopedEventSink, Session, StepId, TurnId,
 };
 use huginn_presentation::{
     contributions::Contributions,
@@ -357,6 +357,7 @@ fn resume_and_synchronize_commit_messages_once_not_mutable_tail() {
     state.synchronize(&session);
     state.project(
         Event::Text {
+            step: StepId(1),
             text: "```rust\npartial".into(),
         },
         "Tool",
@@ -383,13 +384,17 @@ async fn stalled_renderer_keeps_all_transitions_and_composer_responsive() {
     ui.lock().editor.insert("next\nprompt");
     let start = std::time::Instant::now();
     for _ in 0..10_000 {
-        ui.emit(Event::Text { text: "x".into() });
+        ui.emit(Event::Text {
+            step: StepId(1),
+            text: "x".into(),
+        });
     }
     ui.emit(Event::ApprovalResolved {
+        step: StepId(1),
         id: "one".into(),
         approved: false,
     });
-    ui.emit(Event::TurnFinished);
+    ui.emit(Event::TurnFinished { turn: TurnId(1) });
     // Token deltas fold into `tail` and are not retained; only the two
     // authoritative transitions stay in the event log.
     assert_eq!(ui.lock().events.len(), 2);
@@ -1182,6 +1187,7 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
 fn actionable_feedback_and_diagnostic_reset_on_new_operation() {
     let ui = ui();
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "error".into(),
         output: "failed".into(),
         is_error: true,
@@ -1204,6 +1210,7 @@ fn actionable_feedback_and_diagnostic_reset_on_new_operation() {
 fn tool_error_uses_contributed_label_and_marks_status() {
     let ui = ui();
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "call-1".into(),
         output: "boom".into(),
         is_error: false,
@@ -1211,6 +1218,7 @@ fn tool_error_uses_contributed_label_and_marks_status() {
     assert!(ui.lock().tail.contains("Tool result: boom"));
     assert!(!ui.lock().status.diagnostic);
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "call-2".into(),
         output: "kaput".into(),
         is_error: true,
@@ -1225,6 +1233,7 @@ fn tool_error_uses_contributed_label_and_marks_status() {
 fn projected_text_cannot_emit_terminal_escape_sequences() {
     let ui = ui();
     ui.emit(Event::Text {
+        step: StepId(1),
         text: "\x1b[2Jhello\x00".into(),
     });
     assert!(!ui.lock().tail.contains('\x1b'));
@@ -1466,6 +1475,7 @@ mod lock_tests {
         .0;
         *slot.lock().unwrap() = Arc::downgrade(&ui);
         ui.emit(Event::ToolStarted {
+            step: StepId(1),
             call: huginn_core::ToolCall {
                 id: "call".into(),
                 name: "reentrant".into(),
@@ -1473,6 +1483,7 @@ mod lock_tests {
             },
         });
         ui.emit(Event::ToolFinished {
+            step: StepId(1),
             id: "call".into(),
             output: "payload".into(),
             is_error: false,

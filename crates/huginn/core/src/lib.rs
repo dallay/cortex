@@ -123,6 +123,34 @@ pub trait ModelProvider: Send + Sync {
     ) -> Result<BoxStream<'static, Result<ModelDelta>>>;
 }
 
+/// Identity of one `AgentLoop::run` invocation within a session.
+///
+/// Zero is reserved for events persisted before this identity existed: it means
+/// "unknown", never "the first turn". Allocation starts at one and is persisted
+/// with the session so a resumed session never reuses a recorded identity.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TurnId(pub u64);
+
+impl TurnId {
+    /// Reserved for events persisted before turn identity existed.
+    pub const UNKNOWN: Self = Self(0);
+}
+
+/// Identity of one model call inside a turn. Zero means unknown.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct StepId(pub u64);
+
+impl StepId {
+    /// Reserved for events persisted before step identity existed.
+    pub const UNKNOWN: Self = Self(0);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -131,33 +159,52 @@ pub enum Event {
     },
     TurnStarted {
         session_id: String,
+        /// Missing on records written before turn identity existed.
+        #[serde(default)]
+        turn: TurnId,
     },
     Text {
+        /// Missing on records written before step identity existed.
+        #[serde(default)]
+        step: StepId,
         text: String,
     },
     ToolStarted {
+        #[serde(default)]
+        step: StepId,
         call: ToolCall,
     },
     ApprovalRequested {
+        #[serde(default)]
+        step: StepId,
         request: ApprovalRequest,
     },
     ApprovalResolved {
+        #[serde(default)]
+        step: StepId,
         id: String,
         approved: bool,
     },
     ToolFinished {
+        #[serde(default)]
+        step: StepId,
         id: String,
         output: String,
         is_error: bool,
     },
     Usage {
+        #[serde(default)]
+        step: StepId,
         input_tokens: u64,
         output_tokens: u64,
     },
     Compacted {
         through: usize,
     },
-    TurnFinished,
+    TurnFinished {
+        #[serde(default)]
+        turn: TurnId,
+    },
     Error {
         message: String,
     },
@@ -235,6 +282,9 @@ pub struct Session {
     pub summary_through: usize,
     /// A persisted unfinished turn is recovered, never automatically replayed.
     pub interrupted: bool,
+    /// Monotonic turn allocator. Zero on sessions written before turn identity.
+    #[serde(default)]
+    pub turn_seq: u64,
 }
 impl Session {
     pub fn new(workspace: PathBuf) -> Self {
@@ -247,7 +297,17 @@ impl Session {
             summary: None,
             summary_through: 0,
             interrupted: false,
+            turn_seq: 0,
         }
+    }
+
+    /// Allocates the next turn identity and persists the counter with the session.
+    ///
+    /// The counter, not the event log, is the allocator: a session whose events were
+    /// truncated still cannot reuse an identity it already handed out.
+    pub const fn allocate_turn(&mut self) -> TurnId {
+        self.turn_seq = self.turn_seq.saturating_add(1);
+        TurnId(self.turn_seq)
     }
 }
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +360,14 @@ pub struct ModelService(pub Arc<dyn ModelProvider>);
 pub struct ToolsService(pub Arc<dyn ToolRegistry>);
 pub struct SessionsService(pub Arc<dyn SessionStore>);
 pub struct LoopService(pub Arc<dyn AgentLoop>);
+
+/// Stable service id for the replaceable agent loop.
+///
+/// It lives in the contract crate so a plugin outside the host application can name
+/// the service it provides (ADR-0017).
+pub fn agent_loop_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:loop", 1)
+}
 
 /// Workspace context supplied by a replaceable adapter.
 #[async_trait]

@@ -115,18 +115,18 @@ impl EventSink for Output {
         }
         match event {
             Event::ConnectionChanged { .. } => {} // Observability, never conversation.
-            Event::Text { text } => {
+            Event::Text { text, .. } => {
                 print!("{}", safe(&text));
                 let _ = std::io::stdout().flush();
             }
-            Event::ToolStarted { call } => eprintln!("\nTool: {}", safe(&call.name)),
+            Event::ToolStarted { call, .. } => eprintln!("\nTool: {}", safe(&call.name)),
             Event::ToolFinished {
                 is_error: true,
                 output,
                 ..
             } => eprintln!("\nTool failed: {}", safe(&output)),
             Event::Compacted { .. } => eprintln!("\nContext compacted; original history retained."),
-            Event::TurnFinished => println!(),
+            Event::TurnFinished { .. } => println!(),
             Event::TurnStarted { .. }
             | Event::ApprovalRequested { .. }
             | Event::ApprovalResolved { .. }

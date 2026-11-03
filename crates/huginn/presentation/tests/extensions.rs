@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
-    CancellationToken, Event, EventSink, Message, Result, Role, Session, ToolCall,
+    CancellationToken, Event, EventSink, Message, Result, Role, Session, StepId, ToolCall,
 };
 use huginn_plugin_api::v1::*;
 use huginn_presentation::state::Ui;
@@ -124,8 +124,12 @@ async fn tool_renderer_dispatches_by_call_id_for_live_and_resumed_results() {
         name: "native.read".into(),
         arguments: Default::default(),
     };
-    ui.emit(Event::ToolStarted { call: call.clone() });
+    ui.emit(Event::ToolStarted {
+        step: StepId(1),
+        call: call.clone(),
+    });
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "call".into(),
         output: "live".into(),
         is_error: true,

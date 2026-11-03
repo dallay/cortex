@@ -3,7 +3,7 @@ use futures::StreamExt;
 use huginn_core::{
     hooks::{ToolHooks, ToolOutcome},
     AgentError, AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, InstructionSource,
-    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
+    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore, StepId,
     ToolContext, ToolRegistry,
 };
 use std::{
@@ -87,6 +87,18 @@ pub(crate) async fn skill_commands(
         .map(|entry| (format!("/skill:{}", entry.name), entry.description.clone()))
         .collect())
 }
+/// Host-facing I/O and identity for one model call inside a turn.
+///
+/// Bundling it keeps every event a step emits on the same identity and the same host
+/// decision points, instead of threading the same five values through the loop.
+struct StepScope<'a> {
+    step: StepId,
+    selected: &'a [String],
+    approvals: &'a dyn ApprovalPolicy,
+    sink: &'a dyn EventSink,
+    cancel: CancellationToken,
+}
+
 pub(crate) struct LoopExecution<'a> {
     model: &'a dyn ModelProvider,
     tools: &'a dyn ToolRegistry,
@@ -273,12 +285,11 @@ impl<'a> LoopExecution<'a> {
         model: &dyn ModelProvider,
         request: ModelRequest,
         session: &mut Session,
-        cancel: CancellationToken,
-        sink: &dyn EventSink,
+        scope: &StepScope<'_>,
     ) -> Result<Message> {
-        let model_request = model.stream(request, cancel.clone());
+        let model_request = model.stream(request, scope.cancel.clone());
         let mut stream = tokio::select! {
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
             result = model_request => result?,
         };
@@ -287,7 +298,7 @@ impl<'a> LoopExecution<'a> {
         let mut count = 0;
         loop {
             let item = tokio::select! {
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 item = stream.next() => item,
             };
@@ -307,7 +318,10 @@ impl<'a> LoopExecution<'a> {
                     response.content.push_str(&text);
                     // Text deltas are live-only; the completed response is saved below.
                     // Incomplete or cancelled turns intentionally lose partial text.
-                    sink.emit(Event::Text { text });
+                    scope.sink.emit(Event::Text {
+                        step: scope.step,
+                        text,
+                    });
                 }
                 ModelDelta::ToolCall(call) => {
                     if response.tool_calls.len() >= 64 {
@@ -322,10 +336,11 @@ impl<'a> LoopExecution<'a> {
                     self.record(
                         session,
                         Event::Usage {
+                            step: scope.step,
                             input_tokens,
                             output_tokens,
                         },
-                        sink,
+                        scope.sink,
                     )
                     .await?;
                 }
@@ -344,17 +359,21 @@ impl<'a> LoopExecution<'a> {
         &self,
         call: huginn_core::ToolCall,
         session: &mut Session,
-        approvals: &dyn ApprovalPolicy,
-        cancel: CancellationToken,
-        sink: &dyn EventSink,
-        selected: &[String],
+        scope: &StepScope<'_>,
     ) -> Result<()> {
-        self.record(session, Event::ToolStarted { call: call.clone() }, sink)
-            .await?;
+        self.record(
+            session,
+            Event::ToolStarted {
+                step: scope.step,
+                call: call.clone(),
+            },
+            scope.sink,
+        )
+        .await?;
         let ctx = ToolContext {
-            selected_skills: selected.to_vec(),
+            selected_skills: scope.selected.to_vec(),
             workspace: session.workspace.clone(),
-            cancellation: cancel.clone(),
+            cancellation: scope.cancel.clone(),
         };
         let execution = async {
             let tool = self
@@ -376,19 +395,24 @@ impl<'a> LoopExecution<'a> {
                 self.record(
                     session,
                     Event::ApprovalRequested {
+                        step: scope.step,
                         request: request.clone(),
                     },
-                    sink,
+                    scope.sink,
                 )
                 .await?;
-                let approved = approvals.approve(request, cancel.clone()).await?;
+                let approved = scope
+                    .approvals
+                    .approve(request, scope.cancel.clone())
+                    .await?;
                 self.record(
                     session,
                     Event::ApprovalResolved {
+                        step: scope.step,
                         id: request.id.clone(),
                         approved,
                     },
-                    sink,
+                    scope.sink,
                 )
                 .await?;
                 if !approved {
@@ -400,7 +424,7 @@ impl<'a> LoopExecution<'a> {
             tool.execute(action, &ctx).await
         };
         let output = tokio::select! {
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
             output = execution => output,
         };
@@ -415,7 +439,7 @@ impl<'a> LoopExecution<'a> {
                 is_error,
             };
             let notes = tokio::select! {
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 notes = hooks.after(&call, outcome, &ctx) => notes,
             };
@@ -441,11 +465,12 @@ impl<'a> LoopExecution<'a> {
         self.record(
             session,
             Event::ToolFinished {
+                step: scope.step,
                 id: call.id,
                 output,
                 is_error,
             },
-            sink,
+            scope.sink,
         )
         .await?;
         Ok(())
@@ -493,10 +518,19 @@ impl<'a> LoopExecution<'a> {
         } else {
             String::new()
         };
-        for _ in 0..self.config.max_iterations {
+        for iteration in 1..=self.config.max_iterations {
             if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
+            // One model call is one step. Step identity is turn-scoped and restarts
+            // at one for every `run`, so it is never confused with a turn id.
+            let scope = StepScope {
+                step: StepId(iteration as u64),
+                selected,
+                approvals,
+                sink,
+                cancel: cancel.clone(),
+            };
             let mut instructions = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -525,8 +559,7 @@ impl<'a> LoopExecution<'a> {
                         max_tokens: self.config.max_output_tokens,
                     },
                     session,
-                    cancel.clone(),
-                    sink,
+                    &scope,
                 )
                 .await?;
             let mut ids: BTreeSet<_> = session
@@ -550,8 +583,7 @@ impl<'a> LoopExecution<'a> {
                 return Ok(());
             }
             for call in calls {
-                self.execute_tool(call, session, approvals, cancel.clone(), sink, selected)
-                    .await?;
+                self.execute_tool(call, session, &scope).await?;
             }
         }
         Err(AgentError::Model(
@@ -773,11 +805,15 @@ impl LoopExecution<'_> {
         let (prompt, selected, catalog_snapshot) = input;
         // Pin before instruction/session I/O; every request in this turn reuses it.
         let model = self.pin_model(cancellation.clone()).await;
+        // Allocation is persisted with the session before the turn reports itself, so a
+        // crash can never hand the same identity to two turns of one session.
+        let turn = session.allocate_turn();
         session.interrupted = true;
         self.record(
             session,
             Event::TurnStarted {
                 session_id: session.id.clone(),
+                turn,
             },
             events,
         )
@@ -795,7 +831,8 @@ impl LoopExecution<'_> {
         match &result {
             Ok(()) => {
                 session.interrupted = false;
-                self.record(session, Event::TurnFinished, events).await?;
+                self.record(session, Event::TurnFinished { turn }, events)
+                    .await?;
             }
             Err(error) => {
                 self.record(

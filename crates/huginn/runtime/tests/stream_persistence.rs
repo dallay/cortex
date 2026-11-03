@@ -249,7 +249,7 @@ async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
             .unwrap()
             .iter()
             .filter_map(|event| {
-                if let Event::Text { text } = event {
+                if let Event::Text { text, .. } = event {
                     Some(text.clone())
                 } else {
                     None
@@ -278,7 +278,10 @@ async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
             .events
             .iter()
             .any(|e| matches!(e, Event::Usage { .. })));
-        assert!(matches!(resumed.events.last(), Some(Event::TurnFinished)));
+        assert!(matches!(
+            resumed.events.last(),
+            Some(Event::TurnFinished { .. })
+        ));
         engine.sessions = reopened;
         engine
             .run(
@@ -408,7 +411,7 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             .lock()
             .unwrap()
             .iter()
-            .any(|e| matches!(e, Event::Text { text } if text == "é")));
+            .any(|e| matches!(e, Event::Text { text, .. } if text == "é")));
         assert_eq!(*sink.saves_at_text.lock().unwrap(), vec![2]);
         assert_eq!(store.snapshots.lock().unwrap().len(), 3);
         let reloaded = SqliteSessions::open(&db)
@@ -422,7 +425,7 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
         assert!(reloaded
             .events
             .iter()
-            .all(|e| !matches!(e, Event::Text { .. } | Event::TurnFinished)));
+            .all(|e| !matches!(e, Event::Text { .. } | Event::TurnFinished { .. })));
         assert!(matches!(reloaded.events.last(), Some(Event::Error { .. })));
     }
 }

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, LoopService, Message, Result,
-    Role, Session,
+    Role, Session, StepId, TurnId,
 };
 use huginn_plugin_api::v1::{
     contributions_id, CommandMetadata, CommandResult, Contribution, Dialog, UiService, View,
@@ -32,6 +32,7 @@ impl AgentLoop for Engine {
         }
         if prompt == "hold" {
             events.emit(Event::Text {
+                step: StepId(1),
                 text: "STREAM_HELD".into(),
             });
             cancel.cancelled().await;
@@ -79,7 +80,7 @@ impl AgentLoop for Engine {
         session
             .messages
             .push(Message::text(Role::Assistant, "STREAM_COMPLETE"));
-        events.emit(Event::TurnFinished);
+        events.emit(Event::TurnFinished { turn: TurnId(1) });
         Ok(())
     }
 }

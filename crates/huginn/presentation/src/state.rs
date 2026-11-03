@@ -603,8 +603,8 @@ impl UiState {
             Event::ConnectionChanged { snapshot } => {
                 self.project_connection(snapshot.clone());
             }
-            Event::Text { text } => self.tail.push_str(&safe(text)),
-            Event::ToolStarted { call } => {
+            Event::Text { text, .. } => self.tail.push_str(&safe(text)),
+            Event::ToolStarted { call, .. } => {
                 self.tool_names.insert(call.id.clone(), call.name.clone());
                 self.status
                     .set_notice(format!("Tool: {}", safe(&call.name)));
@@ -623,7 +623,7 @@ impl UiState {
                     });
                 }
             }
-            Event::ApprovalRequested { request } => self
+            Event::ApprovalRequested { request, .. } => self
                 .status
                 .set_notice(format!("Approval: {}", safe(&request.action))),
             Event::ApprovalResolved { approved, .. } => self
@@ -632,7 +632,7 @@ impl UiState {
             Event::TurnStarted { .. } => {
                 self.status.set_notice("Thinking…".into());
             }
-            Event::TurnFinished => {
+            Event::TurnFinished { .. } => {
                 self.status.set_notice("Ready".into());
             }
             Event::Error { message } => {
@@ -644,6 +644,7 @@ impl UiState {
             Event::Usage {
                 input_tokens,
                 output_tokens,
+                ..
             } => {
                 self.usage = Some((*input_tokens, *output_tokens));
                 self.status
@@ -1585,6 +1586,7 @@ impl EventSink for Ui {
             id,
             output,
             is_error,
+            ..
         } = &event
         {
             let name = self.lock().tool_names.get(id).cloned().unwrap_or_default();
