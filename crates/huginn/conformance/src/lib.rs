@@ -165,7 +165,7 @@ impl Tool for WriteTool {
     }
     async fn execute(&self, _: PreparedAction, _: &ToolContext) -> Result<String> {
         self.effects.executed.fetch_add(1, Ordering::SeqCst);
-        std::fs::write(&self.target, "effect")?;
+        tokio::fs::write(&self.target, "effect").await?;
         if let Some(cancel) = &self.cancel_after_execute {
             cancel.cancel();
         }
@@ -895,7 +895,7 @@ async fn denial_performs_no_effect(under_test: &UnderTest) -> std::result::Resul
     if host.effects.executed() != 0 {
         return Err("a denied action must not execute".into());
     }
-    if host.target.exists() {
+    if tokio::fs::metadata(&host.target).await.is_ok() {
         return Err("a denied action must leave no observable effect".into());
     }
     if host.approvals.prompts.load(Ordering::SeqCst) != 1 {
@@ -1050,7 +1050,7 @@ async fn hook_block_prevents_effect(under_test: &UnderTest) -> std::result::Resu
     if host.approvals.prompts.load(Ordering::SeqCst) != 0 {
         return Err("a blocked call must not reach the approval prompt".into());
     }
-    if host.target.exists() {
+    if tokio::fs::metadata(&host.target).await.is_ok() {
         return Err("a blocked call must leave no observable effect".into());
     }
     let blocked_visible = session
