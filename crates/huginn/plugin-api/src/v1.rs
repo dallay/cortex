@@ -27,6 +27,18 @@ pub mod hooks {
     };
 }
 
+/// Replaceable agent loop: a trusted native plugin may provide `agent:loop@1`.
+///
+/// The host keeps authorization, effects, events and persistence; an implementation
+/// receives them and can only request decisions (ADR-0017).
+pub mod agent {
+    pub use huginn_core::{
+        agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
+        EventSink, LoopService, Message, ModelDelta, ModelProvider, ModelRequest, Result, Role,
+        Session, StepId, ToolCall, ToolRegistry, TurnId,
+    };
+}
+
 /// Registro de herramientas de autores nativos confiables; no concede permisos.
 pub mod tools {
     pub use huginn_core::{

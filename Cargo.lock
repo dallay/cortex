@@ -2258,6 +2258,7 @@ dependencies = [
  "async-trait",
  "futures",
  "huginn-core",
+ "huginn-plugin-api",
  "serde_json",
  "tokio",
  "uuid",

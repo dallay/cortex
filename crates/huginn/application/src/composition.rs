@@ -22,8 +22,9 @@ pub fn tools_id() -> ServiceId {
 pub fn sessions_id() -> ServiceId {
     ServiceId::new("agent:sessions", 1)
 }
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn loop_id() -> ServiceId {
-    ServiceId::new("agent:loop", 1)
+    huginn_core::agent_loop_id()
 }
 
 pub struct ModelPlugin(pub Arc<dyn ModelProvider>);
