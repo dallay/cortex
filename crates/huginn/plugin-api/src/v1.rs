@@ -34,8 +34,9 @@ pub mod hooks {
 pub mod agent {
     pub use huginn_core::{
         agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, LoopService, Message, ModelDelta, ModelProvider, ModelRequest, Result, Role,
-        Session, StepId, ToolCall, ToolRegistry, TurnId,
+        EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
+        ModelRequest, PreparedAction, Result, Role, Session, SessionStore, StepId, Tool, ToolCall,
+        ToolContext, ToolDefinition, ToolRegistry, TurnId,
     };
 }
 

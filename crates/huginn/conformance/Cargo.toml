@@ -15,5 +15,8 @@ tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
 tempfile.workspace = true
 
+[dev-dependencies]
+huginn-reference-extension = { path = "../reference-extension" }
+
 [lints]
 workspace = true

@@ -375,19 +375,19 @@ impl Capabilities {
 }
 
 /// Building an implementation may need to compose a supervisor, so it may be async.
-pub type BuildFuture<'a> = Pin<Box<dyn Future<Output = Arc<dyn AgentLoop>> + 'a>>;
+pub type BuildFuture<'a> = Pin<Box<dyn Future<Output = Arc<dyn AgentLoop>> + Send + 'a>>;
 
 /// One loop implementation under certification.
 pub struct UnderTest {
     pub name: String,
     pub capabilities: Capabilities,
-    build: Box<dyn for<'a> Fn(&'a Host) -> BuildFuture<'a>>,
+    build: Box<dyn for<'a> Fn(&'a Host) -> BuildFuture<'a> + Send + Sync>,
 }
 impl UnderTest {
     pub fn new(
         name: impl Into<String>,
         capabilities: Capabilities,
-        build: impl for<'a> Fn(&'a Host) -> BuildFuture<'a> + 'static,
+        build: impl for<'a> Fn(&'a Host) -> BuildFuture<'a> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: name.into(),
