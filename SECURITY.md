@@ -60,7 +60,7 @@ The policy covers vulnerabilities in the cortex monorepo, including:
 
 - **Never commit secrets, credentials, or tokens** to the repository. Use environment variables or GitHub Secrets.
 - If a secret is accidentally committed, assume it is compromised and rotate it immediately.
-- Use `.gitignore`, `.env.example`, and `git-secrets` or similar tooling.
+- Use `.gitignore`, `.env.example`, and `git-secrets`, `gitleaks`, or GitGuardian `ggshield` pre-push hooks.
 
 ### Dependency Management
 
@@ -107,6 +107,7 @@ The project uses multiple layers of automated vulnerability scanning:
 | **cargo audit** | Rust dependencies | :white_check_mark: Blocks on vulnerable deps | N/A | — |
 | **Dependabot** | `Cargo.lock`, `pnpm-lock.yaml` | :white_check_mark: Auto-merge for patch/security | N/A | — |
 | **Gitleaks** (`gitleaks-pr`) | Secrets in commits | :white_check_mark: Blocks on any secret found | Reporting only (full history) | — |
+| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook | — | — |
 | **Semgrep** (`semgrep-pr`) | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings | Reporting only (all severities) | — |
 | **Trivy** (`trivy-fs`) | Filesystem, dependencies, IaC | :white_check_mark: Blocks on HIGH/CRITICAL vulns | Reporting only (all severities) | — |
 | **SonarCloud** | Code quality + security hotspots | Conditional (token required) | — | :white_check_mark: If configured |
