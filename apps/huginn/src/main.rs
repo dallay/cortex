@@ -337,6 +337,7 @@ async fn main() -> anyhow::Result<()> {
         skills: None,
         hooks: None,
         inference_hooks: None,
+        steering: None,
         max_iterations: config.max_iterations,
         context_tokens: config.context_tokens,
         max_output_tokens: config.max_output_tokens,

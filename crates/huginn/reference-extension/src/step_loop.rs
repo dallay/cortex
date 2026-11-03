@@ -11,8 +11,8 @@ use huginn_plugin_api::{
     v1::agent::{
         agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
         EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, PreparedAction, Role, Session, SessionStore, StepId, Tool, ToolCall,
-        ToolContext, ToolDefinition, ToolRegistry,
+        ModelRequest, PreparedAction, Role, Session, SessionStore, SteeringQueue, StepId, Tool,
+        ToolCall, ToolContext, ToolDefinition, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -26,6 +26,7 @@ pub struct StepLoopConfig {
     pub max_output_tokens: u32,
     pub hooks: Option<Arc<ToolHooks>>,
     pub inference_hooks: Option<Arc<InferenceHooks>>,
+    pub steering: Option<Arc<SteeringQueue>>,
 }
 impl Default for StepLoopConfig {
     fn default() -> Self {
@@ -34,6 +35,7 @@ impl Default for StepLoopConfig {
             max_output_tokens: 4096,
             hooks: None,
             inference_hooks: None,
+            steering: None,
         }
     }
 }
@@ -285,6 +287,17 @@ impl StepLoop {
                 return Err(AgentError::Cancelled);
             }
             let step = StepId(iteration as u64);
+            if let Some(steering) = &self.config.steering {
+                let injected = steering.take();
+                if !injected.is_empty() {
+                    let count = injected.len();
+                    for message in injected {
+                        session.messages.push(Message::text(Role::User, message));
+                    }
+                    self.record(session, Event::Steered { turn, step, count }, sink)
+                        .await?;
+                }
+            }
             let mut context = vec![Message::text(
                 Role::System,
                 format!(

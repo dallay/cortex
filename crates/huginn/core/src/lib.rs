@@ -151,6 +151,68 @@ impl StepId {
     pub const UNKNOWN: Self = Self(0);
 }
 
+/// Steering messages are bounded and never grants: the host decides what to inject.
+pub const MAX_STEERING_MESSAGES: usize = 8;
+pub const MAX_STEERING_BYTES: usize = 4096;
+
+/// Mailbox the host writes into while a turn is running.
+///
+/// The loop drains it at step boundaries, so an injected message reaches the model at a
+/// point where no tool is mid-flight and no result is being assembled.
+#[derive(Default)]
+pub struct SteeringQueue {
+    pending: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+
+impl SteeringQueue {
+    /// Refuses rather than dropping or replacing: losing a steering message silently
+    /// would let the model act on a partial instruction.
+    pub fn push(&self, message: &str) -> Result<()> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(AgentError::Configuration(
+                "a steering message cannot be empty".into(),
+            ));
+        }
+        if message.len() > MAX_STEERING_BYTES {
+            return Err(AgentError::Configuration(format!(
+                "a steering message cannot exceed {MAX_STEERING_BYTES} bytes"
+            )));
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if pending.len() >= MAX_STEERING_MESSAGES {
+            return Err(AgentError::Configuration(format!(
+                "at most {MAX_STEERING_MESSAGES} steering messages can wait"
+            )));
+        }
+        pending.push_back(message.to_string());
+        drop(pending);
+        Ok(())
+    }
+
+    pub fn take(&self) -> Vec<String> {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pending.drain(..).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -200,6 +262,12 @@ pub enum Event {
     },
     Compacted {
         through: usize,
+    },
+    /// The host injected messages into a running turn; they are history now.
+    Steered {
+        turn: TurnId,
+        step: StepId,
+        count: usize,
     },
     /// A turn-level hook refused the model call. No request was made.
     InferenceBlocked {

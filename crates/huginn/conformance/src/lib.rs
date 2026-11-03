@@ -54,16 +54,22 @@ pub fn write_call(id: &str) -> ToolCall {
 pub struct ScriptModel {
     replies: Mutex<VecDeque<Reply>>,
     calls: AtomicUsize,
+    requests: Mutex<Vec<ModelRequest>>,
 }
 impl ScriptModel {
     pub fn new(replies: Vec<Reply>) -> Self {
         Self {
             replies: Mutex::new(replies.into()),
             calls: AtomicUsize::new(0),
+            requests: Mutex::new(vec![]),
         }
     }
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+    /// Every request the loop actually sent, in order.
+    pub fn requests(&self) -> Vec<ModelRequest> {
+        self.requests.lock().unwrap().clone()
     }
 }
 
@@ -71,10 +77,11 @@ impl ScriptModel {
 impl ModelProvider for ScriptModel {
     async fn stream(
         &self,
-        _: ModelRequest,
+        request: ModelRequest,
         _: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests.lock().unwrap().push(request);
         let reply = self
             .replies
             .lock()
@@ -118,6 +125,7 @@ struct WriteTool {
     effects: Arc<Effects>,
     target: PathBuf,
     cancel_after_execute: Option<CancellationToken>,
+    steer_after_execute: Option<Arc<huginn_core::SteeringQueue>>,
 }
 #[async_trait]
 impl Tool for WriteTool {
@@ -144,6 +152,9 @@ impl Tool for WriteTool {
         std::fs::write(&self.target, "effect")?;
         if let Some(cancel) = &self.cancel_after_execute {
             cancel.cancel();
+        }
+        if let Some(steering) = &self.steer_after_execute {
+            steering.push("steer: narrow the change")?;
         }
         Ok("written".into())
     }
@@ -278,6 +289,7 @@ pub struct Host {
     pub approvals: Arc<Approvals>,
     pub hooks: Arc<ToolHooks>,
     pub inference_hooks: Arc<InferenceHooks>,
+    pub steering: Arc<huginn_core::SteeringQueue>,
     pub workspace: PathBuf,
     pub target: PathBuf,
     pub config: LoopConfig,
@@ -295,6 +307,10 @@ impl Host {
     /// A host whose only hook blocks every write before any preview exists.
     pub async fn with_blocking_hook(script: Vec<Reply>) -> Self {
         Self::assemble(script, Some(Arc::new(BlockWrites)), None, None).await
+    }
+    /// A host where the first executed effect injects a steering message mid-turn.
+    pub async fn steering_after_first_effect(script: Vec<Reply>) -> Self {
+        Self::assemble(script, None, None, None).await
     }
     /// A host whose turn-level hook refuses every model call.
     pub async fn with_blocking_inference_hook(script: Vec<Reply>) -> Self {
@@ -318,10 +334,12 @@ impl Host {
         let workspace = dir.path().to_path_buf();
         let target = workspace.join("effect.txt");
         let effects = Arc::new(Effects::default());
+        let steering = Arc::new(huginn_core::SteeringQueue::default());
         let tools: Arc<dyn ToolRegistry> = Arc::new(EffectsRegistry(Arc::new(WriteTool {
             effects: effects.clone(),
             target: target.clone(),
             cancel_after_execute,
+            steer_after_execute: steering.is_empty().then(|| steering.clone()),
         })));
         let mut supervisor = Supervisor::default();
         supervisor
@@ -358,6 +376,7 @@ impl Host {
             approvals: Arc::new(Approvals::default()),
             hooks,
             inference_hooks,
+            steering,
             workspace,
             target,
             config: LoopConfig::default(),
@@ -377,6 +396,7 @@ impl Host {
         LoopConfig {
             hooks: Some(self.hooks.clone()),
             inference_hooks: Some(self.inference_hooks.clone()),
+            steering: Some(self.steering.clone()),
             ..self.config.clone()
         }
     }
@@ -586,6 +606,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         guarded(
             "inference_hook_blocks_the_call",
             inference_hook_blocks_the_call(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "steering_reaches_the_next_step",
+            steering_reaches_the_next_step(under_test).await,
         )
         .await,
     );
@@ -1128,6 +1155,50 @@ async fn inference_hook_blocks_the_call(under_test: &UnderTest) -> std::result::
     });
     if !audited {
         return Err("the block must be recorded as an auditable event".into());
+    }
+    Ok(())
+}
+
+async fn steering_reaches_the_next_step(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::steering_after_first_effect(vec![
+        Reply::ToolCalls(vec![write_call("c1")]),
+        Reply::Text("done"),
+    ])
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("run failed: {error}"))?;
+
+    let requests = host.script.requests();
+    if requests.len() != 2 {
+        return Err(format!(
+            "expected two model calls, the loop made {}",
+            requests.len()
+        ));
+    }
+    let delivered = requests[1]
+        .messages
+        .iter()
+        .any(|message| message.role == Role::User && message.content == "steer: narrow the change");
+    if !delivered {
+        return Err("the steering message must reach the model at the next step".into());
+    }
+    let recorded = session
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::Steered { count: 1, .. }));
+    if !recorded {
+        return Err("delivery must be recorded as a durable event".into());
     }
     Ok(())
 }

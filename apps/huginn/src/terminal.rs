@@ -129,6 +129,9 @@ impl EventSink for Output {
             Event::InferenceBlocked { hook, reason, .. } => {
                 eprintln!("\nModel call blocked by {}: {}", safe(&hook), safe(&reason))
             }
+            Event::Steered { count, .. } => {
+                eprintln!("\nDelivered {count} steering message(s).")
+            }
             Event::TurnFinished { .. } => println!(),
             Event::TurnStarted { .. }
             | Event::ApprovalRequested { .. }

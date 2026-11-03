@@ -179,6 +179,7 @@ fn extension_step_loop() -> UnderTest {
                     max_output_tokens: host.config.max_output_tokens,
                     hooks: host.loop_config().hooks,
                     inference_hooks: host.loop_config().inference_hooks,
+                    steering: host.loop_config().steering,
                 },
             );
             supervisor

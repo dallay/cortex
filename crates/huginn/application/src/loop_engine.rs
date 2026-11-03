@@ -43,6 +43,8 @@ pub struct LoopConfig {
     pub hooks: Option<Arc<ToolHooks>>,
     /// Turn-level hooks around the model call, same ownership rules.
     pub inference_hooks: Option<Arc<huginn_core::hooks::InferenceHooks>>,
+    /// Host mailbox the loop drains at step boundaries.
+    pub steering: Option<Arc<huginn_core::SteeringQueue>>,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -53,6 +55,7 @@ impl Default for LoopConfig {
             skills: None,
             hooks: None,
             inference_hooks: None,
+            steering: None,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -547,6 +550,27 @@ impl<'a> LoopExecution<'a> {
                 sink,
                 cancel: cancel.clone(),
             };
+            // Steering lands between steps: nothing is mid-flight, so the model sees a
+            // complete history plus the injected messages.
+            if let Some(steering) = &self.config.steering {
+                let injected = steering.take();
+                if !injected.is_empty() {
+                    let count = injected.len();
+                    for message in injected {
+                        session.messages.push(Message::text(Role::User, message));
+                    }
+                    self.record(
+                        session,
+                        Event::Steered {
+                            turn,
+                            step: scope.step,
+                            count,
+                        },
+                        scope.sink,
+                    )
+                    .await?;
+                }
+            }
             let mut instructions = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),

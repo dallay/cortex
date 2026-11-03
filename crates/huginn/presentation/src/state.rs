@@ -644,6 +644,11 @@ impl UiState {
             Event::InferenceBlocked { hook, reason, .. } => self
                 .status
                 .set_diagnostic(format!("Model call blocked by {hook}: {reason}")),
+            Event::Steered { count, .. } => {
+                let noun = if *count == 1 { "message" } else { "messages" };
+                self.status
+                    .set_notice(format!("Delivered {count} steering {noun}"));
+            }
             Event::Usage {
                 input_tokens,
                 output_tokens,
