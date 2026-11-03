@@ -38,8 +38,11 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
+    # GitGuardian (ggshield): scan commits about to be pushed for secrets
+    # https://docs.gitguardian.com/ggshield-docs/integrations/git-hooks/pre-push
     ggshield:
-      run: ggshield secret scan pre-push
+      run: 'if command -v ggshield >/dev/null 2>&1; then ggshield secret scan pre-push "$@"; else echo "ggshield not installed, skipping pre-push scan"; fi'
+      fail_text: 'GitGuardian secret scan found potential secrets. Inspect findings before pushing.'
 
     clippy:
       run: cargo clippy --workspace --all-targets -- -D warnings

@@ -237,7 +237,9 @@ lefthook run pre-push
 ```
 
 El hook `pre-push` ejecuta:
-- `ggshield secret scan pre-push`: escanea commits en busca de secretos antes de hacer push (requiere `ggshield` instalado y configurado con `GITGUARDIAN_API_KEY`).
+- `ggshield secret scan pre-push`: escanea commits en busca de secretos antes de hacer push. Si `ggshield` no está instalado en la máquina, el hook se salta de forma segura (graceful fallback).
+  - Para instalarlo: `pip install ggshield`
+  - Para autenticarlo: `ggshield auth login` o exportando la variable `GITGUARDIAN_API_KEY`.
 - `cargo clippy`: valida advertencias de Rust (-D warnings).
 - `cargo test`: ejecuta la suite de pruebas del workspace.
 
