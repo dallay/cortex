@@ -40,6 +40,8 @@ pub enum Reply {
     ToolCalls(Vec<ToolCall>),
     /// Never yields; only cancellation ends the step.
     Hang,
+    /// A transient inference failure: retryable, and it produced no effect.
+    Transient,
 }
 
 /// The only effect any case is allowed to observe.
@@ -100,6 +102,7 @@ impl ModelProvider for ScriptModel {
         };
         let deltas: BoxStream<'static, Result<ModelDelta>> = match reply {
             Reply::Hang => futures::stream::pending().boxed(),
+            Reply::Transient => return Err(AgentError::Inference("connection reset".into())),
             Reply::Text(text) => futures::stream::iter([
                 Ok(ModelDelta::Text(text.into())),
                 Ok(usage),
@@ -345,6 +348,14 @@ impl Host {
             Arc::new(Instructions("")),
         )
         .await
+    }
+    /// A host that repeats retryable inference failures `retries` times.
+    pub async fn retrying(script: Vec<Reply>, retries: u32) -> Self {
+        let host =
+            Self::assemble(script, None, None, None, (0, 0), Arc::new(Instructions(""))).await;
+        let mut config = host.config.clone();
+        config.max_model_retries = retries;
+        Self { config, ..host }
     }
     /// A host whose repository instructions change on every read.
     pub async fn with_changing_instructions(
@@ -699,6 +710,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         guarded(
             "context_is_pinned_for_the_turn",
             context_is_pinned_for_the_turn(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "retry_repeats_inference_only",
+            retry_repeats_inference_only(under_test).await,
         )
         .await,
     );
@@ -1395,6 +1413,81 @@ async fn context_is_pinned_for_the_turn(under_test: &UnderTest) -> std::result::
         .any(|event| matches!(event, Event::ContextPinned { bytes, .. } if *bytes > 0));
     if !pinned {
         return Err("the turn must record which context it was pinned to".into());
+    }
+    Ok(())
+}
+
+async fn retry_repeats_inference_only(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::retrying(
+        vec![
+            Reply::Transient,
+            Reply::ToolCalls(vec![write_call("c1")]),
+            Reply::Text("done"),
+        ],
+        1,
+    )
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let sessions = host.sessions.clone();
+    let mut session = Session::new(host.workspace.clone());
+    implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("a retryable failure must not end the turn: {error}"))?;
+
+    if host.script.calls() != 3 {
+        return Err(format!(
+            "the failed request must be repeated exactly once, made {} calls",
+            host.script.calls()
+        ));
+    }
+    if host.effects.executed() != 1 {
+        return Err(format!(
+            "an effect must run once, never once per attempt, executed {}",
+            host.effects.executed()
+        ));
+    }
+    let recorded = sessions
+        .snapshot()
+        .map(|session| {
+            session
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::ModelRetried { attempt: 1, .. }))
+        })
+        .unwrap_or(false);
+    if !recorded {
+        return Err("the retry must be recorded as a durable event".into());
+    }
+
+    // With no retry budget the same failure ends the turn instead of looping.
+    let strict = Host::retrying(vec![Reply::Transient], 0).await;
+    let implementation = (under_test.build)(&strict).await;
+    let approval = strict.approval(true);
+    let mut session = Session::new(strict.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    if !matches!(&outcome, Err(AgentError::Inference(_))) {
+        return Err(format!(
+            "without a retry budget the failure must surface, got {outcome:?}"
+        ));
+    }
+    if strict.script.calls() != 1 {
+        return Err("a zero retry budget must not repeat the request".into());
     }
     Ok(())
 }

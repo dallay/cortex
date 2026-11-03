@@ -28,6 +28,7 @@ pub struct StepLoopConfig {
     pub inference_hooks: Option<Arc<InferenceHooks>>,
     pub steering: Option<Arc<SteeringQueue>>,
     pub max_turn_tokens: Option<u64>,
+    pub max_model_retries: u32,
 }
 impl Default for StepLoopConfig {
     fn default() -> Self {
@@ -38,6 +39,7 @@ impl Default for StepLoopConfig {
             inference_hooks: None,
             steering: None,
             max_turn_tokens: None,
+            max_model_retries: 0,
         }
     }
 }
@@ -167,7 +169,7 @@ impl StepLoop {
             }
         }
         if !finished {
-            return Err(AgentError::Model(
+            return Err(AgentError::Inference(
                 "model returned an incomplete turn".into(),
             ));
         }
@@ -356,15 +358,34 @@ impl StepLoop {
                     )));
                 }
             }
-            let (mut response, tokens) = self
-                .collect(
-                    context,
-                    self.tools.definitions(),
-                    sink,
-                    step,
-                    cancel.clone(),
-                )
-                .await?;
+            let mut attempt = 0_u32;
+            let (mut response, tokens) = loop {
+                let request = context.clone();
+                let tools = self.tools.definitions();
+                match self
+                    .collect(request, tools, sink, step, cancel.clone())
+                    .await
+                {
+                    Ok(pair) => break pair,
+                    Err(error)
+                        if attempt < self.config.max_model_retries
+                            && error.is_retryable_inference() =>
+                    {
+                        attempt += 1;
+                        self.record(
+                            session,
+                            Event::ModelRetried {
+                                turn,
+                                step,
+                                attempt,
+                            },
+                            sink,
+                        )
+                        .await?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             if let Some(hooks) = &self.config.inference_hooks {
                 let notes = hooks.after(turn, step, &response, &hook_context).await;
                 if !notes.is_empty() {

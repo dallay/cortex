@@ -130,6 +130,7 @@ impl EventSink for Output {
                 eprintln!("\nModel call blocked by {}: {}", safe(&hook), safe(&reason))
             }
             Event::ContextPinned { .. } => {}
+            Event::ModelRetried { .. } => {}
             Event::Steered { count, .. } => {
                 eprintln!("\nDelivered {count} steering message(s).")
             }

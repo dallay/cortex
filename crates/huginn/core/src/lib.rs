@@ -17,6 +17,12 @@ pub enum AgentError {
     Configuration(String),
     #[error("model: {0}")]
     Model(String),
+    /// The inference transport failed before a complete answer.
+    ///
+    /// Repeating the same request is safe because inference has no host effect. Effects
+    /// are never retried: `Tool` and `Cancelled` end the turn instead.
+    #[error("transient inference failure: {0}")]
+    Inference(String),
     #[error("tool: {0}")]
     Tool(String),
     #[error("session: {0}")]
@@ -35,6 +41,17 @@ pub enum AgentError {
     Json(#[from] serde_json::Error),
 }
 pub type Result<T> = std::result::Result<T, AgentError>;
+
+impl AgentError {
+    /// Whether repeating the *same request* is safe.
+    ///
+    /// Only inference qualifies, and only when it produced no host effect. This is the
+    /// single place the loop asks that question, so a new variant cannot be retried by
+    /// accident.
+    pub const fn is_retryable_inference(&self) -> bool {
+        matches!(self, Self::Inference(_))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -275,6 +292,12 @@ pub enum Event {
     },
     Compacted {
         through: usize,
+    },
+    /// A retryable inference failure was repeated; no effect had been taken.
+    ModelRetried {
+        turn: TurnId,
+        step: StepId,
+        attempt: u32,
     },
     /// The turn pinned its system context; later steps reuse exactly this.
     ContextPinned {

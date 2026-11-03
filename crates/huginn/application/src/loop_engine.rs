@@ -48,6 +48,8 @@ pub struct LoopConfig {
     /// Tokens the whole turn may spend, summed from provider usage reports. `None`
     /// leaves the turn unbounded, which is the historical behavior.
     pub max_turn_tokens: Option<u64>,
+    /// Bounded repeats of a retryable inference failure. Effects are never retried.
+    pub max_model_retries: u32,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -60,6 +62,7 @@ impl Default for LoopConfig {
             inference_hooks: None,
             steering: None,
             max_turn_tokens: None,
+            max_model_retries: 0,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -366,7 +369,9 @@ impl<'a> LoopExecution<'a> {
             }
         }
         if !finished {
-            return Err(AgentError::Model(
+            // A truncated stream is the canonical transient inference failure: no effect
+            // exists, so the same request may be repeated safely.
+            return Err(AgentError::Inference(
                 "model returned an incomplete turn".into(),
             ));
         }
@@ -653,18 +658,34 @@ impl<'a> LoopExecution<'a> {
                     )));
                 }
             }
-            let (mut response, tokens) = self
-                .collect_response(
-                    model,
-                    ModelRequest {
-                        messages: context,
-                        tools,
-                        max_tokens: self.config.max_output_tokens,
-                    },
-                    session,
-                    &scope,
-                )
-                .await?;
+            let mut attempt = 0_u32;
+            let (mut response, tokens) = loop {
+                let request = ModelRequest {
+                    messages: context.clone(),
+                    tools: tools.clone(),
+                    max_tokens: self.config.max_output_tokens,
+                };
+                match self.collect_response(model, request, session, &scope).await {
+                    Ok(pair) => break pair,
+                    Err(error)
+                        if attempt < self.config.max_model_retries
+                            && error.is_retryable_inference() =>
+                    {
+                        attempt += 1;
+                        self.record(
+                            session,
+                            Event::ModelRetried {
+                                turn,
+                                step: scope.step,
+                                attempt,
+                            },
+                            scope.sink,
+                        )
+                        .await?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             if let Some(hooks) = &self.config.inference_hooks {
                 let notes = tokio::select! {
                     biased;

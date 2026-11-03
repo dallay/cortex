@@ -339,6 +339,8 @@ async fn main() -> anyhow::Result<()> {
         inference_hooks: None,
         steering: None,
         max_turn_tokens: None,
+        // One transient inference failure is worth repeating; effects never are.
+        max_model_retries: 1,
         max_iterations: config.max_iterations,
         context_tokens: config.context_tokens,
         max_output_tokens: config.max_output_tokens,

@@ -131,7 +131,7 @@ async fn standard_loop_passes_the_suite() {
     );
     assert_eq!(
         report.outcomes.len(),
-        14,
+        15,
         "the suite must run every case:\n{}",
         report.describe()
     );
@@ -192,6 +192,7 @@ fn extension_step_loop() -> UnderTest {
                     inference_hooks: host.loop_config().inference_hooks,
                     steering: host.loop_config().steering,
                     max_turn_tokens: host.config.max_turn_tokens,
+                    max_model_retries: host.config.max_model_retries,
                 },
             );
             supervisor

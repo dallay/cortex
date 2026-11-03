@@ -406,6 +406,8 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             Ending::Cancel | Ending::LifecycleCancel => {
                 assert!(matches!(error, AgentError::Cancelled))
             }
+            // A truncated stream is a retryable inference failure; a provider error is not.
+            Ending::Incomplete => assert!(matches!(error, AgentError::Inference(_))),
             _ => assert!(matches!(error, AgentError::Model(_))),
         }
         assert!(sink
