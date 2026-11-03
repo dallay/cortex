@@ -14,13 +14,15 @@ use huginn_core::{
     hooks::{tool_hooks_id, ToolHook, ToolHooks, ToolHooksService},
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
-    InstructionSource, ModelDelta, ModelProvider, ModelRequest, PreparedAction, Result, Role,
-    Session, SessionInfo, SessionStore, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
+    InstructionSource, Message, ModelDelta, ModelProvider, ModelRequest, PreparedAction, Result,
+    Role, Session, SessionInfo, SessionStore, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
     ToolRegistry,
 };
 use std::{
     collections::VecDeque,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -218,6 +220,12 @@ impl Events {
     }
 }
 
+/// Wraps a host hook as a plugin, for implementations that build their own supervisor
+/// and therefore own the tool-hook registry instead of accepting `LoopConfig::hooks`.
+pub fn hook_plugin(hook: Arc<dyn ToolHook>) -> Box<dyn Plugin> {
+    Box::new(HookPlugin(hook))
+}
+
 struct HookPlugin(Arc<dyn ToolHook>);
 #[async_trait]
 impl Plugin for HookPlugin {
@@ -245,6 +253,7 @@ pub struct Host {
     pub workspace: PathBuf,
     pub target: PathBuf,
     pub config: LoopConfig,
+    hook: Option<Arc<dyn ToolHook>>,
     tools: Arc<dyn ToolRegistry>,
     _dir: tempfile::TempDir,
     _supervisor: Supervisor,
@@ -284,8 +293,10 @@ impl Host {
         supervisor
             .register(Box::new(composition::HooksPlugin(Arc::default())))
             .unwrap();
-        if let Some(hook) = hook {
-            supervisor.register(Box::new(HookPlugin(hook))).unwrap();
+        if let Some(hook) = &hook {
+            supervisor
+                .register(Box::new(HookPlugin(hook.clone())))
+                .unwrap();
         }
         supervisor.start().await.unwrap();
         let hooks = supervisor
@@ -302,6 +313,7 @@ impl Host {
             workspace,
             target,
             config: LoopConfig::default(),
+            hook,
             tools,
             _dir: dir,
             _supervisor: supervisor,
@@ -326,6 +338,11 @@ impl Host {
     }
     pub fn instructions(&self) -> Arc<dyn InstructionSource> {
         Arc::new(Instructions(""))
+    }
+    /// The hook this host expects to be enforced: `LoopConfig::hooks` for a loop that
+    /// takes the registry, `hook_plugin` for a loop that composes its own supervisor.
+    pub fn hook(&self) -> Option<Arc<dyn ToolHook>> {
+        self.hook.clone()
     }
 }
 
@@ -357,17 +374,20 @@ impl Capabilities {
     pub const FULL: Self = Self { compaction: true };
 }
 
+/// Building an implementation may need to compose a supervisor, so it may be async.
+pub type BuildFuture<'a> = Pin<Box<dyn Future<Output = Arc<dyn AgentLoop>> + 'a>>;
+
 /// One loop implementation under certification.
 pub struct UnderTest {
     pub name: String,
     pub capabilities: Capabilities,
-    build: Box<dyn Fn(&Host) -> Arc<dyn AgentLoop>>,
+    build: Box<dyn for<'a> Fn(&'a Host) -> BuildFuture<'a>>,
 }
 impl UnderTest {
     pub fn new(
         name: impl Into<String>,
         capabilities: Capabilities,
-        build: impl Fn(&Host) -> Arc<dyn AgentLoop> + 'static,
+        build: impl for<'a> Fn(&'a Host) -> BuildFuture<'a> + 'static,
     ) -> Self {
         Self {
             name: name.into(),
@@ -429,34 +449,84 @@ impl Report {
 /// Runs every case against one implementation. Each case gets a fresh host.
 pub async fn run(under_test: &UnderTest) -> Report {
     let mut report = Report::default();
-    report.outcomes.push(
+    let mut record = |outcome: CaseOutcome| report.outcomes.push(outcome);
+
+    record(
         guarded(
             "streaming_lifecycle_order",
             streaming_lifecycle_order(under_test).await,
         )
         .await,
     );
-    report.outcomes.push(
+    record(
         guarded(
             "cancel_before_model_stream",
             cancel_before_model_stream(under_test).await,
         )
         .await,
     );
-    report.outcomes.push(
+    record(
         guarded(
             "cancel_inside_model_stream",
             cancel_inside_model_stream(under_test).await,
         )
         .await,
     );
-    report.outcomes.push(
+    record(
         guarded(
             "denial_performs_no_effect",
             denial_performs_no_effect(under_test).await,
         )
         .await,
     );
+    record(
+        guarded(
+            "cancel_between_tool_calls",
+            cancel_between_tool_calls(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "effect_unknown_is_not_replayed",
+            effect_unknown_is_not_replayed(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "iteration_limit_is_enforced",
+            iteration_limit_is_enforced(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "hook_block_prevents_effect",
+            hook_block_prevents_effect(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "duplicate_tool_calls_are_rejected",
+            duplicate_tool_calls_are_rejected(under_test).await,
+        )
+        .await,
+    );
+    record(if under_test.capabilities.compaction {
+        guarded(
+            "compaction_keeps_turn_boundary",
+            compaction_keeps_turn_boundary(under_test).await,
+        )
+        .await
+    } else {
+        CaseOutcome {
+            case: "compaction_keeps_turn_boundary",
+            status: Status::Skipped,
+            detail: "the implementation does not declare compaction".into(),
+        }
+    });
     report
 }
 
@@ -477,7 +547,7 @@ async fn guarded(name: &'static str, outcome: std::result::Result<(), String>) -
 
 async fn streaming_lifecycle_order(under_test: &UnderTest) -> std::result::Result<(), String> {
     let host = Host::new(vec![Reply::Text("answer")]).await;
-    let implementation = (under_test.build)(&host);
+    let implementation = (under_test.build)(&host).await;
     let events = Events::default();
     let approval = host.approval(true);
     let mut session = Session::new(host.workspace.clone());
@@ -526,7 +596,7 @@ async fn streaming_lifecycle_order(under_test: &UnderTest) -> std::result::Resul
 
 async fn cancel_before_model_stream(under_test: &UnderTest) -> std::result::Result<(), String> {
     let host = Host::new(vec![Reply::Text("never")]).await;
-    let implementation = (under_test.build)(&host);
+    let implementation = (under_test.build)(&host).await;
     let cancel = CancellationToken::new();
     cancel.cancel();
     let approval = host.approval(true);
@@ -566,7 +636,7 @@ async fn cancel_before_model_stream(under_test: &UnderTest) -> std::result::Resu
 
 async fn cancel_inside_model_stream(under_test: &UnderTest) -> std::result::Result<(), String> {
     let host = Host::new(vec![Reply::Hang]).await;
-    let implementation = (under_test.build)(&host);
+    let implementation = (under_test.build)(&host).await;
     let cancel = CancellationToken::new();
     let trigger = cancel.clone();
     tokio::spawn(async move {
@@ -601,7 +671,7 @@ async fn denial_performs_no_effect(under_test: &UnderTest) -> std::result::Resul
         Reply::Text("done"),
     ])
     .await;
-    let implementation = (under_test.build)(&host);
+    let implementation = (under_test.build)(&host).await;
     let approval = host.approval(false);
     let mut session = Session::new(host.workspace.clone());
     implementation
@@ -633,4 +703,317 @@ async fn denial_performs_no_effect(under_test: &UnderTest) -> std::result::Resul
         return Err("the model must see the denial as the result of that call".into());
     }
     Ok(())
+}
+
+async fn cancel_between_tool_calls(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let cancel = CancellationToken::new();
+    let host = Host::cancelling_after_first_effect(
+        vec![
+            Reply::ToolCalls(vec![write_call("c1"), write_call("c2")]),
+            Reply::Text("never"),
+        ],
+        cancel.clone(),
+    )
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            cancel,
+        )
+        .await;
+    if !matches!(outcome, Err(AgentError::Cancelled)) {
+        return Err(format!(
+            "cancelling mid-turn must fail as Cancelled, got {outcome:?}"
+        ));
+    }
+    if host.effects.executed() != 1 {
+        return Err(format!(
+            "the call after cancellation must not run, executed {} tools",
+            host.effects.executed()
+        ));
+    }
+    Ok(())
+}
+
+async fn effect_unknown_is_not_replayed(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::new(vec![Reply::Text("done")]).await;
+    let implementation = (under_test.build)(&host).await;
+    let mut session = Session::new(host.workspace.clone());
+    session
+        .messages
+        .push(Message::text(Role::User, "earlier request"));
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: vec![write_call("pending")],
+        tool_call_id: None,
+    });
+    host.sessions.save(&session).await.unwrap();
+    let mut resumed = host.sessions.load(&session.id).await.unwrap();
+
+    let approval = host.approval(true);
+    implementation
+        .run(
+            &mut resumed,
+            "continue".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("resuming an interrupted turn failed: {error}"))?;
+
+    if host.effects.executed() != 0 {
+        return Err(format!(
+            "an effect with unknown outcome must never be replayed, executed {} tools",
+            host.effects.executed()
+        ));
+    }
+    let recorded = resumed.messages.iter().any(|message| {
+        message.role == Role::Tool && message.tool_call_id.as_deref() == Some("pending")
+    });
+    if !recorded {
+        return Err(
+            "the unanswered call must be closed with an explicit unknown-outcome result".into(),
+        );
+    }
+    Ok(())
+}
+
+async fn iteration_limit_is_enforced(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::new(vec![
+        Reply::ToolCalls(vec![write_call("c1")]),
+        Reply::ToolCalls(vec![write_call("c2")]),
+        Reply::Text("never"),
+    ])
+    .await;
+    let mut config = host.config.clone();
+    config.max_iterations = 2;
+    let host = Host { config, ..host };
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    match outcome {
+        Err(AgentError::Model(message)) if message.contains("iteration limit") => Ok(()),
+        other => Err(format!(
+            "the iteration limit must stop the turn with a diagnostic, got {other:?}"
+        )),
+    }
+}
+
+async fn hook_block_prevents_effect(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::with_blocking_hook(vec![
+        Reply::ToolCalls(vec![write_call("c1")]),
+        Reply::Text("done"),
+    ])
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("a hook block is a tool error, not a turn failure: {error}"))?;
+
+    if host.effects.prepared() != 0 || host.effects.executed() != 0 {
+        return Err("a blocked call must produce no preview and no effect".into());
+    }
+    if host.approvals.prompts.load(Ordering::SeqCst) != 0 {
+        return Err("a blocked call must not reach the approval prompt".into());
+    }
+    if host.target.exists() {
+        return Err("a blocked call must leave no observable effect".into());
+    }
+    let blocked_visible = session
+        .messages
+        .iter()
+        .any(|message| message.role == Role::Tool && message.content.contains("blocked by hook"));
+    if !blocked_visible {
+        return Err("the model must see the block as the result of that call".into());
+    }
+    Ok(())
+}
+
+async fn duplicate_tool_calls_are_rejected(
+    under_test: &UnderTest,
+) -> std::result::Result<(), String> {
+    let host = Host::new(vec![Reply::ToolCalls(vec![
+        write_call("same"),
+        write_call("same"),
+    ])])
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    if !matches!(&outcome, Err(AgentError::Model(message)) if message.contains("duplicate")) {
+        return Err(format!(
+            "duplicate call ids must be rejected, got {outcome:?}"
+        ));
+    }
+    if host.effects.executed() != 0 {
+        return Err("a rejected response must not execute anything".into());
+    }
+    Ok(())
+}
+
+async fn compaction_keeps_turn_boundary(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::new(vec![Reply::Text("summary")]).await;
+    let implementation = (under_test.build)(&host).await;
+    let mut session = Session::new(host.workspace.clone());
+    session.messages.push(Message::text(Role::User, "first"));
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: vec![write_call("t1")],
+        tool_call_id: None,
+    });
+    session
+        .messages
+        .push(Message::tool("t1".into(), "result".into()));
+    session
+        .messages
+        .push(Message::text(Role::Assistant, "first done"));
+    session.messages.push(Message::text(Role::User, "second"));
+    // A trailing tool-call turn has no answer yet, so it must stay out of the summary.
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: vec![write_call("t2")],
+        tool_call_id: None,
+    });
+
+    implementation
+        .compact(&mut session, &Events::default(), CancellationToken::new())
+        .await
+        .map_err(|error| format!("compaction failed: {error}"))?;
+
+    if session.summary.as_deref() != Some("summary") {
+        return Err(format!(
+            "expected the summary to be stored, got {:?}",
+            session.summary
+        ));
+    }
+    if session.summary_through != 4 {
+        return Err(format!(
+            "compaction must stop at the last complete turn (4), got {}",
+            session.summary_through
+        ));
+    }
+    Ok(())
+}
+
+/// A loop that must fail this suite: it executes effects without asking the host and
+/// replays a call whose outcome is unknown.
+pub mod broken {
+    use super::*;
+
+    pub struct ReplayingLoop {
+        model: Arc<dyn ModelProvider>,
+        tools: Arc<dyn ToolRegistry>,
+    }
+    impl ReplayingLoop {
+        pub fn new(model: Arc<dyn ModelProvider>, tools: Arc<dyn ToolRegistry>) -> Self {
+            Self { model, tools }
+        }
+    }
+
+    #[async_trait]
+    impl AgentLoop for ReplayingLoop {
+        async fn run(
+            &self,
+            session: &mut Session,
+            prompt: String,
+            _approvals: &dyn ApprovalPolicy,
+            events: &dyn EventSink,
+            cancel: CancellationToken,
+        ) -> Result<()> {
+            let turn = session.allocate_turn();
+            session.events.push(Event::TurnStarted {
+                session_id: session.id.clone(),
+                turn,
+            });
+            session.messages.push(Message::text(Role::User, prompt));
+            // Replays anything left unanswered by a previous turn.
+            let pending: Vec<ToolCall> = session
+                .messages
+                .iter()
+                .flat_map(|message| message.tool_calls.clone())
+                .filter(|call| {
+                    !session
+                        .messages
+                        .iter()
+                        .any(|message| message.tool_call_id.as_deref() == Some(call.id.as_str()))
+                })
+                .collect();
+            let mut stream = self
+                .model
+                .stream(
+                    ModelRequest {
+                        messages: session.messages.clone(),
+                        tools: vec![],
+                        max_tokens: 64,
+                    },
+                    cancel.clone(),
+                )
+                .await?;
+            let mut answer = String::new();
+            while let Some(delta) = stream.next().await {
+                if let ModelDelta::Text(text) = delta? {
+                    answer.push_str(&text);
+                }
+            }
+            let context = ToolContext {
+                selected_skills: vec![],
+                workspace: session.workspace.clone(),
+                cancellation: cancel,
+            };
+            for call in pending {
+                let Some(tool) = self.tools.get(&call.name) else {
+                    continue;
+                };
+                // No approval: this is the defect the suite must catch.
+                let action = tool.prepare(&call, &context).await?;
+                tool.execute(action, &context).await?;
+            }
+            session
+                .messages
+                .push(Message::text(Role::Assistant, answer.clone()));
+            events.emit(Event::Text {
+                step: StepId(1),
+                text: answer,
+            });
+            session.events.push(Event::TurnFinished { turn });
+            Ok(())
+        }
+    }
 }
