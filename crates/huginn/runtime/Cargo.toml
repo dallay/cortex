@@ -60,9 +60,9 @@ path = "tests/connection_workers.rs"
 required-features = ["test-hooks"]
 
 [dev-dependencies]
-wit-component = "=0.262.0"
-wit-parser = "=0.262.0"
-wat = "=1.262.0"
+wit-component = "=0.263.0"
+wit-parser = "=0.263.0"
+wat = "=1.263.0"
 huginn-plugin-api = { path = "../plugin-api" }
 tempfile = "=3.27.0"
 axum.workspace = true
