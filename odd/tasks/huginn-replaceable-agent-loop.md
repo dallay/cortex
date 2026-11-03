@@ -33,6 +33,28 @@ Deliverable: the complete epic — a functional agent loop whose concrete strate
 | T10 | Certification matrix and loop contract gap list in `docs/huginn/agent-loop-conformance.md` | S3, S11 | inline | (pending) |
 | T11 | Follow-up implementation issues for the remaining epic capabilities, created in GitHub | S11 | inline | (pending) |
 
+## Housekeeping
+
+This machine has limited disk. Measured 2026-11-03: `/` had 42G free of 98G, and this
+worktree occupied **14G, of which 14G is `target/`** (build artifacts, gitignored).
+
+Rules for anyone continuing this feature:
+
+1. `rm -rf target` in this worktree at any time is safe: it costs rebuild time, never
+   work. Do it before handing the session off if space gets tight.
+2. The worktree is disposable. **When this branch is merged to `main`, remove it:**
+
+   ```sh
+   git -C /home/ryuknull/workspaces/cortex worktree remove /home/ryuknull/workspaces/cortex-dallay-720
+   git -C /home/ryuknull/workspaces/cortex branch -d feature/dallay-720-huginnepic-03-replaceable-agent-loop-execution-control
+   ```
+
+   With `-d` (not `-D`) git refuses while unmerged work remains, which is the guard we want.
+3. The primary checkout `/home/ryuknull/workspaces/cortex` still holds 11 unpushed commits
+   and a dirty tree whose `crates/huginn/presentation/src/terminal.rs` and
+   `tests/pty.rs` revert work already merged as `45b6c46`. Do not merge that state; it is
+   the user's local work and not part of this feature.
+
 ## Log
 
 - **L1 — original request (verbatim, DALLAY-720 / #444).** Title: "[HUGINN][EPIC 03] Replaceable Agent Loop & Execution Control". Purpose: "Provide a production-quality agent execution cycle whose concrete strategy can be replaced without changing the kernel." Scope: "* Inference→tool→inference turns and streamed lifecycle events
