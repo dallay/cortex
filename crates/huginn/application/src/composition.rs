@@ -85,6 +85,25 @@ impl Plugin for InstructionsPlugin {
     }
 }
 
+/// Host-owned registry where plugins add restrict-only turn-level hooks.
+pub struct InferenceHooksPlugin(pub Arc<huginn_core::hooks::InferenceHooks>);
+#[async_trait]
+impl Plugin for InferenceHooksPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "core.inference-hooks".into(),
+            provides: vec![huginn_core::hooks::inference_hooks_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(
+            huginn_core::hooks::inference_hooks_id(),
+            huginn_core::hooks::InferenceHooksService(self.0.clone()),
+        )
+    }
+}
+
 /// Host-owned registry where plugins add restrict-only tool hooks.
 pub struct HooksPlugin(pub Arc<ToolHooks>);
 #[async_trait]
@@ -114,12 +133,20 @@ impl Plugin for LoopPlugin {
                 sessions_id(),
                 instructions_id(),
                 tool_hooks_id(),
+                huginn_core::hooks::inference_hooks_id(),
             ],
         }
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         let mut config = self.0.clone();
         config.hooks = Some(ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone());
+        config.inference_hooks = Some(
+            ctx.resolve::<huginn_core::hooks::InferenceHooksService>(
+                &huginn_core::hooks::inference_hooks_id(),
+            )?
+            .0
+            .clone(),
+        );
         let implementation = StandardLoop {
             model: ctx.resolve::<ModelService>(&model_id())?.0.clone(),
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
@@ -310,6 +337,13 @@ impl Plugin for LeasedLoopPlugin {
         let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
         let mut config = self.config.clone();
         config.hooks = Some(ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone());
+        config.inference_hooks = Some(
+            ctx.resolve::<huginn_core::hooks::InferenceHooksService>(
+                &huginn_core::hooks::inference_hooks_id(),
+            )?
+            .0
+            .clone(),
+        );
         let implementation = LeasedAgentLoop {
             model,
             sessions,
@@ -352,6 +386,7 @@ pub async fn build(
     supervisor.register(Box::new(SessionsPlugin(sessions)))?;
     supervisor.register(Box::new(InstructionsPlugin(instructions)))?;
     supervisor.register(Box::new(HooksPlugin(Arc::default())))?;
+    supervisor.register(Box::new(InferenceHooksPlugin(Arc::default())))?;
     supervisor.register(leased_loop_plugin(config))?;
     if let Err(error) = supervisor.start().await {
         supervisor.shutdown().await;

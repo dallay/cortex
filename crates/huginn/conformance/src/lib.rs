@@ -11,7 +11,10 @@ use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_application::{composition, loop_engine::LoopConfig};
 use huginn_core::{
-    hooks::{tool_hooks_id, ToolHook, ToolHooks, ToolHooksService},
+    hooks::{
+        inference_hooks_id, tool_hooks_id, InferenceHook, InferenceHooks, InferenceHooksService,
+        InferenceVerdict, ToolHook, ToolHooks, ToolHooksService,
+    },
     kernel::{Manifest, Plugin, PluginContext, Supervisor},
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
     InstructionSource, Message, ModelDelta, ModelProvider, ModelRequest, PreparedAction, Result,
@@ -242,6 +245,30 @@ impl Plugin for HookPlugin {
     }
 }
 
+/// Wraps a turn-level hook as a plugin, for hosts that own that registry.
+pub fn inference_hook_plugin(hook: Arc<dyn InferenceHook>) -> Box<dyn Plugin> {
+    Box::new(InferenceHookPlugin(hook))
+}
+
+struct InferenceHookPlugin(Arc<dyn InferenceHook>);
+#[async_trait]
+impl Plugin for InferenceHookPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "conformance.inference-hook".into(),
+            provides: vec![],
+            requires: vec![inference_hooks_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let hooks = ctx
+            .resolve::<InferenceHooksService>(&inference_hooks_id())?
+            .0
+            .clone();
+        hooks.register(ctx, "conformance.inference-hook".into(), self.0.clone())
+    }
+}
+
 /// Everything a loop is allowed to receive from the host, plus the effects it must not
 /// reach without a host decision.
 pub struct Host {
@@ -250,10 +277,12 @@ pub struct Host {
     pub sessions: Arc<MemorySessions>,
     pub approvals: Arc<Approvals>,
     pub hooks: Arc<ToolHooks>,
+    pub inference_hooks: Arc<InferenceHooks>,
     pub workspace: PathBuf,
     pub target: PathBuf,
     pub config: LoopConfig,
     hook: Option<Arc<dyn ToolHook>>,
+    inference_hook: Option<Arc<dyn InferenceHook>>,
     tools: Arc<dyn ToolRegistry>,
     _dir: tempfile::TempDir,
     _supervisor: Supervisor,
@@ -261,24 +290,29 @@ pub struct Host {
 
 impl Host {
     pub async fn new(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None).await
+        Self::assemble(script, None, None, None).await
     }
     /// A host whose only hook blocks every write before any preview exists.
     pub async fn with_blocking_hook(script: Vec<Reply>) -> Self {
-        Self::assemble(script, Some(Arc::new(BlockWrites)), None).await
+        Self::assemble(script, Some(Arc::new(BlockWrites)), None, None).await
+    }
+    /// A host whose turn-level hook refuses every model call.
+    pub async fn with_blocking_inference_hook(script: Vec<Reply>) -> Self {
+        Self::assemble(script, None, None, Some(Arc::new(BlockModelCalls))).await
     }
     /// A host that cancels the turn from inside the first executed effect.
     pub async fn cancelling_after_first_effect(
         script: Vec<Reply>,
         cancel: CancellationToken,
     ) -> Self {
-        Self::assemble(script, None, Some(cancel)).await
+        Self::assemble(script, None, Some(cancel), None).await
     }
 
     async fn assemble(
         script: Vec<Reply>,
         hook: Option<Arc<dyn ToolHook>>,
         cancel_after_execute: Option<CancellationToken>,
+        inference_hook: Option<Arc<dyn InferenceHook>>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().to_path_buf();
@@ -293,14 +327,27 @@ impl Host {
         supervisor
             .register(Box::new(composition::HooksPlugin(Arc::default())))
             .unwrap();
+        supervisor
+            .register(Box::new(composition::InferenceHooksPlugin(Arc::default())))
+            .unwrap();
         if let Some(hook) = &hook {
             supervisor
                 .register(Box::new(HookPlugin(hook.clone())))
                 .unwrap();
         }
+        if let Some(hook) = &inference_hook {
+            supervisor
+                .register(Box::new(InferenceHookPlugin(hook.clone())))
+                .unwrap();
+        }
         supervisor.start().await.unwrap();
         let hooks = supervisor
             .resolve::<ToolHooksService>(&tool_hooks_id())
+            .unwrap()
+            .0
+            .clone();
+        let inference_hooks = supervisor
+            .resolve::<InferenceHooksService>(&inference_hooks_id())
             .unwrap()
             .0
             .clone();
@@ -310,10 +357,12 @@ impl Host {
             sessions: Arc::new(MemorySessions::default()),
             approvals: Arc::new(Approvals::default()),
             hooks,
+            inference_hooks,
             workspace,
             target,
             config: LoopConfig::default(),
             hook,
+            inference_hook,
             tools,
             _dir: dir,
             _supervisor: supervisor,
@@ -327,6 +376,7 @@ impl Host {
     pub fn loop_config(&self) -> LoopConfig {
         LoopConfig {
             hooks: Some(self.hooks.clone()),
+            inference_hooks: Some(self.inference_hooks.clone()),
             ..self.config.clone()
         }
     }
@@ -343,6 +393,24 @@ impl Host {
     /// takes the registry, `hook_plugin` for a loop that composes its own supervisor.
     pub fn hook(&self) -> Option<Arc<dyn ToolHook>> {
         self.hook.clone()
+    }
+    /// The turn-level hook this host expects to be enforced.
+    pub fn inference_hook(&self) -> Option<Arc<dyn InferenceHook>> {
+        self.inference_hook.clone()
+    }
+}
+
+/// A hook that refuses every model call, so no request is made.
+struct BlockModelCalls;
+#[async_trait]
+impl InferenceHook for BlockModelCalls {
+    async fn before(
+        &self,
+        _: huginn_core::TurnId,
+        _: StepId,
+        _: &ToolContext,
+    ) -> Result<InferenceVerdict> {
+        Ok(InferenceVerdict::Block("model calls are disabled".into()))
     }
 }
 
@@ -511,6 +579,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         guarded(
             "duplicate_tool_calls_are_rejected",
             duplicate_tool_calls_are_rejected(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "inference_hook_blocks_the_call",
+            inference_hook_blocks_the_call(under_test).await,
         )
         .await,
     );
@@ -1018,4 +1093,41 @@ pub mod broken {
             Ok(())
         }
     }
+}
+
+async fn inference_hook_blocks_the_call(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::with_blocking_inference_hook(vec![Reply::Text("never")]).await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    match &outcome {
+        Err(AgentError::Model(message)) if message.contains("blocked by hook") => {}
+        other => {
+            return Err(format!(
+                "a turn-level block must end the turn with a diagnostic, got {other:?}"
+            ))
+        }
+    }
+    if host.script.calls() != 0 {
+        return Err(format!(
+            "a blocked step must not reach the model, it was called {} times",
+            host.script.calls()
+        ));
+    }
+    let audited = session.events.iter().any(|event| {
+        matches!(event, Event::InferenceBlocked { hook, .. } if hook == "conformance.inference-hook")
+    });
+    if !audited {
+        return Err("the block must be recorded as an auditable event".into());
+    }
+    Ok(())
 }

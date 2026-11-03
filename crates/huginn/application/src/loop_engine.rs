@@ -41,6 +41,8 @@ pub struct LoopConfig {
     pub skills: Option<Arc<dyn crate::skills::SkillLoader>>,
     /// Live, generation-owned registry; plugins may add hooks after the loop starts.
     pub hooks: Option<Arc<ToolHooks>>,
+    /// Turn-level hooks around the model call, same ownership rules.
+    pub inference_hooks: Option<Arc<huginn_core::hooks::InferenceHooks>>,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -50,6 +52,7 @@ impl Default for LoopConfig {
         Self {
             skills: None,
             hooks: None,
+            inference_hooks: None,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -87,6 +90,12 @@ pub(crate) async fn skill_commands(
         .map(|entry| (format!("/skill:{}", entry.name), entry.description.clone()))
         .collect())
 }
+/// Host-owned decision points for a whole turn.
+struct TurnHost<'a> {
+    approvals: &'a dyn ApprovalPolicy,
+    sink: &'a dyn EventSink,
+}
+
 /// Host-facing I/O and identity for one model call inside a turn.
 ///
 /// Bundling it keeps every event a step emits on the same identity and the same host
@@ -487,11 +496,12 @@ impl<'a> LoopExecution<'a> {
         model: Result<Option<Arc<dyn ModelProvider>>>,
         session: &mut Session,
         input: (String, &[String], Option<crate::skills::SkillCatalog>),
-        approvals: &dyn ApprovalPolicy,
-        sink: &dyn EventSink,
+        scope: TurnHost<'_>,
         cancel: CancellationToken,
+        turn: huginn_core::TurnId,
     ) -> Result<()> {
         let (prompt, selected, catalog_snapshot) = input;
+        let TurnHost { approvals, sink } = scope;
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
@@ -556,7 +566,38 @@ impl<'a> LoopExecution<'a> {
                     sink,
                 )
                 .await?;
-            let response = self
+            let hook_context = ToolContext {
+                selected_skills: scope.selected.to_vec(),
+                workspace: session.workspace.clone(),
+                cancellation: scope.cancel.clone(),
+            };
+            // Turn-level hooks run before the request exists: a block costs no call.
+            if let Some(hooks) = &self.config.inference_hooks {
+                let blocked = tokio::select! {
+                    biased;
+                    _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
+                    _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                    blocked = hooks.before(turn, scope.step, &hook_context) => blocked,
+                };
+                if let Some(blocked) = blocked {
+                    self.record(
+                        session,
+                        Event::InferenceBlocked {
+                            turn,
+                            step: scope.step,
+                            hook: blocked.hook.clone(),
+                            reason: blocked.reason.clone(),
+                        },
+                        scope.sink,
+                    )
+                    .await?;
+                    return Err(AgentError::Model(format!(
+                        "model call blocked by hook {}: {}",
+                        blocked.hook, blocked.reason
+                    )));
+                }
+            }
+            let mut response = self
                 .collect_response(
                     model,
                     ModelRequest {
@@ -568,6 +609,27 @@ impl<'a> LoopExecution<'a> {
                     &scope,
                 )
                 .await?;
+            if let Some(hooks) = &self.config.inference_hooks {
+                let notes = tokio::select! {
+                    biased;
+                    _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
+                    _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                    notes = hooks.after(turn, scope.step, &response, &hook_context) => notes,
+                };
+                if !notes.is_empty() {
+                    let budget = crate::output::MAX_OUTPUT_BYTES / 4;
+                    let mut annotations = String::new();
+                    for note in notes {
+                        annotations.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                        if annotations.len() > budget {
+                            annotations =
+                                crate::output::bounded_text_with_limit(annotations, budget);
+                            break;
+                        }
+                    }
+                    response.content.push_str(&annotations);
+                }
+            }
             let mut ids: BTreeSet<_> = session
                 .messages
                 .iter()
@@ -829,9 +891,12 @@ impl LoopExecution<'_> {
                 model,
                 session,
                 (prompt, selected, catalog_snapshot),
-                approvals,
-                events,
+                TurnHost {
+                    approvals,
+                    sink: events,
+                },
                 cancellation,
+                turn,
             )
             .await;
         match &result {

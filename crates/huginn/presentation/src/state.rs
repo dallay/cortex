@@ -641,6 +641,9 @@ impl UiState {
             Event::Compacted { .. } => self
                 .status
                 .set_notice("Context compacted; originals retained".into()),
+            Event::InferenceBlocked { hook, reason, .. } => self
+                .status
+                .set_diagnostic(format!("Model call blocked by {hook}: {reason}")),
             Event::Usage {
                 input_tokens,
                 output_tokens,

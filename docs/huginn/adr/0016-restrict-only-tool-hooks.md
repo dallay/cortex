@@ -61,3 +61,24 @@ effects, so any interception point must not become a second approval path.
   `crates/huginn/plugin-api/tests/hooks.rs`.
 - Still open: turn-level hooks, context contributors, plugin-originated
   follow-up messages and a dedicated audit event for blocks.
+
+## Subsequent decision — turn-level inference hooks (2026-11-03)
+
+The follow-up list above named turn-level hooks. They are now implemented with the same
+restrict-only rule:
+
+1. `huginn_core::hooks::InferenceHook` exposes `before(turn, step, ctx)` returning
+   `Continue` or `Block(reason)`, and `after(turn, step, response, ctx)` returning an
+   optional bounded note.
+2. No verdict authorizes anything: `before` can only stop the model call and `after` can
+   only annotate the answer.
+3. The registry is published as `agent:inference-hooks@1` by the host-owned
+   `core.inference-hooks` plugin, generation-owned like tool hooks and with the same
+   per-hook timeout and fail-closed behavior.
+4. A block emits `Event::InferenceBlocked { turn, step, hook, reason }` — the audit event
+   this ADR asked for — and ends the turn with a diagnostic *before* any request is made,
+   so a blocked step costs no model call.
+5. Notes are appended to the model-visible answer inside the same 4 KiB budget.
+
+Evidence: `crates/huginn/conformance` case `inference_hook_blocks_the_call`, which every
+certified loop must pass.

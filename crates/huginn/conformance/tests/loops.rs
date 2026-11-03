@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 use huginn_application::{composition, loop_engine::StandardLoop};
-use huginn_conformance::{broken::ReplayingLoop, hook_plugin, run, Capabilities, UnderTest};
+use huginn_conformance::{
+    broken::ReplayingLoop, hook_plugin, inference_hook_plugin, run, Capabilities, UnderTest,
+};
 use huginn_core::{
     kernel::{SubstitutionPolicy, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, EventSink, LoopService, Result, Session,
@@ -78,8 +80,17 @@ fn leased() -> UnderTest {
             .unwrap();
             // The composition kernel owns the hook registry: a supervisor-based
             // implementation must be given the host hook here, not through the config.
-            if let Some(hook) = host.hook() {
-                supervisor.register(hook_plugin(hook)).unwrap();
+            let tool_hook = host.hook();
+            let inference_hook = host.inference_hook();
+            if let Some(hook) = &tool_hook {
+                supervisor.register(hook_plugin(hook.clone())).unwrap();
+            }
+            if let Some(hook) = &inference_hook {
+                supervisor
+                    .register(inference_hook_plugin(hook.clone()))
+                    .unwrap();
+            }
+            if tool_hook.is_some() || inference_hook.is_some() {
                 supervisor.start().await.unwrap();
             }
             let inner = supervisor
@@ -167,6 +178,7 @@ fn extension_step_loop() -> UnderTest {
                     max_iterations: host.config.max_iterations,
                     max_output_tokens: host.config.max_output_tokens,
                     hooks: host.loop_config().hooks,
+                    inference_hooks: host.loop_config().inference_hooks,
                 },
             );
             supervisor

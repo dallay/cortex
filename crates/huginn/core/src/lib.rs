@@ -201,6 +201,13 @@ pub enum Event {
     Compacted {
         through: usize,
     },
+    /// A turn-level hook refused the model call. No request was made.
+    InferenceBlocked {
+        turn: TurnId,
+        step: StepId,
+        hook: String,
+        reason: String,
+    },
     TurnFinished {
         #[serde(default)]
         turn: TurnId,

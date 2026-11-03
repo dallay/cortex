@@ -14,7 +14,7 @@ use huginn_plugin_api::{
         ModelRequest, PreparedAction, Role, Session, SessionStore, StepId, Tool, ToolCall,
         ToolContext, ToolDefinition, ToolRegistry,
     },
-    v1::hooks::ToolHooks,
+    v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
 };
 use std::{collections::BTreeSet, sync::Arc};
@@ -25,6 +25,7 @@ pub struct StepLoopConfig {
     pub max_iterations: usize,
     pub max_output_tokens: u32,
     pub hooks: Option<Arc<ToolHooks>>,
+    pub inference_hooks: Option<Arc<InferenceHooks>>,
 }
 impl Default for StepLoopConfig {
     fn default() -> Self {
@@ -32,6 +33,7 @@ impl Default for StepLoopConfig {
             max_iterations: 20,
             max_output_tokens: 4096,
             hooks: None,
+            inference_hooks: None,
         }
     }
 }
@@ -273,6 +275,7 @@ impl StepLoop {
         approvals: &dyn ApprovalPolicy,
         sink: &dyn EventSink,
         cancel: CancellationToken,
+        turn: huginn_plugin_api::v1::agent::TurnId,
     ) -> Result<()> {
         Self::recover(session);
         session.messages.push(Message::text(Role::User, prompt));
@@ -291,7 +294,31 @@ impl StepLoop {
                 ),
             )];
             context.extend(session.messages.iter().cloned());
-            let response = self
+            let hook_context = ToolContext {
+                selected_skills: vec![],
+                workspace: session.workspace.clone(),
+                cancellation: cancel.clone(),
+            };
+            if let Some(hooks) = &self.config.inference_hooks {
+                if let Some(blocked) = hooks.before(turn, step, &hook_context).await {
+                    self.record(
+                        session,
+                        Event::InferenceBlocked {
+                            turn,
+                            step,
+                            hook: blocked.hook.clone(),
+                            reason: blocked.reason.clone(),
+                        },
+                        sink,
+                    )
+                    .await?;
+                    return Err(AgentError::Model(format!(
+                        "model call blocked by hook {}: {}",
+                        blocked.hook, blocked.reason
+                    )));
+                }
+            }
+            let mut response = self
                 .collect(
                     context,
                     self.tools.definitions(),
@@ -300,6 +327,16 @@ impl StepLoop {
                     cancel.clone(),
                 )
                 .await?;
+            if let Some(hooks) = &self.config.inference_hooks {
+                let notes = hooks.after(turn, step, &response, &hook_context).await;
+                if !notes.is_empty() {
+                    let mut annotations = String::new();
+                    for note in notes {
+                        annotations.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                    }
+                    response.content.push_str(&annotations);
+                }
+            }
 
             let mut seen: BTreeSet<String> = session
                 .messages
@@ -375,7 +412,7 @@ impl AgentLoop for StepLoop {
         )
         .await?;
         let result = self
-            .turn(session, prompt, approvals, events, cancellation)
+            .turn(session, prompt, approvals, events, cancellation, turn)
             .await;
         match &result {
             Ok(()) => {

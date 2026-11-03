@@ -20,8 +20,9 @@ pub use workflow::{Field, FieldKind, FormInput, Workflow, WorkflowFuture, Workfl
 pub mod hooks {
     pub use huginn_core::{
         hooks::{
-            tool_hooks_id, Blocked, Note, ToolHook, ToolHooks, ToolHooksService, ToolOutcome,
-            ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
+            inference_hooks_id, tool_hooks_id, Blocked, InferenceHook, InferenceHooks,
+            InferenceHooksService, InferenceVerdict, Note, ToolHook, ToolHooks, ToolHooksService,
+            ToolOutcome, ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
         },
         ToolCall, ToolContext,
     };

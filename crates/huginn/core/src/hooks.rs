@@ -63,12 +63,12 @@ pub struct Note {
 
 pub struct ToolHooksService(pub Arc<ToolHooks>);
 
-struct Entry {
+struct Entry<H> {
     owner: Activation,
-    hook: Arc<dyn ToolHook>,
+    hook: H,
 }
 pub struct ToolHooks {
-    entries: Mutex<BTreeMap<String, Entry>>,
+    entries: Mutex<BTreeMap<String, Entry<Arc<dyn ToolHook>>>>,
     timeout: Duration,
 }
 impl Default for ToolHooks {
@@ -124,7 +124,7 @@ impl ToolHooks {
             timeout,
         }
     }
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Entry>> {
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Entry<Arc<dyn ToolHook>>>> {
         self.entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -211,6 +211,194 @@ impl ToolHooks {
         let mut notes = vec![];
         for (hook, implementation) in self.active() {
             let text = match self.guarded(implementation.after(call, outcome, ctx)).await {
+                Ok(Some(text)) => sanitize(&text),
+                Ok(None) => continue,
+                Err(error) => sanitize(&format!("hook failed: {error}")),
+            };
+            if !text.is_empty() {
+                notes.push(Note { hook, text });
+            }
+        }
+        notes
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Turn-level (inference) hooks: restrict-only, like tool hooks, but around the
+// model call instead of a tool call. ADR-0016 records the decision.
+// ---------------------------------------------------------------------------
+
+pub fn inference_hooks_id() -> ServiceId {
+    ServiceId::new("agent:inference-hooks", 1)
+}
+
+/// A turn-level verdict. Neither arm authorizes anything: a hook can only stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InferenceVerdict {
+    Continue,
+    Block(String),
+}
+
+#[async_trait]
+pub trait InferenceHook: Send + Sync {
+    /// Runs immediately before the model call of `step`. A block means no call is made.
+    async fn before(
+        &self,
+        _turn: crate::TurnId,
+        _step: crate::StepId,
+        _ctx: &ToolContext,
+    ) -> Result<InferenceVerdict> {
+        Ok(InferenceVerdict::Continue)
+    }
+
+    /// Runs after the response was received and before any tool is dispatched.
+    /// A note is appended to the model-visible answer.
+    async fn after(
+        &self,
+        _turn: crate::TurnId,
+        _step: crate::StepId,
+        _response: &crate::Message,
+        _ctx: &ToolContext,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+pub struct InferenceHooksService(pub Arc<InferenceHooks>);
+
+struct InferenceCleanup {
+    registry: Weak<InferenceHooks>,
+    id: String,
+    generation: u64,
+}
+impl Drop for InferenceCleanup {
+    fn drop(&mut self) {
+        if let Some(registry) = self.registry.upgrade() {
+            let mut entries = registry.lock();
+            if entries
+                .get(&self.id)
+                .is_some_and(|entry| entry.owner.generation() == self.generation)
+            {
+                entries.remove(&self.id);
+            }
+        }
+    }
+}
+
+/// Live registry owned by plugin generations, like [`ToolHooks`].
+pub struct InferenceHooks {
+    entries: Mutex<BTreeMap<String, Entry<Arc<dyn InferenceHook>>>>,
+    timeout: Duration,
+}
+impl Default for InferenceHooks {
+    fn default() -> Self {
+        Self::with_timeout(DEFAULT_HOOK_TIMEOUT)
+    }
+}
+impl InferenceHooks {
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            entries: Mutex::default(),
+            timeout,
+        }
+    }
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Entry<Arc<dyn InferenceHook>>>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Reserves the id immediately; the hook runs only after activation commits.
+    pub fn register(
+        self: &Arc<Self>,
+        ctx: &mut PluginContext,
+        id: String,
+        hook: Arc<dyn InferenceHook>,
+    ) -> Result<()> {
+        if !Arc::ptr_eq(
+            self,
+            &ctx.resolve::<InferenceHooksService>(&inference_hooks_id())?
+                .0,
+        ) {
+            return Err(AgentError::Composition(
+                "inference hooks service does not match declared dependency".into(),
+            ));
+        }
+        if !identifier(&id) {
+            return Err(AgentError::Composition("invalid inference hook id".into()));
+        }
+        let mut entries = self.lock();
+        if entries.contains_key(&id) {
+            return Err(AgentError::Composition(format!(
+                "inference hook collision: {id}"
+            )));
+        }
+        entries.insert(
+            id.clone(),
+            Entry {
+                owner: ctx.activation(),
+                hook,
+            },
+        );
+        drop(entries);
+        ctx.own_resource(InferenceCleanup {
+            registry: Arc::downgrade(self),
+            id,
+            generation: ctx.generation(),
+        });
+        Ok(())
+    }
+    /// Committed hook ids in evaluation order.
+    pub fn ids(&self) -> Vec<String> {
+        self.active().into_iter().map(|(id, _)| id).collect()
+    }
+    fn active(&self) -> Vec<(String, Arc<dyn InferenceHook>)> {
+        self.lock()
+            .iter()
+            .filter(|(_, entry)| entry.owner.is_active())
+            .map(|(id, entry)| (id.clone(), entry.hook.clone()))
+            .collect()
+    }
+    async fn guarded<T>(&self, future: impl Future<Output = Result<T>>) -> Result<T> {
+        match tokio::time::timeout(self.timeout, AssertUnwindSafe(future).catch_unwind()).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(AgentError::Model("inference hook panicked".into())),
+            Err(_) => Err(AgentError::Model(format!(
+                "inference hook timed out after {:?}",
+                self.timeout
+            ))),
+        }
+    }
+    /// First block in id order wins; a failing hook blocks (fail closed).
+    pub async fn before(
+        &self,
+        turn: crate::TurnId,
+        step: crate::StepId,
+        ctx: &ToolContext,
+    ) -> Option<Blocked> {
+        for (hook, implementation) in self.active() {
+            let reason = match self.guarded(implementation.before(turn, step, ctx)).await {
+                Ok(InferenceVerdict::Continue) => continue,
+                Ok(InferenceVerdict::Block(reason)) => sanitize(&reason),
+                Err(error) => sanitize(&format!("hook failed: {error}")),
+            };
+            return Some(Blocked { hook, reason });
+        }
+        None
+    }
+    /// Collects bounded notes in id order.
+    pub async fn after(
+        &self,
+        turn: crate::TurnId,
+        step: crate::StepId,
+        response: &crate::Message,
+        ctx: &ToolContext,
+    ) -> Vec<Note> {
+        let mut notes = vec![];
+        for (hook, implementation) in self.active() {
+            let text = match self
+                .guarded(implementation.after(turn, step, response, ctx))
+                .await
+            {
                 Ok(Some(text)) => sanitize(&text),
                 Ok(None) => continue,
                 Err(error) => sanitize(&format!("hook failed: {error}")),

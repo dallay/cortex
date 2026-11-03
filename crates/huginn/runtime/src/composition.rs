@@ -1,7 +1,7 @@
 //! Adapter composition. The application kernel contracts are re-exported for compatibility.
 pub use huginn_application::composition::{
-    instructions_id, loop_id, model_id, sessions_id, tools_id, HooksPlugin, InstructionsPlugin,
-    LoopPlugin, ModelPlugin, SessionsPlugin, ToolsPlugin,
+    instructions_id, loop_id, model_id, sessions_id, tools_id, HooksPlugin, InferenceHooksPlugin,
+    InstructionsPlugin, LoopPlugin, ModelPlugin, SessionsPlugin, ToolsPlugin,
 };
 use huginn_application::{composition::leased_loop_plugin, loop_engine::LoopConfig};
 use huginn_core::{kernel::Supervisor, ModelProvider, Result, SessionStore, ToolRegistry};
@@ -123,6 +123,7 @@ async fn build_native_plugin(
         crate::instructions::FilesystemInstructions,
     ))))?;
     supervisor.register(Box::new(HooksPlugin(Arc::default())))?;
+    supervisor.register(Box::new(InferenceHooksPlugin(Arc::default())))?;
     if let Some(guards) = guards {
         supervisor.register(Box::new(huginn_guards::GuardsPlugin(guards)))?;
     }

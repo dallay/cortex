@@ -126,6 +126,9 @@ impl EventSink for Output {
                 ..
             } => eprintln!("\nTool failed: {}", safe(&output)),
             Event::Compacted { .. } => eprintln!("\nContext compacted; original history retained."),
+            Event::InferenceBlocked { hook, reason, .. } => {
+                eprintln!("\nModel call blocked by {}: {}", safe(&hook), safe(&reason))
+            }
             Event::TurnFinished { .. } => println!(),
             Event::TurnStarted { .. }
             | Event::ApprovalRequested { .. }
