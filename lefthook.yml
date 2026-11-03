@@ -38,6 +38,9 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
+    ggshield:
+      run: ggshield secret scan pre-push
+
     clippy:
       run: cargo clippy --workspace --all-targets -- -D warnings
 
