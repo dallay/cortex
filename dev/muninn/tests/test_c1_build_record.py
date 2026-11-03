@@ -25,7 +25,7 @@ class BuildMaterialsTests(unittest.TestCase):
             (path / 'source.rs').write_bytes(b'fixture')
 
     def test_external_and_build_control_materials_are_bound(self):
-        required_files = {'docs/muninn/evidence/artifact-lock.json',
+        required_files = {'dev/muninn/fixtures/artifact-lock.json',
                           'dev/muninn/c1_build_record.py', 'dev/muninn/c1_provenance.py',
                           '.github/workflows/ci.yml'}
         self.assertTrue(required_files <= set(c1_build_record.FILES))
@@ -67,7 +67,7 @@ class BuildMaterialsTests(unittest.TestCase):
             'Cargo.toml',
             'Cargo.lock',
             'rust-toolchain.toml',
-            'docs/muninn/evidence/artifact-lock.json',
+            'dev/muninn/fixtures/artifact-lock.json',
             'docs/muninn/specs/tck-baseline.csv',
             '.github/workflows/ci.yml',
             '.agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl',
@@ -96,11 +96,11 @@ class BuildMaterialsTests(unittest.TestCase):
     def test_symlinked_file_ancestor_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'root'
-            external = Path(directory) / 'external-docs'
+            external = Path(directory) / 'external-control'
             root.mkdir()
             external.mkdir()
             self.create_complete_root(root)
-            (root / 'docs').rename(external / 'docs')
-            (root / 'docs').symlink_to(external / 'docs', target_is_directory=True)
+            (root / '.github').rename(external / '.github')
+            (root / '.github').symlink_to(external / '.github', target_is_directory=True)
             with self.assertRaises(ValueError):
                 c1_build_record.materials(root)

@@ -39,7 +39,7 @@ SOURCE_FILES = (
     "dev/muninn/c1_build_record.py",
     "dev/muninn/fixtures/minilm-c1-contract-cases.json",
     "dev/muninn/fixtures/minilm-c1-identity-golden.json",
-    "docs/muninn/evidence/artifact-lock.json",
+    "dev/muninn/fixtures/artifact-lock.json",
     "dev/muninn/minilm_tokenizer_reference.py",
     "dev/muninn/requirements-minilm-tokenizer.txt",
     ".github/workflows/ci.yml",

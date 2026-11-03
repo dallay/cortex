@@ -8,7 +8,7 @@ use crate::artifacts::{
     is_lower_hex, load_verified, validate_spec, ArtifactError, VerifiedArtifact,
 };
 
-const PINNED_LOCK: &[u8] = include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json");
+const PINNED_LOCK: &[u8] = include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json");
 pub(crate) const MODEL_ID: &str = "sentence-transformers/all-MiniLM-L6-v2";
 const REQUIRED_FILES: &[&str] = &[
     "config.json",

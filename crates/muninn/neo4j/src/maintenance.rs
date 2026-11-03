@@ -19,7 +19,10 @@ impl Neo4jMaintenance {
 impl GraphMaintenance for Neo4jMaintenance {
     async fn clear_all_data(&self) -> MemoryResult<()> {
         self.client
-            .execute("MATCH (n) DETACH DELETE n", Vec::new())
+            .execute(
+                "MATCH (n) WHERE NOT n:MuninnSchema DETACH DELETE n",
+                Vec::new(),
+            )
             .await
             .map(|_| ())
     }

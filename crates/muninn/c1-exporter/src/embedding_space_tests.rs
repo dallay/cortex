@@ -3,7 +3,7 @@ use super::{EmbeddingSpace, ModelFile, ProvisionedIndex, SpaceError};
 
 fn pinned_space() -> EmbeddingSpace {
     let lock: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     ))
     .unwrap();
     let model = lock["models"]

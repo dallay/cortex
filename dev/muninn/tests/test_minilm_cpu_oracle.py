@@ -305,7 +305,7 @@ class EncodingTests(unittest.TestCase):
 class LockTests(unittest.TestCase):
     def test_lock_authentication_rejects_one_byte_change(self):
         root = Path(__file__).resolve().parents[3]
-        data = (root / "docs/muninn/evidence/artifact-lock.json").read_bytes()
+        data = (root / "dev/muninn/fixtures/artifact-lock.json").read_bytes()
         lock = load_pinned_lock(data)
         self.assertEqual(lock["schema_version"], 1)
         for changed in (data + b" ", bytes([data[0] ^ 1]) + data[1:]):
@@ -341,7 +341,7 @@ class ModuleProfileTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("MUNINN_MINILM_BUNDLE"), "Requires the explicit pinned local bundle")
     def test_pinned_bundle_modules_match_locked_bytes(self):
         root = Path(__file__).resolve().parents[3]
-        lock = load_pinned_lock((root / "docs/muninn/evidence/artifact-lock.json").read_bytes())
+        lock = load_pinned_lock((root / "dev/muninn/fixtures/artifact-lock.json").read_bytes())
         model = next(m for m in lock["models"] if m["id"] == "sentence-transformers/all-MiniLM-L6-v2")
         self.assertEqual(model["revision"], "1110a243fdf4706b3f48f1d95db1a4f5529b4d41")
         artifact = next(f for f in model["files"] if f["path"] == "modules.json")

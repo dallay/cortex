@@ -171,7 +171,7 @@ mod supported {
 
     fn manifest() -> Result<PinnedMiniLmManifest, RunError> {
         PinnedMiniLmManifest::load_pinned(Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .map_err(RunError::Manifest)
     }

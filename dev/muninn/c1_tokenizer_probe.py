@@ -45,7 +45,7 @@ def generate(bundle, corpus_path, labels_path):
     from export_minilm_c1 import read_corpus
     from c1_corpus_draft import validate_labels
 
-    lock = load_pinned_lock((ROOT / 'docs/muninn/evidence/artifact-lock.json').read_bytes())
+    lock = load_pinned_lock((ROOT / 'dev/muninn/fixtures/artifact-lock.json').read_bytes())
     model = next(item for item in lock['models']
                  if item['id'] == 'sentence-transformers/all-MiniLM-L6-v2')
     actual_versions = {name: importlib.metadata.version(name) for name in

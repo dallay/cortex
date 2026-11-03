@@ -31,6 +31,7 @@ pub type Params = Vec<(&'static str, BoltType)>;
 #[derive(Clone)]
 pub struct Neo4jClient {
     graph: Graph,
+    config: neo4rs::Config,
 }
 
 impl Neo4jClient {
@@ -46,12 +47,23 @@ impl Neo4jClient {
         let neo4j_config = builder
             .build()
             .map_err(|err| MemoryError::storage(format!("invalid Neo4j configuration: {err}")))?;
-        let graph = Graph::connect(neo4j_config)
+        let graph = Graph::connect(neo4j_config.clone())
             .await
             .map_err(|err| MemoryError::storage(format!("cannot connect to Neo4j: {err}")))?;
-        let client = Self { graph };
+        let client = Self {
+            graph,
+            config: neo4j_config,
+        };
         client.execute("RETURN 1 AS ok", Vec::new()).await?;
         Ok(client)
+    }
+
+    /// Dedicated pool for schema coordination. DDL uses the ordinary pool, so
+    /// holding the lock cannot exhaust even a one-connection application pool.
+    pub(crate) async fn schema_coordinator(&self) -> MemoryResult<Graph> {
+        Graph::connect(self.config.clone())
+            .await
+            .map_err(storage_error)
     }
 
     /// Run a statement and collect every row.

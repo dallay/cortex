@@ -124,7 +124,7 @@
   ],
   "frozen_files": [
     {
-      "path": "docs/muninn/evidence/artifact-lock.json",
+      "path": "dev/muninn/fixtures/artifact-lock.json",
       "sha256": "c0a09354337251cd7e35b81e0f505a46bf4086edb6c5506bd34b4df9259a9794"
     },
     {

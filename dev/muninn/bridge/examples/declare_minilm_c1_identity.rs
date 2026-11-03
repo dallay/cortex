@@ -12,7 +12,7 @@ fn main() -> Result<(), String> {
         return Err("usage: declare_minilm_c1_identity <explicit-numeric-contract-version>".into());
     }
     let manifest = PinnedMiniLmManifest::load_pinned(
-        &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+        &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
     )
     .map_err(|e| format!("{e:?}"))?;
     let declaration = minilm_c1_identity::declare(&manifest, Some(&args[0]))?;

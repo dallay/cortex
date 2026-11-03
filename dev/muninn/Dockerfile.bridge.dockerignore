@@ -10,8 +10,7 @@
 !third_party/candle-core/**
 !docs/
 !docs/muninn/
-!docs/muninn/evidence/
-!docs/muninn/evidence/artifact-lock.json
+!dev/muninn/fixtures/artifact-lock.json
 !docs/muninn/licenses/
 !docs/muninn/licenses/candle-0.11.0-MIT.txt
 !docs/muninn/licenses/CANDLE-NOTICE.md

@@ -95,7 +95,7 @@ class C0FixtureTests(unittest.TestCase):
             path = ROOT / record["path"]
             self.assertEqual(digest(path), record["sha256"], str(path))
         self.assertEqual(self.manifest["status"], "preparation_config_not_runtime_evidence")
-        lock = json.loads((ROOT / "docs/muninn/evidence/artifact-lock.json").read_text())
+        lock = json.loads((ROOT / "dev/muninn/fixtures/artifact-lock.json").read_text())
         model = next(m for m in lock["models"] if m["id"] == "sentence-transformers/all-MiniLM-L6-v2")
         self.assertEqual(self.manifest["model"]["id"], model["id"])
         self.assertEqual(self.manifest["model"]["revision"], model["revision"])

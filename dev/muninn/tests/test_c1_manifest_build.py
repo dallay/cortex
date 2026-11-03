@@ -17,7 +17,7 @@ class C1ManifestBuildTests(unittest.TestCase):
         (self.root / "crates/muninn/c1-exporter/src").mkdir(parents=True)
         (self.root / "crates/muninn/c1-exporter/examples").mkdir(parents=True)
         (self.root / "third_party/candle-core/src").mkdir(parents=True)
-        (self.root / "docs/muninn/evidence").mkdir(parents=True)
+        (self.root / ".agents/rpi/plan/tasks/muninn-h1-delivery/evidence").mkdir(parents=True)
         for relative in c1_manifest_build.SOURCE_TREES:
             tree = self.root / relative
             tree.mkdir(parents=True, exist_ok=True)
@@ -36,7 +36,7 @@ class C1ManifestBuildTests(unittest.TestCase):
                                                                       encoding="utf-8")
         (self.root / "third_party/candle-core/target").mkdir()
         (self.root / "third_party/candle-core/target/junk.bin").write_bytes(b"junk")
-        (self.root / "docs/muninn/evidence/policy.json").write_text("{}\n", encoding="utf-8")
+        (self.root / ".agents/rpi/plan/tasks/muninn-h1-delivery/evidence/policy.json").write_text("{}\n", encoding="utf-8")
         for name in ("c1_runner.py", "c1_execution.py", "c1_freeze.py"):
             (self.root / "dev/muninn" / name).write_text("# %s\n" % name, encoding="utf-8")
         for relative in c1_manifest_build.SOURCE_FILES:
@@ -49,7 +49,7 @@ class C1ManifestBuildTests(unittest.TestCase):
             "schema_version": 1,
             "state": "frozen_pre_execution",
             "numeric_contract_version": "minilm-cpu-f32-v1",
-            "inputs": [{"path": "docs/muninn/evidence/policy.json", "size": 3,
+            "inputs": [{"path": ".agents/rpi/plan/tasks/muninn-h1-delivery/evidence/policy.json", "size": 3,
                         "sha256": "0" * 64}],
         }), encoding="utf-8")
 
@@ -60,7 +60,7 @@ class C1ManifestBuildTests(unittest.TestCase):
         paths = c1_manifest_build.collect_inputs(self.root, self.prior)
         relatives = {path.relative_to(Path(os.path.realpath(str(self.root)))).as_posix()
                      for path in paths}
-        self.assertIn("docs/muninn/evidence/policy.json", relatives)
+        self.assertIn(".agents/rpi/plan/tasks/muninn-h1-delivery/evidence/policy.json", relatives)
         self.assertIn("Cargo.toml", relatives)
         self.assertIn("Cargo.lock", relatives)
         self.assertIn("rust-toolchain.toml", relatives)
@@ -77,7 +77,7 @@ class C1ManifestBuildTests(unittest.TestCase):
             "schema_version": 1,
             "state": "frozen_pre_execution",
             "numeric_contract_version": "minilm-cpu-f32-v1",
-            "inputs": [{"path": "docs/muninn/evidence/absent.json", "size": 1,
+            "inputs": [{"path": ".agents/rpi/plan/tasks/muninn-h1-delivery/evidence/absent.json", "size": 1,
                         "sha256": "0" * 64}],
         }), encoding="utf-8")
         with self.assertRaises(c1_manifest_build.ManifestError):

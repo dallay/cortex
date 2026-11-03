@@ -27,7 +27,7 @@ class ArtifactTests(unittest.TestCase):
     def test_manifest_does_not_promote_metadata_or_accept_escaping_cache_paths(self):
         lock = load_lock()
         record = lock.file_record("config.json", 2, content=b"{}", cache_file="config.json")
-        manifest = json.loads((Path(__file__).resolve().parents[3]/"docs/muninn/evidence/artifact-lock.json").read_text())
+        manifest = json.loads((Path(__file__).resolve().parents[3]/"dev/muninn/fixtures/artifact-lock.json").read_text())
         lock.validate_manifest(manifest)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -58,7 +58,7 @@ class ArtifactTests(unittest.TestCase):
 
     def test_empty_profile_and_invalid_plugin_receipts_are_rejected(self):
         lock = load_lock()
-        source = json.loads((Path(__file__).resolve().parents[3]/"docs/muninn/evidence/artifact-lock.json").read_text())
+        source = json.loads((Path(__file__).resolve().parents[3]/"dev/muninn/fixtures/artifact-lock.json").read_text())
         for field in ("models", "plugins"):
             changed=copy.deepcopy(source)
             changed[field]=[]

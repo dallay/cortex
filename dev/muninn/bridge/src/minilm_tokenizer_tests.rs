@@ -182,7 +182,7 @@ fn actual_cache_matches_pinned_python_ids_types_and_masks_exactly() {
         std::env::var_os("MUNINN_MINILM_ARTIFACT_ROOT").expect("explicit existing cache root");
     let parent = ArtifactDir::open_root(std::path::Path::new(&root)).expect("safe root");
     let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     )))
     .expect("compiled pin");
     let cache = VerifiedArtifactCache::open(
@@ -203,7 +203,7 @@ fn actual_cache_matches_pinned_python_ids_types_and_masks_exactly() {
     for (key, bytes) in [
         (
             "artifact_lock_sha256",
-            include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json").as_slice(),
+            include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json").as_slice(),
         ),
         (
             "reference_requirements_sha256",
@@ -232,7 +232,7 @@ fn actual_cache_matches_pinned_python_ids_types_and_masks_exactly() {
     );
     assert_eq!(reference["model_forward_executed"], false);
     let identity = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     )))
     .expect("pin for fixture provenance");
     assert_eq!(reference["revision"], identity.revision());

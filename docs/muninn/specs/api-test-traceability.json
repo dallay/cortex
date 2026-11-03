@@ -1,0 +1,1622 @@
+{
+  "entries": [
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.add_message",
+        "class": "ReferenceAdapter",
+        "method": "add_message",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El TCK usa ReferenceAdapter; no ejecuta la API desde un cliente consumidor.",
+        "No cubre todas las opciones de la firma ni implica resultado Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.add_message",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.add_message",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestAddMessage::test_add_message_returns_valid_message"
+      },
+      "test": {
+        "assertion_scope": "Devuelve TCKMessage; ID no nulo; rol/contenido esperados; timestamp presente.",
+        "class": "TestAddMessage",
+        "function": "test_add_message_returns_valid_message",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestAddMessage::test_add_message_returns_valid_message",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.1.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.get_conversation",
+        "class": "ReferenceAdapter",
+        "method": "get_conversation",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El test compara contenido ordenado, no todos los campos del contrato.",
+        "La aprobación histórica corresponde al oráculo adaptado, no a Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.get_conversation",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.get_conversation",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestGetConversation::test_get_conversation_message_order"
+      },
+      "test": {
+        "assertion_scope": "Número de mensajes y contenido en orden de inserción.",
+        "class": "TestGetConversation",
+        "function": "test_get_conversation_message_order",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestGetConversation::test_get_conversation_message_order",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.2.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.search_messages",
+        "class": "ReferenceAdapter",
+        "method": "search_messages",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El test usa threshold=0.0; no cubre ranking, filtros metadata_filters ni threshold predeterminado.",
+        "La aprobación histórica corresponde al oráculo adaptado, no a Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.search_messages",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.search_messages",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestSearchMessages::test_search_messages_respects_limit"
+      },
+      "test": {
+        "assertion_scope": "El número de resultados no excede limit=2.",
+        "class": "TestSearchMessages",
+        "function": "test_search_messages_respects_limit",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestSearchMessages::test_search_messages_respects_limit",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.3.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.list_sessions",
+        "class": "ReferenceAdapter",
+        "method": "list_sessions",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre el backend Bolt y este escenario de conteo.",
+        "La aprobación histórica corresponde al oráculo adaptado, no a Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.list_sessions",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.list_sessions",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestListSessions::test_list_sessions_includes_message_count"
+      },
+      "test": {
+        "assertion_scope": "Tres mensajes de una sesión producen message_count=3.",
+        "class": "TestListSessions",
+        "function": "test_list_sessions_includes_message_count",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestListSessions::test_list_sessions_includes_message_count",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.4.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.clear_session",
+        "class": "ReferenceAdapter",
+        "method": "clear_session",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre el backend Bolt y el aislamiento de este escenario.",
+        "La aprobación histórica corresponde al oráculo adaptado, no a Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.clear_session",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.clear_session",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestClearSession::test_clear_session_preserves_other_sessions"
+      },
+      "test": {
+        "assertion_scope": "Después de limpiar A, A queda vacío y B conserva su mensaje Beta.",
+        "class": "TestClearSession",
+        "function": "test_clear_session_preserves_other_sessions",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestClearSession::test_clear_session_preserves_other_sessions",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.6.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_entity",
+        "class": "ReferenceAdapter",
+        "method": "add_entity",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "ReferenceAdapter desactiva resolución, deduplicación, geocodificación y enriquecimiento.",
+        "La aprobación histórica corresponde al oráculo adaptado, no a Muninn.",
+        "Este caso solo comprueba que el ID no sea nulo; el formato UUID se enlaza por separado con SPEC-3.1.12."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_entity",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_entity",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddEntity::test_add_entity_basic"
+      },
+      "test": {
+        "assertion_scope": "Devuelve TCKEntity; ID no nulo; nombre/tipo y created_at esperados.",
+        "class": "TestAddEntity",
+        "function": "test_add_entity_basic",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddEntity::test_add_entity_basic",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.1.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_entity",
+        "class": "ReferenceAdapter",
+        "method": "add_entity",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El SPEC-3.1.12 declarado por esta prueba todavía no tiene una fila de la matriz; la declaración está en unmapped_declarations.",
+        "El enlace es indirecto por ReferenceAdapter.",
+        "No prueba la implementación Muninn ni el resto de la firma add_entity."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_entity",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_entity",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddEntity::test_add_entity_id_is_uuid"
+      },
+      "test": {
+        "assertion_scope": "La prueba comprueba isinstance(entity.id, UUID).",
+        "class": "TestAddEntity",
+        "function": "test_add_entity_id_is_uuid",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddEntity::test_add_entity_id_is_uuid",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.1.12"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_preference",
+        "class": "ReferenceAdapter",
+        "method": "add_preference",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El caso básico no cubre context; otros argumentos/opciones requieren enlaces separados.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_preference",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_preference",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddPreference::test_add_preference_basic"
+      },
+      "test": {
+        "assertion_scope": "Tipo TCKPreference; ID no nulo; categoría language y preferencia exacta.",
+        "class": "TestAddPreference",
+        "function": "test_add_preference_basic",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddPreference::test_add_preference_basic",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.2.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_fact",
+        "class": "ReferenceAdapter",
+        "method": "add_fact",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre el triple básico; no temporalidad ni variantes de relaciones.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_fact",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_fact",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddFact::test_add_fact_basic"
+      },
+      "test": {
+        "assertion_scope": "Tipo TCKFact; ID no nulo; subject, predicate y object exactos.",
+        "class": "TestAddFact",
+        "function": "test_add_fact_basic",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddFact::test_add_fact_basic",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.3.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.search_entities",
+        "class": "ReferenceAdapter",
+        "method": "search_entities",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "ReferenceAdapter fija threshold=0.0; no cubre ranking ni umbral predeterminado.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.search_entities",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.search_entities",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestSearchEntities::test_search_entities_finds_relevant"
+      },
+      "test": {
+        "assertion_scope": "Resultados no vacíos y el nombre Alice Johnson está presente.",
+        "class": "TestSearchEntities",
+        "function": "test_search_entities_finds_relevant",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestSearchEntities::test_search_entities_finds_relevant",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.4.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.start_trace",
+        "class": "ReferenceAdapter",
+        "method": "start_trace",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "ID solo se comprueba no nulo, no formato UUID.",
+        "ReferenceAdapter fuerza generate_embedding=True; este escenario no valida equivalencia de embeddings.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.start_trace",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.start_trace",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestStartTrace::test_start_trace_basic"
+      },
+      "test": {
+        "assertion_scope": "Tipo TCKReasoningTrace; ID no nulo; sesión/tarea/started_at correctos; completed_at, outcome y success son None.",
+        "class": "TestStartTrace",
+        "function": "test_start_trace_basic",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestStartTrace::test_start_trace_basic",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.1.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.add_step",
+        "class": "ReferenceAdapter",
+        "method": "add_step",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "ReferenceAdapter fuerza generate_embedding=False; no cubre numbering ni campos parciales.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.add_step",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.add_step",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestAddStep::test_add_step_basic"
+      },
+      "test": {
+        "assertion_scope": "Tipo TCKReasoningStep; ID no nulo; trace_id, thought, action y observation exactos.",
+        "class": "TestAddStep",
+        "function": "test_add_step_basic",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestAddStep::test_add_step_basic",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.2.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.record_tool_call",
+        "class": "ReferenceAdapter",
+        "method": "record_tool_call",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre llamada exitosa básica; no result/duration ni estados de fallo.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.record_tool_call",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.record_tool_call",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_basic"
+      },
+      "test": {
+        "assertion_scope": "Tipo TCKToolCall; ID no nulo; tool_name, arguments y status SUCCESS exactos.",
+        "class": "TestRecordToolCall",
+        "function": "test_record_tool_call_basic",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_basic",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.3.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.complete_trace",
+        "class": "ReferenceAdapter",
+        "method": "complete_trace",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre resultado exitoso, no caminos de fallo.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.complete_trace",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.complete_trace",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestCompleteTrace::test_complete_trace_with_outcome"
+      },
+      "test": {
+        "assertion_scope": "Outcome, success=True y completed_at no nulo.",
+        "class": "TestCompleteTrace",
+        "function": "test_complete_trace_with_outcome",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestCompleteTrace::test_complete_trace_with_outcome",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.4.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.get_trace_with_steps",
+        "class": "ReferenceAdapter",
+        "method": "get_trace_with_steps",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No valida todos los campos de los steps ni llamadas de herramientas.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.get_trace_with_steps",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.get_trace_with_steps",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestGetTraceWithSteps::test_get_trace_with_steps"
+      },
+      "test": {
+        "assertion_scope": "Trace presente con ID esperado, dos steps y outcome Done.",
+        "class": "TestGetTraceWithSteps",
+        "function": "test_get_trace_with_steps",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestGetTraceWithSteps::test_get_trace_with_steps",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.5.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.list_traces",
+        "class": "ReferenceAdapter",
+        "method": "list_traces",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "ReferenceAdapter reenvía solo session_id y limit; no cubre since/until/success_only/order/offset.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.list_traces",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.list_traces",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestListTraces::test_list_traces_by_session"
+      },
+      "test": {
+        "assertion_scope": "Dos traces devueltos; cada session_id coincide con SESSION_A.",
+        "class": "TestListTraces",
+        "function": "test_list_traces_by_session",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestListTraces::test_list_traces_by_session",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.6.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.add_message",
+        "class": "ReferenceAdapter",
+        "method": "add_message",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El adapter añade extract_entities=False y convierte metadata falsy a {}.",
+        "Solo verifica dos claves; no metadata anidada ni extensión general.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.add_message",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.add_message",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestAddMessage::test_add_message_with_metadata"
+      },
+      "test": {
+        "assertion_scope": "Metadata source=test y priority=high preservada.",
+        "class": "TestAddMessage",
+        "function": "test_add_message_with_metadata",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestAddMessage::test_add_message_with_metadata",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.1.5"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.get_conversation",
+        "class": "ReferenceAdapter",
+        "method": "get_conversation",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No verifica cuáles mensajes se conservaron ni orden bajo límite.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.get_conversation",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.get_conversation",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestGetConversation::test_get_conversation_with_limit"
+      },
+      "test": {
+        "assertion_scope": "Con limit=2 el resultado contiene exactamente dos mensajes.",
+        "class": "TestGetConversation",
+        "function": "test_get_conversation_with_limit",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestGetConversation::test_get_conversation_with_limit",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.2.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.short_term.clear_session",
+        "class": "ReferenceAdapter",
+        "method": "clear_session",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Pese al nombre del caso, clear_session se llama una sola vez; no demuestra idempotencia de dos llamadas.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.clear_session",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.short_term.clear_session",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_short_term.py::TestClearSession::test_clear_session_idempotent_on_empty"
+      },
+      "test": {
+        "assertion_scope": "Limpiar una sesión vacía no falla y la conversación resultante tiene cero mensajes.",
+        "class": "TestClearSession",
+        "function": "test_clear_session_idempotent_on_empty",
+        "nodeid": "tck/tests/v1/test_short_term.py::TestClearSession::test_clear_session_idempotent_on_empty",
+        "repository_path": "tck/tests/v1/test_short_term.py",
+        "source_sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da",
+        "spec_id": "SPEC-2.6.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_preference",
+        "class": "ReferenceAdapter",
+        "method": "add_preference",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No cubre las demás opciones de add_preference.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_preference",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_preference",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddPreference::test_add_preference_with_context"
+      },
+      "test": {
+        "assertion_scope": "Con context=work environment, el resultado devuelve exactamente ese contexto.",
+        "class": "TestAddPreference",
+        "function": "test_add_preference_with_context",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddPreference::test_add_preference_with_context",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.2.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_fact",
+        "class": "ReferenceAdapter",
+        "method": "add_fact",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "SPEC-3.3.3 permanece como declaración upstream sin fila del inventario.",
+        "No cubre otras opciones del contrato.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_fact",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.add_fact",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestAddFact::test_add_fact_special_characters"
+      },
+      "test": {
+        "assertion_scope": "El subject Café 世界 y el object París se conservan exactamente; el caso no aserta predicate.",
+        "class": "TestAddFact",
+        "function": "test_add_fact_special_characters",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestAddFact::test_add_fact_special_characters",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.3.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.add_step",
+        "class": "ReferenceAdapter",
+        "method": "add_step",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El adapter fuerza generate_embedding=False.",
+        "No cubre observation-only ni numbering.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.add_step",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.add_step",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestAddStep::test_add_step_partial_fields"
+      },
+      "test": {
+        "assertion_scope": "Thought-only conserva thought y action=None; action-only conserva action y thought=None.",
+        "class": "TestAddStep",
+        "function": "test_add_step_partial_fields",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestAddStep::test_add_step_partial_fields",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.2.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.record_tool_call",
+        "class": "ReferenceAdapter",
+        "method": "record_tool_call",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre el estado FAILURE; no los demás estados/resultados.",
+        "El adapter serializa status enum a value y lo reconstruye.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.record_tool_call",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.record_tool_call",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_failure_status"
+      },
+      "test": {
+        "assertion_scope": "Estado FAILURE y error Connection refused se conservan.",
+        "class": "TestRecordToolCall",
+        "function": "test_record_tool_call_failure_status",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_failure_status",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.3.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.list_traces",
+        "class": "ReferenceAdapter",
+        "method": "list_traces",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "La aserción permite menos de dos; no valida IDs ni orden.",
+        "El adapter solo reenvía session_id y limit.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.list_traces",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.list_traces",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestListTraces::test_list_traces_respects_limit"
+      },
+      "test": {
+        "assertion_scope": "Tras crear cinco traces con limit=2, el resultado tiene como máximo dos.",
+        "class": "TestListTraces",
+        "function": "test_list_traces_respects_limit",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestListTraces::test_list_traces_respects_limit",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.6.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.search_preferences",
+        "class": "ReferenceAdapter",
+        "method": "search_preferences",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Aserción débil: no comprueba que un resultado contenga Python.",
+        "El adapter no pasa threshold y filtra category localmente.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.search_preferences",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.search_preferences",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_finds_relevant"
+      },
+      "test": {
+        "assertion_scope": "Al consultar \"Python\", la lista no está vacía.",
+        "class": "TestSearchPreferences",
+        "function": "test_search_preferences_finds_relevant",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestSearchPreferences::test_search_preferences_finds_relevant",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.5.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.search_preferences",
+        "class": "ReferenceAdapter",
+        "method": "search_preferences",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Aserción débil y vacua si no hay resultados.",
+        "El adapter no pasa category a la API; filtra resultados localmente.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.search_preferences",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.search_preferences",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_by_category"
+      },
+      "test": {
+        "assertion_scope": "Para cada resultado devuelto, category == language.",
+        "class": "TestSearchPreferences",
+        "function": "test_search_preferences_by_category",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestSearchPreferences::test_search_preferences_by_category",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.5.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.search_preferences",
+        "class": "ReferenceAdapter",
+        "method": "search_preferences",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El adapter no pasa threshold y convierte los resultados a TCKPreference.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.search_preferences",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.search_preferences",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_empty_database"
+      },
+      "test": {
+        "assertion_scope": "En base vacía, results == [].",
+        "class": "TestSearchPreferences",
+        "function": "test_search_preferences_empty_database",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestSearchPreferences::test_search_preferences_empty_database",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.5.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.search_preferences",
+        "class": "ReferenceAdapter",
+        "method": "search_preferences",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Aserción débil: no exige lista vacía ni ausencia de resultados.",
+        "El adapter no pasa threshold.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.search_preferences",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.search_preferences",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_no_match"
+      },
+      "test": {
+        "assertion_scope": "El resultado es una lista para una consulta sin coincidencias.",
+        "class": "TestSearchPreferences",
+        "function": "test_search_preferences_no_match",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestSearchPreferences::test_search_preferences_no_match",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.5.4"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_entity_by_name",
+        "class": "ReferenceAdapter",
+        "method": "get_entity_by_name",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El adapter reenvía name y transforma el resultado TCK.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_entity_by_name",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_entity_by_name",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_found"
+      },
+      "test": {
+        "assertion_scope": "La entidad existe y name == Alice Johnson.",
+        "class": "TestGetEntityByName",
+        "function": "test_get_entity_by_name_found",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_found",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.6.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_entity_by_name",
+        "class": "ReferenceAdapter",
+        "method": "get_entity_by_name",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "El adapter conserva el resultado None.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_entity_by_name",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_entity_by_name",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_not_found"
+      },
+      "test": {
+        "assertion_scope": "La búsqueda de nombre ausente devuelve None.",
+        "class": "TestGetEntityByName",
+        "function": "test_get_entity_by_name_not_found",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_not_found",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.6.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_entity_by_name",
+        "class": "ReferenceAdapter",
+        "method": "get_entity_by_name",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Escenario cross-memory más amplio; la llamada lookup no recibe session_id.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_entity_by_name",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_entity_by_name",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_enriched_across_sessions"
+      },
+      "test": {
+        "assertion_scope": "La entidad encontrada existe y su ID coincide con la entidad original.",
+        "class": "TestCrossMemoryEntityReferences",
+        "function": "test_entity_enriched_across_sessions",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_enriched_across_sessions",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.1.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_entity_by_name",
+        "class": "ReferenceAdapter",
+        "method": "get_entity_by_name",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "La búsqueda API no recibe identidad de la sesión llamante.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_entity_by_name",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_entity_by_name",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_entity_created_by_one_session_visible_to_another"
+      },
+      "test": {
+        "assertion_scope": "La entidad devuelta existe y conserva el ID creado por la otra sesión.",
+        "class": "TestMultiAgentMemorySharing",
+        "function": "test_entity_created_by_one_session_visible_to_another",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_entity_created_by_one_session_visible_to_another",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.5.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_entity_by_name",
+        "class": "ReferenceAdapter",
+        "method": "get_entity_by_name",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "La aserción enlaza un flujo de mayor alcance; lookup no recibe scope de sesión.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_entity_by_name",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_entity_by_name",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_conversations_isolated_but_entities_shared"
+      },
+      "test": {
+        "assertion_scope": "Conversaciones A/B tienen un mensaje distinto; lookup devuelve la entidad compartida con ID original.",
+        "class": "TestMultiAgentMemorySharing",
+        "function": "test_conversations_isolated_but_entities_shared",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_conversations_isolated_but_entities_shared",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.5.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.get_related_entities",
+        "class": "ReferenceAdapter",
+        "method": "get_related_entities",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo cubre resultado vacío, no traversal ni filtros de relaciones.",
+        "Adapter transforma relationship_type en una lista y descarta datos de la relación.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.get_related_entities",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.get_related_entities",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_empty"
+      },
+      "test": {
+        "assertion_scope": "Sin relaciones en la base, related == [].",
+        "class": "TestGetRelatedEntities",
+        "function": "test_get_related_entities_empty",
+        "nodeid": "tck/tests/v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_empty",
+        "repository_path": "tck/tests/v1/test_long_term.py",
+        "source_sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30",
+        "spec_id": "SPEC-3.7.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.get_tool_stats",
+        "class": "ReferenceAdapter",
+        "method": "get_tool_stats",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No comprueba avg_duration_ms ni todos los campos.",
+        "Adapter reenvía tool_name y transforma campos a TCKToolStats.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.get_tool_stats",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.get_tool_stats",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_after_calls"
+      },
+      "test": {
+        "assertion_scope": "Estadísticas incluyen search_entities con total=3, successful=2, failed=1.",
+        "class": "TestGetToolStats",
+        "function": "test_get_tool_stats_after_calls",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_after_calls",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.7.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.get_tool_stats",
+        "class": "ReferenceAdapter",
+        "method": "get_tool_stats",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No compara conteos ni tasa agregada.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.get_tool_stats",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.get_tool_stats",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_multiple_tools"
+      },
+      "test": {
+        "assertion_scope": "Los nombres tool_alpha y tool_beta aparecen en el resultado.",
+        "class": "TestGetToolStats",
+        "function": "test_get_tool_stats_multiple_tools",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_multiple_tools",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.7.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.get_tool_stats",
+        "class": "ReferenceAdapter",
+        "method": "get_tool_stats",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Solo verifica lista vacía.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.get_tool_stats",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.get_tool_stats",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_no_calls"
+      },
+      "test": {
+        "assertion_scope": "Sin llamadas, stats == [].",
+        "class": "TestGetToolStats",
+        "function": "test_get_tool_stats_no_calls",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_no_calls",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.7.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.reasoning.get_tool_stats",
+        "class": "ReferenceAdapter",
+        "method": "get_tool_stats",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "No comprueba avg_duration_ms.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.get_tool_stats",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.reasoning.get_tool_stats",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_success_rate"
+      },
+      "test": {
+        "assertion_scope": "total=4, successful=3, failed=1 y success_rate dentro de 0.01 de 0.75.",
+        "class": "TestGetToolStats",
+        "function": "test_get_tool_stats_success_rate",
+        "nodeid": "tck/tests/v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_success_rate",
+        "repository_path": "tck/tests/v1/test_reasoning.py",
+        "source_sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47",
+        "spec_id": "SPEC-4.7.4"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.merge_duplicate_entities",
+        "class": "ReferenceAdapter",
+        "method": "merge_duplicate_entities",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Aserción débil: no verifica source removal, datos combinados ni relaciones.",
+        "Adapter transforma None a ValueError y devuelve solo el target de la tupla.",
+        "PASS histórico del oráculo adaptado, no Muninn."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.merge_duplicate_entities",
+      "kind": "mapped_reference_test",
+      "link_type": "indirect_via_reference_adapter",
+      "operation": "client.long_term.merge_duplicate_entities",
+      "reference_baseline": {
+        "outcome": "passed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_duplicate_entities"
+      },
+      "test": {
+        "assertion_scope": "El ID de la entidad mergeada coincide con el ID de la entidad target alice1.",
+        "class": "TestMergeDuplicateEntities",
+        "function": "test_merge_duplicate_entities",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_duplicate_entities",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.3.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_end_to_end_conversation_with_entities_and_reasoning"
+      },
+      "test": {
+        "assertion_scope": "En setup se llama adapter.add_relationship; la conversión falla antes de las aserciones posteriores.",
+        "class": "TestCrossMemoryEntityReferences",
+        "function": "test_end_to_end_conversation_with_entities_and_reasoning",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_end_to_end_conversation_with_entities_and_reasoning",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.1.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_between_entities"
+      },
+      "test": {
+        "assertion_scope": "La llamada add_relationship falla en el adaptador antes de comprobar source, target y relationship_type.",
+        "class": "TestAddRelationship",
+        "function": "test_add_relationship_between_entities",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_between_entities",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.2.1"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_bidirectional_traversal"
+      },
+      "test": {
+        "assertion_scope": "La llamada add_relationship falla en el adaptador antes de traversal y aserción Bob.",
+        "class": "TestAddRelationship",
+        "function": "test_add_relationship_bidirectional_traversal",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_bidirectional_traversal",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.2.2"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_multiple_types"
+      },
+      "test": {
+        "assertion_scope": "La primera llamada add_relationship falla antes de la segunda relación y las consultas posteriores.",
+        "class": "TestAddRelationship",
+        "function": "test_add_relationship_multiple_types",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_multiple_types",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.2.3"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_returns_valid_id"
+      },
+      "test": {
+        "assertion_scope": "La llamada add_relationship falla en conversión antes de las aserciones de ID.",
+        "class": "TestAddRelationship",
+        "function": "test_add_relationship_returns_valid_id",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_returns_valid_id",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.2.4"
+      }
+    },
+    {
+      "adapter": {
+        "call_target": "self._client.long_term.add_relationship",
+        "class": "ReferenceAdapter",
+        "method": "add_relationship",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "coverage_limits": [
+        "Outcome histórico failed: no es evidencia positiva de comportamiento API.",
+        "No atribuir el defecto a Muninn; el error se produce al convertir el resultado en ReferenceAdapter."
+      ],
+      "failure_diagnostic": {
+        "assertions_reached": false,
+        "gap_id": "REF-002",
+        "known_caveat": "El adapter lee rel.properties y la referencia expone attributes; la llamada API puede haber escrito antes del error, así que el estado de persistencia no se infiere.",
+        "stage": "adapter_result_conversion_after_api_call"
+      },
+      "inventory_id": "api:src/neo4j_agent_memory/memory/long_term.py:LongTermMemory.add_relationship",
+      "kind": "failed_reference_test",
+      "operation": "client.long_term.add_relationship",
+      "reference_baseline": {
+        "gap_id": "REF-002",
+        "outcome": "failed",
+        "profile": "adapted",
+        "target": "upstream_reference_oracle_only",
+        "test_id": "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_preserves_relationships"
+      },
+      "test": {
+        "assertion_scope": "La llamada add_relationship de setup falla antes de merge_duplicate_entities; el test no prueba el merge.",
+        "class": "TestMergeDuplicateEntities",
+        "function": "test_merge_preserves_relationships",
+        "nodeid": "tck/tests/v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_preserves_relationships",
+        "repository_path": "tck/tests/v1/test_cross_memory.py",
+        "source_sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688",
+        "spec_id": "SPEC-5.3.2"
+      }
+    },
+    {
+      "backend": "bolt",
+      "coverage_limits": [
+        "La prueba está planificada, no existe ni se ha ejecutado."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.search_messages",
+      "kind": "planned_test",
+      "operation": "client.short_term.search_messages",
+      "planned_assertions": [
+        "Crear mensajes elegibles con metadata distinta.",
+        "Llamar search_messages con metadata_filters.",
+        "Afirmar que aparece el ID coincidente y que ningún resultado contiene metadata no coincidente."
+      ],
+      "planned_test_id": "dev/muninn/tests/test_api_traceability_cases.py::test_search_messages_metadata_filters",
+      "state": "planned_not_implemented"
+    },
+    {
+      "backend": "bolt",
+      "coverage_limits": [
+        "La prueba está planificada, no existe ni se ha ejecutado."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.list_traces",
+      "kind": "planned_test",
+      "operation": "client.reasoning.list_traces",
+      "planned_assertions": [
+        "Crear traces con success y started_at controlados.",
+        "Aplicar success_only, since y until por separado.",
+        "Comparar los IDs exactos incluidos y excluidos en cada caso."
+      ],
+      "planned_test_id": "dev/muninn/tests/test_api_traceability_cases.py::test_list_traces_success_and_time_filters",
+      "state": "planned_not_implemented"
+    },
+    {
+      "backend": "bolt",
+      "coverage_limits": [
+        "La prueba está planificada, no existe ni se ha ejecutado."
+      ],
+      "inventory_id": "api:src/neo4j_agent_memory/memory/reasoning.py:ReasoningMemory.list_traces",
+      "kind": "planned_test",
+      "operation": "client.reasoning.list_traces",
+      "planned_assertions": [
+        "Crear traces con started_at deterministas y distintos.",
+        "Comprobar order_by/order_dir con una secuencia exacta de IDs.",
+        "Aplicar offset y limit y comprobar la página resultante exacta."
+      ],
+      "planned_test_id": "dev/muninn/tests/test_api_traceability_cases.py::test_list_traces_order_and_offset",
+      "state": "planned_not_implemented"
+    },
+    {
+      "adapter": {
+        "call_target": "self._client._client.execute_write",
+        "class": "ReferenceAdapter",
+        "method": "delete_message",
+        "repository_path": "tck/reference/adapter.py"
+      },
+      "backend": "bolt",
+      "baseline_results": [
+        {
+          "gap_id": "",
+          "outcome": "passed",
+          "profile": "adapted"
+        },
+        {
+          "gap_id": "REF-001",
+          "outcome": "failed",
+          "profile": "native-delete"
+        }
+      ],
+      "candidate_test_id": "v1/test_short_term.py::TestDeleteMessage::test_delete_message_returns_true",
+      "disposition": "not_evidence_for_api_method",
+      "inventory_id": "api:src/neo4j_agent_memory/memory/short_term.py:ShortTermMemory.delete_message",
+      "kind": "rejected_association",
+      "operation": "client.short_term.delete_message",
+      "reason": "El adaptador ejecuta Cypher propio mediante execute_write y no invoca client.short_term.delete_message; no asociar el PASS adaptado a la API pública.",
+      "spec_id": "SPEC-2.5.1"
+    }
+  ],
+  "execution_this_run": "not_run",
+  "inputs": [
+    {
+      "path": "dev/muninn/.cache/sources/agent-memory-tck/tck/reference/adapter.py",
+      "sha256": "1694c11742e553543f2ccf7d0202568508807b7bbf724624bb3e9b14079578ee"
+    },
+    {
+      "path": "dev/muninn/.cache/sources/agent-memory-tck/tck/tests/v1/test_cross_memory.py",
+      "sha256": "41551d5aae67be702dc6e497a3dece88917bf90d9a0ae9b610759f28b5e20688"
+    },
+    {
+      "path": "dev/muninn/.cache/sources/agent-memory-tck/tck/tests/v1/test_long_term.py",
+      "sha256": "75bd6bc9916542da786b26c73629657bb8d97067cea913c1c953e237e316cf30"
+    },
+    {
+      "path": "dev/muninn/.cache/sources/agent-memory-tck/tck/tests/v1/test_reasoning.py",
+      "sha256": "f362477461ee3d06ab7e58677a79f40ff4450bec236fb96bd775c356a31d1c47"
+    },
+    {
+      "path": "dev/muninn/.cache/sources/agent-memory-tck/tck/tests/v1/test_short_term.py",
+      "sha256": "ad948adfe0d083f2907cc36a6393f554481a4957befc2e19c06a83db2d7529da"
+    },
+    {
+      "path": "dev/muninn/references.json",
+      "sha256": "5c2233ff5430555741fd19e93bde37b1845b272567eace0bad4a673066ee8199"
+    },
+    {
+      "path": "dev/muninn/source-integrity.json",
+      "sha256": "c38560fed02865db1106c4ba05393b55e5f01a733006f9a2375f86b4f9e029b1"
+    },
+    {
+      "path": "docs/muninn/specs/api-profile.csv",
+      "sha256": "ce7f5259439cca1cc4f4ede47310f88205c5699841a2eb31da8c0ce5e6411ea8"
+    },
+    {
+      "path": "docs/muninn/specs/inventory-test-traceability.json",
+      "sha256": "d9e1f45d8ceeab84e9a7913d8bc31b873eda1ead6a889a6792b892add6876afc"
+    },
+    {
+      "path": "docs/muninn/specs/parity-matrix.csv",
+      "sha256": "6e611985e0993b6727abb7394bf64f4ed47cb7a537d3fbf4dfea5e6e1f899e07"
+    },
+    {
+      "path": "docs/muninn/specs/tck-baseline.csv",
+      "sha256": "c334ea9f075dbc080ab3f8bdfcb2a77ff829e3bef91f29666bfad51dccf3f82a"
+    }
+  ],
+  "parity_claim": false,
+  "reference_commit": "9d45af5529ecb5f2fe352013468a11087f3163d4",
+  "schema_version": 1,
+  "scope": "partial_api_traceability_not_parity",
+  "tck_commit": "e60b410f1046dc21db50f9aba48e171dc8a9b5a1"
+}

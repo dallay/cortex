@@ -18,7 +18,7 @@
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
-        "docs/muninn/evidence/artifact-lock.json",
+        "dev/muninn/fixtures/artifact-lock.json",
         "dev/muninn/c1_build_record.py",
         "dev/muninn/c1_provenance.py",
         "dev/muninn/c1_runner.py",

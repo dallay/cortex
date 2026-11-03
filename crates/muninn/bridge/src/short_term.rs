@@ -93,6 +93,19 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
             }
             .await
         }
+        "create_session_conversation" => {
+            async {
+                let session_id = args.string("session_id")?;
+                let conversation = memory
+                    .create_conversation(
+                        &session_id,
+                        args.opt_string("user_identifier")?.as_deref(),
+                    )
+                    .await?;
+                Ok(Reply::Json(wire::conversation(&conversation)))
+            }
+            .await
+        }
         "create_conversation" => {
             async {
                 // Hosted semantics: every call opens a new conversation whose
@@ -167,6 +180,9 @@ async fn add_message(state: &BridgeState, args: &Args) -> BridgeResult {
         operation_key: args.opt_string("operation_key")?,
         metadata: args.object("metadata")?,
         user_identifier: args.opt_string("user_identifier")?,
+        generate_embedding: args
+            .opt_bool("generate_embedding")?
+            .unwrap_or_else(|| AddMessageOptions::default().generate_embedding),
         ..AddMessageOptions::default()
     };
     let message = state

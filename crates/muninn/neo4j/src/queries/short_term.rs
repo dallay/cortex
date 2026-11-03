@@ -212,57 +212,113 @@ LIMIT $limit
 
 /// Exact scoped fallback used only after a successful, underfilled ANN query.
 pub const SEARCH_MESSAGES_EXACT: &str = "
+CALL {
 MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
   AND m.embedding_identity = $embedding_identity
   AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
+WITH DISTINCT m LIMIT $candidate_probe_limit
+RETURN collect(m) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS m
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
 WHERE score >= $threshold
-RETURN DISTINCT m, score
+RETURN m, score, false AS over_limit
 ORDER BY score DESC
 LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS m, null AS score, true AS over_limit
+}
+RETURN m, score, over_limit
 ";
 
 pub const SEARCH_MESSAGES_EXACT_IN_SESSION: &str = "
+CALL {
 MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
   AND m.embedding_identity = $embedding_identity
   AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
+WITH DISTINCT m LIMIT $candidate_probe_limit
+RETURN collect(m) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS m
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
 WHERE score >= $threshold
-RETURN DISTINCT m, score
+RETURN m, score, false AS over_limit
 ORDER BY score DESC
 LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS m, null AS score, true AS over_limit
+}
+RETURN m, score, over_limit
 ";
 
 pub const SEARCH_MESSAGES_EXACT_FILTERED: &str = "
+CALL {
 MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
   AND m.embedding_identity = $embedding_identity
   AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
   AND m.metadata IS NOT NULL AND {metadata_clause}
+WITH DISTINCT m LIMIT $candidate_probe_limit
+RETURN collect(m) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS m
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
 WHERE score >= $threshold
-RETURN DISTINCT m, score
+RETURN m, score, false AS over_limit
 ORDER BY score DESC
 LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS m, null AS score, true AS over_limit
+}
+RETURN m, score, over_limit
 ";
 
 pub const SEARCH_MESSAGES_EXACT_IN_SESSION_FILTERED: &str = "
+CALL {
 MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)
 WHERE c.owner_scope = $owner_scope
   AND m.embedding_identity = $embedding_identity
   AND m.embedding_dimensions = $embedding_dimensions
   AND m.embedding IS NOT NULL AND size(m.embedding) = size($embedding)
   AND m.metadata IS NOT NULL AND {metadata_clause}
+WITH DISTINCT m LIMIT $candidate_probe_limit
+RETURN collect(m) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS m
 WITH m, vector.similarity.cosine(m.embedding, $embedding) AS score
 WHERE score >= $threshold
-RETURN DISTINCT m, score
+RETURN m, score, false AS over_limit
 ORDER BY score DESC
 LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS m, null AS score, true AS over_limit
+}
+RETURN m, score, over_limit
 ";
 
 /// Chain-repairing delete. Upstream `DELETE_MESSAGE` uses plain `DELETE`,
@@ -513,6 +569,36 @@ RETURN m
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+    #[test]
+    fn exact_probe_filters_before_count_and_never_scores_overflow() {
+        for query in [
+            SEARCH_MESSAGES_EXACT,
+            SEARCH_MESSAGES_EXACT_IN_SESSION,
+            SEARCH_MESSAGES_EXACT_FILTERED,
+            SEARCH_MESSAGES_EXACT_IN_SESSION_FILTERED,
+        ] {
+            let probe = query.find("LIMIT $candidate_probe_limit").unwrap();
+            for guard in [
+                "c.owner_scope = $owner_scope",
+                "m.embedding_identity = $embedding_identity",
+                "m.embedding_dimensions = $embedding_dimensions",
+            ] {
+                assert!(query.find(guard).unwrap() < probe);
+            }
+            assert!(
+                query.find("size(candidates) <= $max_candidates").unwrap()
+                    < query.find("vector.similarity.cosine").unwrap()
+            );
+            if query.contains("{metadata_clause}") {
+                assert!(query.find("{metadata_clause}").unwrap() < probe);
+            }
+            if query.contains("$session_id") {
+                assert!(query.find("$session_id").unwrap() < probe);
+            }
+            assert!(query.contains("true AS over_limit"));
+        }
+    }
+
     #[test]
     fn ann_search_excludes_legacy_and_other_spaces_before_limit() {
         for query in [

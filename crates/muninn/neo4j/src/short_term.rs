@@ -12,6 +12,20 @@ use neo4rs::{BoltMap, BoltNull, BoltType, Row};
 use serde_json::Value;
 use uuid::Uuid;
 
+const MAX_EXACT_CANDIDATES: i64 = 10_000;
+const EXACT_CANDIDATE_PROBE_LIMIT: i64 = MAX_EXACT_CANDIDATES + 1;
+const EXACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+// neo4rs 0.8 has no per-query Bolt timeout API. Include pool wait and row
+// consumption in the caller budget; do not claim a server cancellation guarantee.
+async fn exact_with_budget<T>(
+    operation: impl std::future::Future<Output = MemoryResult<T>>,
+) -> MemoryResult<T> {
+    tokio::time::timeout(EXACT_TIMEOUT, operation)
+        .await
+        .map_err(|_| MemoryError::storage("EXACT query exceeded 5 second budget"))?
+}
+
 use crate::bolt::{column, opt_string, opt_vector, row_values, Props};
 use crate::client::{Neo4jClient, Params};
 use crate::queries::short_term as q;
@@ -528,7 +542,27 @@ impl ShortTermStore for Neo4jShortTermStore {
         let rows = search_with_exact_fallback(limit, |use_exact| {
             let cypher = if use_exact { exact } else { ann }.replace("{metadata_clause}", &clause);
             let params = params.clone();
-            async move { self.client.execute_dynamic(&cypher, params).await }
+            async move {
+                if !use_exact {
+                    return self.client.execute_dynamic(&cypher, params).await;
+                }
+                let mut params = params;
+                params.push(("max_candidates".into(), MAX_EXACT_CANDIDATES.into()));
+                params.push((
+                    "candidate_probe_limit".into(),
+                    EXACT_CANDIDATE_PROBE_LIMIT.into(),
+                ));
+                let rows = exact_with_budget(self.client.execute_dynamic(&cypher, params)).await?;
+                for row in &rows {
+                    if row
+                        .get::<bool>("over_limit")
+                        .map_err(|error| MemoryError::storage(error.to_string()))?
+                    {
+                        return Err(MemoryError::storage("EXACT candidate set exceeds 10000"));
+                    }
+                }
+                Ok(rows)
+            }
         })
         .await?;
         rows.iter()
@@ -737,6 +771,17 @@ where
 mod fallback_tests {
     use super::*;
     use std::future::ready;
+
+    #[tokio::test]
+    async fn exact_budget_rejects_pending_work_with_existing_storage_error() {
+        let started = std::time::Instant::now();
+        let result = exact_with_budget(std::future::pending::<MemoryResult<()>>()).await;
+        assert!(
+            matches!(result, Err(MemoryError::Storage(ref message)) if message == "EXACT query exceeded 5 second budget")
+        );
+        assert!(started.elapsed() >= EXACT_TIMEOUT);
+        assert!(started.elapsed() < std::time::Duration::from_secs(7));
+    }
 
     #[tokio::test]
     async fn sufficient_ann_does_not_execute_exact_query() {

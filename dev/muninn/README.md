@@ -118,6 +118,65 @@ Los datos de Neo4j están en `tmpfs`; al retirar ese contenedor desaparecen.
 Los artefactos locales se conservan. No uses comandos de borrado general ni
 recetas de reset de bases persistentes para preparar esta prueba.
 
+## Captura comparativa GM-01 aislada
+
+Esta ejecución está separada de la captura del oráculo anterior. El runner
+verifica y materializa el checkout fijado antes del build. Construye el binario
+Muninn actual en Linux arm64 desde un contexto privado acotado y ejecuta el
+capturador Python dentro de Compose. No copia el ejecutable del host.
+
+Requiere autorización para iniciar los tres servicios y ejecutar el build. No
+ejecutes este comando si solo se autorizó validar la configuración:
+
+La imagen Neo4j fijada debe existir localmente antes de ejecutar el runner. El
+runner inspecciona el ID de la imagen antes del build y falla sin iniciar los
+servicios si la imagen falta o el ID no tiene formato válido. No descarga Neo4j.
+Si hace falta prepararla, ejecuta este pull manual por separado:
+
+```sh
+docker pull neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+```
+
+El runner registra la referencia y el ID local validado en `neo4j_image` del
+manifiesto final o bloqueado. El paso explícito de preparación
+`docker compose build --pull capture` puede descargar las imágenes base Rust y
+Python fijadas por digest; el runtime sigue sin descargar.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py \
+  --reference dev/muninn/.cache/sources/agent-memory \
+  --evidence .agents/rpi/plan/tasks/muninn-h1-delivery/evidence/gm01-isolated-nueva
+```
+
+El proyecto contiene `reference-db`, `rust-db` y `capture`, en una red `internal`
+sin puertos publicados. El bridge se inicia como hijo de `capture` y enlaza solo
+su loopback. Python usa los nombres DNS de las dos bases. El capturador no es root,
+usa un filesystem de solo lectura y solo escribe en el directorio nuevo de
+evidencia. No hay socket Docker dentro de ningún contenedor. Compose elimina solo
+el proyecto de esta ejecución.
+
+La preparación ejecuta `docker compose build --pull capture`; puede descargar las
+imágenes base Rust y Python fijadas por digest y las dependencias de compilación.
+Antes del build, el runner ejecuta `docker image inspect` para la imagen Neo4j
+fijada y valida que el ID local sea `sha256:<64 hex>`. Si la imagen no está
+disponible o el ID no es válido, el runner guarda el bloqueo y no ejecuta el build
+ni `up`. No hace pull automático de Neo4j. Después del build, el host inspecciona
+el tag único de `capture` y registra su ID local en `capture_image.id`; también
+registra la referencia e ID local de Neo4j en `neo4j_image.reference` y
+`neo4j_image.id`. La ejecución usa `docker compose up --pull never --no-build`;
+no descarga ni reconstruye imágenes. Neo4j y las imágenes base están fijadas por
+digest. La contraseña llega a Neo4j mediante `NEO4J_AUTH_FILE`; no aparece en argv
+ni en el manifiesto. El manifiesto registra hashes locales, pero no es una
+atestación C1. `h1_acceptance` permanece `not_established`, incluso si
+`comparison` es `pass`.
+
+Las pruebas unitarias no inician build ni servicios:
+
+```sh
+PYTHONPATH=dev/muninn python3 -m unittest discover \
+  -s dev/muninn/tests -p 'test_gm01*.py' -v
+```
+
 ## Reproducir la exportación de dependencias
 
 Con `uv` 0.9.5, desde el checkout fijado de `agent-memory`:
@@ -129,6 +188,37 @@ uv export --frozen --no-dev --no-default-groups --no-emit-project \
 
 La exportación no sustituye el entorno separado del TCK ni fija los
 modelos de extracción. No se debe interpretar esta captura como G0 terminado.
+
+## Esquema no vectorial contra fixtures aislados
+
+El contrato de esquema no vectorial se valida contra fixtures Neo4j 5.26
+efímeras, no contra una base existente. Cada escenario recibe su propio
+contenedor Neo4j nuevo con almacenamiento `tmpfs`, de modo que ningún escenario
+observa el esquema ni los datos de otro.
+
+El runner no implementa el contrato: lo valida. El sujeto bajo prueba es la
+prueba de integración Rust `crates/muninn/neo4j/tests/schema_non_vector.rs`, que
+se compila dentro de Dory y se ejecuta contra el fixture.
+
+```sh
+docker run --rm -v "$PWD:/src" -v dallay630-linux-target:/target \
+  -e CARGO_HOME=/tmp/cargo -e CARGO_TARGET_DIR=/target -w /src \
+  rust:1.99.1-slim@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 \
+  cargo +1.99.1 test --locked --no-run -p muninn-neo4j --test schema_non_vector
+
+python3 dev/muninn/schema_runner.py \
+  --evidence .agents/rpi/plan/tasks/muninn-h1-delivery/evidence/schema-isolated-nueva
+```
+
+El runner crea una red `internal` sin puertos publicados, monta el secreto de
+autenticación en solo lectura, aplica límites de memoria y capabilities al
+contenedor, y elimina contenedores, red y secretos al terminar. Un escenario
+cuyo fixture no arranca se marca `BLOCKED` y se reintenta una vez con un
+fixture nuevo; ese reintento no sustituye un resultado de esquema.
+
+Cada directorio de evidencia debe ser nuevo. El runner escribe un log por
+escenario y un `summary.json` con el estado, el contenedor, el código de salida
+y la limpieza. Código **1** significa fallo o bloqueo, no un contrato aprobado.
 
 ## TCK contra el oráculo
 
@@ -258,7 +348,7 @@ El inventario canónico es adicional al CSV1335 y no importa código upstream:
 ```sh
 python3 dev/muninn/api_inventory.py --sources "$MUNINN_REFERENCE_ROOT" \
   --output docs/muninn/specs/api-profile.csv \
-  --metadata docs/muninn/evidence/api-profile.json --check
+  --metadata .agents/rpi/plan/tasks/muninn-h1-delivery/evidence/api-profile.json --check
 ```
 
 Incluye fachada, fábrica, contratos y accesores concretos; separa exports,
@@ -274,7 +364,7 @@ El validador no descarga ni instala modelos:
 
 ```sh
 python3 dev/muninn/artifact_lock.py \
-  --input docs/muninn/evidence/artifact-lock.json \
+  --input dev/muninn/fixtures/artifact-lock.json \
   --sources "$MUNINN_REFERENCE_ROOT"
 ```
 
@@ -308,7 +398,7 @@ plugin ni acredita que sus funciones sean compatibles.
 ## Smoke funcional APOC posterior
 
 El recibo original del JAR continúa describiendo solo bytes. La prueba posterior
-`docs/muninn/evidence/apoc-smoke.json` verifica únicamente `apoc.version()` real.
+`.agents/rpi/plan/tasks/muninn-h1-delivery/evidence/apoc-smoke.json` verifica únicamente `apoc.version()` real.
 No convierte el recibo de metadatos en aceptación de todas las funciones.
 
 ```sh

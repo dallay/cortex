@@ -93,8 +93,8 @@ ORDER BY score DESC";
 
 /// Límite superior fijo de candidatos exhaustivos aceptados por la consulta EXACT.
 ///
-/// Deriva del diseño revisado `docs/muninn/evidence/minilm-exact-design-query-detailed.json`
-/// (ver `docs/muninn/evidence/minilm-design-review-r2.json`, revisión PASS):
+/// Deriva del diseño revisado `.agents/rpi/plan/tasks/muninn-h1-delivery/evidence/minilm-exact-design-query-detailed.json`
+/// (ver `.agents/rpi/plan/tasks/muninn-h1-delivery/evidence/minilm-design-review-r2.json`, revisión PASS):
 /// la consulta recoge como máximo `EXACT_CANDIDATE_PROBE_LIMIT` candidatos
 /// propietario/sesión y rechaza explícitamente (`over_limit`) cuando el total
 /// supera `MAX_EXACT_CANDIDATES`, sin truncado silencioso.
@@ -110,7 +110,7 @@ pub const EXACT_CANDIDATE_PROBE_LIMIT: u32 = MAX_EXACT_CANDIDATES + 1;
 /// Consulta EXACT: coseno exhaustivo acotado por propietario/sesión, sin índice ANN.
 ///
 /// Replica el Cypher revisado y aprobado (PASS) en
-/// `docs/muninn/evidence/minilm-exact-design-query-detailed.json`
+/// `.agents/rpi/plan/tasks/muninn-h1-delivery/evidence/minilm-exact-design-query-detailed.json`
 /// (`cypher_sha256` `9a6b614ecb54e45505c1bad22d8345dd85a3ce60213fb0babba3745170f44d31`).
 ///
 /// El filtro de sesión (`$session_id`) se aplica en la primera `CALL`, antes

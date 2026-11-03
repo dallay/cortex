@@ -95,9 +95,13 @@ pub fn opt_datetime(value: Option<&DateTime<Utc>>) -> Value {
 pub fn message(message: &Message) -> Value {
     json!({
         "id": message.id,
+        "conversation_id": message.conversation_id,
         "role": message.role.as_str(),
         "content": message.content,
         "timestamp": datetime(&message.created_at),
+        // Messages are immutable in this model; tool-call storage is not supported.
+        "updated_at": null,
+        "tool_calls": null,
         "embedding": message.embedding,
         "metadata": message.metadata,
     })
@@ -107,6 +111,7 @@ pub fn conversation(conversation: &Conversation) -> Value {
     json!({
         "id": conversation.id,
         "session_id": conversation.session_id,
+        "metadata": {},
         "messages": conversation.messages.iter().map(message).collect::<Vec<_>>(),
         "title": conversation.title,
         "created_at": datetime(&conversation.created_at),
@@ -304,6 +309,64 @@ mod tests {
     }
 
     #[test]
+    fn message_serializes_conversation_id_from_model() {
+        for conversation_id in [Some(Uuid::new_v4()), None] {
+            let model = Message {
+                id: Uuid::new_v4(),
+                role: MessageRole::User,
+                content: "hello".into(),
+                conversation_id,
+                created_at: Utc::now(),
+                embedding: Some(vec![1.0]),
+                metadata: std::iter::once(("source".into(), json!("test"))).collect(),
+            };
+            assert_eq!(
+                message(&model),
+                json!({
+                    "id": model.id,
+                    "conversation_id": conversation_id,
+                    "role": "user",
+                    "content": "hello",
+                    "timestamp": datetime(&model.created_at),
+                    "updated_at": null,
+                    "tool_calls": null,
+                    "embedding": [1.0],
+                    "metadata": {"source": "test"},
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn conversation_preserves_message_conversation_id_instead_of_container_id() {
+        let mut model = Conversation::empty("session-a");
+        for conversation_id in [Some(Uuid::new_v4()), None] {
+            model.messages.push(Message {
+                id: Uuid::new_v4(),
+                role: MessageRole::User,
+                content: "hello".into(),
+                conversation_id,
+                created_at: model.created_at,
+                embedding: None,
+                metadata: Metadata::new(),
+            });
+        }
+        let result = conversation(&model);
+        assert_eq!(result["id"], json!(model.id));
+        for (serialized, message) in result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(&model.messages)
+        {
+            assert_eq!(
+                serialized.get("conversation_id"),
+                Some(&json!(message.conversation_id))
+            );
+        }
+    }
+
+    #[test]
     fn arguments_distinguish_missing_null_and_wrong_types() {
         let absent = args(json!({}));
         assert!(absent.opt_string("value").unwrap().is_none());
@@ -354,6 +417,10 @@ mod tests {
         assert_eq!(encoded["role"], "assistant");
         assert_eq!(encoded["timestamp"], datetime(&created_at));
         assert_eq!(encoded["embedding"], json!([1.0, 0.0]));
+        assert!(encoded.as_object().unwrap().contains_key("updated_at"));
+        assert_eq!(encoded["updated_at"], Value::Null);
+        assert!(encoded.as_object().unwrap().contains_key("tool_calls"));
+        assert_eq!(encoded["tool_calls"], Value::Null);
 
         let conversation = Conversation {
             id: conversation_id,
@@ -368,6 +435,7 @@ mod tests {
         assert_eq!(encoded["messages"].as_array().unwrap().len(), 1);
         assert_eq!(encoded["title"], Value::Null);
         assert_eq!(encoded["updated_at"], Value::Null);
+        assert_eq!(encoded["metadata"], json!({}));
 
         let session = SessionInfo {
             session_id: "session".into(),

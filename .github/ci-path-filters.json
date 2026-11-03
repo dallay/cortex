@@ -53,7 +53,7 @@
     "dev/muninn/requirements-minilm-tokenizer.txt",
     "dev/muninn/api_test_traceability.py",
     ".agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl",
-    "docs/muninn/evidence/artifact-lock.json",
+    "dev/muninn/fixtures/artifact-lock.json",
     "docs/muninn/specs/tck-baseline.csv",
     "docs/muninn/specs/api-test-traceability.json",
     ".github/ci-path-filters.json",

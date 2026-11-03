@@ -127,7 +127,7 @@ const routeCases = [
   ['crates/muninn/application/tests/short_term_flows.rs', ['backend', 'muninn_c1']],
   ['apps/muninn/src/main.rs', ['backend', 'muninn_c1']],
   ['third_party/candle-core/src/lib.rs', ['backend', 'muninn_c1']],
-  ['docs/muninn/evidence/artifact-lock.json', ['docs', 'muninn_c1']],
+  ['dev/muninn/fixtures/artifact-lock.json', ['muninn_c1']],
   ['docs/muninn/specs/tck-baseline.csv', ['docs', 'muninn_c1']],
   ['docs/muninn/reference-tck.md', ['docs']],
   ['.agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl', ['docs', 'muninn_c1']],

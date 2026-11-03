@@ -63,7 +63,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_generate_uses_local_auto_tokenizer_and_checked_files_twice(self):
         from minilm_cpu_oracle import load_pinned_lock
-        lock = load_pinned_lock((ROOT / 'docs/muninn/evidence/artifact-lock.json').read_bytes())
+        lock = load_pinned_lock((ROOT / 'dev/muninn/fixtures/artifact-lock.json').read_bytes())
         versions = {}
         for line in (ROOT / 'dev/muninn/requirements-minilm-tokenizer.txt').read_text().splitlines():
             if line and not line.startswith('#'):

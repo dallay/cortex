@@ -136,7 +136,7 @@ mod supported {
         let (corpus, input_sha256) = read_corpus(file)?;
         let root = ArtifactDir::open_root(&root).map_err(|_| RunError::Artifact)?;
         let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .map_err(|_| RunError::Artifact)?;
         let directory = root.open_subdir(&bundle).map_err(|_| RunError::Artifact)?;

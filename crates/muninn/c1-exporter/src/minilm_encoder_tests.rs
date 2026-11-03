@@ -241,7 +241,7 @@ fn actual_cache() -> crate::artifact_fs::staging::model::VerifiedArtifactCache {
         std::env::var_os("MUNINN_MINILM_ARTIFACT_ROOT").expect("explicit private cache root");
     let parent = ArtifactDir::open_root(std::path::Path::new(&root)).expect("safe existing root");
     let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     )))
     .expect("compiled pin");
     VerifiedArtifactCache::open(

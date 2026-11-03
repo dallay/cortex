@@ -307,7 +307,7 @@ fn actual_cache() -> crate::artifact_fs::staging::model::VerifiedArtifactCache {
     let bundle = "ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1";
     let parent = ArtifactDir::open_root(std::path::Path::new(&root)).expect("safe existing root");
     let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     )))
     .expect("compiled pin");
     VerifiedArtifactCache::open(parent.open_subdir(bundle).expect("bundle"), manifest)

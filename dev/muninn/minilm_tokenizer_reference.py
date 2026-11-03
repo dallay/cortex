@@ -65,7 +65,7 @@ def _cases() -> list:
 
 def generate(bundle: Path) -> dict:
     project = Path(__file__).resolve().parents[2]
-    lock_path = project / "docs/muninn/evidence/artifact-lock.json"
+    lock_path = project / "dev/muninn/fixtures/artifact-lock.json"
     lock_bytes = lock_path.read_bytes()
     lock = json.loads(lock_bytes)
     model = next(item for item in lock["models"] if item["id"] == "sentence-transformers/all-MiniLM-L6-v2")

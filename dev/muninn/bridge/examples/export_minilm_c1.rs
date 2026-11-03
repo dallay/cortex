@@ -147,7 +147,7 @@ mod supported {
         }
         let (corpus, input_sha256) = read_corpus(file)?;
         let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .map_err(|_| RunError::Artifact)?;
         let identity = super::minilm_c1_identity::declare(&manifest, Some(&contract))
@@ -306,7 +306,7 @@ mod supported {
         #[test]
         fn serializes_version_and_candidate_identity() {
             let manifest = PinnedMiniLmManifest::load_pinned(
-                &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+                &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
             )
             .unwrap();
             let identity =

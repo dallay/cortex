@@ -11,7 +11,7 @@ import c1_provenance
 TREES = ('crates/muninn/c1-exporter', 'third_party/candle-core')
 FILES = (
     'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
-    'docs/muninn/evidence/artifact-lock.json',
+    'dev/muninn/fixtures/artifact-lock.json',
     'dev/muninn/c1_build_record.py', 'dev/muninn/c1_provenance.py',
     'dev/muninn/c1_runner.py', 'dev/muninn/c1_attempt_run.py',
     'dev/muninn/c1_attempt_plan.json', 'dev/muninn/c1_manifest_build.py',

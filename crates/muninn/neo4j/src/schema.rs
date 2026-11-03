@@ -6,7 +6,6 @@
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::BoltType;
 use serde_json::Value;
-use tracing::warn;
 
 use crate::bolt::{column, to_json};
 use crate::client::Neo4jClient;
@@ -81,8 +80,65 @@ impl<'a> SchemaManager<'a> {
         }
     }
 
-    /// Create every constraint and index (`setup_all`). Idempotent.
+    /// Serialize schema upgrades and persist a version only after validation.
     pub async fn setup_all(&self) -> MemoryResult<()> {
+        self.run("CREATE CONSTRAINT muninn_schema_id IF NOT EXISTS FOR (s:MuninnSchema) REQUIRE s.id IS UNIQUE").await?;
+        let definitions = self.client.execute(
+            "SHOW CONSTRAINTS YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'muninn_schema_id' RETURN name, type, entityType, labelsOrTypes, properties",
+            vec![],
+        ).await?;
+        let definitions = schema_rows(&definitions)?;
+        validate_schema_definition(
+            &definitions,
+            "muninn_schema_id",
+            "UNIQUENESS",
+            "MuninnSchema",
+            &["id"],
+        )?;
+        // Initialize outside the lock transaction so a crash leaves an explicit
+        // retryable v0 marker. MERGE is protected by the verified unique key.
+        self.run("MERGE (s:MuninnSchema {id: 'product'}) ON CREATE SET s.version = 0, s.state = 'ready', s.revision = 0").await?;
+        let coordinator = self.client.schema_coordinator().await?;
+        let mut transaction = coordinator
+            .start_txn()
+            .await
+            .map_err(|e| MemoryError::storage(e.to_string()))?;
+        let result = async {
+            // Direct property dependency acquires the exclusive node write lock
+            // BEFORE reading. All cooperating migrators retain it until commit.
+            let mut stream = transaction.execute(neo4rs::query(
+                "MATCH (s:MuninnSchema {id: 'product'}) SET s.revision = coalesce(s.revision, 0) + 1 RETURN properties(s) AS marker"
+            )).await.map_err(|e| MemoryError::storage(e.to_string()))?;
+            let row = stream.next(transaction.handle()).await.map_err(|e| MemoryError::storage(e.to_string()))?
+                .ok_or_else(|| MemoryError::storage("Muninn schema marker disappeared"))?;
+            let marker = to_json(&column(&row, "marker")?);
+            crate::migrations::validate_marker(&marker)?;
+            drop(stream);
+            self.validate_non_vector_definitions(true).await?;
+            self.validate_existing_vector_dimensions().await?;
+            self.setup_objects().await?;
+            transaction.run(neo4rs::query(
+                "MATCH (s:MuninnSchema {id: 'product'}) SET s.version = $version, s.state = 'ready'"
+            ).param("version", crate::migrations::SCHEMA_VERSION)).await.map_err(|e| MemoryError::storage(e.to_string()))?;
+            Ok(())
+        }.await;
+        match result {
+            Ok(()) => transaction
+                .commit()
+                .await
+                .map_err(|e| MemoryError::storage(e.to_string())),
+            Err(error) => {
+                transaction.rollback().await.map_err(|e| {
+                    MemoryError::storage(format!(
+                        "schema failure: {error}; lock rollback failed: {e}"
+                    ))
+                })?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn setup_objects(&self) -> MemoryResult<()> {
         for (name, label, property) in CONSTRAINTS {
             self.run(&format!(
                 "CREATE CONSTRAINT {name} IF NOT EXISTS FOR (n:{label}) REQUIRE n.{property} IS UNIQUE"
@@ -138,16 +194,20 @@ impl<'a> SchemaManager<'a> {
             }
         }
         for (name, label, property) in POINT_INDEXES {
-            if let Err(err) = self
-                .run(&format!(
-                    "CREATE POINT INDEX {name} IF NOT EXISTS FOR (n:{label}) ON (n.{property})"
-                ))
-                .await
-            {
-                warn!(index = name, error = %err, "point index creation failed");
-            }
+            self.run(&format!(
+                "CREATE POINT INDEX {name} IF NOT EXISTS FOR (n:{label}) ON (n.{property})"
+            ))
+            .await?;
         }
-        self.await_indexes().await;
+        for (name, _, _) in INDEXES.iter().chain(TEXT_INDEXES).chain(POINT_INDEXES) {
+            self.client
+                .execute(
+                    "CALL db.awaitIndex($name, 60)",
+                    vec![("name", BoltType::from(*name))],
+                )
+                .await?;
+        }
+        self.validate_non_vector_schema().await?;
         let inventory = self.vector_index_inventory().await?;
         validate_vector_index_configuration(&inventory, self.vector_dimensions)?;
         for (name, _, _) in VECTOR_INDEXES {
@@ -207,6 +267,30 @@ impl<'a> SchemaManager<'a> {
         validate_vector_indexes(&self.vector_index_inventory().await?, expected)
     }
 
+    async fn validate_existing_vector_dimensions(&self) -> MemoryResult<()> {
+        let names = self
+            .client
+            .execute("SHOW INDEXES YIELD name, type RETURN name, type", vec![])
+            .await?;
+        for row in names {
+            let name: String = row
+                .get("name")
+                .map_err(|e| MemoryError::storage(e.to_string()))?;
+            let kind: String = row
+                .get("type")
+                .map_err(|e| MemoryError::storage(e.to_string()))?;
+            if VECTOR_INDEXES
+                .iter()
+                .any(|(required, _, _)| *required == name)
+                && kind != "VECTOR"
+            {
+                return Err(MemoryError::storage(format!("required vector index `{name}` is occupied by {kind}; no product DDL was executed")));
+            }
+        }
+        let inventory = self.vector_index_inventory().await?;
+        validate_vector_metadata(&inventory, self.vector_dimensions, true)
+    }
+
     async fn equivalent_index(
         &self,
         name: &str,
@@ -235,6 +319,92 @@ impl<'a> SchemaManager<'a> {
             && matches!(value("state")?.as_str(), Some("ONLINE" | "POPULATING")))
     }
 
+    async fn validate_non_vector_schema(&self) -> MemoryResult<()> {
+        self.validate_non_vector_definitions(false).await
+    }
+
+    async fn validate_non_vector_definitions(&self, allow_missing: bool) -> MemoryResult<()> {
+        let constraints = self.client.execute(
+            "SHOW CONSTRAINTS YIELD name, type, entityType, labelsOrTypes, properties RETURN name, type, entityType, labelsOrTypes, properties",
+            Vec::<(&'static str, BoltType)>::new(),
+        ).await?;
+        let indexes = self.client.execute(
+            "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties, state, failureMessage RETURN name, type, entityType, labelsOrTypes, properties, state, failureMessage",
+            Vec::<(&'static str, BoltType)>::new(),
+        ).await?;
+        let convert = |rows: &[neo4rs::Row], keys: &[&str]| -> MemoryResult<Vec<Value>> {
+            rows.iter()
+                .map(|row| {
+                    let mut metadata = serde_json::Map::new();
+                    for key in keys {
+                        metadata.insert((*key).into(), to_json(&column(row, key)?));
+                    }
+                    Ok(Value::Object(metadata))
+                })
+                .collect()
+        };
+        let constraints = convert(
+            &constraints,
+            &["name", "type", "entityType", "labelsOrTypes", "properties"],
+        )?;
+        let indexes = convert(
+            &indexes,
+            &[
+                "name",
+                "type",
+                "entityType",
+                "labelsOrTypes",
+                "properties",
+                "state",
+                "failureMessage",
+            ],
+        )?;
+        let validate_constraint = |name: &str, label: &str, properties: &[&str]| {
+            if allow_missing && !constraints.iter().any(|row| row["name"] == name) {
+                if indexes.iter().any(|row| row["name"] == name) {
+                    return Err(MemoryError::storage(format!("required constraint `{name}` is occupied by an index; no product DDL was executed")));
+                }
+                return Ok(());
+            }
+            validate_schema_definition(&constraints, name, "UNIQUENESS", label, properties)
+        };
+        for (name, label, property) in CONSTRAINTS {
+            validate_constraint(name, label, &[property])?;
+        }
+        validate_constraint(
+            "conversation_owner_session",
+            "Conversation",
+            &["owner_scope", "session_id"],
+        )?;
+        validate_constraint(
+            "message_operation",
+            "Message",
+            &["operation_conversation_id", "operation_key"],
+        )?;
+        for (definitions, kind) in [
+            (INDEXES, "RANGE"),
+            (TEXT_INDEXES, "TEXT"),
+            (POINT_INDEXES, "POINT"),
+        ] {
+            for (name, label, property) in definitions {
+                if allow_missing && !indexes.iter().any(|row| row["name"] == *name) {
+                    continue;
+                }
+                validate_schema_definition(&indexes, name, kind, label, &[property])?;
+                let row = indexes
+                    .iter()
+                    .find(|row| row["name"].as_str() == Some(*name));
+                if !row.is_some_and(|row| {
+                    (row["state"] == "ONLINE" || (allow_missing && row["state"] == "POPULATING"))
+                        && row["failureMessage"] == ""
+                }) {
+                    return Err(MemoryError::storage(format!("required index `{name}` is failed or unavailable; inspect SHOW INDEXES; no objects were removed or rebuilt")));
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn run(&self, cypher: &str) -> MemoryResult<()> {
         self.client
             .execute(cypher, Vec::<(&'static str, BoltType)>::new())
@@ -243,11 +413,55 @@ impl<'a> SchemaManager<'a> {
     }
 }
 
+fn schema_rows(rows: &[neo4rs::Row]) -> MemoryResult<Vec<Value>> {
+    rows.iter()
+        .map(|row| {
+            let mut value = serde_json::Map::new();
+            for key in ["name", "type", "entityType", "labelsOrTypes", "properties"] {
+                value.insert(key.to_owned(), to_json(&column(row, key)?));
+            }
+            Ok(Value::Object(value))
+        })
+        .collect()
+}
+
+fn validate_schema_definition(
+    rows: &[Value],
+    name: &str,
+    kind: &str,
+    label: &str,
+    properties: &[&str],
+) -> MemoryResult<()> {
+    let row = rows.iter().find(|row| row["name"].as_str() == Some(name));
+    if !row.is_some_and(|row| {
+        row["type"] == kind
+            && row["entityType"] == "NODE"
+            && row["labelsOrTypes"] == serde_json::json!([label])
+            && row["properties"] == serde_json::json!(properties)
+    }) {
+        return Err(MemoryError::storage(format!(
+            "required schema object `{name}` is missing or incompatible; expected {kind} on {label} {properties:?}; inspect SHOW CONSTRAINTS and SHOW INDEXES; no objects were removed or rebuilt"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate configuration separately so freshly created POPULATING indexes can
 /// be awaited, but existing incompatible indexes are never accepted or rebuilt.
 fn validate_vector_index_configuration(rows: &[Value], expected: usize) -> MemoryResult<()> {
+    validate_vector_metadata(rows, expected, false)
+}
+
+fn validate_vector_metadata(
+    rows: &[Value],
+    expected: usize,
+    allow_missing: bool,
+) -> MemoryResult<()> {
     for (name, label, property) in VECTOR_INDEXES {
         let row = rows.iter().find(|row| row["name"].as_str() == Some(*name));
+        if allow_missing && row.is_none() {
+            continue;
+        }
         let valid = row.is_some_and(|row| {
             row["type"] == "VECTOR"
                 && row["entityType"] == "NODE"
@@ -298,6 +512,106 @@ fn validate_vector_indexes(rows: &[Value], expected: usize) -> MemoryResult<()> 
 mod vector_metadata_tests {
     use super::*;
     use serde_json::{json, Value};
+
+    #[test]
+    fn named_constraint_requires_exact_definition() {
+        let mut row = json!({"name":"conversation_id", "type":"UNIQUENESS",
+            "entityType":"NODE", "labelsOrTypes":["Conversation"], "properties":["id"]});
+        assert!(validate_schema_definition(
+            &[row.clone()],
+            "conversation_id",
+            "UNIQUENESS",
+            "Conversation",
+            &["id"]
+        )
+        .is_ok());
+        row["properties"] = json!(["wrong"]);
+        assert!(validate_schema_definition(
+            &[row],
+            "conversation_id",
+            "UNIQUENESS",
+            "Conversation",
+            &["id"]
+        )
+        .is_err());
+        assert!(validate_schema_definition(
+            &[],
+            "conversation_id",
+            "UNIQUENESS",
+            "Conversation",
+            &["id"]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn composite_constraint_and_index_definitions_are_exact() {
+        for (name, kind, label, properties) in [
+            (
+                "conversation_owner_session",
+                "UNIQUENESS",
+                "Conversation",
+                vec!["owner_scope", "session_id"],
+            ),
+            (
+                "message_operation",
+                "UNIQUENESS",
+                "Message",
+                vec!["operation_conversation_id", "operation_key"],
+            ),
+            (
+                "conversation_session_idx",
+                "RANGE",
+                "Conversation",
+                vec!["session_id"],
+            ),
+            (
+                "message_content_text_idx",
+                "TEXT",
+                "Message",
+                vec!["content"],
+            ),
+        ] {
+            let row = json!({"name":name, "type":kind, "entityType":"NODE",
+                "labelsOrTypes":[label], "properties":properties});
+            assert!(validate_schema_definition(
+                std::slice::from_ref(&row),
+                name,
+                kind,
+                label,
+                &properties
+            )
+            .is_ok());
+            for (key, invalid) in [
+                ("type", json!("WRONG")),
+                ("entityType", json!("RELATIONSHIP")),
+                ("labelsOrTypes", json!(["Wrong"])),
+                ("properties", json!(["wrong"])),
+            ] {
+                let mut incompatible = row.clone();
+                incompatible[key] = invalid;
+                assert!(
+                    validate_schema_definition(&[incompatible], name, kind, label, &properties)
+                        .is_err(),
+                    "{name}: {key}"
+                );
+            }
+            if properties.len() > 1 {
+                let mut reversed = properties.clone();
+                reversed.reverse();
+                let mut incompatible = row.clone();
+                incompatible["properties"] = json!(reversed);
+                assert!(validate_schema_definition(
+                    &[incompatible],
+                    name,
+                    kind,
+                    label,
+                    &properties
+                )
+                .is_err());
+            }
+        }
+    }
 
     fn inventory() -> Vec<Value> {
         VECTOR_INDEXES.iter().map(|(name, label, property)| json!({

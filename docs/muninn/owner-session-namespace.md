@@ -1,87 +1,87 @@
-# Namespace de sesiones por propietario
+# Owner, session, and namespace boundaries
 
-## Contrato del prototipo
+## Prototype contract
 
-La identidad de una conversación es `(owner_scope, session_id)`. El mismo
-`session_id` puede existir para dos propietarios y para el namespace sin
-propietario. Omitir `user_identifier` selecciona únicamente este último; no
-selecciona todos los propietarios.
+A conversation is identified by `(owner_scope, session_id)`. The same
+`session_id` can exist for two owners and for the ownerless namespace. Omitting
+`user_identifier` selects only the latter; it never selects every owner.
 
-`OwnerScope` conserva el identificador exacto y rechaza identificadores vacíos
-o compuestos solo por espacios. La codificación distingue `unowned` de
-`owned:<identificador>`, incluso si el identificador contiene esos prefijos.
-El scope proporcionado por el caller **no es autenticación**.
+`OwnerScope` keeps the exact identifier and rejects empty or whitespace-only
+identifiers. Its encoding distinguishes `unowned` from `owned:<identifier>`,
+even when the identifier itself contains those prefixes. The scope supplied by
+the caller **is not authentication**.
 
-El puerto exige scope en resolución, ingesta, lectura, listado, búsqueda y
-borrado. Las mutaciones finales filtran también por scope. Un UUID explícito
-no permite adoptar una conversación ajena ni cambiar su sesión. Una lectura
-por sesión más UUID exige ambas identidades. La lectura solo por UUID sigue
-siendo una operación distinta, siempre scoped.
+The port requires a scope for resolution, ingestion, reads, listings, searches,
+and deletion. Final mutations also filter by scope. An explicit UUID does not
+allow adopting another owner's conversation or changing its session. A read by
+session plus UUID requires both identities. A read by UUID alone remains a
+different operation and is always scoped.
 
-El esquema conserva unicidad de UUID y añade unicidad compuesta para
-`(owner_scope, session_id)`. No rellena propiedades legacy al arrancar.
-Las operaciones por identidad relevante rechazan conversaciones legacy sin
-namespace. Los listados y búsquedas no incluyen esas conversaciones.
-Una migración de datos requiere una operación explícita separada.
+The schema keeps UUID uniqueness and adds composite uniqueness for
+`(owner_scope, session_id)`. It does not backfill legacy properties at startup.
+Operations on a relevant identity reject legacy conversations that have no
+namespace. Listings and searches exclude those conversations. Migrating data
+requires a separate explicit operation.
 
-## Búsqueda y límites de aceptación
+## Search and acceptance limits
 
-La búsqueda intenta primero ANN global con `db.index.vector.queryNodes`, con
-`k = limit`. Cypher aplica los filtros de propietario, sesión opcional, identidad
-y dimensiones del embedding, metadata y umbral antes de devolver resultados.
-Si ese resultado filtrado contiene menos de `limit` filas, ejecuta una búsqueda
-exacta scoped y devuelve únicamente el resultado completo de esa consulta,
-limitado a `limit`. No mezcla ambas listas ni hace consultas por mensaje.
+Search first attempts a global ANN query through `db.index.vector.queryNodes`
+with `k = limit`. Cypher applies the owner, optional session, embedding identity
+and dimension, metadata, and threshold filters before returning results. If the
+filtered result has fewer than `limit` rows, it runs a scoped exact search and
+returns only that query's complete result, limited to `limit`. It does not mix
+both lists or issue per-message queries.
 
-El fallback calcula coseno sobre los mensajes que cumplen los filtros scoped.
-Evita que candidatos ajenos oculten resultados propios cuando ANN queda
-incompleto. Si ANN completa el límite, el ranking sigue siendo aproximado: no
-se garantiza equivalencia con la búsqueda exacta ni recall completo.
+The fallback computes cosine over messages that satisfy the scoped filters. It
+prevents foreign candidates from hiding the owner's own results when ANN comes
+back incomplete. If ANN fills the limit, ranking remains approximate: exact
+equivalence and full recall are not guaranteed.
 
-Los errores ANN de índice, dimensiones o almacenamiento se propagan sin fallback.
-Los predicados de identidad y dimensiones posteriores a ANN no protegen al
-procedimiento frente a dimensiones distintas entre la consulta y el índice.
-No hay oversampling, paginación ni configuración adicional.
+ANN errors for index, dimensions, or storage propagate without fallback. The
+identity and dimension predicates applied after ANN do not protect the
+procedure from dimensions that differ between the query and the index. There is
+no oversampling, pagination, or additional configuration.
 
-El fallback puede recorrer todos los mensajes del scope y añade una segunda
-consulta cuando ANN queda incompleto. No demuestra rendimiento acotado,
-aceptación MiniLM, procedencia C1 ni cierre global del hito H1.
+The fallback may scan every message in the scope and adds a second query when
+ANN is incomplete. It does not demonstrate bounded performance, MiniLM
+acceptance, C1 provenance, or closure of the H1 milestone.
 
-La operación administrativa global `clear_all_data` conserva su control
-explícito en el bridge y no equivale a una operación cotidiana sin propietario.
+The global administrative operation `clear_all_data` keeps its explicit guard
+in the bridge and is not an everyday operation without an owner.
 
-## Idempotencia opcional de mensajes
+## Optional message idempotency
 
-`add_message` acepta `operation_key` opcional. La clave se limita a la
-conversación resuelta por `(owner_scope, session_id)`. La misma clave con el
-mismo payload devuelve el mensaje almacenado; la misma clave con otro payload
-produce un conflicto sin añadir un mensaje. Sin clave, los mensajes repetidos
-siguen siendo escrituras distintas. La clave se puede volver a usar después de
-borrar el mensaje al que estaba asociada.
+`add_message` accepts an optional `operation_key`. The key is limited to the
+conversation resolved by `(owner_scope, session_id)`. The same key with the same
+payload returns the stored message; the same key with a different payload
+produces a conflict without adding a message. Without a key, repeated messages
+remain distinct writes. The key can be reused after the message it was
+associated with is deleted.
 
-El payload incluye role, content, metadata y `generate_embedding`; no incluye
-el UUID generado ni el resultado del proveedor de embeddings. La aplicación
-comprueba primero si ya existe la operación, para que un replay no dependa de
-otra llamada al proveedor. La escritura mantiene además la comprobación atómica
-del adaptador Neo4j para proteger las carreras entre solicitudes concurrentes.
-Esta clave no sustituye autenticación ni autorización.
+The payload includes role, content, metadata, and `generate_embedding`; it does
+not include the generated UUID or the embedding provider's result. The
+application first checks whether the operation already exists, so a replay does
+not depend on another provider call. Writing also keeps the Neo4j adapter's
+atomic check to protect races between concurrent requests. This key is not a
+substitute for authentication or authorization.
 
-Límite aprobado: la garantía de no llamar al proveedor cubre replays de mensajes
-ya persistidos. Dos solicitudes concurrentes que consultan antes de que exista
-el mensaje pueden llamar ambas al embedder; la escritura atómica evita el
-duplicado y resuelve replay/conflicto. El usuario acepta este límite para evitar
-el coste operativo de coordinación/reserva cross-process y recuperación de
-operaciones pendientes.
+Approved limit: the guarantee of not calling the provider covers replays of
+already persisted messages. Two concurrent requests that check before the
+message exists can both call the embedder; the atomic write prevents the
+duplicate and resolves replay or conflict. The user accepts this limit to avoid
+the operational cost of cross-process coordination/reservation and recovery of
+pending operations.
 
-## Validación focalizada
+## Focused validation
 
-- Pruebas de paquetes: `cargo test -p muninn-core -p muninn-application -p muninn-neo4j -p muninn-bridge --locked`.
-- Prueba real opt-in: `cargo test -p muninn-neo4j --test owner_namespace --locked -- --ignored`.
-- La prueba opt-in requiere `MUNINN_FIXTURE_URI` y `MUNINN_FIXTURE_PASSWORD`,
-  exclusivamente contra una Neo4j sintética nueva. Crea datos de prueba; no
-  debe apuntar a una base activa.
+- Package tests: `cargo test -p muninn-core -p muninn-application -p muninn-neo4j -p muninn-bridge --locked`.
+- Real opt-in test: `cargo test -p muninn-neo4j --test owner_namespace --locked -- --ignored`.
+- The opt-in test requires `MUNINN_FIXTURE_URI` and `MUNINN_FIXTURE_PASSWORD`,
+  only against a new synthetic Neo4j. It creates test data and must never point
+  at an active database.
 
-La prueba real cubre sesiones homónimas, namespace unowned, UUID ajeno o
-incoherente, escritura individual y por lote, lectura, listado, búsqueda con
-candidatos ajenos, borrados scoped, resolución concurrente y rechazo legacy.
-No sustituye el TCK ni la matriz completa de cadenas y fallos concurrentes.
+The real test covers identically named sessions, the ownerless namespace,
+foreign or inconsistent UUIDs, individual and batch writes, reads, listings,
+search with foreign candidates, scoped deletions, concurrent resolution, and
+legacy rejection. It does not replace the TCK or the full chain and concurrent
+failure matrix.

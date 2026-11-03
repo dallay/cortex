@@ -857,7 +857,7 @@ mod tests {
         let root = Fixture::new();
         let cache = complete_stage(&root).publish().expect("synthetic fixture");
         let manifest = PinnedMiniLmManifest::load_pinned(Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .expect("compiled approved lock");
         let directory = root

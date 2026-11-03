@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn c1_contract_grammar_matches_shared_cases() {
         let manifest = PinnedMiniLmManifest::load_pinned(
-            &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+            &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
         )
         .unwrap();
         let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn python_cross_language_literal_golden() {
         let manifest = PinnedMiniLmManifest::load_pinned(
-            &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+            &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
         )
         .unwrap();
         let value = declare(&manifest, Some("test-unapproved-v1")).unwrap();
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn declaration_matches_the_shared_python_golden_byte_for_byte() {
         let manifest = PinnedMiniLmManifest::load_pinned(
-            &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+            &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
         )
         .unwrap();
         let golden: serde_json::Value = serde_json::from_slice(include_bytes!(
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn declaration_uses_approved_manifest_without_cache_or_indices() {
         let manifest = PinnedMiniLmManifest::load_pinned(
-            &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+            &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
         )
         .unwrap();
         let value = declare(&manifest, Some("test-unapproved-v1")).unwrap();
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn contract_is_required_and_affects_identity() {
         let manifest = PinnedMiniLmManifest::load_pinned(
-            &include_bytes!("../../../../docs/muninn/evidence/artifact-lock.json")[..],
+            &include_bytes!("../../../../dev/muninn/fixtures/artifact-lock.json")[..],
         )
         .unwrap();
         for contract in [None, Some(""), Some("invalid contract")] {

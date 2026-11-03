@@ -6,7 +6,7 @@ from pathlib import Path
 from minilm_cpu_oracle import load_pinned_lock
 
 BUNDLE_ID = 'ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1'
-LOCK = Path(__file__).resolve().parents[2] / 'docs/muninn/evidence/artifact-lock.json'
+LOCK = Path(__file__).resolve().parents[2] / 'dev/muninn/fixtures/artifact-lock.json'
 
 def declare(numeric_contract_version, lock=None):
     if type(numeric_contract_version) is not str or re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,63}', numeric_contract_version) is None:

@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn the_space_id_matches_the_frozen_c1_declaration() {
         let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .expect("pinned manifest");
         let space_id = minilm_cpu_f32_v1_space_id(&manifest).expect("space identity");

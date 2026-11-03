@@ -8,6 +8,7 @@ pub mod bolt;
 pub mod client;
 pub mod long_term;
 pub mod maintenance;
+mod migrations;
 pub mod queries;
 pub mod query;
 pub mod reasoning;

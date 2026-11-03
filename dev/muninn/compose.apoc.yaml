@@ -24,7 +24,7 @@ services:
     secrets: [neo4j_auth]
     volumes:
       - ./apoc_smoke.py:/probe.py:ro
-      - ../../docs/muninn/evidence/artifact-lock.json:/manifest.json:ro
+      - ../../dev/muninn/fixtures/artifact-lock.json:/manifest.json:ro
       - ./artifacts:/artifacts
     networks: [oracle]
     depends_on:

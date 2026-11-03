@@ -29,7 +29,7 @@ impl MiniLmEmbedder {
     /// Returns a provider error for missing, malformed or incompatible artifacts.
     pub fn load(path: &Path, bundle_id: &str) -> MemoryResult<Self> {
         let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-            "../../../../docs/muninn/evidence/artifact-lock.json"
+            "../../../../dev/muninn/fixtures/artifact-lock.json"
         )))
         .map_err(|_| MemoryError::provider("invalid pinned MiniLM bundle manifest"))?;
         let declaration =

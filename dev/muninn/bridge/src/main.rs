@@ -503,7 +503,7 @@ fn load_encoder() -> Result<CandidateMiniLmEmbeddingAdapter, &'static str> {
             .map_err(|_| "artifact_bundle_open")?
     };
     let manifest = PinnedMiniLmManifest::load_pinned(std::io::Cursor::new(include_bytes!(
-        "../../../../docs/muninn/evidence/artifact-lock.json"
+        "../../../../dev/muninn/fixtures/artifact-lock.json"
     )))
     .map_err(|_| "artifact_manifest")?;
     let space_id = muninn_bridge_spike::embedding_port::minilm_cpu_f32_v1_space_id(&manifest)

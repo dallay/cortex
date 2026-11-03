@@ -59,6 +59,38 @@ impl muninn_core::ports::Embedder for UnreachableEmbedder {
     }
 }
 
+#[derive(Default)]
+struct RecordingEmbedder {
+    identity_calls: AtomicUsize,
+    embed_calls: AtomicUsize,
+    batch_calls: AtomicUsize,
+    dimensions_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl muninn_core::ports::Embedder for RecordingEmbedder {
+    fn identity(&self) -> MemoryResult<EmbeddingIdentity> {
+        self.identity_calls.fetch_add(1, Ordering::SeqCst);
+        EmbeddingIdentity::new("bridge:test:recording:v1", 1)
+    }
+
+    async fn embed(&self, text: &str) -> MemoryResult<Vec<f64>> {
+        assert_eq!(text, "hello");
+        self.embed_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![1.0])
+    }
+
+    async fn embed_batch(&self, _: &[String]) -> MemoryResult<Vec<Vec<f64>>> {
+        self.batch_calls.fetch_add(1, Ordering::SeqCst);
+        unreachable!("add_message must not use batch embedding")
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions_calls.fetch_add(1, Ordering::SeqCst);
+        1
+    }
+}
+
 struct SearchEmbedder;
 
 #[async_trait]
@@ -595,6 +627,23 @@ async fn request(state: Arc<BridgeState>, method: &str, body: &str) -> axum::htt
 }
 
 #[tokio::test]
+async fn native_create_requires_session_without_changing_hosted_contract() {
+    assert_eq!(
+        post(state(None, None), "create_session_conversation", "{}").await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post(
+            state(None, None),
+            "create_conversation",
+            r#"{"session_id":"native"}"#
+        )
+        .await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn cypher_query_reaches_read_only_port() {
     let port = Arc::new(RecordingCypherQuery {
         called: AtomicBool::new(false),
@@ -668,6 +717,99 @@ async fn missing_arguments_are_bad_requests() {
         post(state(None, None), "add_message", "{}").await,
         StatusCode::BAD_REQUEST
     );
+}
+
+fn add_state(calls: Arc<Mutex<AddCalls>>, embedder: Arc<RecordingEmbedder>) -> Arc<BridgeState> {
+    Arc::new(BridgeState {
+        memory: Arc::new(MemoryClient::new(
+            MemoryPorts {
+                short_term: Arc::new(UnreachableStore::Add {
+                    calls,
+                    conversation_id: Uuid::new_v4(),
+                }),
+                long_term: Arc::new(UnreachableLongTerm),
+                reasoning: Arc::new(UnreachableReasoning),
+                embedder: Some(embedder),
+                cypher_query: None,
+            },
+            &MemoryOptions::default(),
+        )),
+        maintenance: None,
+    })
+}
+
+#[tokio::test]
+async fn add_message_respects_generate_embedding() {
+    for (flag, expected_calls) in [
+        (Some(serde_json::json!(false)), 0),
+        (Some(serde_json::json!(true)), 1),
+        (None, 1),
+        (Some(serde_json::Value::Null), 1),
+    ] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let embedder = Arc::new(RecordingEmbedder::default());
+        let state = add_state(calls.clone(), embedder.clone());
+        let mut args = serde_json::json!({
+            "session_id": "session-a", "role": "user", "content": "hello"
+        });
+        if let Some(flag) = flag {
+            args["generate_embedding"] = flag;
+        }
+        let response = request(state, "add_message", &args.to_string()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            embedder.identity_calls.load(Ordering::SeqCst),
+            expected_calls
+        );
+        assert_eq!(embedder.embed_calls.load(Ordering::SeqCst), expected_calls);
+        assert_eq!(embedder.batch_calls.load(Ordering::SeqCst), 0);
+        if expected_calls == 0 {
+            assert_eq!(embedder.dimensions_calls.load(Ordering::SeqCst), 0);
+        }
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.ensured.len(), 1);
+        assert_eq!(calls.appended.len(), 1);
+        let expected_embedding = (expected_calls == 1).then(|| vec![1.0]);
+        assert_eq!(calls.appended[0].2.embedding, expected_embedding);
+        assert_eq!(body["embedding"], serde_json::json!(expected_embedding));
+    }
+}
+
+#[tokio::test]
+async fn add_message_rejects_invalid_generate_embedding_before_persistence() {
+    for invalid in [
+        serde_json::json!("false"),
+        serde_json::json!(0),
+        serde_json::json!([]),
+        serde_json::json!({}),
+    ] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let embedder = Arc::new(RecordingEmbedder::default());
+        let state = add_state(calls.clone(), embedder.clone());
+        let args = serde_json::json!({
+            "session_id": "session-a", "role": "user", "content": "hello",
+            "generate_embedding": invalid
+        });
+        let response = request(state, "add_message", &args.to_string()).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"], "'generate_embedding' must be a boolean");
+        assert_eq!(embedder.identity_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(embedder.embed_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(embedder.batch_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(embedder.dimensions_calls.load(Ordering::SeqCst), 0);
+        let calls = calls.lock().unwrap();
+        assert!(calls.ensured.is_empty());
+        assert!(calls.appended.is_empty());
+        drop(calls);
+    }
 }
 
 #[tokio::test]
