@@ -1,0 +1,63 @@
+change: settings-modal
+current_phase: archive
+completed:
+  - init
+  - explore
+  - propose
+  - spec
+  - design
+  - tasks
+  - apply
+  - verify
+  - qa
+  - archive
+next: null
+archived_to: .agents/sdd/changes/archive/2026-11-03-settings-modal/
+# Notes:
+# - verify was re-run a second time on 2026-11-03 after the aggregate gate
+#   (`just ci-local`) completed with exit 0 (1523s,
+#   `CI LOCAL — all applicable local gates passed`). Log:
+#   /tmp/opencode/settings-modal-ci-final3.log. Verdict: PASS.
+# - All findings from the first verify re-run are resolved:
+#   WARNING-01 — the tracked PTY test
+#   `crates/huginn/presentation/tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream`
+#   now asserts `Settings discarded`, so REQ-08 / SET-08-A has a tracked
+#   assertion (notification emitted at crates/huginn/presentation/src/terminal.rs:1551).
+#   SUGGESTION-01 — the tasks.md traceability matrix now references actual test names.
+# - An incidental pre-existing flake in
+#   crates/infrastructure/transport-axum/tests/gateway_e2e.rs and
+#   openai_tool_stream_round_trip.rs was resolved: the wiremock harness now
+#   filters `received_requests()` to the provider endpoint (`/chat/completions`,
+#   `/v1/messages`) so its own `GET /` readiness probes do not break upstream
+#   assertions. Verified over 25 consecutive green runs.
+# - T-15 is complete. No critical or acceptance-blocking issue remains.
+# - Only informational notes remain (SUGGESTION-02 frontend coverage
+#   percentage, SUGGESTION-03 artifact-size environment variables).
+# - A qa-report.md from the earlier cycle exists and is superseded by the QA
+#   re-run that follows this verify re-run.
+# - QA re-run completed on 2026-11-03 with PASS WITH WARNINGS. All REQ-01–REQ-16
+#   have direct evidence; no blocking findings. See qa-report.md. Archive is next.
+#   QA noted two remaining stale test-name pointers in the tasks.md matrix.
+# - Archive completed on 2026-11-03. The change folder was moved to
+#   .agents/sdd/changes/archive/2026-11-03-settings-modal/. The canonical spec
+#   stays at .agents/sdd/specs/ui-settings/spec.md and was copied verbatim into
+#   the archived folder as specs/ui-settings/spec.md for the audit trail.
+# - The QA verdict remains PASS WITH WARNINGS. The archive does not claim the
+#   warnings are resolved:
+#   * INFO-01 — two stale test-name pointers remain in the tasks.md traceability
+#     matrix. They are informational and were deliberately left untouched.
+#   * INFO-02 — narrow-viewport header wording differs from the wording used in
+#     wider viewports. Informational.
+#   * INFO-03 — scope-hygiene notes about files changed outside the settings
+#     modal scope. Informational.
+# - Incidental gate-stabilization changes are intentionally kept in this branch
+#   (operator decision, documented in archive-report.md):
+#   * Wiremock readiness-probe filtering in
+#     crates/infrastructure/transport-axum/tests/gateway_e2e.rs and
+#     crates/infrastructure/transport-axum/tests/openai_tool_stream_round_trip.rs
+#     — required for a stable aggregate gate; verified over 25 consecutive green
+#     runs.
+#   * Clippy-driven refactors in Huginn presentation event test support
+#     (crates/huginn/presentation/src/event/test_support.rs and the tests that
+#     use it) — required to keep clippy -D warnings green in the aggregate gate.
+updated: 2026-11-03

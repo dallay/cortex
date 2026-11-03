@@ -14,11 +14,16 @@ pub fn last_fingerprint(dedup: &ErrorDeduplicator) -> &[u8] {
 }
 
 pub fn decrypts_to(dedup: &ErrorDeduplicator, fingerprint: &[u8], plaintext: &[u8]) -> bool {
-    fingerprint.len() >= 12
-        && dedup
-            .cipher
-            .decrypt(Nonce::from_slice(&fingerprint[..12]), &fingerprint[12..])
-            .is_ok_and(|decoded| decoded == plaintext)
+    if fingerprint.len() < 12 {
+        return false;
+    }
+    let Ok(nonce) = Nonce::try_from(&fingerprint[..12]) else {
+        return false;
+    };
+    dedup
+        .cipher
+        .decrypt(&nonce, &fingerprint[12..])
+        .is_ok_and(|decoded| decoded == plaintext)
 }
 
 pub const fn exhaust_nonce_after_next(dedup: &mut ErrorDeduplicator) {
