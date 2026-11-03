@@ -2265,6 +2265,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "huginn-conformance"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "huginn-application",
+ "huginn-core",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "huginn-core"
 version = "0.0.1"
 dependencies = [

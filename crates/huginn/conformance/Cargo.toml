@@ -1,0 +1,19 @@
+[package]
+name = "huginn-conformance"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+huginn-core = { path = "../core" }
+huginn-application = { path = "../application" }
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
