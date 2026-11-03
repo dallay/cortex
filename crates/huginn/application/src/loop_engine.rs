@@ -110,6 +110,10 @@ struct TurnHost<'a> {
 ///
 /// Bundling it keeps every event a step emits on the same identity and the same host
 /// decision points, instead of threading the same five values through the loop.
+/// Largest answer the loop will persist; a truncated stream or an oversized reply is an
+/// error, not something to store.
+const MAX_RESPONSE_BYTES: usize = 1_048_576;
+
 struct StepScope<'a> {
     step: StepId,
     selected: &'a [String],
@@ -305,7 +309,8 @@ impl<'a> LoopExecution<'a> {
         request: ModelRequest,
         session: &mut Session,
         scope: &StepScope<'_>,
-    ) -> Result<(Message, u64)> {
+        spent: &mut u64,
+    ) -> Result<Message> {
         let model_request = model.stream(request, scope.cancel.clone());
         let mut stream = tokio::select! {
             _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -315,7 +320,6 @@ impl<'a> LoopExecution<'a> {
         let mut response = Message::text(Role::Assistant, "");
         let mut finished = false;
         let mut count = 0;
-        let mut tokens = 0_u64;
         loop {
             let item = tokio::select! {
                 _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -353,7 +357,9 @@ impl<'a> LoopExecution<'a> {
                     input_tokens,
                     output_tokens,
                 } => {
-                    tokens = tokens.saturating_add(input_tokens.saturating_add(output_tokens));
+                    // Counted even if this attempt later fails: the provider already
+                    // spent those tokens, so the turn budget must see them.
+                    *spent = spent.saturating_add(input_tokens.saturating_add(output_tokens));
                     self.record(
                         session,
                         Event::Usage {
@@ -375,7 +381,7 @@ impl<'a> LoopExecution<'a> {
                 "model returned an incomplete turn".into(),
             ));
         }
-        Ok((response, tokens))
+        Ok(response)
     }
 
     async fn execute_tool(
@@ -449,6 +455,11 @@ impl<'a> LoopExecution<'a> {
                         "action denied by user; do not retry without a new user request".into(),
                     ));
                 }
+            }
+            // Cancellation can begin during prepare or while the user decides, so the
+            // decision is re-checked immediately before the effect.
+            if scope.cancel.is_cancelled() || self.lifecycle.is_cancelled() {
+                return Err(AgentError::Cancelled);
             }
             tool.execute(action, &ctx).await
         };
@@ -659,18 +670,29 @@ impl<'a> LoopExecution<'a> {
                 }
             }
             let mut attempt = 0_u32;
-            let (mut response, tokens) = loop {
+            let mut response = loop {
                 let request = ModelRequest {
                     messages: context.clone(),
                     tools: tools.clone(),
                     max_tokens: self.config.max_output_tokens,
                 };
-                match self.collect_response(model, request, session, &scope).await {
-                    Ok(pair) => break pair,
+                match self
+                    .collect_response(model, request, session, &scope, &mut spent)
+                    .await
+                {
+                    Ok(response) => break response,
                     Err(error)
                         if attempt < self.config.max_model_retries
                             && error.is_retryable_inference() =>
                     {
+                        // A retry is another request: it must fit the remaining budget.
+                        if let Some(budget) = self.config.max_turn_tokens {
+                            if spent >= budget {
+                                return Err(AgentError::Model(format!(
+                                    "turn budget exhausted ({spent}/{budget} tokens) before a retry"
+                                )));
+                            }
+                        }
                         attempt += 1;
                         self.record(
                             session,
@@ -704,10 +726,17 @@ impl<'a> LoopExecution<'a> {
                             break;
                         }
                     }
-                    response.content.push_str(&annotations);
+                    if response.content.len().saturating_add(annotations.len()) > MAX_RESPONSE_BYTES
+                    {
+                        let room = MAX_RESPONSE_BYTES.saturating_sub(response.content.len());
+                        response
+                            .content
+                            .push_str(&crate::output::bounded_text_with_limit(annotations, room));
+                    } else {
+                        response.content.push_str(&annotations);
+                    }
                 }
             }
-            spent = spent.saturating_add(tokens);
             if let Some(budget) = self.config.max_turn_tokens {
                 if spent > budget {
                     return Err(AgentError::Model(format!(
@@ -960,7 +989,7 @@ impl LoopExecution<'_> {
         let model = self.pin_model(cancellation.clone()).await;
         // Allocation is persisted with the session before the turn reports itself, so a
         // crash can never hand the same identity to two turns of one session.
-        let turn = session.allocate_turn();
+        let turn = session.allocate_turn()?;
         session.interrupted = true;
         self.record(
             session,

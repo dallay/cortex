@@ -73,7 +73,7 @@ fn leased() -> UnderTest {
                 host.script.clone(),
                 host.tools(),
                 host.sessions.clone(),
-                host.loop_config(),
+                host.kernel_config(),
                 host.instructions(),
             )
             .await
@@ -175,7 +175,7 @@ fn extension_step_loop() -> UnderTest {
                 host.script.clone(),
                 host.tools(),
                 host.sessions.clone(),
-                host.loop_config(),
+                host.kernel_config(),
                 host.instructions(),
             )
             .await

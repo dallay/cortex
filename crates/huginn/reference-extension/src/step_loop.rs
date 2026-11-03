@@ -121,6 +121,7 @@ impl StepLoop {
         tools: Vec<ToolDefinition>,
         sink: &dyn EventSink,
         step: StepId,
+        max_tokens: u32,
         cancel: CancellationToken,
     ) -> Result<(Message, u64)> {
         let mut stream = tokio::select! {
@@ -130,7 +131,7 @@ impl StepLoop {
                 ModelRequest {
                     messages: context,
                     tools,
-                    max_tokens: self.config.max_output_tokens,
+                    max_tokens,
                 },
                 cancel.clone(),
             ) => result?,
@@ -235,6 +236,11 @@ impl StepLoop {
                         )));
                     }
                 }
+                // Cancellation can begin while the user decides; re-check before the
+                // effect rather than trusting the entry check.
+                if context.cancellation.is_cancelled() {
+                    return Err(AgentError::Cancelled);
+                }
                 execute(tool.as_ref(), action, &context).await
             }
             .await;
@@ -266,6 +272,7 @@ impl StepLoop {
             outcome = work => outcome,
         };
         let (output, is_error) = outcome?;
+        let output = bounded(output);
         session
             .messages
             .push(Message::tool(call.id.clone(), output.clone()));
@@ -363,7 +370,14 @@ impl StepLoop {
                 let request = context.clone();
                 let tools = self.tools.definitions();
                 match self
-                    .collect(request, tools, sink, step, cancel.clone())
+                    .collect(
+                        request,
+                        tools,
+                        sink,
+                        step,
+                        self.config.max_output_tokens,
+                        cancel.clone(),
+                    )
                     .await
                 {
                     Ok(pair) => break pair,
@@ -452,6 +466,24 @@ impl StepLoop {
     }
 }
 
+/// Largest tool result kept in history. The contract does not export the host limit, so
+/// every implementation states its own.
+pub const MAX_OUTPUT_BYTES: usize = 65_536;
+
+fn bounded(output: String) -> String {
+    if output.len() <= MAX_OUTPUT_BYTES {
+        return output;
+    }
+    let mut end = MAX_OUTPUT_BYTES;
+    while !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[output truncated at {MAX_OUTPUT_BYTES} bytes]",
+        &output[..end]
+    )
+}
+
 /// Local helper so the dispatch closure borrows the tool only once.
 async fn execute(tool: &dyn Tool, action: PreparedAction, context: &ToolContext) -> Result<String> {
     tool.execute(action, context).await
@@ -467,7 +499,7 @@ impl AgentLoop for StepLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        let turn = session.allocate_turn();
+        let turn = session.allocate_turn()?;
         session.interrupted = true;
         self.record(
             session,
@@ -537,6 +569,7 @@ impl AgentLoop for StepLoop {
                 request.tools,
                 events,
                 StepId(1),
+                request.max_tokens,
                 cancellation,
             )
             .await?;

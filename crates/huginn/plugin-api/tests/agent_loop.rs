@@ -38,7 +38,7 @@ impl AgentLoop for EchoLoop {
         events: &dyn EventSink,
         _cancel: CancellationToken,
     ) -> Result<()> {
-        let turn = session.allocate_turn();
+        let turn = session.allocate_turn()?;
         session.events.push(Event::TurnStarted {
             session_id: session.id.clone(),
             turn,

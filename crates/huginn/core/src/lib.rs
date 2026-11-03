@@ -422,9 +422,15 @@ impl Session {
     ///
     /// The counter, not the event log, is the allocator: a session whose events were
     /// truncated still cannot reuse an identity it already handed out.
-    pub const fn allocate_turn(&mut self) -> TurnId {
-        self.turn_seq = self.turn_seq.saturating_add(1);
-        TurnId(self.turn_seq)
+    /// Fails instead of saturating: reusing one identity for every later turn would
+    /// make two turns indistinguishable in an audit.
+    pub fn allocate_turn(&mut self) -> Result<TurnId> {
+        let next = self
+            .turn_seq
+            .checked_add(1)
+            .ok_or_else(|| AgentError::Session("turn counter exhausted in this session".into()))?;
+        self.turn_seq = next;
+        Ok(TurnId(next))
     }
 }
 #[derive(Debug, Clone, Serialize)]

@@ -489,6 +489,15 @@ impl Host {
             counts: self.approvals.clone(),
         })
     }
+    /// Config for a factory that builds its own supervisor: the kernel owns the hook
+    /// registries there, so the config must not carry the host's own.
+    pub fn kernel_config(&self) -> LoopConfig {
+        LoopConfig {
+            hooks: None,
+            inference_hooks: None,
+            ..self.loop_config()
+        }
+    }
     pub fn instructions(&self) -> Arc<dyn InstructionSource> {
         self.instructions.clone()
     }
@@ -1165,7 +1174,7 @@ pub mod broken {
             events: &dyn EventSink,
             cancel: CancellationToken,
         ) -> Result<()> {
-            let turn = session.allocate_turn();
+            let turn = session.allocate_turn()?;
             session.events.push(Event::TurnStarted {
                 session_id: session.id.clone(),
                 turn,

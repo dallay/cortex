@@ -53,6 +53,7 @@ copy host code or cannot express a guarantee at all.
 | G5 | Capabilities are declared out of band | The suite needs `Capabilities { compaction }` because `AgentLoop::compact` has a default `Err` | Nothing in the trait says what an implementation supports |
 | G6 | `Event::Error` carries no turn identity | Kept as-is for schema compatibility | A consumer must infer the turn positionally |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
+| G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
 | G8 | Concurrency and backpressure are unspecified | Only cross-process session leases exist | Two turns on one session in one process have no defined outcome |
 
 G1, G2 and G4 are the ones that would change the contract; the rest are either additive or

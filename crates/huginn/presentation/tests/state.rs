@@ -1230,6 +1230,37 @@ fn tool_error_uses_contributed_label_and_marks_status() {
 }
 
 #[test]
+fn a_retry_drops_the_partial_answer_of_the_failed_attempt() {
+    let mut state = UiState::default();
+    state.project(
+        Event::Text {
+            step: StepId(1),
+            text: "partial answer".into(),
+        },
+        "Tool",
+        "Tool error",
+    );
+    assert_eq!(state.tail, "partial answer");
+
+    state.project(
+        Event::ModelRetried {
+            turn: TurnId(1),
+            step: StepId(1),
+            attempt: 1,
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    assert!(
+        state.tail.is_empty(),
+        "the failed attempt must not splice into the retry: {:?}",
+        state.tail
+    );
+    assert!(state.status.notice.contains("Retrying"));
+}
+
+#[test]
 fn projected_text_cannot_emit_terminal_escape_sequences() {
     let ui = ui();
     ui.emit(Event::Text {

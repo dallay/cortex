@@ -115,7 +115,7 @@ impl AgentLoop for PluginLoop {
         _cancel: CancellationToken,
     ) -> Result<()> {
         self.0.plugin_runs.fetch_add(1, Ordering::SeqCst);
-        let turn = session.allocate_turn();
+        let turn = session.allocate_turn()?;
         session.events.push(Event::TurnStarted {
             session_id: session.id.clone(),
             turn,

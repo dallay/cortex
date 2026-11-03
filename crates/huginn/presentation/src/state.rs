@@ -645,7 +645,13 @@ impl UiState {
                 .status
                 .set_diagnostic(format!("Model call blocked by {hook}: {reason}")),
             Event::ContextPinned { .. } => {}
-            Event::ModelRetried { .. } => {}
+            Event::ModelRetried { attempt, .. } => {
+                // The failed attempt's deltas were already rendered; drop them so they do
+                // not splice into the answer of the retry.
+                self.tail.clear();
+                self.status
+                    .set_notice(format!("Retrying after an incomplete answer ({attempt})"));
+            }
             Event::Steered { count, .. } => {
                 let noun = if *count == 1 { "message" } else { "messages" };
                 self.status
