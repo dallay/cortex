@@ -1020,7 +1020,7 @@ Enter save Esc close"
             {
                 text.push_str(&format!(
                     "{} {}{}\n",
-                    if i == *selected { ">" } else { " " },
+                    if i == *selected { "▶" } else { " " },
                     label,
                     if *checked { " ✓" } else { "" }
                 ));

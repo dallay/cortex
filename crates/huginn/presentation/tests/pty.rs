@@ -930,6 +930,82 @@ fn overlays_keep_status_visible_at_minimum_inline_size() {
 }
 
 #[test]
+fn settings_pty_render_header_and_marker() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("/settings\r");
+    pty.wait_for("┌Settings");
+    // The frame is delivered in chunks, and the footer hint is the last line of
+    // the modal. Wait for it so the captured screen holds the whole frame.
+    pty.wait_for("Up/Down select");
+    let screen = pty.screen_text();
+    for tab in ["theme", "indicators", "sound", "toasts", "integrations"] {
+        assert!(
+            screen.contains(tab),
+            "settings tab {tab} missing:\n{screen}"
+        );
+    }
+    assert!(
+        screen.contains("▶ one-dark ✓"),
+        "selected settings row must match the spec:\n{screen}"
+    );
+    assert!(
+        screen.contains("Up/Down select"),
+        "settings footer missing:\n{screen}"
+    );
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("┌Settings");
+    pty.send("\x03");
+    pty.finish(true);
+
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    let mut narrow = Pty::start_sized(command, true, 8, 20);
+    narrow.wait_for("Huginn");
+    narrow.send("/settings\r");
+    narrow.wait_for("┌Settings");
+    // Same chunking rule as the wide case: the footer hint closes the frame.
+    narrow.wait_for("Enter save");
+    let screen = narrow.screen_text();
+    assert!(
+        screen.contains("▶ one-dark ✓"),
+        "selected settings row missing at 20x8:\n{screen}"
+    );
+    assert!(
+        screen.contains("Enter save"),
+        "settings footer missing at 20x8:\n{screen}"
+    );
+    narrow.send("\x1b");
+    narrow.wait_until_screen_not_contains("┌Settings");
+    narrow.send("\x03");
+    narrow.finish(true);
+}
+
+#[test]
+fn settings_pty_escape_closes_modal_without_cancelling_stream() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("stream\r");
+    pty.wait_for("chunk0");
+    pty.send("/settings\r");
+    pty.wait_for("┌Settings");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("┌Settings");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    let output = pty.output();
+    assert!(
+        output.contains("Settings discarded"),
+        "Esc must report the discarded settings:\n{output}"
+    );
+    assert!(
+        !output.contains("operation cancelled"),
+        "Esc cancelled the active stream:\n{output}"
+    );
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
     command.arg("normal");
