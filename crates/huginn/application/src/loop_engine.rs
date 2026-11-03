@@ -544,6 +544,28 @@ impl<'a> LoopExecution<'a> {
         } else {
             String::new()
         };
+        // Pinned once for the whole turn: a mid-turn change to repository instructions
+        // must not silently alter what the model was already told.
+        let pinned = {
+            let mut loaded = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                result = self.instructions.load(&session.workspace) => result?,
+            };
+            loaded.push_str(&metadata);
+            loaded
+        };
+        self.record(
+            session,
+            Event::ContextPinned {
+                turn,
+                bytes: pinned.len(),
+                digest: huginn_core::fingerprint(pinned.as_bytes()),
+            },
+            sink,
+        )
+        .await?;
         for iteration in 1..=self.config.max_iterations {
             if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -578,20 +600,14 @@ impl<'a> LoopExecution<'a> {
                     .await?;
                 }
             }
-            let mut instructions = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
-                result = self.instructions.load(&session.workspace) => result?,
-            };
-            instructions.push_str(&metadata);
+            let instructions = &pinned;
             let tools = self.tools.definitions();
             let tool_bytes = serde_json::to_vec(&tools)?.len();
             let context = self
                 .context(
                     model,
                     session,
-                    &instructions,
+                    instructions,
                     tool_bytes,
                     cancel.clone(),
                     sink,

@@ -151,6 +151,19 @@ impl StepId {
     pub const UNKNOWN: Self = Self(0);
 }
 
+/// Non-cryptographic provenance digest (FNV-1a, 64 bit, hex).
+///
+/// Used to state *which* context a turn was pinned to, so a later audit can tell two
+/// turns apart. It is not a security boundary and cannot authenticate content.
+pub fn fingerprint(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 /// Steering messages are bounded and never grants: the host decides what to inject.
 pub const MAX_STEERING_MESSAGES: usize = 8;
 pub const MAX_STEERING_BYTES: usize = 4096;
@@ -262,6 +275,12 @@ pub enum Event {
     },
     Compacted {
         through: usize,
+    },
+    /// The turn pinned its system context; later steps reuse exactly this.
+    ContextPinned {
+        turn: TurnId,
+        bytes: usize,
+        digest: String,
     },
     /// The host injected messages into a running turn; they are history now.
     Steered {

@@ -288,7 +288,18 @@ impl StepLoop {
         Self::recover(session);
         let mut spent = 0_u64;
         session.messages.push(Message::text(Role::User, prompt));
+        // Pinned once for the whole turn.
         let instructions = self.instructions.load(&session.workspace).await?;
+        self.record(
+            session,
+            Event::ContextPinned {
+                turn,
+                bytes: instructions.len(),
+                digest: huginn_plugin_api::fingerprint(instructions.as_bytes()),
+            },
+            sink,
+        )
+        .await?;
         for iteration in 1..=self.config.max_iterations {
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);

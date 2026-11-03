@@ -257,12 +257,14 @@ async fn text_deltas_are_live_only_with_bounded_saves_and_durable_resume() {
             })
             .collect();
         assert_eq!(live, vec!["é"; chunks]);
-        assert_eq!(*sink.saves_at_text.lock().unwrap(), vec![2; chunks]);
+        // One save per durable transition before the deltas: turn start, prompt and the
+        // pinned context. It must stay constant per chunk, not grow with the deltas.
+        assert_eq!(*sink.saves_at_text.lock().unwrap(), vec![3; chunks]);
         {
             let snapshots = store.snapshots.lock().unwrap();
             assert_eq!(
                 snapshots.len(),
-                5,
+                6,
                 "save count must not depend on text delta count"
             );
             assert!(snapshots
@@ -412,8 +414,8 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             .unwrap()
             .iter()
             .any(|e| matches!(e, Event::Text { text, .. } if text == "é")));
-        assert_eq!(*sink.saves_at_text.lock().unwrap(), vec![2]);
-        assert_eq!(store.snapshots.lock().unwrap().len(), 3);
+        assert_eq!(*sink.saves_at_text.lock().unwrap(), vec![3]);
+        assert_eq!(store.snapshots.lock().unwrap().len(), 4);
         let reloaded = SqliteSessions::open(&db)
             .unwrap()
             .load(&session.id)

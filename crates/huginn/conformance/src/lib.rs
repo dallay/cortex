@@ -209,6 +209,22 @@ impl MemorySessions {
     }
 }
 
+/// Counts reads and returns different text each time, so drift is observable.
+#[derive(Default)]
+pub struct ChangingInstructions(AtomicUsize);
+impl ChangingInstructions {
+    pub fn loads(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+#[async_trait]
+impl InstructionSource for ChangingInstructions {
+    async fn load(&self, _: &Path) -> Result<String> {
+        let read = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(format!("instructions v{read}"))
+    }
+}
+
 struct Instructions(&'static str);
 #[async_trait]
 impl InstructionSource for Instructions {
@@ -303,6 +319,7 @@ pub struct Host {
     pub hooks: Arc<ToolHooks>,
     pub inference_hooks: Arc<InferenceHooks>,
     pub steering: Arc<huginn_core::SteeringQueue>,
+    instructions: Arc<dyn InstructionSource>,
     pub workspace: PathBuf,
     pub target: PathBuf,
     pub config: LoopConfig,
@@ -315,33 +332,65 @@ pub struct Host {
 
 impl Host {
     pub async fn new(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, None, (0, 0)).await
+        Self::assemble(script, None, None, None, (0, 0), Arc::new(Instructions(""))).await
     }
     /// A host whose only hook blocks every write before any preview exists.
     pub async fn with_blocking_hook(script: Vec<Reply>) -> Self {
-        Self::assemble(script, Some(Arc::new(BlockWrites)), None, None, (0, 0)).await
+        Self::assemble(
+            script,
+            Some(Arc::new(BlockWrites)),
+            None,
+            None,
+            (0, 0),
+            Arc::new(Instructions("")),
+        )
+        .await
+    }
+    /// A host whose repository instructions change on every read.
+    pub async fn with_changing_instructions(
+        script: Vec<Reply>,
+        source: Arc<ChangingInstructions>,
+    ) -> Self {
+        Self::assemble(script, None, None, None, (0, 0), source).await
     }
     /// A host whose turn budget stops the turn, reporting `usage` per model call.
     pub async fn budgeted(script: Vec<Reply>, max_turn_tokens: u64, usage: (u64, u64)) -> Self {
-        let host = Self::assemble(script, None, None, None, usage).await;
+        let host =
+            Self::assemble(script, None, None, None, usage, Arc::new(Instructions(""))).await;
         let mut config = host.config.clone();
         config.max_turn_tokens = Some(max_turn_tokens);
         Self { config, ..host }
     }
     /// A host where the first executed effect injects a steering message mid-turn.
     pub async fn steering_after_first_effect(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, None, (0, 0)).await
+        Self::assemble(script, None, None, None, (0, 0), Arc::new(Instructions(""))).await
     }
     /// A host whose turn-level hook refuses every model call.
     pub async fn with_blocking_inference_hook(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, Some(Arc::new(BlockModelCalls)), (0, 0)).await
+        Self::assemble(
+            script,
+            None,
+            None,
+            Some(Arc::new(BlockModelCalls)),
+            (0, 0),
+            Arc::new(Instructions("")),
+        )
+        .await
     }
     /// A host that cancels the turn from inside the first executed effect.
     pub async fn cancelling_after_first_effect(
         script: Vec<Reply>,
         cancel: CancellationToken,
     ) -> Self {
-        Self::assemble(script, None, Some(cancel), None, (0, 0)).await
+        Self::assemble(
+            script,
+            None,
+            Some(cancel),
+            None,
+            (0, 0),
+            Arc::new(Instructions("")),
+        )
+        .await
     }
 
     async fn assemble(
@@ -350,6 +399,7 @@ impl Host {
         cancel_after_execute: Option<CancellationToken>,
         inference_hook: Option<Arc<dyn InferenceHook>>,
         usage: (u64, u64),
+        instructions: Arc<dyn InstructionSource>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().to_path_buf();
@@ -398,6 +448,7 @@ impl Host {
             hooks,
             inference_hooks,
             steering,
+            instructions,
             workspace,
             target,
             config: LoopConfig::default(),
@@ -428,7 +479,7 @@ impl Host {
         })
     }
     pub fn instructions(&self) -> Arc<dyn InstructionSource> {
-        Arc::new(Instructions(""))
+        self.instructions.clone()
     }
     /// The hook this host expects to be enforced: `LoopConfig::hooks` for a loop that
     /// takes the registry, `hook_plugin` for a loop that composes its own supervisor.
@@ -641,6 +692,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         guarded(
             "turn_budget_stops_the_turn",
             turn_budget_stops_the_turn(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "context_is_pinned_for_the_turn",
+            context_is_pinned_for_the_turn(under_test).await,
         )
         .await,
     );
@@ -1275,6 +1333,68 @@ async fn turn_budget_stops_the_turn(under_test: &UnderTest) -> std::result::Resu
             "the over-budget step must not take effects, executed {} tools",
             host.effects.executed()
         ));
+    }
+    Ok(())
+}
+
+async fn context_is_pinned_for_the_turn(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let source = Arc::new(ChangingInstructions::default());
+    let host = Host::with_changing_instructions(
+        vec![
+            Reply::ToolCalls(vec![write_call("c1")]),
+            Reply::Text("done"),
+        ],
+        source.clone(),
+    )
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("run failed: {error}"))?;
+
+    if source.loads() != 1 {
+        return Err(format!(
+            "instructions must be read once per turn, read {} times",
+            source.loads()
+        ));
+    }
+    let requests = host.script.requests();
+    if requests.len() != 2 {
+        return Err(format!("expected two model calls, got {}", requests.len()));
+    }
+    let first = requests[0]
+        .messages
+        .first()
+        .map(|message| message.content.clone())
+        .unwrap_or_default();
+    let second = requests[1]
+        .messages
+        .first()
+        .map(|message| message.content.clone())
+        .unwrap_or_default();
+    if !first.contains("instructions v1") {
+        return Err(format!(
+            "the turn did not start from the first read: {first}"
+        ));
+    }
+    if first != second {
+        return Err("the system context drifted between steps of the same turn".into());
+    }
+    let pinned = session
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::ContextPinned { bytes, .. } if *bytes > 0));
+    if !pinned {
+        return Err("the turn must record which context it was pinned to".into());
     }
     Ok(())
 }

@@ -124,6 +124,17 @@ async fn standard_loop_passes_the_suite() {
         report.describe()
     );
     assert!(report.passed("compaction_keeps_turn_boundary"));
+    assert!(
+        report.passed("context_is_pinned_for_the_turn"),
+        "a case silently missing from the run is not a pass:\n{}",
+        report.describe()
+    );
+    assert_eq!(
+        report.outcomes.len(),
+        14,
+        "the suite must run every case:\n{}",
+        report.describe()
+    );
 }
 
 #[tokio::test]
