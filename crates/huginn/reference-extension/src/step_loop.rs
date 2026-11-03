@@ -27,6 +27,7 @@ pub struct StepLoopConfig {
     pub hooks: Option<Arc<ToolHooks>>,
     pub inference_hooks: Option<Arc<InferenceHooks>>,
     pub steering: Option<Arc<SteeringQueue>>,
+    pub max_turn_tokens: Option<u64>,
 }
 impl Default for StepLoopConfig {
     fn default() -> Self {
@@ -36,6 +37,7 @@ impl Default for StepLoopConfig {
             hooks: None,
             inference_hooks: None,
             steering: None,
+            max_turn_tokens: None,
         }
     }
 }
@@ -118,7 +120,7 @@ impl StepLoop {
         sink: &dyn EventSink,
         step: StepId,
         cancel: CancellationToken,
-    ) -> Result<Message> {
+    ) -> Result<(Message, u64)> {
         let mut stream = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -133,6 +135,7 @@ impl StepLoop {
         };
         let mut response = Message::text(Role::Assistant, "");
         let mut finished = false;
+        let mut tokens = 0_u64;
         loop {
             let item = tokio::select! {
                 biased;
@@ -149,11 +152,14 @@ impl StepLoop {
                 ModelDelta::Usage {
                     input_tokens,
                     output_tokens,
-                } => sink.emit(Event::Usage {
-                    step,
-                    input_tokens,
-                    output_tokens,
-                }),
+                } => {
+                    tokens = tokens.saturating_add(input_tokens.saturating_add(output_tokens));
+                    sink.emit(Event::Usage {
+                        step,
+                        input_tokens,
+                        output_tokens,
+                    });
+                }
                 ModelDelta::Finished => finished = true,
             }
             if response.content.len() > 1_048_576 || response.tool_calls.len() > 64 {
@@ -165,7 +171,7 @@ impl StepLoop {
                 "model returned an incomplete turn".into(),
             ));
         }
-        Ok(response)
+        Ok((response, tokens))
     }
 
     async fn dispatch(
@@ -280,6 +286,7 @@ impl StepLoop {
         turn: huginn_plugin_api::v1::agent::TurnId,
     ) -> Result<()> {
         Self::recover(session);
+        let mut spent = 0_u64;
         session.messages.push(Message::text(Role::User, prompt));
         let instructions = self.instructions.load(&session.workspace).await?;
         for iteration in 1..=self.config.max_iterations {
@@ -331,7 +338,14 @@ impl StepLoop {
                     )));
                 }
             }
-            let mut response = self
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent >= budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exhausted ({spent}/{budget} tokens); start a new session"
+                    )));
+                }
+            }
+            let (mut response, tokens) = self
                 .collect(
                     context,
                     self.tools.definitions(),
@@ -351,6 +365,14 @@ impl StepLoop {
                 }
             }
 
+            spent = spent.saturating_add(tokens);
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent > budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exceeded ({spent}/{budget} tokens); nothing further was sent"
+                    )));
+                }
+            }
             let mut seen: BTreeSet<String> = session
                 .messages
                 .iter()
@@ -477,7 +499,7 @@ impl AgentLoop for StepLoop {
             tools: vec![],
             max_tokens: 1024,
         };
-        let summary = self
+        let (summary, _) = self
             .collect(
                 request.messages,
                 request.tools,

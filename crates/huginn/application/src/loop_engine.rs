@@ -45,6 +45,9 @@ pub struct LoopConfig {
     pub inference_hooks: Option<Arc<huginn_core::hooks::InferenceHooks>>,
     /// Host mailbox the loop drains at step boundaries.
     pub steering: Option<Arc<huginn_core::SteeringQueue>>,
+    /// Tokens the whole turn may spend, summed from provider usage reports. `None`
+    /// leaves the turn unbounded, which is the historical behavior.
+    pub max_turn_tokens: Option<u64>,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -56,6 +59,7 @@ impl Default for LoopConfig {
             hooks: None,
             inference_hooks: None,
             steering: None,
+            max_turn_tokens: None,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -298,7 +302,7 @@ impl<'a> LoopExecution<'a> {
         request: ModelRequest,
         session: &mut Session,
         scope: &StepScope<'_>,
-    ) -> Result<Message> {
+    ) -> Result<(Message, u64)> {
         let model_request = model.stream(request, scope.cancel.clone());
         let mut stream = tokio::select! {
             _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -308,6 +312,7 @@ impl<'a> LoopExecution<'a> {
         let mut response = Message::text(Role::Assistant, "");
         let mut finished = false;
         let mut count = 0;
+        let mut tokens = 0_u64;
         loop {
             let item = tokio::select! {
                 _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -345,6 +350,7 @@ impl<'a> LoopExecution<'a> {
                     input_tokens,
                     output_tokens,
                 } => {
+                    tokens = tokens.saturating_add(input_tokens.saturating_add(output_tokens));
                     self.record(
                         session,
                         Event::Usage {
@@ -364,7 +370,7 @@ impl<'a> LoopExecution<'a> {
                 "model returned an incomplete turn".into(),
             ));
         }
-        Ok(response)
+        Ok((response, tokens))
     }
 
     async fn execute_tool(
@@ -505,6 +511,7 @@ impl<'a> LoopExecution<'a> {
     ) -> Result<()> {
         let (prompt, selected, catalog_snapshot) = input;
         let TurnHost { approvals, sink } = scope;
+        let mut spent = 0_u64;
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
@@ -621,7 +628,16 @@ impl<'a> LoopExecution<'a> {
                     )));
                 }
             }
-            let mut response = self
+            // The budget is checked before the request that would exceed it, so a turn
+            // never pays for a call it cannot keep.
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent >= budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exhausted ({spent}/{budget} tokens); start a new session"
+                    )));
+                }
+            }
+            let (mut response, tokens) = self
                 .collect_response(
                     model,
                     ModelRequest {
@@ -652,6 +668,14 @@ impl<'a> LoopExecution<'a> {
                         }
                     }
                     response.content.push_str(&annotations);
+                }
+            }
+            spent = spent.saturating_add(tokens);
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent > budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exceeded ({spent}/{budget} tokens); nothing further was sent"
+                    )));
                 }
             }
             let mut ids: BTreeSet<_> = session

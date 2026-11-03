@@ -180,6 +180,7 @@ fn extension_step_loop() -> UnderTest {
                     hooks: host.loop_config().hooks,
                     inference_hooks: host.loop_config().inference_hooks,
                     steering: host.loop_config().steering,
+                    max_turn_tokens: host.config.max_turn_tokens,
                 },
             );
             supervisor

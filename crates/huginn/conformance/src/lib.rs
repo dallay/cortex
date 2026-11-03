@@ -55,13 +55,19 @@ pub struct ScriptModel {
     replies: Mutex<VecDeque<Reply>>,
     calls: AtomicUsize,
     requests: Mutex<Vec<ModelRequest>>,
+    usage: (u64, u64),
 }
 impl ScriptModel {
     pub fn new(replies: Vec<Reply>) -> Self {
+        Self::reporting_usage(replies, (0, 0))
+    }
+    /// Reports the same usage for every call, so a turn budget has something to sum.
+    pub fn reporting_usage(replies: Vec<Reply>, usage: (u64, u64)) -> Self {
         Self {
             replies: Mutex::new(replies.into()),
             calls: AtomicUsize::new(0),
             requests: Mutex::new(vec![]),
+            usage,
         }
     }
     pub fn calls(&self) -> usize {
@@ -88,16 +94,23 @@ impl ModelProvider for ScriptModel {
             .unwrap()
             .pop_front()
             .unwrap_or(Reply::Text("done"));
+        let usage = ModelDelta::Usage {
+            input_tokens: self.usage.0,
+            output_tokens: self.usage.1,
+        };
         let deltas: BoxStream<'static, Result<ModelDelta>> = match reply {
             Reply::Hang => futures::stream::pending().boxed(),
-            Reply::Text(text) => {
-                futures::stream::iter([Ok(ModelDelta::Text(text.into())), Ok(ModelDelta::Finished)])
-                    .boxed()
-            }
+            Reply::Text(text) => futures::stream::iter([
+                Ok(ModelDelta::Text(text.into())),
+                Ok(usage),
+                Ok(ModelDelta::Finished),
+            ])
+            .boxed(),
             Reply::ToolCalls(calls) => futures::stream::iter(
                 calls
                     .into_iter()
                     .map(|call| Ok(ModelDelta::ToolCall(call)))
+                    .chain(std::iter::once(Ok(usage)))
                     .chain(std::iter::once(Ok(ModelDelta::Finished))),
             )
             .boxed(),
@@ -302,26 +315,33 @@ pub struct Host {
 
 impl Host {
     pub async fn new(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, None).await
+        Self::assemble(script, None, None, None, (0, 0)).await
     }
     /// A host whose only hook blocks every write before any preview exists.
     pub async fn with_blocking_hook(script: Vec<Reply>) -> Self {
-        Self::assemble(script, Some(Arc::new(BlockWrites)), None, None).await
+        Self::assemble(script, Some(Arc::new(BlockWrites)), None, None, (0, 0)).await
+    }
+    /// A host whose turn budget stops the turn, reporting `usage` per model call.
+    pub async fn budgeted(script: Vec<Reply>, max_turn_tokens: u64, usage: (u64, u64)) -> Self {
+        let host = Self::assemble(script, None, None, None, usage).await;
+        let mut config = host.config.clone();
+        config.max_turn_tokens = Some(max_turn_tokens);
+        Self { config, ..host }
     }
     /// A host where the first executed effect injects a steering message mid-turn.
     pub async fn steering_after_first_effect(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, None).await
+        Self::assemble(script, None, None, None, (0, 0)).await
     }
     /// A host whose turn-level hook refuses every model call.
     pub async fn with_blocking_inference_hook(script: Vec<Reply>) -> Self {
-        Self::assemble(script, None, None, Some(Arc::new(BlockModelCalls))).await
+        Self::assemble(script, None, None, Some(Arc::new(BlockModelCalls)), (0, 0)).await
     }
     /// A host that cancels the turn from inside the first executed effect.
     pub async fn cancelling_after_first_effect(
         script: Vec<Reply>,
         cancel: CancellationToken,
     ) -> Self {
-        Self::assemble(script, None, Some(cancel), None).await
+        Self::assemble(script, None, Some(cancel), None, (0, 0)).await
     }
 
     async fn assemble(
@@ -329,6 +349,7 @@ impl Host {
         hook: Option<Arc<dyn ToolHook>>,
         cancel_after_execute: Option<CancellationToken>,
         inference_hook: Option<Arc<dyn InferenceHook>>,
+        usage: (u64, u64),
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().to_path_buf();
@@ -370,7 +391,7 @@ impl Host {
             .0
             .clone();
         Self {
-            script: Arc::new(ScriptModel::new(script)),
+            script: Arc::new(ScriptModel::reporting_usage(script, usage)),
             effects,
             sessions: Arc::new(MemorySessions::default()),
             approvals: Arc::new(Approvals::default()),
@@ -613,6 +634,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         guarded(
             "steering_reaches_the_next_step",
             steering_reaches_the_next_step(under_test).await,
+        )
+        .await,
+    );
+    record(
+        guarded(
+            "turn_budget_stops_the_turn",
+            turn_budget_stops_the_turn(under_test).await,
         )
         .await,
     );
@@ -1199,6 +1227,54 @@ async fn steering_reaches_the_next_step(under_test: &UnderTest) -> std::result::
         .any(|event| matches!(event, Event::Steered { count: 1, .. }));
     if !recorded {
         return Err("delivery must be recorded as a durable event".into());
+    }
+    Ok(())
+}
+
+async fn turn_budget_stops_the_turn(under_test: &UnderTest) -> std::result::Result<(), String> {
+    let host = Host::budgeted(
+        vec![
+            Reply::ToolCalls(vec![write_call("c1")]),
+            Reply::ToolCalls(vec![write_call("c2")]),
+            Reply::Text("never"),
+        ],
+        10,
+        (4, 4),
+    )
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    let approval = host.approval(true);
+    let mut session = Session::new(host.workspace.clone());
+    let outcome = implementation
+        .run(
+            &mut session,
+            "go".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    match &outcome {
+        Err(AgentError::Model(message)) if message.contains("budget") => {}
+        other => {
+            return Err(format!(
+                "an exhausted turn budget must stop the turn, got {other:?}"
+            ))
+        }
+    }
+    if host.script.calls() != 2 {
+        return Err(format!(
+            "the loop must stop as soon as the budget is exceeded, it made {} calls",
+            host.script.calls()
+        ));
+    }
+    // The step that pushed the turn over budget must not dispatch its tools: the
+    // budget is a ceiling on effects too, not only on requests.
+    if host.effects.executed() != 1 {
+        return Err(format!(
+            "the over-budget step must not take effects, executed {} tools",
+            host.effects.executed()
+        ));
     }
     Ok(())
 }
