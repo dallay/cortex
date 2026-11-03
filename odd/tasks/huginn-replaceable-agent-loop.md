@@ -41,7 +41,10 @@ worktree occupied **14G, of which 14G is `target/`** (build artifacts, gitignore
 Rules for anyone continuing this feature:
 
 1. `rm -rf target` in this worktree at any time is safe: it costs rebuild time, never
-   work. Do it before handing the session off if space gets tight.
+   work. Do it before handing the session off if space gets tight. A full
+   `cargo test --workspace --all-features` build reached **55G** and filled the disk once;
+   `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0` keeps it far smaller and is what
+   to use for the CI-equivalent check.
 2. The worktree is disposable. **When this branch is merged to `main`, remove it:**
 
    ```sh

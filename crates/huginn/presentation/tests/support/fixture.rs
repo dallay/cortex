@@ -65,7 +65,10 @@ impl AgentLoop for Engine {
             let marker = gated_resize_stream && index % 4 == 0;
             tokio::select! {
                 _ = cancel.cancelled() => { session.interrupted = true; return Err(huginn_core::AgentError::Cancelled); },
-                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text { text: format!("{}chunk{index} ", if marker { "\n" } else { "" }) }),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text {
+                    step: StepId(1),
+                    text: format!("{}chunk{index} ", if marker { "\n" } else { "" }),
+                }),
             }
             if marker {
                 let signal = format!("resize-{index}");

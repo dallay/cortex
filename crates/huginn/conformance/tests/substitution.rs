@@ -1,15 +1,18 @@
-//! A plugin can replace the production loop without editing the host (ADR-0017).
+//! Replacing the production loop through the plugin path invokes only the replacement.
+//!
+//! This lives here rather than in `huginn-application` because the architecture guard
+//! forbids the application crate from depending on the authoring SDK, tests included.
 
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_application::{composition, loop_engine::LoopConfig};
 use huginn_core::{
+    agent_loop_id,
     kernel::{Manifest, Plugin, PluginContext, SubstitutionPolicy},
-    AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
+    AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
     InstructionSource, LoopService, Message, ModelDelta, ModelProvider, ModelRequest, Result, Role,
-    Session, SessionInfo, SessionStore, StepId, ToolDefinition, ToolRegistry,
+    Session, SessionInfo, SessionStore, StepId, Tool, ToolDefinition, ToolRegistry,
 };
-use huginn_plugin_api::v1::agent::agent_loop_id;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -46,7 +49,7 @@ impl ToolRegistry for NoTools {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![]
     }
-    fn get(&self, _: &str) -> Option<Arc<dyn huginn_core::Tool>> {
+    fn get(&self, _: &str) -> Option<Arc<dyn Tool>> {
         None
     }
 }
@@ -84,7 +87,7 @@ struct NoApproval;
 #[async_trait]
 impl ApprovalPolicy for NoApproval {
     async fn approve(&self, request: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Err(huginn_core::AgentError::Tool(format!(
+        Err(AgentError::Tool(format!(
             "unexpected approval {}",
             request.id
         )))
@@ -99,7 +102,7 @@ impl EventSink for Events {
     }
 }
 
-/// An alternative loop authored outside the host crate.
+/// An alternative loop written against the contracts only.
 struct PluginLoop(Arc<Counts>);
 #[async_trait]
 impl AgentLoop for PluginLoop {
@@ -161,10 +164,13 @@ async fn substituting_the_loop_runs_only_the_plugin_implementation() {
     .await
     .unwrap();
 
-    let before = supervisor
-        .provider_of(&composition::loop_id())
-        .map(|record| record.plugin_id.clone());
-    assert_eq!(before.as_deref(), Some("core.loop"));
+    assert_eq!(
+        supervisor
+            .provider_of(&composition::loop_id())
+            .map(|record| record.plugin_id.as_str()),
+        Some("core.loop"),
+        "the host loop must own the service before the substitution"
+    );
 
     supervisor
         .substitute(
@@ -185,7 +191,7 @@ async fn substituting_the_loop_runs_only_the_plugin_implementation() {
 
     let slot = supervisor.resolve::<LoopService>(&agent_loop_id()).unwrap();
     let events = Events::default();
-    let mut session = Session::new("/nonexistent/plugin-loop".into());
+    let mut session = Session::new("/nonexistent/substitution".into());
     slot.0
         .run(
             &mut session,
