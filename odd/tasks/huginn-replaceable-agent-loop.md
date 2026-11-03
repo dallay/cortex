@@ -23,15 +23,15 @@ Deliverable: the complete epic — a functional agent loop whose concrete strate
 | --- | --- | --- | --- | --- |
 | T1 | Turn and step identity in lifecycle events (`TurnId`, `StepId`, additive schema, resume correlation) | S9, S5, S10 | inline | `babfb50` |
 | T2 | Plugin-authorable loop registration: `huginn_plugin_api::v1::agent`, core-owned `agent:loop@1` id, ADR-0017 | S2, S10 | inline | `d6fd14f` |
-| T3 | Loop-parametric conformance suite in a dedicated Huginn test-support crate, with a broken-loop fixture | S3, S4 | inline | (pending) |
-| T4 | Second distinct loop strategy registered through the plugin path, passing the whole suite | S1, S3, S2 | inline | (pending) |
-| T5 | Pre/post inference (turn-level) hooks with a block audit event | S7, S4 | inline | (pending) |
-| T6 | Steering and queued messages: in-turn message injection with defined semantics | S6 | inline | (pending) |
-| T7 | Budget enforcement: per-turn token and iteration budget from `Event::Usage`, fail-closed | S6, S4 | inline | (pending) |
-| T8 | Context pinning: instructions and skill catalog loaded once per turn, with provenance | S8, S10 | inline | (pending) |
-| T9 | Effect-aware retry classification for inference calls (idempotent vs effect-bearing) | S7, S4 | inline | (pending) |
-| T10 | Certification matrix and loop contract gap list in `docs/huginn/agent-loop-conformance.md` | S3, S11 | inline | (pending) |
-| T11 | Follow-up implementation issues for the remaining epic capabilities, created in GitHub | S11 | inline | (pending) |
+| T3 | Loop-parametric conformance suite in a dedicated Huginn test-support crate, with a broken-loop fixture | S3, S4 | inline | `50820e5`, `8810aa5`, `45fd2fc` |
+| T4 | Second distinct loop strategy registered through the plugin path, passing the whole suite | S1, S3, S2 | inline | `0fb26ba` |
+| T5 | Pre/post inference (turn-level) hooks with a block audit event | S7, S4 | inline | `abac1d7` |
+| T6 | Steering and queued messages: in-turn message injection with defined semantics | S6 | inline | `270fba6` |
+| T7 | Budget enforcement: per-turn token and iteration budget from `Event::Usage`, fail-closed | S6, S4 | inline | `5d9d95a` |
+| T8 | Context pinning: instructions and skill catalog loaded once per turn, with provenance | S8, S10 | inline | `6d84800` |
+| T9 | Effect-aware retry classification for inference calls (idempotent vs effect-bearing) | S7, S4 | inline | `aea7963` |
+| T10 | Certification matrix and loop contract gap list in `docs/huginn/agent-loop-conformance.md` | S3, S11 | inline | `8d263af` |
+| T11 | Follow-up implementation issues for the remaining epic capabilities, created in GitHub | S11 | inline | #536–#541 |
 
 ## Housekeeping
 
@@ -71,3 +71,9 @@ Rules for anyone continuing this feature:
 - **L8 — T2 delivered.** `d6fd14f`. `huginn_plugin_api::v1::agent`, `composition::loop_id` delegating to `huginn_core::agent_loop_id`, ADR-0017. Tests: `crates/huginn/plugin-api/tests/agent_loop.rs` (authorable path) and `crates/huginn/application/tests/plugin_loop.rs` (substitution moves the provider to the plugin, one plugin run, zero model calls — S4 no double invocation).
 - **L9 — delivery strategy for the remaining slices.** The schema change touched 12 test fixtures, so slice 1 exceeded the 400-line review budget. From T3 on, each task lands as its own commit under ~400 authored lines, and any task that grows past that is split by capability, not by file.
 - **L10 — incident.** A scripted multi-file edit inserted `step:` fields into production code and deleted the `InstructionSource` trait; the `check` pre-commit hook caught it and the block was restored and re-verified. A scripted edit must be followed by reading `git diff` for the production files it touched. `gentle-ai-worker` also failed on its first turn with zero tool calls (provider error); it was not retried and the work continued inline.
+- **L11 — T3 delivered.** `50820e5`, `8810aa5`, `45fd2fc`. New `huginn-conformance` crate: host doubles, `UnderTest` with declared capabilities, and thirteen cases. The suite immediately found two real defects, both fixed in production code: a tool could start after the turn was cancelled (unbiased `tokio::select`), and a supervisor-based loop receives the kernel's hook registry rather than `LoopConfig::hooks`. `broken::ReplayingLoop` fails no-replay and denial, so the suite is proven able to fail.
+- **L12 — T4 delivered.** `0fb26ba`. `StepLoop` in `crates/huginn-reference-extension`, authored only against `huginn_plugin_api::v1::agent`, installed by `Supervisor::substitute`. Epic acceptance outcome met: `StandardLoop`, the production `LeasedAgentLoop` and this extension pass the same suite while a broken loop fails it.
+- **L13 — T5 to T9 delivered.** `abac1d7` turn-level inference hooks with `Event::InferenceBlocked`; `270fba6` steering mailbox drained at step boundaries; `5d9d95a` per-turn token budget that binds effects too; `6d84800` context pinned once per turn with a `ContextPinned` provenance digest and an extra durable save that the stream-persistence expectations now account for; `aea7963` `AgentError::Inference` plus a bounded retry that repeats inference and never an effect. Each landed with a conformance case, and the suite now asserts its own case count so a case cannot silently vanish.
+- **L14 — T10 delivered.** `8d263af`. Sixteen certified clauses with their proving case and enforcement side, plus the eight contract gaps found by certifying an external loop.
+- **L15 — T11 delivered.** #536 TUI steering adoption, #537 transient transport classification, #538 complete-turn rule into the contract, #539 hook registries and rebinding for authorable loops, #540 declared capabilities and `Error` identity, #541 in-process concurrency and backpressure.
+- **L16 — process note.** Two commits were amended or tightened after a check I ran *after* committing: a failing runtime assertion about save counts, and an `#[allow]`-avoidance refactor. Hook `check` only compiles, it does not test, so the full suite must be run before a commit is treated as done.
