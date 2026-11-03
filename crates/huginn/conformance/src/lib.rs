@@ -673,13 +673,14 @@ async fn denial_performs_no_effect(under_test: &UnderTest) -> std::result::Resul
     .await;
     let implementation = (under_test.build)(&host).await;
     let approval = host.approval(false);
+    let events = Events::default();
     let mut session = Session::new(host.workspace.clone());
     implementation
         .run(
             &mut session,
             "go".into(),
             &*approval,
-            &Events::default(),
+            &events,
             CancellationToken::new(),
         )
         .await
@@ -824,13 +825,14 @@ async fn hook_block_prevents_effect(under_test: &UnderTest) -> std::result::Resu
     .await;
     let implementation = (under_test.build)(&host).await;
     let approval = host.approval(true);
+    let events = Events::default();
     let mut session = Session::new(host.workspace.clone());
     implementation
         .run(
             &mut session,
             "go".into(),
             &*approval,
-            &Events::default(),
+            &events,
             CancellationToken::new(),
         )
         .await

@@ -361,6 +361,12 @@ impl<'a> LoopExecution<'a> {
         session: &mut Session,
         scope: &StepScope<'_>,
     ) -> Result<()> {
+        // A cancelled turn must not start another effect. Waiting for the token inside
+        // `select!` below is not enough: a chosen effect can complete before the
+        // cancellation is observed, and `select!` is unbiased by default.
+        if scope.cancel.is_cancelled() || self.lifecycle.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
         self.record(
             session,
             Event::ToolStarted {
