@@ -5,6 +5,8 @@ pub mod connections;
 pub mod kernel;
 pub mod providers;
 pub use kernel::{ServiceHandle, ServiceLease, ServiceSlotHandle};
+mod turn;
+pub use turn::complete_turn_ends;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

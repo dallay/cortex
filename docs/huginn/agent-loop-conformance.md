@@ -124,15 +124,15 @@ copy host code or cannot express a guarantee at all.
 
 | # | Gap | Evidence | Consequence |
 | --- | --- | --- | --- |
-| G1 | The complete-turn boundary rule is not part of the contract | The rule is implemented twice, in `huginn_application::loop_engine::complete_turn_ends` and in `StepLoop::complete_turn_end` | Every implementation must reimplement compaction boundaries and can silently disagree |
+| G1 (resolved) | The complete-turn boundary rule is part of the contract | `huginn_core::complete_turn_ends` owns the rule and `v1::agent` exports it; the host loop and the reference extension both call it | A loop stops compaction at the same boundaries as the host instead of reimplementing the rule and silently disagreeing |
 | G4 | Transient transport failures are not classified by the adapters | Only a truncated stream yields `AgentError::Inference`; HTTP failures still surface as `Model` | The retry budget added here never engages for a real provider |
 | G5 (resolved) | Capabilities are part of `AgentLoop` | `AgentLoopCapabilities` is read by the conformance suite; no production host reads it yet | One declaration per implementation/configuration; conservative default |
 | G6 (resolved) | `Event::Error` carries a defaulted turn identity | Old JSON loads as unknown; new errors round-trip with their turn | Additive persisted schema, no positional inference for new turn errors |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
 
-G1 and G4 are the ones that would change the contract; the rest are either additive or
-adoption work. They are tracked as follow-up issues rather than folded into this change.
+G4 is the one that would change the contract; the rest are either additive or adoption work.
+They are tracked as follow-up issues rather than folded into this change.
 
 G2 and G3 are closed. The hook-registry rule is one rule with one owner: the kernel owns
 `agent:tool-hooks@1` and `agent:inference-hooks@1`, refuses a loop that supplies a foreign
