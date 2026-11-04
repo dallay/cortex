@@ -325,6 +325,9 @@ pub enum Event {
         turn: TurnId,
     },
     Error {
+        /// Unknown for legacy records and diagnostics outside an allocated turn.
+        #[serde(default)]
+        turn: TurnId,
         message: String,
     },
 }
@@ -447,6 +450,19 @@ pub trait SessionStore: Send + Sync {
     async fn load(&self, id: &str) -> Result<Session>;
     async fn list(&self) -> Result<Vec<SessionInfo>>;
 }
+/// Optional operations declared by an implementation for its current configuration.
+///
+/// Discovery is synchronous and side-effect-free: it must not acquire provider leases
+/// or perform I/O. A declaration describes support, not readiness or authorization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentLoopCapabilities {
+    pub compaction: bool,
+    pub skill_commands: bool,
+    /// The loop acquires its model and session store from the kernel per turn, so a
+    /// substitution between turns is honored instead of served by a retired provider.
+    pub rebinds_services: bool,
+}
+
 /// A certifiable loop admits one in-process operation per exact `Session::id`.
 ///
 /// This applies across snapshots and loop instances. Acquire a
@@ -457,6 +473,11 @@ pub trait SessionStore: Send + Sync {
 /// admission provides no merge or stale-snapshot protection.
 #[async_trait]
 pub trait AgentLoop: Send + Sync {
+    /// Conservative by default so existing implementations need not opt in.
+    fn capabilities(&self) -> AgentLoopCapabilities {
+        AgentLoopCapabilities::default()
+    }
+
     /// Host-owned discovery only. Entries are not plugin command contributions.
     async fn skill_commands(
         &self,

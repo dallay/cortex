@@ -284,7 +284,14 @@ async fn explicit_skill_is_lower_trust_and_cannot_grant_effect_authority_on_resu
         .messages
         .iter()
         .any(|m| m.role == Role::User && m.content.contains("NEW INVOKED BODY")));
-    assert!(events.0.lock().unwrap().iter().any(|event| matches!(event, Event::Error { message } if message.contains("Skill catalog changed"))));
+    assert!(events.0.lock().unwrap().iter().any(|event| matches!(event, Event::Error { message, .. } if message.contains("Skill catalog changed"))));
+    assert!(events.0.lock().unwrap().iter().any(|event| matches!(event,
+        Event::Error { turn: huginn_core::TurnId(2), message }
+            if message.contains("Skill catalog changed"))));
+    let persisted = store.load(&resumed.id).await.unwrap();
+    assert!(persisted.events.iter().any(|event| matches!(event,
+        Event::Error { turn: huginn_core::TurnId(2), message }
+            if message.contains("Skill catalog changed"))));
     assert_eq!(
         resumed
             .messages
@@ -1649,7 +1656,9 @@ async fn skills_follow_normal_tool_context_and_warn_on_resume_without_replay() {
     let warning = events
         .iter()
         .find_map(|event| match event {
-            Event::Error { message } if message.contains("Skill catalog changed") => Some(message),
+            Event::Error { message, .. } if message.contains("Skill catalog changed") => {
+                Some(message)
+            }
             _ => None,
         })
         .expect("catalog changes should be reported on resume");

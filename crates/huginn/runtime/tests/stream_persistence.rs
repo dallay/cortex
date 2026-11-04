@@ -431,5 +431,8 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             .iter()
             .all(|e| !matches!(e, Event::Text { .. } | Event::TurnFinished { .. })));
         assert!(matches!(reloaded.events.last(), Some(Event::Error { .. })));
+        assert!(matches!(reloaded.events.last(), Some(Event::Error {
+            turn: huginn_core::TurnId(1), message,
+        }) if message == &error.to_string()));
     }
 }

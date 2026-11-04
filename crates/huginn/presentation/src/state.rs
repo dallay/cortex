@@ -641,7 +641,7 @@ impl UiState {
             Event::TurnFinished { .. } => {
                 self.status.set_notice("Ready".into());
             }
-            Event::Error { message } => {
+            Event::Error { message, .. } => {
                 self.status.set_diagnostic(safe(message));
             }
             Event::Compacted { .. } => self
@@ -1594,7 +1594,7 @@ impl EventSink for Ui {
         {
             return;
         }
-        if let Event::Error { message } = &event {
+        if let Event::Error { message, .. } = &event {
             if !self
                 .error_deduplicator
                 .lock()
@@ -1629,7 +1629,7 @@ impl EventSink for Ui {
             return;
         }
         let mut state = self.lock();
-        if let Event::Error { message } = &event {
+        if let Event::Error { message, .. } = &event {
             state.project_ui_event(crate::event::EventKind::Diagnostic, message.clone());
         }
         state.project_view(event, view);

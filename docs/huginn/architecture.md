@@ -306,6 +306,10 @@ The host provides the prompt, approval policy, event sink and cancellation token
 ```rust
 #[async_trait]
 pub trait AgentLoop: Send + Sync {
+    fn capabilities(&self) -> AgentLoopCapabilities {
+        AgentLoopCapabilities::default()
+    }
+
     async fn run(
         &self,
         session: &mut Session,
@@ -317,8 +321,12 @@ pub trait AgentLoop: Send + Sync {
 }
 ```
 
-`AgentLoop` also provides a default `compact` method. See the core API for its
-exact signature. Turns and supported manual compaction share process-local
+`AgentLoopCapabilities` declares `compaction` and `skill_commands` support for the
+implementation's configuration. Both default to `false`; discovery performs no I/O or
+provider acquisition and does not grant authorization or promise readiness. Wrappers
+forward the declaration. The host and conformance suite read the same contract.
+`AgentLoop` also provides default `compact` (unsupported error) and `skill_commands`
+(empty list) methods; their behavior is unchanged. See the core API for exact signatures. Turns and supported manual compaction share process-local
 `SessionOperation` admission: capacity one per exact session ID, with immediate
 rejection and no waiting queue. The permit covers host access through final
 persistence across loop instances. Different sessions remain independent; callers
@@ -377,9 +385,15 @@ pub enum Event {
     Usage { input_tokens: u64, output_tokens: u64 },
     Compacted { through: usize },
     TurnFinished,
-    Error { message: String },
+    Error { turn: TurnId, message: String },
 }
 ```
+
+The excerpt above omits other turn/step identity fields and newer event variants;
+`huginn_core::Event` is the complete schema. `Error::turn` is serde-defaulted, so
+identity-less historical errors still load as `TurnId::UNKNOWN` (zero). New loop
+failures and turn warnings carry the allocated turn; diagnostics outside a turn use
+unknown. This is an additive persisted schema change, not a new turn-allocation path.
 
 ### Event Flow
 

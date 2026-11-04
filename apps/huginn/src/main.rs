@@ -764,6 +764,7 @@ async fn tui_chat(
             ui.synchronize(session);
             if let Err(error) = &result {
                 scoped_events.emit(huginn_core::Event::Error {
+                    turn: huginn_core::TurnId::UNKNOWN,
                     message: error.to_string(),
                 });
             }
