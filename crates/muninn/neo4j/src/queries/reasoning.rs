@@ -45,6 +45,20 @@ SET rt.outcome = $outcome,
 RETURN rt
 ";
 
+/// Inline structured completion writes in pinned `memory/reasoning.py`.
+/// These are top-level properties, not entries in the legacy metadata JSON.
+pub const SET_TRACE_OUTCOME_FIELDS: &str = "
+MATCH (rt:ReasoningTrace {id: $id})
+SET rt.error_kind = $error_kind, rt.metrics_json = $metrics_json
+";
+
+pub const LAST_TRACE_STEP: &str = "
+MATCH (:ReasoningTrace {id: $trace_id})-[:HAS_STEP]->(s:ReasoningStep)
+RETURN s.id AS step_id
+ORDER BY s.step_number DESC
+LIMIT 1
+";
+
 /// Upstream `CREATE_REASONING_STEP`, assigning `step_number` in the same
 /// statement.
 ///

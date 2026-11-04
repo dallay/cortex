@@ -424,6 +424,43 @@ impl ReasoningStore for Neo4jReasoningStore {
             .transpose()
     }
 
+    async fn set_trace_outcome_fields(
+        &self,
+        trace_id: Uuid,
+        outcome: &muninn_core::model::TraceOutcome,
+    ) -> MemoryResult<()> {
+        outcome.validate()?;
+        let metrics = serde_json::to_value(&outcome.metrics)
+            .map_err(|error| MemoryError::invalid(error.to_string()))?;
+        self.client
+            .execute(
+                q::SET_TRACE_OUTCOME_FIELDS,
+                vec![
+                    ("id", trace_id.to_string().into()),
+                    ("error_kind", opt_string(outcome.error_kind.as_deref())),
+                    (
+                        "metrics_json",
+                        opt_string(serialize_json(&metrics).as_deref()),
+                    ),
+                ],
+            )
+            .await
+            .map(|_| ())
+    }
+
+    async fn last_trace_step(&self, trace_id: Uuid) -> MemoryResult<Option<Uuid>> {
+        let rows = self
+            .client
+            .execute(
+                q::LAST_TRACE_STEP,
+                vec![("trace_id", trace_id.to_string().into())],
+            )
+            .await?;
+        rows.first()
+            .map(|row| Props::of(&row_values(row, &["step_id"])?)?.uuid("step_id"))
+            .transpose()
+    }
+
     async fn get_trace_with_steps(&self, trace_id: Uuid) -> MemoryResult<Option<ReasoningTrace>> {
         let rows = self
             .client

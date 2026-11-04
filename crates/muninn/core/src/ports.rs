@@ -629,6 +629,32 @@ pub trait ReasoningStore: Send + Sync {
         success: Option<bool>,
     ) -> MemoryResult<Option<ReasoningTrace>>;
 
+    /// Persist only the structured `error_kind` and serialized metrics, after
+    /// legacy completion. Older adapters fail explicitly rather than lose fields.
+    async fn set_trace_outcome_fields(
+        &self,
+        _trace_id: Uuid,
+        _outcome: &crate::model::TraceOutcome,
+    ) -> MemoryResult<()> {
+        Err(MemoryError::NotSupported(
+            "structured trace outcome fields".into(),
+        ))
+    }
+
+    /// Highest numbered step, not list order. Adapters may provide a narrow read.
+    async fn last_trace_step(&self, trace_id: Uuid) -> MemoryResult<Option<Uuid>> {
+        Ok(self
+            .get_trace_with_steps(trace_id)
+            .await?
+            .and_then(|trace| {
+                trace
+                    .steps
+                    .into_iter()
+                    .max_by_key(|step| step.step_number)
+                    .map(|step| step.id)
+            }))
+    }
+
     async fn get_trace_with_steps(&self, trace_id: Uuid) -> MemoryResult<Option<ReasoningTrace>>;
 
     async fn list_traces(&self, query: &TraceQuery) -> MemoryResult<Vec<ReasoningTrace>>;

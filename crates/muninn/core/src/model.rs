@@ -274,6 +274,40 @@ pub struct ReasoningStep {
     pub metadata: Metadata,
 }
 
+/// Explicit application-approved completion, matching upstream `TraceOutcome`.
+/// Never populate this from provider-private reasoning streams.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceOutcome {
+    pub success: bool,
+    pub summary: String,
+    pub error_kind: Option<String>,
+    pub related_entities: Vec<EntityRef>,
+    pub metrics: std::collections::BTreeMap<String, f64>,
+}
+
+impl TraceOutcome {
+    /// Validate before embeddings or persistence, including native callers.
+    pub fn validate(&self) -> Result<(), MemoryError> {
+        if self.metrics.values().any(|value| !value.is_finite()) {
+            return Err(MemoryError::invalid(
+                "outcome metrics must be finite numbers",
+            ));
+        }
+        for entity in &self.related_entities {
+            let identity = match entity {
+                EntityRef::Id(id) => id,
+                EntityRef::NameType { name, .. } | EntityRef::Name(name) => name,
+            };
+            if identity.is_empty() {
+                return Err(MemoryError::invalid(
+                    "entity reference requires a nonempty name or id",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReasoningTrace {
     pub id: Uuid,

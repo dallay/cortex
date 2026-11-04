@@ -2,8 +2,8 @@
 //! Platinum hosted conversation steps).
 
 use muninn_application::{SimilarityOptions, StartTraceOptions, StepInput, ToolCallOptions};
-use muninn_core::model::ToolCallStatus;
-use muninn_core::ports::TraceQuery;
+use muninn_core::model::{ToolCallStatus, TraceOutcome};
+use muninn_core::ports::{TraceOrder, TraceQuery};
 use serde_json::Value;
 
 use crate::wire::{self, Args};
@@ -47,15 +47,29 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "record_tool_call" => record_tool_call(state, args).await,
         "complete_trace" => {
             async {
-                let outcome = args.opt_string("outcome")?;
-                let trace = memory
-                    .complete_trace(
-                        args.uuid("trace_id")?,
-                        outcome.as_deref(),
-                        args.opt_bool("success")?,
-                        false,
-                    )
-                    .await?;
+                // Parse the entire request before embeddings or any store access.
+                let structured = args
+                    .raw("outcome")
+                    .and_then(Value::as_object)
+                    .map(structured_outcome)
+                    .transpose()?;
+                let legacy = if structured.is_none() {
+                    args.opt_string("outcome")?
+                } else {
+                    None
+                };
+                let id = args.uuid("trace_id")?;
+                let success = args.opt_bool("success")?;
+                let embeddings = args.opt_bool("generate_step_embeddings")?.unwrap_or(false);
+                let trace = if let Some(outcome) = structured {
+                    memory
+                        .complete_trace_with_outcome(id, &outcome, embeddings)
+                        .await?
+                } else {
+                    memory
+                        .complete_trace(id, legacy.as_deref(), success, embeddings)
+                        .await?
+                };
                 Ok(Reply::Json(wire::trace(&trace)))
             }
             .await
@@ -74,11 +88,7 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         }
         "list_traces" => {
             async {
-                let query = TraceQuery {
-                    session_id: args.opt_string("session_id")?,
-                    limit: args.opt_i64("limit")?.unwrap_or(100),
-                    ..TraceQuery::default()
-                };
+                let query = trace_query(args)?;
                 let traces = memory.list_traces(&query).await?;
                 Ok(Reply::Json(Value::Array(
                     traces.iter().map(wire::trace).collect(),
@@ -184,6 +194,102 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         _ => return None,
     };
     Some(result)
+}
+
+fn trace_query(args: &Args) -> Result<TraceQuery, BridgeError> {
+    let order_by = match args
+        .opt_string("order_by")?
+        .as_deref()
+        .unwrap_or("started_at")
+    {
+        "started_at" => TraceOrder::StartedAt,
+        "completed_at" => TraceOrder::CompletedAt,
+        _ => {
+            return Err(BridgeError::BadRequest(
+                "'order_by' must be 'started_at' or 'completed_at'".into(),
+            ))
+        }
+    };
+    let ascending = match args.opt_string("order_dir")?.as_deref().unwrap_or("desc") {
+        "asc" => true,
+        "desc" => false,
+        _ => {
+            return Err(BridgeError::BadRequest(
+                "'order_dir' must be 'asc' or 'desc'".into(),
+            ))
+        }
+    };
+    let query = TraceQuery {
+        session_id: args.opt_string("session_id")?,
+        success: args.opt_bool("success_only")?,
+        since: args.opt_datetime("since")?,
+        until: args.opt_datetime("until")?,
+        limit: args.opt_i64("limit")?.unwrap_or(100),
+        offset: args.opt_i64("offset")?.unwrap_or(0),
+        order_by,
+        ascending,
+    };
+    for (name, value) in [("limit", query.limit), ("offset", query.offset)] {
+        if value < 0 {
+            return Err(BridgeError::BadRequest(format!(
+                "'{name}' must be nonnegative"
+            )));
+        }
+    }
+    Ok(query)
+}
+
+/// JSON object fields mirror pinned schema/models.py::TraceOutcome. Output
+/// remains the legacy trace shape; related refs reuse the existing resolver.
+fn structured_outcome(
+    object: &serde_json::Map<String, Value>,
+) -> Result<TraceOutcome, BridgeError> {
+    let fields = Args::new(object.clone());
+    let success = fields
+        .opt_bool("success")?
+        .ok_or_else(|| BridgeError::BadRequest("missing argument 'success'".into()))?;
+    let summary = fields.string("summary")?;
+    let error_kind = fields.opt_string("error_kind")?;
+    let mut metrics = std::collections::BTreeMap::new();
+    if let Some(value) = object.get("metrics") {
+        let values = value
+            .as_object()
+            .ok_or_else(|| BridgeError::BadRequest("'metrics' must be an object".into()))?;
+        for (key, value) in values {
+            let number = value
+                .as_f64()
+                .filter(|number| number.is_finite())
+                .ok_or_else(|| {
+                    BridgeError::BadRequest("outcome metrics must be finite numbers".into())
+                })?;
+            metrics.insert(key.clone(), number);
+        }
+    }
+    let related_entities = parse_entity_refs(object.get("related_entities"))?;
+    // Validate even non-selected fields in structured EntityRef input, without
+    // changing the existing tool-call parser's precedence or compatibility.
+    if let Some(Value::Array(refs)) = object.get("related_entities") {
+        for entity in refs {
+            if let Some(entity) = entity.as_object() {
+                let fields = Args::new(entity.clone());
+                for key in ["id", "name", "type", "label"] {
+                    fields.opt_string(key)?;
+                }
+            }
+        }
+    }
+    let outcome = TraceOutcome {
+        success,
+        summary,
+        error_kind,
+        related_entities,
+        metrics,
+    };
+    outcome.validate().map_err(|error| match error {
+        muninn_core::MemoryError::InvalidInput(message) => BridgeError::BadRequest(message),
+        other => BridgeError::Memory(other),
+    })?;
+    Ok(outcome)
 }
 
 /// TCK default status is `success`; any of the six statuses is accepted.

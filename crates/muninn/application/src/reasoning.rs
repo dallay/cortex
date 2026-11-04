@@ -13,6 +13,7 @@ use std::sync::Arc;
 use muninn_core::model::{
     AgentStep, ConversationTrace, EntityProvenance, EntityRef, Metadata, ReasoningStep,
     ReasoningStepWithContext, ReasoningTrace, StepExplanation, ToolCall, ToolCallStatus, ToolStats,
+    TraceOutcome,
 };
 use muninn_core::ports::{
     Embedder, OwnerScope, ReasoningStore, StepRecord, TraceQuery, TraceRecord,
@@ -20,6 +21,8 @@ use muninn_core::ports::{
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::reasoning_observer::{HookContext, ToolCallObserver};
 
 /// Upstream `_format_observation` cap.
 const MAX_OBSERVATION_CHARS: usize = 1000;
@@ -130,6 +133,7 @@ pub struct ReasoningMemory {
     store: Arc<dyn ReasoningStore>,
     embedder: Option<Arc<dyn Embedder>>,
     multi_tenant: bool,
+    observers: Vec<Arc<dyn ToolCallObserver>>,
 }
 
 impl ReasoningMemory {
@@ -142,7 +146,19 @@ impl ReasoningMemory {
             store,
             embedder,
             multi_tenant,
+            observers: Vec::new(),
         }
+    }
+
+    /// Add an ordered observer before sharing this service; no runtime locks.
+    pub fn on_tool_call_recorded(mut self, observer: Arc<dyn ToolCallObserver>) -> Self {
+        self.observers.push(observer);
+        self
+    }
+
+    /// Replace an observation using the existing store write path.
+    pub async fn set_step_observation(&self, step_id: Uuid, observation: &str) -> MemoryResult<()> {
+        self.store.set_step_observation(step_id, observation).await
     }
 
     fn owner_scope(&self, owner: Option<&str>) -> MemoryResult<OwnerScope> {
@@ -234,13 +250,23 @@ impl ReasoningMemory {
             .await?;
         if options.auto_observation {
             if let Some(result) = &call.result {
-                self.store
-                    .set_step_observation(step_id, &format_observation(result))
+                self.set_step_observation(step_id, &format_observation(result))
                     .await?;
             }
         }
         for entity in &options.touched_entities {
-            self.store.record_touched(step_id, entity).await?;
+            self.record_touched_entity(step_id, entity).await?;
+        }
+        let context = HookContext {
+            memory: self,
+            call: &call,
+            step_id,
+        };
+        for observer in &self.observers {
+            if observer.on_tool_call_recorded(&context).await.is_err() {
+                // No callback names, error strings, arguments or results in logs.
+                tracing::warn!("tool-call observer failed; continuing");
+            }
         }
         Ok(call)
     }
@@ -255,13 +281,58 @@ impl ReasoningMemory {
         success: Option<bool>,
         generate_step_embeddings: bool,
     ) -> MemoryResult<ReasoningTrace> {
+        self.complete_trace_record(trace_id, outcome, success, generate_step_embeddings)
+            .await?
+            .ok_or_else(|| MemoryError::not_found(format!("trace {trace_id}")))
+    }
+
+    // Shared legacy write path. Structured completion checks absence after its
+    // side writes, matching the pinned runtime's final `if not results` check.
+    async fn complete_trace_record(
+        &self,
+        trace_id: Uuid,
+        outcome: Option<&str>,
+        success: Option<bool>,
+        generate_step_embeddings: bool,
+    ) -> MemoryResult<Option<ReasoningTrace>> {
         if generate_step_embeddings {
             self.embed_pending_steps(trace_id).await?;
         }
-        self.store
-            .complete_trace(trace_id, outcome, success)
-            .await?
-            .ok_or_else(|| MemoryError::not_found(format!("trace {trace_id}")))
+        self.store.complete_trace(trace_id, outcome, success).await
+    }
+
+    /// Complete with a structured outcome. Its success overrides any legacy flag.
+    /// Write order matches the pinned runtime: embeddings, legacy completion,
+    /// structured properties, last-step links. Later errors propagate and may
+    /// leave an already-completed trace, just as the reference's separate writes do.
+    pub async fn complete_trace_with_outcome(
+        &self,
+        trace_id: Uuid,
+        outcome: &TraceOutcome,
+        generate_step_embeddings: bool,
+    ) -> MemoryResult<ReasoningTrace> {
+        outcome.validate()?;
+        let trace = self
+            .complete_trace_record(
+                trace_id,
+                Some(&outcome.summary),
+                Some(outcome.success),
+                generate_step_embeddings,
+            )
+            .await?;
+        if outcome.error_kind.is_some() || !outcome.metrics.is_empty() {
+            self.store
+                .set_trace_outcome_fields(trace_id, outcome)
+                .await?;
+        }
+        if !outcome.related_entities.is_empty() {
+            if let Some(step_id) = self.store.last_trace_step(trace_id).await? {
+                for entity in &outcome.related_entities {
+                    self.record_touched_entity(step_id, entity).await?;
+                }
+            }
+        }
+        trace.ok_or_else(|| MemoryError::not_found(format!("trace {trace_id}")))
     }
 
     /// `_generate_step_embeddings_batch`. Returns the number of steps embedded.
@@ -1126,6 +1197,87 @@ mod tests {
         ) -> MemoryResult<Vec<ConversationStep>> {
             Ok(Vec::new())
         }
+    }
+
+    fn structured_outcome() -> TraceOutcome {
+        TraceOutcome {
+            success: false,
+            summary: "approved summary".into(),
+            error_kind: None,
+            related_entities: Vec::new(),
+            metrics: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_native_validation_precedes_all_dependencies() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let store = Arc::new(FakeStore::default());
+            let memory = ReasoningMemory::new(store.clone(), Some(Arc::new(RejectEmbedder)), false);
+            let mut outcome = structured_outcome();
+            outcome.metrics.insert("n".into(), invalid);
+            let error = memory
+                .complete_trace_with_outcome(Uuid::nil(), &outcome, true)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "invalid input: outcome metrics must be finite numbers"
+            );
+            assert!(!*store.closed.lock().unwrap());
+            assert!(store.traces.lock().unwrap().is_empty());
+            assert!(store.touched.lock().unwrap().is_empty());
+        }
+        let store = Arc::new(FakeStore::default());
+        let mut outcome = structured_outcome();
+        outcome
+            .related_entities
+            .push(EntityRef::Name(String::new()));
+        let error = memory(store.clone(), false)
+            .complete_trace_with_outcome(Uuid::nil(), &outcome, true)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid input: entity reference requires a nonempty name or id"
+        );
+        assert!(!*store.closed.lock().unwrap());
+        assert!(store.touched.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn structured_native_defaults_support_legacy_adapters_without_silent_metadata_loss() {
+        let store = Arc::new(FakeStore::default());
+        let mem = memory(store.clone(), false);
+        let trace = mem
+            .start_trace("s", "task", StartTraceOptions::default())
+            .await
+            .unwrap();
+        let mut outcome = structured_outcome();
+        // No last step is not an error and must not create a synthetic step.
+        outcome
+            .related_entities
+            .push(EntityRef::Name("entity".into()));
+        let completed = mem
+            .complete_trace_with_outcome(trace.id, &outcome, false)
+            .await
+            .unwrap();
+        assert_eq!(completed.outcome.as_deref(), Some("approved summary"));
+        assert_eq!(completed.success, Some(false));
+        assert!(completed.completed_at.is_some());
+        assert!(store.steps.lock().unwrap().is_empty());
+        assert!(store.touched.lock().unwrap().is_empty());
+        outcome.error_kind = Some("timeout".into());
+        let error = mem
+            .complete_trace_with_outcome(trace.id, &outcome, false)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "not supported: structured trace outcome fields"
+        );
+        assert!(*store.closed.lock().unwrap()); // Runtime side writes follow completion.
+        assert!(store.touched.lock().unwrap().is_empty());
     }
 
     fn memory(store: Arc<FakeStore>, multi_tenant: bool) -> ReasoningMemory {
