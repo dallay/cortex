@@ -414,6 +414,15 @@ impl LongTermStore for UnreachableLongTerm {
     async fn link_user_to_preference(&self, _: &str, _: Uuid) -> MemoryResult<()> {
         unreachable!()
     }
+    async fn link_preference_to_entity(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn preferences_for(&self, _: &str, _: bool) -> MemoryResult<Vec<Preference>> {
+        unreachable!()
+    }
     async fn search_preferences(
         &self,
         _: &[f64],
@@ -1270,4 +1279,595 @@ async fn short_term_context_preserves_exact_owner_in_search() {
         .get_context_scoped("q", None, 5, Some(" owner "))
         .await
         .is_ok());
+}
+
+/// Long-term store that records what the bridge actually forwards.
+#[derive(Default)]
+struct RecordingLongTerm {
+    fact: Mutex<Option<Fact>>,
+    preference: Mutex<Option<Preference>>,
+    applies_to: Mutex<Vec<(Uuid, Uuid)>>,
+    relationship: Mutex<Option<Relationship>>,
+    facts: Mutex<Vec<Fact>>,
+    preferences: Mutex<Vec<Preference>>,
+    supersessions: Mutex<Vec<(Uuid, Uuid)>>,
+    preferences_query: Mutex<Option<(String, bool)>>,
+    preference_target: Mutex<Option<Uuid>>,
+    preference_as_of: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
+    entities: Mutex<Vec<Entity>>,
+}
+
+impl RecordingLongTerm {
+    fn stored_fact(&self) -> Fact {
+        self.fact.lock().unwrap().clone().expect("fact not stored")
+    }
+
+    fn set_preferences(&self, preferences: Vec<Preference>) {
+        *self.preferences.lock().unwrap() = preferences;
+    }
+
+    fn supersessions(&self) -> Vec<(Uuid, Uuid)> {
+        self.supersessions.lock().unwrap().clone()
+    }
+
+    fn last_preferences_query(&self) -> Option<(String, bool)> {
+        self.preferences_query.lock().unwrap().clone()
+    }
+
+    fn set_facts(&self, facts: Vec<Fact>) {
+        *self.facts.lock().unwrap() = facts;
+    }
+
+    fn stored_relationship(&self) -> Relationship {
+        self.relationship
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("relationship not stored")
+    }
+
+    fn applies_to_records(&self) -> Vec<(Uuid, Uuid)> {
+        self.applies_to.lock().unwrap().clone()
+    }
+
+    fn stored_preference(&self) -> Preference {
+        self.preference
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("preference not stored")
+    }
+}
+
+fn timestamp(text: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .unwrap()
+        .with_timezone(&chrono::Utc)
+}
+
+#[async_trait]
+impl LongTermStore for RecordingLongTerm {
+    async fn upsert_entity(&self, _: &Entity) -> MemoryResult<Entity> {
+        unreachable!()
+    }
+    async fn get_entity(&self, id: Uuid) -> MemoryResult<Option<Entity>> {
+        Ok(self
+            .entities
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|entity| entity.id == id)
+            .cloned())
+    }
+    async fn get_entity_by_name(&self, _: &str) -> MemoryResult<Option<Entity>> {
+        unreachable!()
+    }
+    async fn search_entities(
+        &self,
+        _: &[f64],
+        _: i64,
+        _: f64,
+    ) -> MemoryResult<Vec<Scored<Entity>>> {
+        unreachable!()
+    }
+    async fn list_entities(&self, _: Option<&str>, _: i64) -> MemoryResult<Vec<Entity>> {
+        unreachable!()
+    }
+    async fn update_entity(&self, _: Uuid, _: &EntityUpdate) -> MemoryResult<Option<Entity>> {
+        unreachable!()
+    }
+    async fn delete_entity(&self, _: Uuid) -> MemoryResult<bool> {
+        unreachable!()
+    }
+    async fn related_entities(&self, _: Uuid, _: u8) -> MemoryResult<Vec<RelatedEntity>> {
+        unreachable!()
+    }
+    async fn upsert_relationship(
+        &self,
+        relationship: &Relationship,
+    ) -> MemoryResult<Option<Relationship>> {
+        *self.relationship.lock().unwrap() = Some(relationship.clone());
+        Ok(Some(relationship.clone()))
+    }
+    async fn merge_entities(&self, _: Uuid, _: Uuid) -> MemoryResult<Option<(Entity, Entity)>> {
+        unreachable!()
+    }
+    async fn link_same_as(&self, _: Uuid, _: Uuid, _: f64, _: &str, _: &str) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn set_entity_feedback(&self, _: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
+        unreachable!()
+    }
+    async fn link_message_to_entity(&self, _: Uuid, _: Uuid, _: f64) -> MemoryResult<bool> {
+        unreachable!()
+    }
+    async fn entity_mentions(&self, _: Uuid) -> MemoryResult<Option<Vec<EntityMention>>> {
+        unreachable!()
+    }
+    async fn entity_graph(&self, _: i64) -> MemoryResult<EntityGraph> {
+        unreachable!()
+    }
+    async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
+        *self.preference.lock().unwrap() = Some(preference.clone());
+        Ok(preference.clone())
+    }
+    async fn find_duplicate_preference(
+        &self,
+        _: &[f64],
+        _: &str,
+        _: f64,
+        _: Option<&str>,
+    ) -> MemoryResult<Option<Preference>> {
+        unreachable!()
+    }
+    async fn link_user_to_preference(&self, _: &str, _: Uuid) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn link_preference_to_entity(
+        &self,
+        preference_id: Uuid,
+        entity_id: Uuid,
+    ) -> MemoryResult<()> {
+        self.applies_to
+            .lock()
+            .unwrap()
+            .push((preference_id, entity_id));
+        Ok(())
+    }
+    async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+        self.supersessions.lock().unwrap().push((old_id, new_id));
+        Ok(())
+    }
+    async fn preferences_for(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+    ) -> MemoryResult<Vec<Preference>> {
+        *self.preferences_query.lock().unwrap() = Some((user_identifier.to_owned(), active_only));
+        Ok(self.preferences.lock().unwrap().clone())
+    }
+    async fn preferences_for_filtered(
+        &self,
+        user: &str,
+        active_only: bool,
+        target: Option<Uuid>,
+        as_of: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> MemoryResult<Vec<Preference>> {
+        *self.preference_target.lock().unwrap() = target;
+        *self.preference_as_of.lock().unwrap() = as_of;
+        self.preferences_for(user, active_only).await
+    }
+    async fn search_preferences(
+        &self,
+        _: &[f64],
+        _: i64,
+        _: f64,
+        _: Option<&str>,
+    ) -> MemoryResult<Vec<Scored<Preference>>> {
+        unreachable!()
+    }
+    async fn preferences_by_category(
+        &self,
+        _: &str,
+        _: i64,
+        _: Option<&str>,
+    ) -> MemoryResult<Vec<Preference>> {
+        unreachable!()
+    }
+    async fn create_fact(&self, fact: &Fact) -> MemoryResult<Fact> {
+        *self.fact.lock().unwrap() = Some(fact.clone());
+        Ok(fact.clone())
+    }
+    async fn find_duplicate_fact(
+        &self,
+        _: &[f64],
+        _: &str,
+        _: &str,
+        _: f64,
+    ) -> MemoryResult<Option<Fact>> {
+        Ok(None)
+    }
+    async fn update_fact_confidence(&self, _: Uuid, _: f64, _: &str) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn search_facts(&self, _: &[f64], _: i64, _: f64) -> MemoryResult<Vec<Scored<Fact>>> {
+        unreachable!()
+    }
+    async fn facts_by_subject(&self, _: &str, _: i64) -> MemoryResult<Vec<Fact>> {
+        Ok(self.facts.lock().unwrap().clone())
+    }
+}
+
+fn state_with_long_term(long_term: Arc<dyn LongTermStore>) -> Arc<BridgeState> {
+    let memory = MemoryClient::new(
+        MemoryPorts {
+            short_term: Arc::new(UnreachableStore::Never),
+            long_term,
+            reasoning: Arc::new(UnreachableReasoning),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    Arc::new(BridgeState {
+        memory: Arc::new(memory),
+        maintenance: None,
+    })
+}
+
+#[tokio::test]
+async fn add_fact_forwards_supplied_confidence_and_validity() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let response = request(
+        state_with_long_term(store.clone()),
+        "add_fact",
+        r#"{"subject":"ana","predicate":"vive_en","obj":"Madrid","confidence":0.9,
+            "valid_from":"2026-02-01T00:00:00+00:00",
+            "valid_until":"2026-06-01T00:00:00+00:00"}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let fact: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let stored = store.stored_fact();
+    assert_eq!(stored.confidence, 0.9);
+    assert_eq!(
+        stored.valid_from,
+        Some(timestamp("2026-02-01T00:00:00+00:00"))
+    );
+    assert_eq!(
+        stored.valid_until,
+        Some(timestamp("2026-06-01T00:00:00+00:00"))
+    );
+    assert_eq!(fact["confidence"], 0.9);
+    assert_eq!(fact["valid_from"], "2026-02-01T00:00:00+00:00");
+    assert_eq!(fact["valid_until"], "2026-06-01T00:00:00+00:00");
+}
+
+#[tokio::test]
+async fn add_preference_forwards_confidence_and_metadata() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let response = request(
+        state_with_long_term(store.clone()),
+        "add_preference",
+        r#"{"category":"food","preference":"cafe sin azucar","context":"manana",
+            "confidence":0.8,"metadata":{"source":"gm05","nested":{"tags":["n"]}}}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let stored = store.stored_preference();
+    assert_eq!(stored.confidence, 0.8);
+    assert_eq!(stored.metadata["source"], "gm05");
+    assert_eq!(body["confidence"], 0.8);
+    assert_eq!(body["metadata"]["source"], "gm05");
+    assert_eq!(body["metadata"]["nested"]["tags"][0], "n");
+}
+
+#[tokio::test]
+async fn add_preference_links_applies_to_entities() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(entity));
+    let body = format!(r#"{{"category":"food","preference":"cafe","applies_to":["{entity}"]}}"#);
+    let response = request(state_with_long_term(store.clone()), "add_preference", &body).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        store.applies_to_records(),
+        vec![(store.stored_preference().id, entity)]
+    );
+}
+
+#[tokio::test]
+async fn add_relationship_forwards_description_confidence_and_validity() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let source = Uuid::new_v4();
+    let target = Uuid::new_v4();
+    let body = format!(
+        r#"{{"source_id":"{source}","target_id":"{target}",
+            "relationship_type":"WORKS_AT","description":"trabaja en",
+            "confidence":0.75,"valid_from":"2026-03-01T00:00:00+00:00",
+            "valid_until":"2026-09-01T00:00:00+00:00",
+            "properties":{{"role":"cto"}}}}"#
+    );
+    let response = request(
+        state_with_long_term(store.clone()),
+        "add_relationship",
+        &body,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let relationship: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let stored = store.stored_relationship();
+    assert_eq!(stored.description.as_deref(), Some("trabaja en"));
+    assert_eq!(stored.confidence, 0.75);
+    assert_eq!(
+        stored.valid_from,
+        Some(timestamp("2026-03-01T00:00:00+00:00"))
+    );
+    assert_eq!(
+        stored.valid_until,
+        Some(timestamp("2026-09-01T00:00:00+00:00"))
+    );
+    assert_eq!(stored.properties["role"], "cto");
+    assert_eq!(relationship["description"], "trabaja en");
+    assert_eq!(relationship["confidence"], 0.75);
+    assert_eq!(relationship["valid_from"], "2026-03-01T00:00:00+00:00");
+    assert_eq!(relationship["valid_until"], "2026-09-01T00:00:00+00:00");
+}
+
+#[tokio::test]
+async fn get_facts_about_returns_stored_facts() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let fact = Fact {
+        id: Uuid::new_v4(),
+        subject: "ana".into(),
+        predicate: "vive_en".into(),
+        object: "Madrid".into(),
+        confidence: 0.9,
+        embedding: None,
+        valid_from: Some(timestamp("2026-02-01T00:00:00+00:00")),
+        valid_until: None,
+        created_at: chrono::Utc::now(),
+        metadata: Metadata::new(),
+    };
+    store.set_facts(vec![fact.clone()]);
+    let response = request(
+        state_with_long_term(store.clone()),
+        "get_facts_about",
+        r#"{"subject":"ana","limit":10}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body[0]["id"], fact.id.to_string());
+    assert_eq!(body[0]["object"], "Madrid");
+    assert_eq!(body[0]["confidence"], 0.9);
+    assert_eq!(body[0]["valid_from"], "2026-02-01T00:00:00+00:00");
+}
+
+#[tokio::test]
+async fn supersede_preference_marks_the_old_preference() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let old = Uuid::new_v4();
+    let new = Uuid::new_v4();
+    let body = format!(r#"{{"old_id":"{old}","new_id":"{new}"}}"#);
+    let response = request(
+        state_with_long_term(store.clone()),
+        "supersede_preference",
+        &body,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(store.supersessions(), vec![(old, new)]);
+}
+
+fn target_entity(id: Uuid) -> Entity {
+    Entity {
+        id,
+        name: "target".into(),
+        canonical_name: None,
+        entity_type: "OBJECT".into(),
+        subtype: None,
+        description: None,
+        confidence: 1.0,
+        aliases: vec![],
+        embedding: None,
+        created_at: chrono::Utc::now(),
+        updated_at: None,
+        metadata: Metadata::new(),
+    }
+}
+
+#[tokio::test]
+async fn preference_filters_forward_together_and_preserve_defaults() {
+    let target = Uuid::new_v4();
+    for (extra, active, expected_target, expected_time) in [
+        (serde_json::json!({}), true, None, None),
+        (
+            serde_json::json!({"applies_to":null,"as_of":null,"active_only":null}),
+            true,
+            None,
+            None,
+        ),
+        (
+            serde_json::json!({"applies_to":target,"as_of":"2026-01-01T02:00:00+02:00","active_only":false}),
+            false,
+            Some(target),
+            Some(timestamp("2026-01-01T00:00:00Z")),
+        ),
+    ] {
+        let store = Arc::new(RecordingLongTerm::default());
+        let mut args = extra;
+        args["user_identifier"] = " owner ".into();
+        let response = request(
+            state_with_long_term(store.clone()),
+            "get_preferences_for",
+            &args.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"[]");
+        assert_eq!(
+            store.last_preferences_query(),
+            Some((" owner ".into(), active))
+        );
+        assert_eq!(*store.preference_target.lock().unwrap(), expected_target);
+        assert_eq!(*store.preference_as_of.lock().unwrap(), expected_time);
+    }
+}
+
+#[tokio::test]
+async fn preference_filters_reject_wrong_types_before_dependencies() {
+    for (key, value, message) in [
+        (
+            "applies_to",
+            serde_json::json!(42),
+            "'applies_to' must be a string",
+        ),
+        (
+            "applies_to",
+            serde_json::json!([]),
+            "'applies_to' must be a string",
+        ),
+        (
+            "as_of",
+            serde_json::json!(false),
+            "'as_of' must be a string",
+        ),
+        (
+            "active_only",
+            serde_json::json!("false"),
+            "'active_only' must be a boolean",
+        ),
+    ] {
+        let mut args = serde_json::json!({"user_identifier":"owner"});
+        args[key] = value;
+        let response = request(state(None, None), "get_preferences_for", &args.to_string()).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+            message
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_preference_target_returns_404_without_links_or_creation() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let target = Uuid::new_v4();
+    let missing = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(target));
+    let args =
+        serde_json::json!({"category":"food", "preference":"tea", "applies_to":[target, missing]});
+    let response = request(
+        state_with_long_term(store.clone()),
+        "add_preference",
+        &args.to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+        format!("not found: entity {missing}")
+    );
+    assert!(store.preference.lock().unwrap().is_none());
+    assert!(store.applies_to_records().is_empty());
+}
+
+#[tokio::test]
+async fn preference_target_filter_rejects_malformed_uuid_before_store() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let response = request(
+        state_with_long_term(store.clone()),
+        "get_preferences_for",
+        r#"{"user_identifier":"owner","applies_to":"not-a-uuid"}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+        "'applies_to' must be a UUID"
+    );
+    assert!(store.last_preferences_query().is_none());
+}
+
+#[tokio::test]
+async fn preference_time_filter_rejects_malformed_timestamp_before_store() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let response = request(
+        state_with_long_term(store.clone()),
+        "get_preferences_for",
+        r#"{"user_identifier":"owner","as_of":"yesterday"}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+        "'as_of' must be an RFC 3339 timestamp"
+    );
+    assert!(store.last_preferences_query().is_none());
+}
+
+#[tokio::test]
+async fn get_preferences_for_returns_the_user_history() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let preference = Preference {
+        id: Uuid::new_v4(),
+        category: "food".into(),
+        preference: "cafe".into(),
+        context: None,
+        confidence: 0.8,
+        embedding: None,
+        created_at: chrono::Utc::now(),
+        metadata: Metadata::new(),
+        valid_from: Some(timestamp("2026-01-01T00:00:00+00:00")),
+        valid_until: Some(timestamp("2026-01-02T00:00:00+00:00")),
+    };
+    store.set_preferences(vec![preference.clone()]);
+    let response = request(
+        state_with_long_term(store.clone()),
+        "get_preferences_for",
+        r#"{"user_identifier":"gm05-user","active_only":false}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        store.last_preferences_query(),
+        Some(("gm05-user".into(), false))
+    );
+    assert_eq!(body[0]["id"], preference.id.to_string());
+    assert_eq!(body[0]["confidence"], 0.8);
+    assert_eq!(body[0]["valid_from"], "2026-01-01T00:00:00+00:00");
+    assert_eq!(body[0]["valid_until"], "2026-01-02T00:00:00+00:00");
 }
