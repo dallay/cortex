@@ -387,8 +387,47 @@ impl rook_core::ModelCatalogPort for FakeCatalog {
 // ---------------------------------------------------------------------------
 
 struct WiremockUpstreams {
-    openai: wiremock::MockServer,
-    anthropic: wiremock::MockServer,
+    openai: UpstreamServer,
+    anthropic: UpstreamServer,
+}
+
+/// A wiremock upstream that reports only provider traffic.
+///
+/// Wiremock records every request the server receives, including the
+/// readiness probes it sends to `GET /` while the mock server starts. Those
+/// probes never reach the provider adapter, so counting them makes upstream
+/// assertions depend on thread timing. Filtering by the provider endpoint
+/// keeps every upstream assertion deterministic.
+struct UpstreamServer {
+    server: wiremock::MockServer,
+    endpoint: &'static str,
+}
+
+impl UpstreamServer {
+    fn new(server: wiremock::MockServer, endpoint: &'static str) -> Self {
+        Self { server, endpoint }
+    }
+
+    /// Requests the provider endpoint received, without wiremock probes.
+    async fn received_requests(&self) -> Option<Vec<wiremock::Request>> {
+        let requests = self.server.received_requests().await?;
+        Some(
+            requests
+                .into_iter()
+                .filter(|request| {
+                    request.method.as_str() == "POST" && request.url.path() == self.endpoint
+                })
+                .collect(),
+        )
+    }
+}
+
+impl std::ops::Deref for UpstreamServer {
+    type Target = wiremock::MockServer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.server
+    }
 }
 
 enum UpstreamMock {
@@ -429,8 +468,8 @@ async fn start_upstreams_planned(
         .mount(&anthropic_server)
         .await;
     WiremockUpstreams {
-        openai: openai_server,
-        anthropic: anthropic_server,
+        openai: UpstreamServer::new(openai_server, "/chat/completions"),
+        anthropic: UpstreamServer::new(anthropic_server, "/v1/messages"),
     }
 }
 

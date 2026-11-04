@@ -22,8 +22,9 @@ pub fn tools_id() -> ServiceId {
 pub fn sessions_id() -> ServiceId {
     ServiceId::new("agent:sessions", 1)
 }
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn loop_id() -> ServiceId {
-    ServiceId::new("agent:loop", 1)
+    huginn_core::agent_loop_id()
 }
 
 pub struct ModelPlugin(pub Arc<dyn ModelProvider>);
@@ -84,6 +85,25 @@ impl Plugin for InstructionsPlugin {
     }
 }
 
+/// Host-owned registry where plugins add restrict-only turn-level hooks.
+pub struct InferenceHooksPlugin(pub Arc<huginn_core::hooks::InferenceHooks>);
+#[async_trait]
+impl Plugin for InferenceHooksPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "core.inference-hooks".into(),
+            provides: vec![huginn_core::hooks::inference_hooks_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(
+            huginn_core::hooks::inference_hooks_id(),
+            huginn_core::hooks::InferenceHooksService(self.0.clone()),
+        )
+    }
+}
+
 /// Host-owned registry where plugins add restrict-only tool hooks.
 pub struct HooksPlugin(pub Arc<ToolHooks>);
 #[async_trait]
@@ -100,6 +120,41 @@ impl Plugin for HooksPlugin {
     }
 }
 
+/// The kernel owns the hook registries.
+///
+/// A caller that supplies a different registry would see its guards dropped silently,
+/// which fails open, so a mismatch is refused instead of overwritten.
+fn adopt_hook_registries(ctx: &PluginContext, config: &mut LoopConfig) -> Result<()> {
+    let kernel_tool_hooks = ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone();
+    let kernel_inference_hooks = ctx
+        .resolve::<huginn_core::hooks::InferenceHooksService>(
+            &huginn_core::hooks::inference_hooks_id(),
+        )?
+        .0
+        .clone();
+    if config
+        .hooks
+        .as_ref()
+        .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_tool_hooks))
+    {
+        return Err(AgentError::Composition(
+            "loop config supplies a tool-hook registry the kernel does not own".into(),
+        ));
+    }
+    if config
+        .inference_hooks
+        .as_ref()
+        .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_inference_hooks))
+    {
+        return Err(AgentError::Composition(
+            "loop config supplies an inference-hook registry the kernel does not own".into(),
+        ));
+    }
+    config.hooks = Some(kernel_tool_hooks);
+    config.inference_hooks = Some(kernel_inference_hooks);
+    Ok(())
+}
+
 pub struct LoopPlugin(pub LoopConfig);
 #[async_trait]
 impl Plugin for LoopPlugin {
@@ -113,12 +168,13 @@ impl Plugin for LoopPlugin {
                 sessions_id(),
                 instructions_id(),
                 tool_hooks_id(),
+                huginn_core::hooks::inference_hooks_id(),
             ],
         }
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         let mut config = self.0.clone();
-        config.hooks = Some(ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone());
+        adopt_hook_registries(ctx, &mut config)?;
         let implementation = StandardLoop {
             model: ctx.resolve::<ModelService>(&model_id())?.0.clone(),
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
@@ -214,6 +270,9 @@ impl Drop for LoopAdmissionLease {
 struct LeasedAgentLoop {
     model: ServiceSlotHandle<ModelService>,
     sessions: ServiceSlotHandle<SessionsService>,
+    /// Acquired per operation: a substituted registry must be the one evaluated.
+    hooks: ServiceSlotHandle<ToolHooksService>,
+    inference_hooks: ServiceSlotHandle<huginn_core::hooks::InferenceHooksService>,
     tools: Arc<dyn ToolRegistry>,
     instructions: Arc<dyn InstructionSource>,
     config: LoopConfig,
@@ -226,15 +285,32 @@ impl LeasedAgentLoop {
         &'a self,
         model: &'a ModelService,
         sessions: &'a SessionsService,
+        config: &'a LoopConfig,
     ) -> LoopExecution<'a> {
         LoopExecution::new(
             model.0.as_ref(),
             self.tools.as_ref(),
             sessions.0.as_ref(),
             self.instructions.as_ref(),
-            &self.config,
+            config,
             &self.lifecycle,
         )
+    }
+
+    /// Resolves the registries this run must evaluate.
+    ///
+    /// The config copy taken at activation is not authoritative: `Substitute` can replace
+    /// either service, and a loop that kept the retired registry would silently skip a
+    /// blocking hook installed afterwards.
+    fn live_config(
+        &self,
+        hooks: &ToolHooksService,
+        inference_hooks: &huginn_core::hooks::InferenceHooksService,
+    ) -> LoopConfig {
+        let mut config = self.config.clone();
+        config.hooks = Some(hooks.0.clone());
+        config.inference_hooks = Some(inference_hooks.0.clone());
+        config
     }
 }
 
@@ -259,7 +335,10 @@ impl AgentLoop for LeasedAgentLoop {
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
-        self.execution(&model, &sessions)
+        let hooks = self.hooks.acquire()?;
+        let inference_hooks = self.inference_hooks.acquire()?;
+        let config = self.live_config(&hooks, &inference_hooks);
+        self.execution(&model, &sessions, &config)
             .run(session, prompt, approvals, events, cancellation)
             .await
     }
@@ -273,7 +352,10 @@ impl AgentLoop for LeasedAgentLoop {
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
-        self.execution(&model, &sessions)
+        let hooks = self.hooks.acquire()?;
+        let inference_hooks = self.inference_hooks.acquire()?;
+        let config = self.live_config(&hooks, &inference_hooks);
+        self.execution(&model, &sessions, &config)
             .compact(session, events, cancellation)
             .await
     }
@@ -308,10 +390,15 @@ impl Plugin for LeasedLoopPlugin {
         let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
         let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
         let mut config = self.config.clone();
-        config.hooks = Some(ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone());
+        adopt_hook_registries(ctx, &mut config)?;
+
         let implementation = LeasedAgentLoop {
             model,
             sessions,
+            hooks: ctx.service_slot_handle::<ToolHooksService>(&tool_hooks_id())?,
+            inference_hooks: ctx.service_slot_handle::<huginn_core::hooks::InferenceHooksService>(
+                &huginn_core::hooks::inference_hooks_id(),
+            )?,
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
             instructions: ctx
                 .resolve::<InstructionsService>(&instructions_id())?
@@ -351,6 +438,7 @@ pub async fn build(
     supervisor.register(Box::new(SessionsPlugin(sessions)))?;
     supervisor.register(Box::new(InstructionsPlugin(instructions)))?;
     supervisor.register(Box::new(HooksPlugin(Arc::default())))?;
+    supervisor.register(Box::new(InferenceHooksPlugin(Arc::default())))?;
     supervisor.register(leased_loop_plugin(config))?;
     if let Err(error) = supervisor.start().await {
         supervisor.shutdown().await;

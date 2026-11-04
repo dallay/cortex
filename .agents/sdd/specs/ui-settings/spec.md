@@ -211,17 +211,17 @@ with an explicit non-conversational destination.
 ### REQ-08 — Discard on Esc
 
 When pressing Esc outside an incomplete paste, the system SHALL close
-`Overlay::Settings`, discard su copy editable y revocar el lease sin cancelar
+`Overlay::Settings`, discard its editable copy, and revoke the lease without cancelling
 the ongoing turn. Before initiating Apply it SHALL display `Settings discarded`
 as a non-conversational `Notification` and SHALL NOT invoke persistence or modify
 the file. If Apply already initiated writing, Esc SHALL NOT initiate additional writes
-ni prometer rollback o que el file permanece intacto. El receipt del Apply
+nor promising rollback or that the file remains untouched. The receipt of the Apply
 already initiated SHALL follow the REQ-07 contract without restoring the overlay or its focus.
 
 Previously: modal discard and notice; now closing with focus revocation and
 explicit classification, preserving REQ-13.
 
-#### Scenario: SET-08-A — discard durante streaming
+#### Scenario: SET-08-A — Discard during streaming
 
 - GIVEN `Settings` with unsaved changes, without an initiated Apply, and an in-flight streaming turn
 - WHEN Esc is pressed
@@ -229,7 +229,7 @@ explicit classification, preserving REQ-13.
 - AND the turn continues and keypress reaches neither editor nor turn canceller
 - AND `Settings discarded` is displayed outside conversation
 
-#### Scenario: SET-08-B — Esc durante write iniciada
+#### Scenario: SET-08-B — Esc during initiated write
 
 - GIVEN an Apply whose write has started and is held by a controlled barrier, with a streaming turn
 - WHEN Esc is pressed and the write is released with success or failure in separate test cases
@@ -317,27 +317,27 @@ The system SHALL NOT reject `Config::load` when a user has added unknown keys in
 
 ### REQ-12 — Modal precedence
 
-El sistema SHALL usar `Approval > overlay ordinary activo > completion`.
+The system SHALL use `Approval > active ordinary overlay > completion`.
 `Settings`, plugin dialogs, and workflows SHALL be ordinary overlays, not
 slots with simultaneous priorities. A new authorized ordinary request and
 active SHALL replace the current ordinary overlay; rejected or revoked requests
-SHALL NOT hacerlo. replace Settings SHALL discard su copy editable y
+SHALL NOT do so. Replacing Settings SHALL discard its editable copy and
 revoke the lease; before initiating Apply it SHALL NOT write. If the write already
 started, replacing SHALL NOT start another or guarantee rollback, and its receipt
-SHALL fulfill REQ-07 without altering the replacement overlay. Approval SHALL preempt Settings and any otro overlay;
+SHALL fulfill REQ-07 without altering the replacement overlay. Approval SHALL preempt Settings and any other overlay;
 no ordinary overlay SHALL replace a pending Approval. Upon resolving or
 closing Approval, Settings SHALL NOT automatically be restored.
 
-Anteriormente: la cadena `Modal > Settings > PluginDialog > completion`
+Previously: the chain `Modal > Settings > PluginDialog > completion`
 contradicted the scenario replacing Settings with a plugin dialog.
 This substitution preserves that authorized replacement without demoting Approval.
 
-#### Scenario: SET-12-A — Approval preempta Settings
+#### Scenario: SET-12-A — Approval preempts Settings
 
 - GIVEN `Settings` open on `sound` with unsaved changes and no initiated Apply
 - WHEN the host requests Approval for a tool
 - THEN Settings is discarded without persisting and Approval assumes focus and rendering
-- AND al resolver Approval no reaparece Settings
+- AND upon resolving Approval, Settings does not reappear
 
 #### Scenario: SET-12-B — Authorized dialog replaces Settings
 
@@ -346,12 +346,12 @@ This substitution preserves that authorized replacement without demoting Approva
 - THEN Settings is discarded without persisting and the plugin dialog renders
 - AND input captured under the previous lease does not reach the new dialog
 
-#### Scenario: SET-12-C — request rechazada no reemplaza
+#### Scenario: SET-12-C — Rejected request does not replace
 
 - GIVEN `Settings` open with a modified copy, or Approval pending in another case
 - WHEN a revoked ordinary request arrives, or an ordinary request arrives while Approval is pending, respectively
 - THEN the active overlay preserves focus and content
-- AND the rejected request does not initiate a save or grant permission, even if a previous Apply may completar su write
+- AND the rejected request does not initiate a save or grant permission, even if a previous Apply may complete its write
 
 #### Scenario: SET-12-D — Approval during Apply and late receipt
 

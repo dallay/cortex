@@ -17,6 +17,12 @@ pub enum AgentError {
     Configuration(String),
     #[error("model: {0}")]
     Model(String),
+    /// The inference transport failed before a complete answer.
+    ///
+    /// Repeating the same request is safe because inference has no host effect. Effects
+    /// are never retried: `Tool` and `Cancelled` end the turn instead.
+    #[error("transient inference failure: {0}")]
+    Inference(String),
     #[error("tool: {0}")]
     Tool(String),
     #[error("session: {0}")]
@@ -35,6 +41,17 @@ pub enum AgentError {
     Json(#[from] serde_json::Error),
 }
 pub type Result<T> = std::result::Result<T, AgentError>;
+
+impl AgentError {
+    /// Whether repeating the *same request* is safe.
+    ///
+    /// Only inference qualifies, and only when it produced no host effect. This is the
+    /// single place the loop asks that question, so a new variant cannot be retried by
+    /// accident.
+    pub const fn is_retryable_inference(&self) -> bool {
+        matches!(self, Self::Inference(_))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -123,6 +140,109 @@ pub trait ModelProvider: Send + Sync {
     ) -> Result<BoxStream<'static, Result<ModelDelta>>>;
 }
 
+/// Identity of one `AgentLoop::run` invocation within a session.
+///
+/// Zero is reserved for events persisted before this identity existed: it means
+/// "unknown", never "the first turn". Allocation starts at one and is persisted
+/// with the session so a resumed session never reuses a recorded identity.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TurnId(pub u64);
+
+impl TurnId {
+    /// Reserved for events persisted before turn identity existed.
+    pub const UNKNOWN: Self = Self(0);
+}
+
+/// Identity of one model call inside a turn. Zero means unknown.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct StepId(pub u64);
+
+impl StepId {
+    /// Reserved for events persisted before step identity existed.
+    pub const UNKNOWN: Self = Self(0);
+}
+
+/// Non-cryptographic provenance digest (FNV-1a, 64 bit, hex).
+///
+/// Used to state *which* context a turn was pinned to, so a later audit can tell two
+/// turns apart. It is not a security boundary and cannot authenticate content.
+pub fn fingerprint(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Steering messages are bounded and never grants: the host decides what to inject.
+pub const MAX_STEERING_MESSAGES: usize = 8;
+pub const MAX_STEERING_BYTES: usize = 4096;
+
+/// Mailbox the host writes into while a turn is running.
+///
+/// The loop drains it at step boundaries, so an injected message reaches the model at a
+/// point where no tool is mid-flight and no result is being assembled.
+#[derive(Default)]
+pub struct SteeringQueue {
+    pending: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+
+impl SteeringQueue {
+    /// Refuses rather than dropping or replacing: losing a steering message silently
+    /// would let the model act on a partial instruction.
+    pub fn push(&self, message: &str) -> Result<()> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(AgentError::Configuration(
+                "a steering message cannot be empty".into(),
+            ));
+        }
+        if message.len() > MAX_STEERING_BYTES {
+            return Err(AgentError::Configuration(format!(
+                "a steering message cannot exceed {MAX_STEERING_BYTES} bytes"
+            )));
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if pending.len() >= MAX_STEERING_MESSAGES {
+            return Err(AgentError::Configuration(format!(
+                "at most {MAX_STEERING_MESSAGES} steering messages can wait"
+            )));
+        }
+        pending.push_back(message.to_string());
+        drop(pending);
+        Ok(())
+    }
+
+    pub fn take(&self) -> Vec<String> {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pending.drain(..).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -131,33 +251,77 @@ pub enum Event {
     },
     TurnStarted {
         session_id: String,
+        /// Missing on records written before turn identity existed.
+        #[serde(default)]
+        turn: TurnId,
     },
     Text {
+        /// Missing on records written before step identity existed.
+        #[serde(default)]
+        step: StepId,
         text: String,
     },
     ToolStarted {
+        #[serde(default)]
+        step: StepId,
         call: ToolCall,
     },
     ApprovalRequested {
+        #[serde(default)]
+        step: StepId,
         request: ApprovalRequest,
     },
     ApprovalResolved {
+        #[serde(default)]
+        step: StepId,
         id: String,
         approved: bool,
     },
     ToolFinished {
+        #[serde(default)]
+        step: StepId,
         id: String,
         output: String,
         is_error: bool,
     },
     Usage {
+        #[serde(default)]
+        step: StepId,
         input_tokens: u64,
         output_tokens: u64,
     },
     Compacted {
         through: usize,
     },
-    TurnFinished,
+    /// A retryable inference failure was repeated; no effect had been taken.
+    ModelRetried {
+        turn: TurnId,
+        step: StepId,
+        attempt: u32,
+    },
+    /// The turn pinned its system context; later steps reuse exactly this.
+    ContextPinned {
+        turn: TurnId,
+        bytes: usize,
+        digest: String,
+    },
+    /// The host injected messages into a running turn; they are history now.
+    Steered {
+        turn: TurnId,
+        step: StepId,
+        count: usize,
+    },
+    /// A turn-level hook refused the model call. No request was made.
+    InferenceBlocked {
+        turn: TurnId,
+        step: StepId,
+        hook: String,
+        reason: String,
+    },
+    TurnFinished {
+        #[serde(default)]
+        turn: TurnId,
+    },
     Error {
         message: String,
     },
@@ -235,6 +399,9 @@ pub struct Session {
     pub summary_through: usize,
     /// A persisted unfinished turn is recovered, never automatically replayed.
     pub interrupted: bool,
+    /// Monotonic turn allocator. Zero on sessions written before turn identity.
+    #[serde(default)]
+    pub turn_seq: u64,
 }
 impl Session {
     pub fn new(workspace: PathBuf) -> Self {
@@ -247,7 +414,23 @@ impl Session {
             summary: None,
             summary_through: 0,
             interrupted: false,
+            turn_seq: 0,
         }
+    }
+
+    /// Allocates the next turn identity and persists the counter with the session.
+    ///
+    /// The counter, not the event log, is the allocator: a session whose events were
+    /// truncated still cannot reuse an identity it already handed out.
+    /// Fails instead of saturating: reusing one identity for every later turn would
+    /// make two turns indistinguishable in an audit.
+    pub fn allocate_turn(&mut self) -> Result<TurnId> {
+        let next = self
+            .turn_seq
+            .checked_add(1)
+            .ok_or_else(|| AgentError::Session("turn counter exhausted in this session".into()))?;
+        self.turn_seq = next;
+        Ok(TurnId(next))
     }
 }
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +483,14 @@ pub struct ModelService(pub Arc<dyn ModelProvider>);
 pub struct ToolsService(pub Arc<dyn ToolRegistry>);
 pub struct SessionsService(pub Arc<dyn SessionStore>);
 pub struct LoopService(pub Arc<dyn AgentLoop>);
+
+/// Stable service id for the replaceable agent loop.
+///
+/// It lives in the contract crate so a plugin outside the host application can name
+/// the service it provides (ADR-0017).
+pub fn agent_loop_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:loop", 1)
+}
 
 /// Workspace context supplied by a replaceable adapter.
 #[async_trait]

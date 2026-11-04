@@ -115,18 +115,28 @@ impl EventSink for Output {
         }
         match event {
             Event::ConnectionChanged { .. } => {} // Observability, never conversation.
-            Event::Text { text } => {
+            Event::Text { text, .. } => {
                 print!("{}", safe(&text));
                 let _ = std::io::stdout().flush();
             }
-            Event::ToolStarted { call } => eprintln!("\nTool: {}", safe(&call.name)),
+            Event::ToolStarted { call, .. } => eprintln!("\nTool: {}", safe(&call.name)),
             Event::ToolFinished {
                 is_error: true,
                 output,
                 ..
             } => eprintln!("\nTool failed: {}", safe(&output)),
             Event::Compacted { .. } => eprintln!("\nContext compacted; original history retained."),
-            Event::TurnFinished => println!(),
+            Event::InferenceBlocked { hook, reason, .. } => {
+                eprintln!("\nModel call blocked by {}: {}", safe(&hook), safe(&reason))
+            }
+            Event::ContextPinned { .. } => {}
+            Event::ModelRetried { attempt, .. } => {
+                eprintln!("\n[retrying after an incomplete answer: attempt {attempt}]")
+            }
+            Event::Steered { count, .. } => {
+                eprintln!("\nDelivered {count} steering message(s).")
+            }
+            Event::TurnFinished { .. } => println!(),
             Event::TurnStarted { .. }
             | Event::ApprovalRequested { .. }
             | Event::ApprovalResolved { .. }

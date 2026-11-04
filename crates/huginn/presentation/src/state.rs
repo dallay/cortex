@@ -187,6 +187,9 @@ pub struct UiState {
     completion_editor: Option<(String, usize, bool)>,
     completion_catalog: Vec<(String, u64)>,
     pub tail: String,
+    /// Length of `tail` after the last completed tool result. A retried attempt may only
+    /// drop what it produced, not output from earlier steps of the same turn.
+    tail_after_tool: usize,
     pub status: crate::status_bar::StatusSnapshot,
     pub widgets: Vec<(String, View)>,
 
@@ -603,8 +606,8 @@ impl UiState {
             Event::ConnectionChanged { snapshot } => {
                 self.project_connection(snapshot.clone());
             }
-            Event::Text { text } => self.tail.push_str(&safe(text)),
-            Event::ToolStarted { call } => {
+            Event::Text { text, .. } => self.tail.push_str(&safe(text)),
+            Event::ToolStarted { call, .. } => {
                 self.tool_names.insert(call.id.clone(), call.name.clone());
                 self.status
                     .set_notice(format!("Tool: {}", safe(&call.name)));
@@ -615,6 +618,8 @@ impl UiState {
                 let view = view.unwrap_or_else(|| fallback(output, *is_error));
                 self.tail
                     .push_str(&format!("\n{}\n", safe(&view.plain_text())));
+                // A retry may roll the tail back to here, never further.
+                self.tail_after_tool = self.tail.len();
                 if *is_error || view.is_error {
                     self.status.set_diagnostic(if view.title.is_empty() {
                         "Tool error".into()
@@ -623,16 +628,17 @@ impl UiState {
                     });
                 }
             }
-            Event::ApprovalRequested { request } => self
+            Event::ApprovalRequested { request, .. } => self
                 .status
                 .set_notice(format!("Approval: {}", safe(&request.action))),
             Event::ApprovalResolved { approved, .. } => self
                 .status
                 .set_notice(if *approved { "Approved" } else { "Denied" }.into()),
             Event::TurnStarted { .. } => {
+                self.tail_after_tool = 0;
                 self.status.set_notice("Thinking…".into());
             }
-            Event::TurnFinished => {
+            Event::TurnFinished { .. } => {
                 self.status.set_notice("Ready".into());
             }
             Event::Error { message } => {
@@ -641,9 +647,26 @@ impl UiState {
             Event::Compacted { .. } => self
                 .status
                 .set_notice("Context compacted; originals retained".into()),
+            Event::InferenceBlocked { hook, reason, .. } => self
+                .status
+                .set_diagnostic(format!("Model call blocked by {hook}: {reason}")),
+            Event::ContextPinned { .. } => {}
+            Event::ModelRetried { attempt, .. } => {
+                // The failed attempt's deltas were already rendered; drop only those, so
+                // earlier tool output stays visible and nothing splices into the retry.
+                self.tail.truncate(self.tail_after_tool);
+                self.status
+                    .set_notice(format!("Retrying after an incomplete answer ({attempt})"));
+            }
+            Event::Steered { count, .. } => {
+                let noun = if *count == 1 { "message" } else { "messages" };
+                self.status
+                    .set_notice(format!("Delivered {count} steering {noun}"));
+            }
             Event::Usage {
                 input_tokens,
                 output_tokens,
+                ..
             } => {
                 self.usage = Some((*input_tokens, *output_tokens));
                 self.status
@@ -685,6 +708,7 @@ impl UiState {
         }
         self.message_count = session.messages.len();
         self.tail.clear();
+        self.tail_after_tool = 0;
         self.busy = false;
         self.turn_cancel = None;
         if session.interrupted {
@@ -1585,6 +1609,7 @@ impl EventSink for Ui {
             id,
             output,
             is_error,
+            ..
         } = &event
         {
             let name = self.lock().tool_names.get(id).cloned().unwrap_or_default();

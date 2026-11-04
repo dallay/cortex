@@ -1,4 +1,5 @@
 //! Separate, statically linked reference extension.
+pub mod step_loop;
 use async_trait::async_trait;
 use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext},

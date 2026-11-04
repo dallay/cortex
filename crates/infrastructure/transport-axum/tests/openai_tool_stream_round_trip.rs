@@ -5,6 +5,24 @@ use rook_core::{CompletionRequest, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 use transport_axum::openai_adapter::OpenAIChatCompletionChunk;
 
+/// Requests the provider endpoint received.
+///
+/// Wiremock records the readiness probes it sends to `GET /` while the mock
+/// server starts, so the raw log contains traffic that never reached the
+/// provider adapter. Filtering by endpoint keeps the assertion deterministic.
+async fn provider_requests(
+    server: &wiremock::MockServer,
+    endpoint: &str,
+) -> Vec<wiremock::Request> {
+    server
+        .received_requests()
+        .await
+        .expect("request captured")
+        .into_iter()
+        .filter(|request| request.method.as_str() == "POST" && request.url.path() == endpoint)
+        .collect()
+}
+
 #[tokio::test]
 async fn upstream_tool_call_fragments_survive_provider_domain_and_openai_wire() {
     let server = wiremock::MockServer::start().await;
@@ -107,7 +125,7 @@ async fn upstream_tool_call_fragments_survive_provider_domain_and_openai_wire() 
     );
     assert_eq!(wire_chunks[2]["choices"][0]["finish_reason"], "tool_calls");
 
-    let requests = server.received_requests().await.expect("request captured");
+    let requests = provider_requests(&server, "/chat/completions").await;
     let sent: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(sent["messages"][0]["tool_calls"][0]["id"], "call-prior");
     assert_eq!(
