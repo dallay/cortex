@@ -940,3 +940,298 @@ async fn discovery_is_cancelled_when_its_plugin_is_removed() {
     supervisor.shutdown().await;
     task.abort();
 }
+
+// --- Transient inference transport classification ---------------------------------
+//
+// Inference has no host effect, so a transport failure that repeating the same request
+// can plausibly fix must surface as `AgentError::Inference`: `is_retryable_inference()` is
+// the only retry question the loop asks and `max_model_retries` bounds the answers. The
+// permanent modes are pinned here as well, because a retry spent on them burns the budget
+// without any chance of a different response.
+
+const PARTIAL_TEXT: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n";
+const PARTIAL_EVENT: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}";
+
+/// The catalog routes an adapter consults before a model becomes usable.
+fn catalog(router: Router) -> Router {
+    router
+        .route(
+            "/v1/models",
+            get(|| async { Json(json!({"data":[{"id":"fixture"}]})) }),
+        )
+        .route(
+            "/api/tags",
+            get(|| async { Json(json!({"models":[{"name":"fixture"}]})) }),
+        )
+        .route(
+            "/api/show",
+            post(|| async { Json(json!({"capabilities":["completion","tools"]})) }),
+        )
+}
+
+/// Builds the production chain: adapter -> capability gate -> transport.
+async fn streaming_model(
+    provider: &str,
+    router: Router,
+    timeout_secs: u64,
+) -> (Arc<dyn ModelProvider>, tokio::task::JoinHandle<()>) {
+    let (endpoint, task) = server(router).await;
+    let endpoint = if provider == "openai" {
+        format!("{endpoint}/v1")
+    } else {
+        endpoint
+    };
+    let adapter = if provider == "openai" {
+        InferenceAdapter::openai_compatible(timeout_secs)
+    } else {
+        InferenceAdapter::ollama(timeout_secs)
+    };
+    let model = adapter
+        .create_connection_model(
+            &selection(provider),
+            material(provider, &endpoint),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("the adapter must build a model for the selected provider");
+    (model, task)
+}
+
+/// The failure raised before any delta can arrive.
+async fn request_error(model: &Arc<dyn ModelProvider>) -> AgentError {
+    match model.stream(request(), CancellationToken::new()).await {
+        Ok(_) => panic!("the request must fail before any delta"),
+        Err(error) => error,
+    }
+}
+
+/// The failure raised inside the stream, after the response headers arrived.
+async fn stream_error(model: &Arc<dyn ModelProvider>) -> AgentError {
+    let mut stream = model
+        .stream(request(), CancellationToken::new())
+        .await
+        .expect("the response headers must arrive before the failure under test");
+    while let Some(item) = stream.next().await {
+        if let Err(error) = item {
+            return error;
+        }
+    }
+    panic!("the stream must fail instead of ending cleanly");
+}
+
+/// A failure the transport may report at the request or inside the stream: a connection
+/// reset can cost the response headers as well as the body.
+async fn any_error(model: &Arc<dyn ModelProvider>) -> AgentError {
+    let mut stream = match model.stream(request(), CancellationToken::new()).await {
+        Ok(stream) => stream,
+        Err(error) => return error,
+    };
+    while let Some(item) = stream.next().await {
+        if let Err(error) = item {
+            return error;
+        }
+    }
+    panic!("the response must fail instead of ending cleanly");
+}
+
+fn assert_transient(error: &AgentError, mode: &str) {
+    assert!(
+        matches!(error, AgentError::Inference(_)),
+        "{mode} must be a transient inference failure, got {error:?}"
+    );
+    assert!(error.is_retryable_inference(), "{mode} must be retryable");
+}
+
+fn assert_permanent(error: &AgentError, mode: &str) {
+    assert!(
+        matches!(error, AgentError::Model(_)),
+        "{mode} must stay a permanent model failure, got {error:?}"
+    );
+    assert!(
+        !error.is_retryable_inference(),
+        "{mode} must never be retryable"
+    );
+}
+
+#[tokio::test]
+async fn server_errors_are_retryable_inference() {
+    for provider in ["openai", "ollama"] {
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            let router = catalog(Router::new())
+                .route("/v1/chat/completions", post(move || async move { status }));
+            let (model, task) = streaming_model(provider, router, 2).await;
+            assert_transient(
+                &request_error(&model).await,
+                &format!("{provider} HTTP {status}"),
+            );
+            task.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_errors_stay_permanent() {
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNAUTHORIZED,
+        StatusCode::NOT_FOUND,
+        StatusCode::TOO_MANY_REQUESTS,
+    ] {
+        let router = catalog(Router::new())
+            .route("/v1/chat/completions", post(move || async move { status }));
+        let (model, task) = streaming_model("openai", router, 2).await;
+        assert_permanent(&request_error(&model).await, &format!("HTTP {status}"));
+        task.abort();
+    }
+}
+
+#[tokio::test]
+async fn header_timeout_is_retryable_inference() {
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(|| async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            ""
+        }),
+    );
+    let (model, task) = streaming_model("openai", router, 1).await;
+    assert_transient(&request_error(&model).await, "an unanswered request");
+    task.abort();
+}
+
+#[tokio::test]
+async fn refused_connection_is_retryable_inference() {
+    let router = catalog(Router::new()).route("/v1/chat/completions", post(|| async { "" }));
+    let (model, task) = streaming_model("openai", router, 2).await;
+    // Aborting and awaiting the serve task drops the listener, so the next connect is
+    // refused instead of racing a socket that is still open.
+    task.abort();
+    let _ = task.await;
+    assert_transient(&request_error(&model).await, "a refused connection");
+}
+
+#[tokio::test]
+async fn incomplete_body_without_finish_marker_is_retryable_inference() {
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                Body::from(PARTIAL_TEXT),
+            )
+        }),
+    );
+    let (model, task) = streaming_model("openai", router, 2).await;
+    assert_transient(
+        &stream_error(&model).await,
+        "a clean end without a finish marker",
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn truncated_sse_event_is_retryable_inference() {
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                Body::from(PARTIAL_EVENT),
+            )
+        }),
+    );
+    let (model, task) = streaming_model("openai", router, 2).await;
+    assert_transient(&stream_error(&model).await, "a truncated SSE event");
+    task.abort();
+}
+
+#[tokio::test]
+async fn reset_body_stream_is_retryable_inference() {
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                Body::from_stream(
+                    futures::stream::iter(vec![Ok(bytes::Bytes::from(PARTIAL_TEXT))]).chain(
+                        futures::stream::once(async {
+                            // Let the headers and the first delta reach the client so the reset
+                            // lands inside the body instead of costing the whole response.
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionReset,
+                                "connection reset by peer",
+                            ))
+                        }),
+                    ),
+                ),
+            )
+        }),
+    );
+    let (model, task) = streaming_model("openai", router, 2).await;
+    assert_transient(&any_error(&model).await, "a reset body stream");
+    task.abort();
+}
+
+#[tokio::test]
+async fn unsupported_finish_reason_stays_permanent() {
+    let body =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"cut\"},\"finish_reason\":\"length\"}]}\n\n";
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(move || async move { ([("content-type", "text/event-stream")], Body::from(body)) }),
+    );
+    let (model, task) = streaming_model("openai", router, 2).await;
+    assert_permanent(&stream_error(&model).await, "an unsupported finish reason");
+    task.abort();
+}
+
+#[tokio::test]
+async fn malformed_stream_json_stays_permanent() {
+    let router = catalog(Router::new()).route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                Body::from("data: not json\n\n"),
+            )
+        }),
+    );
+    let (model, task) = streaming_model("openai", router, 2).await;
+    assert_permanent(&stream_error(&model).await, "a malformed SSE payload");
+    task.abort();
+}
+
+#[tokio::test]
+async fn configuration_errors_are_never_retryable() {
+    let error = huginn_runtime::model::OpenAiProvider::with_transport(
+        "http://example.com",
+        "fixture".into(),
+        None,
+        2,
+        false,
+    )
+    .err()
+    .expect("plain HTTP to a public host must be refused");
+    assert!(matches!(error, AgentError::Configuration(_)));
+    assert!(!error.is_retryable_inference());
+}
+
+#[tokio::test]
+async fn cancellation_is_never_retryable() {
+    let router = catalog(Router::new()).route("/v1/chat/completions", post(|| async { "" }));
+    let (model, task) = streaming_model("openai", router, 2).await;
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let error = match model.stream(request(), cancel).await {
+        Ok(_) => panic!("a cancelled request must not proceed"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, AgentError::Cancelled));
+    assert!(!error.is_retryable_inference());
+    task.abort();
+}
