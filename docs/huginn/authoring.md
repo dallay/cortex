@@ -115,6 +115,55 @@ keeps its existing 64 KiB content budget plus a marker when truncated.
 Registrations follow the plugin generation like other contributions. See
 [ADR-0016](adr/0016-restrict-only-tool-hooks.md).
 
+## Agent loops
+
+A plugin that provides `agent:loop@1` implements `AgentLoop` from
+`huginn_plugin_api::v1::agent`. The host keeps authorization, effects, events and
+persistence; the loop can only ask for decisions. The clauses a loop must satisfy are
+listed in [agent-loop-conformance.md](agent-loop-conformance.md).
+
+### Hook registries
+
+The kernel owns both registries, `agent:tool-hooks@1` and `agent:inference-hooks@1`.
+A loop never chooses them and never accepts one from its own configuration: the host
+refuses a loop whose config names a registry it does not own, because silently
+substituting it would drop the guards other plugins installed. Resolve the published
+service instead of storing a copy taken at construction, so a registry replaced after
+your loop started still gates the turn.
+
+### Surviving a provider substitution
+
+`Arc<dyn ModelProvider>` pins the provider that was published when your loop was
+created. After `Supervisor::substitute` replaces `agent:model`, a loop holding that
+`Arc` keeps calling the retired provider. Hold `ServiceSlotHandle`s instead and acquire
+the services at the start of every turn and every compaction:
+
+```rust
+use huginn_plugin_api::v1::agent::{
+    agent_loop_id, model_id, sessions_id, LoopService, ModelService, SessionsService,
+    ServiceSlotHandle,
+};
+
+async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+    let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
+    let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
+    ctx.provide(agent_loop_id(), LoopService(Arc::new(Mine { model, sessions })))
+}
+
+// inside `AgentLoop::run`, once per turn:
+let model = self.model.acquire()?;
+```
+
+Declare the capability in the conformance suite with `Capabilities::REBINDING`. The
+`substitution_rebinds_the_model` case then substitutes `agent:model` between two turns
+and fails any loop that keeps the retired provider. A loop that does not declare it is
+not certified for that clause, and a loop that declares it without being published
+into a supervisor fails the case instead of skipping it.
+
+The reference loop in `crates/huginn/reference-extension` is authored against this SDK
+only and is certified with both clauses, so it is a working example of the whole
+pattern.
+
 ## Registro de herramientas desde plugin-api
 
 Un autor nativo puede implementar `Tool` y registrar herramientas mediante
