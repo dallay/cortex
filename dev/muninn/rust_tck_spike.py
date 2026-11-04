@@ -77,7 +77,57 @@ def schema_ids_from_suite(suite, collected_ids=None):
     return selected
 
 
-def select_cases(all_ids, profile, suite=None, bronze_ids=None):
+SILVER_PROFILES = ("silver", "silver-long-term", "silver-reasoning")
+SILVER_SPLIT_PROFILES = ("silver-long-term", "silver-reasoning")
+SILVER_MODULES = {"silver-long-term": ("v1/test_long_term.py", 38),
+                  "silver-reasoning": ("v1/test_reasoning.py", 29)}
+SILVER_TOTAL = sum(count for _, count in SILVER_MODULES.values())
+
+
+def silver_partition(silver_ids):
+    """Divide el marcador fijado por módulo; fuera de ellos la partición es ambigua.
+
+    H2 solo puede reclamar `silver-long-term`; los casos de `silver-reasoning`
+    pertenecen a H3 y nunca cuentan como aceptación de la memoria de largo plazo.
+    """
+    ids = set(silver_ids)
+    if len(ids) != SILVER_TOTAL:
+        raise ValueError(f"El inventario Silver fijado debe contener exactamente {SILVER_TOTAL} IDs")
+    partition = {}
+    classified = set()
+    for profile, (module, count) in SILVER_MODULES.items():
+        partition[profile] = {node_id for node_id in ids if node_id.startswith(module + "::")}
+        if len(partition[profile]) != count:
+            raise ValueError("La partición Silver no coincide con el inventario fijado")
+        classified.update(partition[profile])
+    if classified != ids:
+        raise ValueError("Hay casos Silver fuera de los módulos fijados")
+    return partition
+
+
+def profile_selector(profile, items, suite=None):
+    """Argumentos de pytest de un perfil, incluida su raíz de colección.
+
+    `items` es el inventario coleccionado con `nodeid` y `markers`. Los perfiles
+    Silver se ejecutan sólo con rutas de node ID: si además se pasa la raíz, pytest
+    colecciona la suite completa y la evidencia deja de coincidir con lo declarado.
+    """
+    if suite is None:
+        raise ValueError("La selección requiere el source suite fijado")
+    root = str(Path(suite) / "v1")
+    ids = {item["nodeid"] for item in items}
+    if profile == "bronze":
+        bronze = {item["nodeid"] for item in items if "bronze" in item["markers"]}
+        return bronze, [root, "-m", "bronze"]
+    if profile in SILVER_PROFILES:
+        silver_ids = {item["nodeid"] for item in items if "silver" in item["markers"]}
+        selected, _ = select_cases(ids, profile, silver_ids=silver_ids)
+        return selected, [str(Path(suite) / node_id) for node_id in sorted(selected)]
+    selected, expression = select_cases(ids, profile, suite)
+    return selected, [root, "-k", expression]
+
+
+def select_cases(all_ids, profile, suite=None, bronze_ids=None, silver_ids=None):
     """Deriva IDs del código fijado; el reporte debe coincidir exactamente."""
     if TARGET not in all_ids:
         raise ValueError("Test fijado ausente")
@@ -100,6 +150,13 @@ def select_cases(all_ids, profile, suite=None, bronze_ids=None):
         if not all_ids:
             raise ValueError("La colección TCK está vacía")
         return set(bronze_ids), "bronze"
+    if profile in SILVER_PROFILES:
+        if silver_ids is None or silver_ids != all_ids.intersection(silver_ids):
+            raise ValueError("El inventario Silver fijado debe contener exactamente 67 IDs coleccionados")
+        partition = silver_partition(silver_ids)
+        if profile == "silver":
+            return set(silver_ids), None
+        return partition[profile], None
     if profile not in ("messages", "sessions", "chains", "search"):
         raise ValueError("Perfil no permitido")
     groups = ("TestAddMessage", "TestGetConversation")

@@ -69,6 +69,79 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.select_cases(bronze - {next(iter(bronze))}, "bronze", bronze_ids=bronze)
 
+    def test_silver_split_profiles_cover_the_combined_inventory_without_mixing_hitos(self):
+        module = runner()
+        self.assertEqual(set(module.SILVER_PROFILES) - {"silver"},
+                         set(module.SILVER_SPLIT_PROFILES))
+
+    def test_silver_profiles_split_the_pinned_inventory_by_module(self):
+        module = runner()
+        long_term = {f"v1/test_long_term.py::TestCase{i}::test_case_{i}" for i in range(38)}
+        reasoning = {f"v1/test_reasoning.py::TestCase{i}::test_case_{i}" for i in range(29)}
+        silver = long_term | reasoning
+        all_ids = silver | {module.TARGET, "v1/test_schema.py::TestSchema::test_other"}
+        self.assertEqual(module.select_cases(all_ids, "silver", silver_ids=silver),
+                         (silver, None))
+        self.assertEqual(module.select_cases(all_ids, "silver-long-term", silver_ids=silver),
+                         (long_term, None))
+        self.assertEqual(module.select_cases(all_ids, "silver-reasoning", silver_ids=silver),
+                         (reasoning, None))
+
+    def test_silver_profiles_fail_closed_on_inventory_drift(self):
+        module = runner()
+        long_term = {f"v1/test_long_term.py::TestCase{i}::test_case_{i}" for i in range(38)}
+        reasoning = {f"v1/test_reasoning.py::TestCase{i}::test_case_{i}" for i in range(29)}
+        silver = long_term | reasoning
+        all_ids = silver | {module.TARGET}
+        with self.assertRaises(ValueError):
+            module.select_cases(all_ids, "silver")
+        with self.assertRaises(ValueError):
+            module.select_cases(all_ids, "silver", silver_ids=silver - {next(iter(silver))})
+        with self.assertRaises(ValueError):
+            module.select_cases(all_ids | {"v1/test_cross_memory.py::TestCase::test_x"},
+                                "silver", silver_ids=silver | {"v1/test_cross_memory.py::TestCase::test_x"})
+        with self.assertRaises(ValueError):
+            module.select_cases(all_ids, "silver", silver_ids=silver | {"v1/test_long_term.py::TestCase0::test_extra"})
+        drifted = (long_term - {next(iter(long_term))}) | reasoning | {
+            "v1/test_reasoning.py::TestCase30::test_case_30"}
+        with self.assertRaises(ValueError):
+            module.select_cases(all_ids | drifted, "silver-long-term", silver_ids=drifted)
+
+    def test_profile_selector_maps_each_profile_to_exact_pytest_arguments(self):
+        module = runner()
+        suite = Path("/synthetic/suite")
+        long_term = {f"v1/test_long_term.py::TestCase{i}::test_case_{i}" for i in range(38)}
+        reasoning = {f"v1/test_reasoning.py::TestCase{i}::test_case_{i}" for i in range(29)}
+        bronze = {f"v1/test_short_term.py::TestCase{i}::test_case_{i}" for i in range(3)} | {
+            module.TARGET, "v1/test_short_term.py::TestGetConversation::test_read"}
+        items = [{"nodeid": nodeid,
+                  "markers": (["silver"] if nodeid in long_term | reasoning else [])
+                  + (["bronze"] if nodeid in bronze else [])}
+                 for nodeid in sorted(long_term | reasoning | bronze)]
+        selected, arguments = module.profile_selector("bronze", items, suite)
+        self.assertEqual(selected, bronze)
+        self.assertEqual(arguments, [str(suite / "v1"), "-m", "bronze"])
+        selected, arguments = module.profile_selector("silver-long-term", items, suite)
+        self.assertEqual(selected, long_term)
+        self.assertEqual(arguments, [str(suite / nodeid) for nodeid in sorted(long_term)])
+        selected, arguments = module.profile_selector("silver-reasoning", items, suite)
+        self.assertEqual(selected, reasoning)
+        self.assertEqual(arguments, [str(suite / nodeid) for nodeid in sorted(reasoning)])
+        with self.assertRaises(ValueError):
+            module.profile_selector("silver-reasoning", items)
+        selected, arguments = module.profile_selector("messages", items, suite)
+        self.assertEqual(selected, {module.TARGET, "v1/test_short_term.py::TestGetConversation::test_read"})
+        self.assertEqual(arguments, [str(suite / "v1"), "-k", "TestAddMessage or TestGetConversation"])
+
+    def test_profile_selector_rejects_a_silver_module_swap(self):
+        module = runner()
+        long_term = {f"v1/test_long_term.py::TestCase{i}::test_case_{i}" for i in range(39)}
+        reasoning = {f"v1/test_reasoning.py::TestCase{i}::test_case_{i}" for i in range(28)}
+        items = [{"nodeid": module.TARGET, "markers": []}]
+        items += [{"nodeid": nodeid, "markers": ["silver"]} for nodeid in sorted(long_term | reasoning)]
+        with self.assertRaises(ValueError):
+            module.profile_selector("silver-reasoning", items, Path("/synthetic/suite"))
+
     def test_runner_requires_digest_pinned_image_references(self):
         module = runner()
         self.assertTrue(module.IMAGE_REF.fullmatch(

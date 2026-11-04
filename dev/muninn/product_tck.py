@@ -11,8 +11,13 @@ import tempfile
 from product_chain_fixture import ProductFixture
 from product_tck_report import validate_profile_result
 from reference import verify_source_tree
-from rust_tck_spike import load_normative_lock, select_cases
+from rust_tck_spike import SILVER_SPLIT_PROFILES, load_normative_lock, profile_selector
 from tck_runner import prepare_suite
+
+
+# El perfil combinado `silver` no se ejecuta aquí: mezclaría H2 (largo plazo) con
+# los casos de reasoning de H3 en una sola evidencia.
+PROFILES = ('messages', 'chains', 'search', 'schema', 'bronze', *SILVER_SPLIT_PROFILES)
 
 
 def main():
@@ -54,20 +59,18 @@ def pytest_collection_modifyitems(items):
                'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
         env.pop('PYTEST_ADDOPTS', None)
         env.pop('PYTEST_PLUGINS', None)
-        command = [sys.executable, '-m', 'pytest', str(suite / 'v1'), '-c', str(base / 'tck-pytest.ini'),
+        command = [sys.executable, '-m', 'pytest', '-c', str(base / 'tck-pytest.ini'),
                    '--rootdir', str(suite), '--import-mode=importlib', '-q', '--tb=short',
                    '-p', 'pytest_asyncio.plugin', '-p', 'pytest_jsonreport.plugin', '-p', 'pytest_metadata.plugin']
         with (args.output / 'collection.log').open('w') as log:
-            code = subprocess.run(command + ['--collect-only', '-p', 'inventory_plugin'], env=env, stdout=log, stderr=log).returncode
+            code = subprocess.run(command + [str(suite / 'v1'), '--collect-only', '-p', 'inventory_plugin'], env=env, stdout=log, stderr=log).returncode
         if code:
             raise RuntimeError('No se pudo coleccionar TCK normativo')
         items = json.loads(inventory.read_text())
-        ids = {item['nodeid'] for item in items}
         results = {}
-        for profile in ('messages', 'chains', 'search', 'schema', 'bronze'):
-            selected, expression = select_cases(ids, profile, suite) if profile != 'bronze' else ({i['nodeid'] for i in items if 'bronze' in i['markers']}, None)
+        for profile in PROFILES:
+            selected, selector = profile_selector(profile, items, suite)
             report = args.output.resolve() / (profile + '.json')
-            selector = ['-m', 'bronze'] if profile == 'bronze' else ['-k', expression]
             with (args.output / (profile + '.log')).open('w') as log:
                 code = subprocess.run(command + selector + ['--json-report', '--json-report-file=' + str(report), '--json-report-omit=log,streams'], env=env, stdout=log, stderr=log).returncode
             data = json.loads(report.read_text())
@@ -84,7 +87,8 @@ def pytest_collection_modifyitems(items):
         summary = {'commit': lock['commit'], 'historical_commit': lock['historical_commit'],
                    'binary_sha256': fixture.binary_sha256, 'neo4j_image_id': fixture.image,
                    'provider': 'hash', 'inference': False, 'official_test_hashes': hashes,
-                   'collected': len(items), 'bronze': sum('bronze' in i['markers'] for i in items), 'profiles': results}
+                   'collected': len(items), 'bronze': sum('bronze' in i['markers'] for i in items),
+                   'silver': sum('silver' in i['markers'] for i in items), 'profiles': results}
         (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(json.dumps(summary, indent=2))
         if any(not result['valid'] for result in results.values()):
