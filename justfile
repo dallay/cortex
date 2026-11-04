@@ -434,6 +434,7 @@ ci-lint: (_ci-header "markdown-lint + skills...")
     @node scripts/validate-skills.mjs
     @node --test scripts/validate-skills.test.mjs
     @bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh
+    @bash scripts/pre-push-secret-scan.test.sh
 
 # Verify Rust code formatting matches rustfmt rules
 ci-fmt: (_ci-header "fmt-check...")
@@ -559,7 +560,7 @@ ci-ci:
     echo "${Y}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
     echo ""
     run_step "1/9 markdown-lint"    bash -c 'pnpm exec markdownlint-cli2 "*.md" "docs/**/*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"'
-    run_step "2/9 skills validation"  bash -c 'node scripts/validate-skills.mjs && node --test scripts/validate-skills.test.mjs && bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh'
+    run_step "2/9 skills validation"  bash -c 'node scripts/validate-skills.mjs && node --test scripts/validate-skills.test.mjs && bash .agents/skills/pinned-tag/scripts/resolve-action-sha.test.sh && bash scripts/pre-push-secret-scan.test.sh'
     run_step "3/9 fmt-check"       cargo fmt --all -- --check
     run_step "4/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "5/9 cargo check"     cargo check --workspace

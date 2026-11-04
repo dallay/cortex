@@ -38,11 +38,16 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
-    # GitGuardian (ggshield): scan commits about to be pushed for secrets
+    # GitGuardian (ggshield): scan commits about to be pushed for secrets.
+    # The wrapper separates "the scan completed and found something" from "the
+    # scanner could not run" (unauthenticated ggshield, server unavailable, and
+    # so on), so a blocked push names the real cause. `fail_text` stays unset on
+    # purpose: lefthook prints it on every non-zero exit, which is exactly the
+    # false "found secrets" report for scanner failures.
+    # Set CORTEX_SECRET_SCAN_REQUIRED=1 to fail closed when ggshield is missing.
     # https://docs.gitguardian.com/ggshield-docs/integrations/git-hooks/pre-push
     ggshield:
-      run: 'if command -v ggshield >/dev/null 2>&1; then ggshield secret scan pre-push "$@"; else echo "ggshield not installed, skipping pre-push scan"; fi'
-      fail_text: 'GitGuardian secret scan found potential secrets. Inspect findings before pushing.'
+      run: bash scripts/pre-push-secret-scan.sh "$@"
 
     clippy:
       run: cargo clippy --workspace --all-targets -- -D warnings
