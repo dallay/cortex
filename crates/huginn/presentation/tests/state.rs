@@ -1,6 +1,6 @@
 use huginn_core::{
     ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Message, Role,
-    ScopedEventSink, Session,
+    ScopedEventSink, Session, StepId, TurnId,
 };
 use huginn_presentation::{
     contributions::Contributions,
@@ -357,6 +357,7 @@ fn resume_and_synchronize_commit_messages_once_not_mutable_tail() {
     state.synchronize(&session);
     state.project(
         Event::Text {
+            step: StepId(1),
             text: "```rust\npartial".into(),
         },
         "Tool",
@@ -383,13 +384,17 @@ async fn stalled_renderer_keeps_all_transitions_and_composer_responsive() {
     ui.lock().editor.insert("next\nprompt");
     let start = std::time::Instant::now();
     for _ in 0..10_000 {
-        ui.emit(Event::Text { text: "x".into() });
+        ui.emit(Event::Text {
+            step: StepId(1),
+            text: "x".into(),
+        });
     }
     ui.emit(Event::ApprovalResolved {
+        step: StepId(1),
         id: "one".into(),
         approved: false,
     });
-    ui.emit(Event::TurnFinished);
+    ui.emit(Event::TurnFinished { turn: TurnId(1) });
     // Token deltas fold into `tail` and are not retained; only the two
     // authoritative transitions stay in the event log.
     assert_eq!(ui.lock().events.len(), 2);
@@ -1182,6 +1187,7 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
 fn actionable_feedback_and_diagnostic_reset_on_new_operation() {
     let ui = ui();
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "error".into(),
         output: "failed".into(),
         is_error: true,
@@ -1204,6 +1210,7 @@ fn actionable_feedback_and_diagnostic_reset_on_new_operation() {
 fn tool_error_uses_contributed_label_and_marks_status() {
     let ui = ui();
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "call-1".into(),
         output: "boom".into(),
         is_error: false,
@@ -1211,6 +1218,7 @@ fn tool_error_uses_contributed_label_and_marks_status() {
     assert!(ui.lock().tail.contains("Tool result: boom"));
     assert!(!ui.lock().status.diagnostic);
     ui.emit(Event::ToolFinished {
+        step: StepId(1),
         id: "call-2".into(),
         output: "kaput".into(),
         is_error: true,
@@ -1222,9 +1230,85 @@ fn tool_error_uses_contributed_label_and_marks_status() {
 }
 
 #[test]
+fn a_retry_drops_the_partial_answer_of_the_failed_attempt() {
+    let mut state = UiState::default();
+    state.project(
+        Event::Text {
+            step: StepId(1),
+            text: "partial answer".into(),
+        },
+        "Tool",
+        "Tool error",
+    );
+    assert_eq!(state.tail, "partial answer");
+
+    state.project(
+        Event::ModelRetried {
+            turn: TurnId(1),
+            step: StepId(1),
+            attempt: 1,
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    assert!(
+        state.tail.is_empty(),
+        "the failed attempt must not splice into the retry: {:?}",
+        state.tail
+    );
+    assert!(state.status.notice.contains("Retrying"));
+}
+
+#[test]
+fn a_retry_keeps_tool_output_from_earlier_steps() {
+    let mut state = UiState::default();
+    state.project(
+        Event::ToolFinished {
+            step: StepId(1),
+            id: "c1".into(),
+            output: "EARLIER TOOL OUTPUT".into(),
+            is_error: false,
+        },
+        "Tool",
+        "Tool error",
+    );
+    state.project(
+        Event::Text {
+            step: StepId(2),
+            text: "partial answer".into(),
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    state.project(
+        Event::ModelRetried {
+            turn: TurnId(1),
+            step: StepId(2),
+            attempt: 1,
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    assert!(
+        state.tail.contains("EARLIER TOOL OUTPUT"),
+        "earlier tool output must stay visible: {:?}",
+        state.tail
+    );
+    assert!(
+        !state.tail.contains("partial answer"),
+        "the failed attempt must be dropped: {:?}",
+        state.tail
+    );
+}
+
+#[test]
 fn projected_text_cannot_emit_terminal_escape_sequences() {
     let ui = ui();
     ui.emit(Event::Text {
+        step: StepId(1),
         text: "\x1b[2Jhello\x00".into(),
     });
     assert!(!ui.lock().tail.contains('\x1b'));
@@ -1466,6 +1550,7 @@ mod lock_tests {
         .0;
         *slot.lock().unwrap() = Arc::downgrade(&ui);
         ui.emit(Event::ToolStarted {
+            step: StepId(1),
             call: huginn_core::ToolCall {
                 id: "call".into(),
                 name: "reentrant".into(),
@@ -1473,6 +1558,7 @@ mod lock_tests {
             },
         });
         ui.emit(Event::ToolFinished {
+            step: StepId(1),
             id: "call".into(),
             output: "payload".into(),
             is_error: false,
@@ -1481,5 +1567,154 @@ mod lock_tests {
             ui.lock().tail.contains("unlocked"),
             "renderer must run outside every host mutex"
         );
+    }
+}
+
+#[cfg(feature = "test-driver")]
+mod paste_marker_tests {
+    use huginn_presentation::state::{test_support as paste, UiState};
+
+    const FIRST: &str = "first-line-one\nfirst-line-two\nfirst-line-three";
+    const SECOND: &str = "second-line-one\nsecond-line-two\nsecond-line-three";
+
+    #[test]
+    fn short_paste_remains_literal() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, "first line\nsecond line");
+
+        assert_eq!(paste::visible_text(&state), "first line\nsecond line");
+        assert_eq!(paste::submitted_text(&state), "first line\nsecond line");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn long_single_line_paste_uses_a_one_line_placeholder() {
+        let mut state = UiState::default();
+        let pasted = "x".repeat(151);
+        paste::paste_text(&mut state, &pasted);
+
+        assert_eq!(paste::visible_text(&state), "[Pasted ~1 lines]");
+        assert_eq!(paste::submitted_text(&state), pasted);
+        assert_eq!(paste::pending_paste_count(&state), 1);
+    }
+
+    #[test]
+    fn deleting_text_between_large_pastes_preserves_both_original_payloads() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, "X");
+        paste::paste_text(&mut state, SECOND);
+        paste::set_cursor(&mut state, "[Pasted ~3 lines]X".len());
+
+        paste::backspace(&mut state);
+
+        assert_eq!(
+            paste::visible_text(&state),
+            "[Pasted ~3 lines][Pasted ~3 lines]"
+        );
+        assert_eq!(paste::submitted_text(&state), format!("{FIRST}{SECOND}"));
+        assert_eq!(paste::pending_paste_count(&state), 2);
+    }
+
+    #[test]
+    fn horizontal_navigation_treats_pending_paste_as_one_segment() {
+        let mut state = UiState::default();
+        paste::insert_text(&mut state, "before");
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, "after");
+        let marker_start = "before".len();
+        let marker_end = marker_start + "[Pasted ~3 lines]".len();
+        paste::set_cursor(&mut state, marker_end + "after".len());
+
+        for _ in 0.."after".len() {
+            paste::move_left(&mut state);
+        }
+        paste::move_left(&mut state);
+        assert_eq!(paste::cursor(&state), marker_start);
+
+        paste::move_right(&mut state);
+        assert_eq!(paste::cursor(&state), marker_end);
+    }
+
+    #[test]
+    fn inserting_inside_pending_marker_materializes_the_original_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::insert_text(&mut state, "!");
+
+        assert_eq!(paste::pending_paste_count(&state), 0);
+        assert!(!paste::visible_text(&state).contains("[Pasted ~"));
+        assert_eq!(paste::visible_text(&state), format!("{FIRST}!"));
+        assert_eq!(paste::submitted_text(&state), format!("{FIRST}!"));
+    }
+
+    #[test]
+    fn backspace_after_pending_paste_removes_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+
+        paste::backspace(&mut state);
+
+        assert_eq!(paste::visible_text(&state), "");
+        assert_eq!(paste::submitted_text(&state), "");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn delete_before_pending_paste_removes_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::set_cursor(&mut state, 0);
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), "");
+        assert_eq!(paste::submitted_text(&state), "");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn backspace_inside_pending_marker_removes_only_that_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " after");
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::backspace(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " after");
+        assert_eq!(paste::submitted_text(&state), " after");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn delete_inside_pending_marker_removes_only_that_marker_and_payload() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " after");
+        paste::set_cursor(&mut state, "[Pasted".len());
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " after");
+        assert_eq!(paste::submitted_text(&state), " after");
+        assert_eq!(paste::pending_paste_count(&state), 0);
+    }
+
+    #[test]
+    fn deleting_one_of_two_pending_pastes_keeps_the_other_payload_attached() {
+        let mut state = UiState::default();
+        paste::paste_text(&mut state, FIRST);
+        paste::insert_text(&mut state, " ");
+        paste::paste_text(&mut state, SECOND);
+        paste::set_cursor(&mut state, 0);
+
+        paste::delete(&mut state);
+
+        assert_eq!(paste::visible_text(&state), " [Pasted ~3 lines]");
+        assert_eq!(paste::submitted_text(&state), format!(" {SECOND}"));
+        assert_eq!(paste::pending_paste_count(&state), 1);
     }
 }

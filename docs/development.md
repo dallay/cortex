@@ -225,15 +225,23 @@ Consulta el [Troubleshooting de Dev Testing Guide](../dev/README.md), que cubre 
 
 ## Git hooks
 
-El proyecto usa lefthook para pre-commit hooks:
+El proyecto usa lefthook para gestionar hooks de git (`pre-commit`, `pre-push`, etc.):
 
 ```bash
 # Instalar hooks (automático con `just setup`)
 lefthook install
 
-# Run manualmente
+# Ejecutar manualmente
 lefthook run pre-commit
+lefthook run pre-push
 ```
+
+El hook `pre-push` ejecuta:
+- `ggshield secret scan pre-push`: escanea commits en busca de secretos antes de hacer push. Si `ggshield` no está instalado en la máquina, el hook se salta de forma segura (graceful fallback).
+  - Para instalarlo: `pip install ggshield`
+  - Para autenticarlo: `ggshield auth login` o exportando la variable `GITGUARDIAN_API_KEY`.
+- `cargo clippy`: valida advertencias de Rust (-D warnings).
+- `cargo test`: ejecuta la suite de pruebas del workspace.
 
 ## Documentación
 

@@ -50,6 +50,12 @@ function last24hLabel(item: (typeof items.value)[number]): string {
 function formatPercent(value: number | null): string {
   return value === null ? t("providers.quota.unavailable") : `${(value * 100).toFixed(1)}%`;
 }
+function upstreamAvailabilityLabel(value: "available" | "not_reported" | "unavailable"): string {
+  return t(`providers.quota.upstream.availability.${value}`);
+}
+function freshnessLabel(value: "fresh" | "stale" | "unknown_expiry"): string {
+  return t(`providers.quota.upstream.freshness.${value}`);
+}
 </script>
 
 <template>
@@ -86,10 +92,36 @@ function formatPercent(value: number | null): string {
             <TableCell class="text-right font-mono text-xs">{{ last24hLabel(item) }}</TableCell>
             <TableCell class="text-right font-mono text-xs"><span>{{ formatUsd(item.last7d.costAvailability === 'complete' ? item.last7d.costUsd : null) }}</span><span class="block text-[11px] text-muted-foreground">{{ t('providers.quota.estimatedCost') }}</span><span v-if="item.last7d.costAvailability === 'partial'" class="block text-[11px] text-muted-foreground">{{ t('providers.quota.partialCost') }}</span></TableCell>
             <TableCell class="text-right"><div class="font-mono text-xs">{{ formatPercent(item.rateLimitObservation.ratio) }}</div><div class="text-[11px] text-muted-foreground">{{ item.rateLimitObservation.rateLimitedRequests === null ? '—' : n(item.rateLimitObservation.rateLimitedRequests) }}/{{ item.rateLimitObservation.requests === null ? '—' : n(item.rateLimitObservation.requests) }}</div></TableCell>
-            <TableCell class="space-y-2 text-right"><Badge :variant="item.statusVariant">{{ t(`providers.quota.level.${item.localWarningLevel}`) }}</Badge><div class="text-[11px] text-muted-foreground">{{ t('providers.quota.observedRateLimits') }}</div></TableCell>
+            <TableCell class="space-y-2 text-right"><div class="text-[11px] text-muted-foreground">{{ t('providers.quota.localWarningLabel') }}</div><Badge :variant="item.statusVariant">{{ t(`providers.quota.level.${item.localWarningLevel}`) }}</Badge><div class="text-[11px] text-muted-foreground">{{ t('providers.quota.observedRateLimits') }}</div></TableCell>
           </TableRow>
           <TableRow>
             <TableCell :colspan="cellCount" class="p-0"><section :data-testid="`quota-trend-${item.providerKind}`" class="grid grid-cols-2 gap-2 px-4 pb-3 sm:grid-cols-4 lg:grid-cols-7" :aria-label="t('providers.quota.trendLabel', {provider: item.displayName})"><div v-for="point in item.trend" :key="point.date" data-testid="quota-trend-day" class="min-w-0 border-t-2 border-primary/60 pt-1 text-center text-[10px] text-muted-foreground"><span class="block">{{ point.date }}</span><span class="block font-mono">{{ point.requests === null ? '—' : n(point.requests) }} {{ t('providers.quota.requests') }}</span><span class="block font-mono">{{ point.totalTokens === null ? '—' : n(point.totalTokens) }} {{ t('providers.quota.tokens') }}</span><span v-if="point.costUsd !== null" class="block font-mono">{{ t('providers.quota.trendCost') }}: {{ formatUsd(point.costUsd) }}</span><span v-else class="block">{{ t('providers.quota.trendCost') }}: {{ formatUsd(null) }}</span><span v-if="point.costAvailability === 'partial'" class="block">{{ t('providers.quota.partialCost') }}</span><span v-else-if="point.costAvailability === 'unknown'" class="block">{{ t('providers.quota.unknownCost') }}</span></div></section></TableCell>
+          </TableRow>
+          <TableRow v-if="item.upstreamObservations.availability !== 'unavailable'">
+            <TableCell :colspan="cellCount" class="p-0">
+              <section :data-testid="`upstream-observations-${item.providerKind}`" class="space-y-2 border-t px-4 py-3" :aria-label="t('providers.quota.upstream.title')">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-medium">{{ t('providers.quota.upstream.title') }}</span>
+                  <Badge v-if="item.upstreamObservations.availability === 'not_reported'" variant="secondary">{{ upstreamAvailabilityLabel('not_reported') }}</Badge>
+                </div>
+                <p v-if="item.upstreamObservations.availability === 'not_reported'" class="text-xs text-muted-foreground" data-testid="upstream-observations-empty">{{ t('providers.quota.upstream.notReported') }}</p>
+                <ul v-else class="space-y-1">
+                  <li v-for="observation in item.upstreamObservations.observations" :key="`${observation.connectionId ?? 'unknown'}-${observation.metric}-${observation.scope ?? 'none'}-${observation.window ?? 'none'}`" :data-testid="`upstream-observation-${observation.metric}`" class="text-xs text-muted-foreground">
+                    <span class="font-mono text-foreground">{{ observation.metric }}</span>
+                    <span v-if="observation.scope"> · {{ t('providers.quota.upstream.scope') }}: {{ observation.scope }}</span>
+                    <span v-if="observation.window"> · {{ t('providers.quota.upstream.window') }}: {{ observation.window }}</span>
+                    <span v-if="observation.limit !== null"> · {{ t('providers.quota.upstream.limit') }}: {{ n(observation.limit) }}</span>
+                    <span v-if="observation.remaining !== null"> · {{ t('providers.quota.upstream.remaining') }}: {{ n(observation.remaining) }}</span>
+                    <span v-if="observation.connectionId"> · {{ t('providers.quota.upstream.connection') }}: {{ observation.connectionId }}</span>
+                    <span> · {{ t('providers.quota.upstream.source') }}: {{ observation.source }}</span>
+                    <span> · {{ freshnessLabel(observation.freshness) }}</span>
+                    <span> · {{ t('providers.quota.upstream.ageSeconds', {seconds: observation.ageSeconds }) }}</span>
+                    <span v-if="observation.resetAt"> · {{ t('providers.quota.upstream.resetAt') }}: {{ d(new Date(observation.resetAt), 'short') }}</span>
+                  </li>
+                </ul>
+                <p class="text-[11px] text-muted-foreground">{{ t('providers.quota.upstream.disclaimer') }}</p>
+              </section>
+            </TableCell>
           </TableRow>
           </template>
           <TableRow v-if="!loading && rows.length === 0"><TableCell :colspan="cellCount" class="py-8 text-center text-muted-foreground">{{ error || t('providers.quota.empty') }}</TableCell></TableRow>

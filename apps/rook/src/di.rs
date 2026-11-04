@@ -367,8 +367,8 @@ impl RookContainer {
         let _health_check_task =
             HealthCheck::spawn_background_task(health_check.clone(), health_check_interval);
 
-        let usecases: Arc<rook_usecases::RookUsecases> =
-            Arc::new(rook_usecases::RookUsecases::new(
+        let usecases: Arc<rook_usecases::RookUsecases> = Arc::new(
+            rook_usecases::RookUsecases::new(
                 RouteRequest::new(
                     router.clone(),
                     cache.clone(),
@@ -401,7 +401,9 @@ impl RookContainer {
                 session_repo.clone(),
                 model_catalog.clone(),
                 fallback_router.clone(),
-            ));
+            )
+            .with_quota_observation_reader(quota_observation_recorder.clone()),
+        );
 
         // Check initialization state to decide on setup token.
         // Run AFTER usecases is built so we can write the token into it.

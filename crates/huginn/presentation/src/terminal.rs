@@ -5,6 +5,10 @@ use crate::{
     Connection, Interaction, Presentation,
 };
 use async_trait::async_trait;
+#[cfg(unix)]
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::{
     cursor::Show,
     event::{
@@ -36,9 +40,74 @@ use unicode_width::UnicodeWidthChar;
 static OWNER: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 static TERMINAL_IO: Mutex<()> = Mutex::new(());
+#[cfg(unix)]
+static KEYBOARD_ENHANCEMENT_PUSHED: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+
+#[cfg(unix)]
+fn begin_keyboard_protocol() -> std::io::Result<()> {
+    KEYBOARD_ENHANCEMENT_PUSHED.store(true, Ordering::SeqCst);
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+    let mut stdout = std::io::stdout();
+    execute!(&mut stdout, PushKeyboardEnhancementFlags(flags))?;
+    stdout.write_all(b"\x1b[?u\x1b[c")?;
+    stdout.flush()
+}
+
+#[cfg(unix)]
+fn set_modify_other_keys(enabled: bool) -> std::io::Result<()> {
+    if enabled {
+        if KITTY_KEYBOARD_ACTIVE.load(Ordering::SeqCst)
+            || MODIFY_OTHER_KEYS_ACTIVE.swap(true, Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        std::io::stdout().write_all(b"\x1b[>4;2m")?;
+    } else if MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
+        std::io::stdout().write_all(b"\x1b[>4;0m")?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_keyboard_protocol_reply(
+    reply: crate::input::KeyboardProtocolReply,
+) -> std::io::Result<()> {
+    match reply {
+        crate::input::KeyboardProtocolReply::KittyFlags(flags) if flags > 0 => {
+            KITTY_KEYBOARD_ACTIVE.store(true, Ordering::SeqCst);
+            set_modify_other_keys(false)
+        }
+        crate::input::KeyboardProtocolReply::KittyFlags(_) => {
+            KITTY_KEYBOARD_ACTIVE.store(false, Ordering::SeqCst);
+            set_modify_other_keys(true)
+        }
+        crate::input::KeyboardProtocolReply::DeviceAttributes => {
+            set_modify_other_keys(!KITTY_KEYBOARD_ACTIVE.load(Ordering::SeqCst))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restore_keyboard_protocol() {
+    let mut stdout = std::io::stdout();
+    if MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = stdout.write_all(b"\x1b[>4;0m");
+    }
+    if KEYBOARD_ENHANCEMENT_PUSHED.swap(false, Ordering::SeqCst) {
+        let _ = execute!(&mut stdout, PopKeyboardEnhancementFlags);
+    }
+    KITTY_KEYBOARD_ACTIVE.store(false, Ordering::SeqCst);
+    let _ = stdout.flush();
+}
 
 type Screen = Terminal<HostBackend>;
 
@@ -183,6 +252,8 @@ impl TerminalGuard {
                     return;
                 }
                 if OWNER.load(Ordering::SeqCst) {
+                    #[cfg(unix)]
+                    restore_keyboard_protocol();
                     let _ = disable_raw_mode();
                     let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
                 }
@@ -200,6 +271,8 @@ impl TerminalGuard {
         if self.active.swap(false, Ordering::SeqCst) {
             #[cfg(unix)]
             crate::input::revoke();
+            #[cfg(unix)]
+            restore_keyboard_protocol();
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, Show);
             let _ = disable_raw_mode();
             OWNER.store(false, Ordering::SeqCst);
@@ -350,15 +423,24 @@ impl Ratatui {
             });
         }
         let done = CancellationToken::new();
+        drop(io);
+        #[cfg(unix)]
+        let input_generation = crate::input::begin();
+        #[cfg(unix)]
+        {
+            let _io = TERMINAL_IO
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            begin_keyboard_protocol()?;
+        }
         drivers.push((stop.clone(), done.clone()));
         drop(drivers);
-        drop(io);
         let cleanup_guard = guard.clone();
         let mut driver = Driver {
             connection,
             screen,
             #[cfg(unix)]
-            input_generation: crate::input::begin(),
+            input_generation,
             guard,
             ui: ui.clone(),
             standalone,
@@ -596,7 +678,11 @@ impl Driver {
         }
         #[cfg(unix)]
         {
-            Ok(crate::input::next(self.input_generation, focus)?)
+            let event = crate::input::next(self.input_generation, focus)?;
+            if let Some(reply) = crate::input::take_keyboard_protocol_reply() {
+                apply_keyboard_protocol_reply(reply)?;
+            }
+            Ok(event)
         }
         #[cfg(not(unix))]
         {
@@ -934,7 +1020,7 @@ Enter save Esc close"
             {
                 text.push_str(&format!(
                     "{} {}{}\n",
-                    if i == *selected { ">" } else { " " },
+                    if i == *selected { "▶" } else { " " },
                     label,
                     if *checked { " ✓" } else { "" }
                 ));
@@ -990,24 +1076,40 @@ Enter save Esc close"
                 );
             return last_scroll;
         }
-        let [tail, composer] = Layout::vertical([
-            Constraint::Min(1),
-            Constraint::Length(if !view.completion.items.is_empty() && area.height < 8 {
-                3
-            } else {
-                4
-            }),
-        ])
-        .areas(area);
+        let editor_width = area.width.saturating_sub(2).max(1);
+        // Reuse wrapped rows for both sizing and rendering; do not add another
+        // full-draft pass to the frame loop.
+        let editor_lines = wrapped(&view.editor.text, editor_width);
+        let minimum_composer_height = if !view.completion.items.is_empty() && area.height < 8 {
+            3
+        } else {
+            4
+        };
+        let reserved_popup_height = if view.completion.items.is_empty() {
+            0
+        } else {
+            3
+        };
+        let max_composer_height = (frame.area().height / 3)
+            .max(6)
+            .saturating_add(2)
+            .min(area.height.saturating_sub(1 + reserved_popup_height));
+        let requested_composer_height =
+            u16::try_from(editor_lines.len().saturating_add(2)).unwrap_or(u16::MAX);
+        let composer_height = requested_composer_height
+            .max(minimum_composer_height)
+            .min(max_composer_height);
+        let [tail, composer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
         let popup_height = if view.completion.items.is_empty() {
             0
         } else {
             (view.completion.items.len() as u16 + 2)
                 .min(7)
-                .min(tail.height)
+                .min(tail.height.saturating_sub(1))
         };
         let [tail, popup] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(popup_height)]).areas(tail);
+            Layout::vertical([Constraint::Min(1), Constraint::Length(popup_height)]).areas(tail);
         // The transcript is rendered by the app: history first, then the text
         // still in flight, windowed to the area and to the scroll position.
         let mut lines = view
@@ -1015,7 +1117,9 @@ Enter save Esc close"
             .iter()
             .flat_map(|block| wrapped(block, tail.width))
             .collect::<Vec<String>>();
-        lines.extend(wrapped(&view.tail, tail.width));
+        if !view.tail.is_empty() {
+            lines.extend(wrapped(&view.tail, tail.width));
+        }
         let height = usize::from(tail.height);
         let scroll = view.history_scroll.min(lines.len().saturating_sub(height));
         let start = lines.len().saturating_sub(height + scroll);
@@ -1058,14 +1162,12 @@ Enter save Esc close"
             let mut selection = ListState::default().with_selected(Some(view.completion.selected));
             frame.render_stateful_widget(list, popup, &mut selection);
         }
-        let editor_width = composer.width.saturating_sub(2).max(1);
         let before = wrapped(&view.editor.text[..view.editor.cursor], editor_width);
         let row = before.len().saturating_sub(1);
         let offset = row.saturating_sub(usize::from(composer.height.saturating_sub(3)));
-        let lines = wrapped(&view.editor.text, editor_width);
         frame.render_widget(
             Paragraph::new(
-                lines
+                editor_lines
                     .into_iter()
                     .skip(offset)
                     .collect::<Vec<_>>()
@@ -1074,7 +1176,7 @@ Enter save Esc close"
             .block(Block::bordered().title(if view.busy {
                 "Compose next prompt — Esc cancels turn"
             } else {
-                "Huginn — Enter sends / Alt+Enter newline / /help"
+                "Huginn — Enter sends / Shift+Enter (if supported) / /help"
             })),
             composer,
         );
@@ -1233,7 +1335,7 @@ Enter save Esc close"
             return;
         }
         if let Event::Paste(text) = &event {
-            state.editor.insert(text);
+            state.insert_pasted_text(text);
             let crate::state::UiState {
                 editor, completion, ..
             } = &mut *state;
@@ -1274,20 +1376,24 @@ Enter save Esc close"
                 }
                 KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
                     let execute = key.code == KeyCode::Enter;
+                    // Completion replaces byte ranges in the visible draft.
+                    // Expand paste spans first so that it cannot orphan source text.
+                    state.materialize_all_pastes();
                     let crate::state::UiState {
                         editor, completion, ..
                     } = &mut *state;
                     match completion.accept(editor, execute) {
+                        None => return,
                         Some(Acceptance::Inserted) => return,
                         Some(Acceptance::Command(Some(command))) => {
                             let line = state.editor.text.trim().to_string();
                             let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
                             drop(state);
                             self.ui.dispatch_handle(&command, line[boundary..].trim());
-                            self.ui.lock().editor = Editor::default();
+                            self.ui.lock().clear_editor();
                             return;
                         }
-                        _ => {}
+                        Some(Acceptance::Command(None)) => {}
                     }
                 }
                 _ => {}
@@ -1315,14 +1421,15 @@ Enter save Esc close"
                     .modifiers
                     .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
             {
-                state.editor.insert("\n")
+                state.insert_editor_text("\n")
             }
-            KeyCode::Char('j') if ctrl => state.editor.insert("\n"),
+            KeyCode::Char('j') if ctrl => state.insert_editor_text("\n"),
             KeyCode::Enter => {
-                let line = if state.editor.text.trim_start().starts_with("/skill:") {
-                    state.editor.text.clone()
+                let draft = state.submitted_editor_text();
+                let line = if draft.trim_start().starts_with("/skill:") {
+                    draft
                 } else {
-                    state.editor.text.trim().to_string()
+                    draft.trim().to_string()
                 };
                 if line.is_empty() {
                     return;
@@ -1333,7 +1440,7 @@ Enter save Esc close"
                 }
                 drop(state);
                 if self.ui.dispatch_command(&line) {
-                    self.ui.lock().editor = Editor::default();
+                    self.ui.lock().clear_editor();
                     return;
                 }
                 let mut state = self.ui.lock();
@@ -1347,7 +1454,7 @@ Enter save Esc close"
                 } else {
                     return;
                 }
-                state.editor = Editor::default();
+                state.clear_editor();
             }
             KeyCode::PageUp => {
                 // Scroll the transcript up; the composer keeps its own focus.
@@ -1357,16 +1464,16 @@ Enter save Esc close"
                 state.history_scroll = state.history_scroll.saturating_sub(HISTORY_PAGE);
             }
             KeyCode::Char(ch) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                state.editor.insert(&ch.to_string())
+                state.insert_editor_text(&ch.to_string())
             }
-            KeyCode::Backspace => state.editor.backspace(),
-            KeyCode::Delete => state.editor.delete(),
-            KeyCode::Left => state.editor.left(),
-            KeyCode::Right => state.editor.right(),
-            KeyCode::Up => state.editor.vertical(false),
-            KeyCode::Down => state.editor.vertical(true),
-            KeyCode::Home => state.editor.home(),
-            KeyCode::End => state.editor.end(),
+            KeyCode::Backspace => state.backspace_editor(),
+            KeyCode::Delete => state.delete_editor(),
+            KeyCode::Left => state.move_editor_left(),
+            KeyCode::Right => state.move_editor_right(),
+            KeyCode::Up => state.move_editor_vertical(false),
+            KeyCode::Down => state.move_editor_vertical(true),
+            KeyCode::Home => state.move_editor_home(),
+            KeyCode::End => state.move_editor_end(),
             _ => {}
         }
     }
@@ -1454,6 +1561,10 @@ mod tests {
     use super::*;
 
     fn frame_text(view: &View, width: u16, height: u16) -> String {
+        frame_text_and_cursor(view, width, height).0
+    }
+
+    fn frame_text_and_cursor(view: &View, width: u16, height: u16) -> (String, Position) {
         let mut terminal =
             Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal
@@ -1461,13 +1572,14 @@ mod tests {
                 Driver::render_frame(frame, view);
             })
             .unwrap();
-        terminal
+        let text = terminal
             .backend()
             .buffer()
             .content
             .iter()
             .map(|cell| cell.symbol())
-            .collect()
+            .collect();
+        (text, terminal.backend().cursor_position())
     }
 
     #[test]
@@ -1653,6 +1765,145 @@ mod tests {
                 "height={height}: {output}"
             );
         }
+    }
+
+    #[test]
+    fn multiline_composer_grows_to_show_the_complete_draft_before_scrolling() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor = Editor {
+            text: "first line\nsecond line\nthird line".into(),
+            cursor: "first line\nsecond line\nthird line".len(),
+        };
+
+        let output = frame_text(&view, 80, 24);
+
+        for line in ["first line", "second line", "third line"] {
+            assert!(
+                output.contains(line),
+                "multiline draft missing {line:?}: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn composer_cap_keeps_a_transcript_row_at_the_minimum_viewport() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.history = vec!["HIST".into()];
+        view.editor.text = (0..10)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let output = frame_text(&view, 20, 8);
+
+        assert!(
+            output.contains("HIST"),
+            "reserved transcript row is empty: {output}"
+        );
+        assert_eq!(
+            output.matches('│').count(),
+            8,
+            "composer should use 6 rows: {output}"
+        );
+        for index in 6..10 {
+            let line = format!("draft-{index:02}");
+            assert!(
+                output.contains(&line),
+                "visible composer line missing {line}: {output}"
+            );
+        }
+        assert!(
+            !output.contains("draft-00"),
+            "old rows should scroll within the composer: {output}"
+        );
+    }
+
+    #[test]
+    fn composer_cap_applies_to_text_rows_and_includes_its_block_borders() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor.text = (0..20)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let output = frame_text(&view, 80, 24);
+
+        assert_eq!(
+            output.matches('│').count(),
+            16,
+            "composer should show 8 text rows: {output}"
+        );
+        for index in 12..20 {
+            let line = format!("draft-{index:02}");
+            assert!(
+                output.contains(&line),
+                "visible composer line missing {line}: {output}"
+            );
+        }
+        assert!(
+            !output.contains("draft-00"),
+            "older rows should scroll within the composer: {output}"
+        );
+    }
+
+    #[test]
+    fn composer_cursor_stays_visible_after_scroll() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.editor.text = (0..20)
+            .map(|index| format!("draft-{index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.editor.cursor = view.editor.text.len();
+
+        let (_, cursor) = frame_text_and_cursor(&view, 80, 24);
+
+        assert_eq!(cursor, Position::new(9, 21));
+
+        view.editor.cursor = view.editor.text.find("\ndraft-15").unwrap() + 1 + "draft-15".len();
+        let (_, cursor) = frame_text_and_cursor(&view, 80, 24);
+
+        assert_eq!(cursor, Position::new(9, 21));
+    }
+
+    #[test]
+    fn completion_popup_keeps_an_item_and_transcript_row_at_minimum_viewport() {
+        let mut view = test_view(OverlayView::Help(0));
+        view.overlay = None;
+        view.history.push("history-visible".into());
+        view.editor.text = format!(
+            "/h\n{}",
+            (0..20)
+                .map(|index| format!("draft-{index:02}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        view.editor.cursor = 2;
+        view.completion.refresh(
+            &view.editor,
+            &[
+                crate::completion::CatalogCommand::host("/help", "Show help"),
+                crate::completion::CatalogCommand::host("/history", "Show history"),
+            ],
+            &[],
+        );
+        assert!(!view.completion.items.is_empty());
+
+        let output = frame_text(&view, 20, 8);
+
+        assert!(
+            output.contains("/help"),
+            "completion item is not visible: {output}"
+        );
+        assert!(
+            output.contains("history-visible"),
+            "transcript row is not visible: {output}"
+        );
     }
 
     fn test_view(overlay: OverlayView) -> View {

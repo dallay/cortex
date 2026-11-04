@@ -217,6 +217,7 @@ pub struct ProviderQuotaSummaryResponse {
     pub account_quota: ProviderAccountQuotaResponse,
     pub local_thresholds: Vec<ProviderQuotaThresholdResponse>,
     pub rate_limit_observation: ProviderRateLimitObservationResponse,
+    pub upstream_observations: ProviderUpstreamObservationsResponse,
     pub local_warning_level: &'static str,
     pub all_time: ProviderQuotaWindowResponse,
     pub last_24h: ProviderQuotaWindowResponse,
@@ -228,6 +229,34 @@ pub struct ProviderQuotaSummaryResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderAccountQuotaResponse {
     pub availability: &'static str,
+}
+
+/// Actual upstream response observations; this is separate from Cortex-routed
+/// rate-limited request counts and from local threshold configuration.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUpstreamObservationsResponse {
+    /// `available`, `not_reported`, or `unavailable`.
+    pub availability: &'static str,
+    pub observations: Vec<ProviderUpstreamObservationResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUpstreamObservationResponse {
+    pub connection_id: Option<String>,
+    pub metric: String,
+    pub source: String,
+    pub scope: Option<String>,
+    pub window: Option<String>,
+    pub limit: Option<f64>,
+    pub remaining: Option<f64>,
+    pub observed_at: DateTime<Utc>,
+    pub age_seconds: i64,
+    /// Effective reset from the absolute or observed-at-anchored duration.
+    pub reset_at: Option<DateTime<Utc>>,
+    /// `fresh`, `stale`, or `unknown_expiry`.
+    pub freshness: &'static str,
 }
 
 #[derive(Debug, Serialize)]

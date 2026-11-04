@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use huginn_presentation::input_test_support::{Parser, PASTE_LIMIT};
+use huginn_presentation::input_test_support::{Parser, ProtocolReply, PASTE_LIMIT};
 
 type Lease = (u64, u64);
 const END: &[u8] = b"\x1b[201~";
@@ -180,5 +180,54 @@ fn oversized_unknown_control_sequence_never_releases_suffix_to_new_focus() {
     assert_eq!(
         feed(&mut parser, b"x", NEW, NEW),
         vec![(key(KeyCode::Char('x')), NEW)]
+    );
+}
+
+#[test]
+fn kitty_shift_enter_sequence_is_a_newline_event() {
+    let mut parser = Parser::default();
+
+    assert_eq!(
+        feed(&mut parser, b"\x1b[13;2u", OLD, OLD),
+        vec![(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            OLD
+        )]
+    );
+}
+
+#[test]
+fn modify_other_keys_shift_enter_is_a_newline_event() {
+    let mut parser = Parser::default();
+
+    assert_eq!(
+        feed(&mut parser, b"\x1b[27;2;13~", OLD, OLD),
+        vec![(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            OLD
+        )]
+    );
+}
+
+#[test]
+fn keyboard_protocol_replies_are_consumed_not_delivered() {
+    let mut parser = Parser::default();
+
+    assert!(feed(&mut parser, b"\x1b[?", OLD, OLD).is_empty());
+    assert!(feed(&mut parser, b"7u", OLD, OLD).is_empty());
+    assert_eq!(
+        parser.take_protocol_reply(),
+        Some(ProtocolReply::KittyFlags(7))
+    );
+    assert!(feed(&mut parser, b"\x1b[?0u", OLD, OLD).is_empty());
+    assert_eq!(
+        parser.take_protocol_reply(),
+        Some(ProtocolReply::KittyFlags(0))
+    );
+    assert!(feed(&mut parser, b"\x1b[?1;", OLD, OLD).is_empty());
+    assert!(feed(&mut parser, b"2c", OLD, OLD).is_empty());
+    assert_eq!(
+        parser.take_protocol_reply(),
+        Some(ProtocolReply::DeviceAttributes)
     );
 }

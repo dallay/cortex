@@ -968,8 +968,8 @@ host `/settings` and mirrors the `extension` mode already present (line 552 in `
 
 | Test                                            | Asserts                                                                                                                                                                     | REQ            |
 |-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
-| `settings_pty_render_header_and_marker`         | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `> one-dark ✓`. | REQ-02, REQ-05 |
-| `settings_pty_esc_does_not_cancel_running_turn` | Open `/settings`, press Esc, the status bar shows `Settings discarded`, and an active turn keeps streaming.                                                                 | REQ-13         |
+| `settings_pty_render_header_and_marker`         | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `▶ one-dark ✓`. | REQ-02, REQ-05 |
+| `settings_pty_escape_closes_modal_without_cancelling_stream` | Open `/settings`, press Esc, the status bar shows `Settings discarded`, and an active turn keeps streaming.                                                                 | REQ-13         |
 
 ### Unit tests in `apps/huginn/tests/ui_settings.rs` (NEW)
 

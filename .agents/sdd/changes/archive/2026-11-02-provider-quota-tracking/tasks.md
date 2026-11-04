@@ -53,7 +53,7 @@ El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack c
 
 ## Phase 4: Integrated Verification
 
-- [ ] 4.1 Contrastar ambas delta specs con suites focalizadas y ejecutar `just ci-local`; registrar resultados antes de cerrar esta tarea.
+- [x] 4.1 Contrastar ambas delta specs con suites focalizadas y ejecutar `just ci-local`. Evidencia: ambas delta specs contrastadas con `cargo test -p transport-axum --test provider_quota_routes` (13 tests), `cargo test -p rook-usecases`, `cargo test -p rook-core` (61 tests) y la suite del dashboard (44 archivos, 386 tests). `just ci-local` re-ejecutado tras liberar espacio: todos los gates pasaron (install, CI contract, doctor, issue-labeler, dashboard build, Markdown lint, fmt, Clippy, Huginn architecture + cargo check, Rust tests 457s, frontend typecheck/Biome/Vitest, Rust doc, cargo audit, Trivy, Gitleaks). Semgrep falló por incompatibilidad de toolchain local (`protobuf` de `semgrep==1.126.0` bajo Python 3.14 elegido por `uv`) y pasó al reejecutarse con `--python 3.12`: 19 reglas, 252 objetivos, 11 hallazgos con excepciones exactas, chequeo de no suprimidos `true`. Gates adicionales: `just ci-coverage-frontend` pasó, `just ci-coverage-rust` pasó con `--fail-under-lines 87`, `just ci-e2e` pasó con 90 tests. SonarCloud y el build push-only quedan fuera del conjunto local por diseño y no se reportan como passed.
 - [x] 4.2 Confirmado por `git diff --name-only` y lectura de `routes.rs`: no cambian `V2__usage_history.sql`, adapters, routing, DI, autorización admin ni URL `/api/providers/quota`. Cambian deliberadamente el handler/DTO y dashboard para cumplir el contrato; el test de ruta invoca handler por Router de prueba y no revalida middleware admin existente.
 
 ## Phase 5: Upstream Capture (U1–U3, absorbed from `per-provider-quota-integration`)
@@ -73,14 +73,29 @@ still do not read these observations; wiring them into the summary is U5.
 - [x] 5.9 Scope: carry `anthropic-workspace-id` as request-scoped provenance when present.
 - [x] 5.10 Tests: field-level assertions for provider identity, metric, limit, remaining, and scope; canonical gate accepted/rejected matrices; identity wrapper round-trip through SQLite.
 - [x] 5.11 Remove the inline `#[cfg(test)]` module from `apps/rook/src/di.rs`; cover it from the `quota_identity_tests` integration target instead.
-- [ ] 5.12 Wire observations into the quota summary endpoint (U5). Until then the store is write-only by design and must be described that way.
+- [x] 5.12 Wire observations into the quota summary endpoint (U5). Verified separately from Cortex-routed usage, local 429 counts, and local thresholds.
+
+## Phase 6: Dashboard Upstream Reconciliation (U6)
+
+- [x] 6.1 Decision of record: render captured upstream observations in a dedicated dashboard section; keep the local warning explicitly labeled as a local routed-traffic warning; never compare upstream values against local monitoring thresholds.
+- [x] 6.2 API types for `upstreamObservations` in `apps/rook/dashboard/src/lib/api.ts` (availability, freshness, provenance, scope, window, limit/remaining, observation time, age, reset).
+- [x] 6.3 View section `upstream-observations-<providerKind>` with metric, scope, window, limit, remaining, source, freshness, age and reset; `not_reported` renders an explicit empty state and `unavailable` renders no section.
+- [x] 6.4 Localization in `en.json` and `es.json` under `providers.quota.upstream`, including the disclaimer that these are provider-reported observations and not Cortex activity or account-wide guarantees.
+- [x] 6.5 Tests for `available`, `not_reported` and `unavailable` states in `ProvidersQuotaView.spec.ts`; verified with `pnpm --filter @dallay/rook-dashboard exec vitest run src/views/ProvidersQuotaView.spec.ts` (5 tests).
 
 ## Consolidation Note
 
 `per-provider-quota-integration` was retired. Its scope (U1–U3) is Phase 5 of
 this change; its design and exploration remain as reference under
-`reference/`. U5 (endpoint/DTO wiring) and U6 (dashboard reconciliation) remain
-pending and are the reason capture is currently write-only.
+`reference/`. U5 (endpoint/DTO wiring) is complete. U6 (dashboard reconciliation)
+was resolved by the U6 decision of record: the dashboard renders captured upstream
+observations in a dedicated section with provenance, scope/window, age and
+freshness, and keeps the local warning explicitly labeled as a local
+routed-traffic warning derived from recorded 429 ratios. Upstream observations
+never drive the warning level and are never compared against the local
+monitoring thresholds. The two designs no longer conflict: the reference
+capture design is applied only to the observation display, while its
+threshold-reuse proposal is rejected.
 
 ## Orden de implementación
 

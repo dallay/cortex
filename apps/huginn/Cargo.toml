@@ -33,7 +33,7 @@ tempfile.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-wit-component = "=0.262.0"
+wit-component = "=0.263.0"
 rusqlite.workspace = true
 axum.workspace = true
 futures.workspace = true

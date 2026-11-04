@@ -1,0 +1,121 @@
+# QA Report: `settings-modal`
+
+## 1. Identity
+
+- **Change:** `settings-modal`
+- **Capability:** `ui-settings` (new, delta spec `.agents/sdd/specs/ui-settings/spec.md`)
+- **Mode:** OpenSpec (`.agents/sdd/config.yaml`, `strict_tdd: false`)
+- **Phase:** QA (acceptance gate, after `sdd-verify`, before `sdd-archive`)
+- **Date:** 2026-11-03
+- **Branch under test:** `fix/settings-modal-acceptance` (HEAD `2966de5`, plus uncommitted working-tree changes listed in §3)
+- **QA mode:** capability-driven acceptance QA. No SDD quality runner is configured (`.agents/sdd/quality-runner.json` and `scripts/sdd-quality-runner.mjs` are absent), so **no runner envelope exists**. This report is therefore a **fallback** evidence review built from commands executed by this QA executor; no result is inherited from prose alone.
+- **Supersedes:** the earlier `qa-report.md` from the previous cycle (FAIL verdict, task T-15 incomplete). That file was overwritten from scratch with current evidence.
+
+## 2. Scope and target
+
+- **Target surface:** the Huginn TUI settings modal in the terminal application: `/settings` dispatch, the five-tab modal, key handling, working copy, apply/discard, and persistence of the `[ui]` section into `config.toml`.
+- **In scope for this QA pass:** observable behavior of REQ-01 … REQ-16 of the canonical spec, plus the aggregate local gate status and the traceability of the task matrix.
+- **Out of scope for this QA pass:** runtime consumption of the persisted `[ui]` values by any subsystem (theme renderer, sound, toasts, indicators, providers). The spec states that v1 is shell + persistence only, and no requirement covers subscribers.
+- **Code under test (working tree):**
+  - `crates/huginn/presentation/src/settings.rs` (new: `UiConfig` and sub-structs, `SettingsDialog` state machine, `SaveUiConfig` seam)
+  - `crates/huginn/presentation/src/state.rs` (host short-circuit at `state.rs:846`, catalog entry at `state.rs:1084`, apply/receipt handling at `state.rs:1445`–`1525`)
+  - `crates/huginn/presentation/src/terminal.rs` (modal renderer; `▶` marker at `terminal.rs:1023`, add-provider notice at `terminal.rs:1543`, `Settings discarded` notification at `terminal.rs:1551`)
+  - `apps/huginn/src/ui_settings.rs` (TOML patcher), `apps/huginn/src/config.rs` (`[ui]` field with `#[serde(default)]`)
+
+## 3. Environment and limitations
+
+- **Environment:** Linux, `cargo 1.99.1`, `rustc 1.99.1`; workspace root `/home/ryuknull/workspaces/worktrees/settings-modal`.
+- **Permissions / data safety:** no production system, no real user profile, and no external provider was touched. The operator session ran the real `huginn` binary with an **isolated `HOME=/tmp/opencode/qa-home`**, so every write landed in a throwaway directory. `HUGINN_API_KEY=qa-dummy-key` and `base_url = http://127.0.0.1:9/v1` were used only to satisfy start-up validation; no model request was ever issued except the deliberate line-mode probe, which fails with a connection error against an unreachable local port.
+- **Working-tree scope observation:** the tree carries uncommitted changes outside the feature: `crates/infrastructure/transport-axum/tests/gateway_e2e.rs` and `crates/infrastructure/transport-axum/tests/openai_tool_stream_round_trip.rs` (wiremock readiness-probe filtering; a pre-existing flake fix that unblocked the gate), plus clippy-driven refactors in `crates/huginn/presentation/src/event/test_support.rs` and `crates/huginn/presentation/tests/event.rs`. `crates/huginn/presentation/src/terminal.rs` (the `>` → `▶` marker fix) and `crates/huginn/presentation/tests/pty.rs` (the new PTY fixtures) are in scope.
+- **Limitations (explicit):**
+  1. `just ci-local` was **not re-executed** by this QA executor. The gate takes ≈25 min and the filesystem had 1.6 GB free, which is the same condition that forced the previous run to shrink debug artifacts. The gate result is **inherited from the verify phase** and was inspected by this executor at `/tmp/opencode/settings-modal-ci-final3.log` (8,199 lines; final line `CI LOCAL — all applicable local gates passed (1523s).`). The log also contains the settings test names with `ok` results (for example `settings_pty_escape_closes_modal_without_cancelling_stream` at lines 1,655 and 5,574). Every feature-relevant subset was re-run independently by this QA executor (§4).
+  2. No browser, HTTP API, DOM, or web surface exists for this change; browser, axe/WCAG, and web-responsive capabilities do not apply. Terminal viewport adaptation was observed instead, at 100×30 and 20×8.
+  3. No internationalization infrastructure exists in this product, so locale/i18n scenarios are not applicable rather than untested.
+  4. No load or performance requirement exists in the spec; v1 introduces no hot path, so performance scenarios are not applicable.
+  5. Static reading of the source was used only to locate evidence. It never produced a PASS verdict on its own.
+
+## 4. Capability inventory and dispositions
+
+| Capability | Disposition | Rationale / observed evidence |
+|---|---|---|
+| Rust unit and integration test execution (`cargo test`) | **Selected** | Primary evidence source. `crates/huginn/presentation/tests/{settings,dispatch_settings,preemption,state,event,overlay,status_bar,conversation,completion,pty}.rs` and `apps/huginn/tests/{ui_settings,config_compat,config_resolution}.rs` all executed (logs in §5). |
+| PTY-level terminal interaction through the test harness | **Selected** | `cargo test -p huginn-presentation --features test-driver --test pty` — 48 PTY tests, including the two settings fixtures. The `test-driver` feature is required (`crates/huginn/presentation/Cargo.toml:14`), so a plain `--test pty` run compiles zero tests; this was detected and corrected. |
+| Manual operator session against the real binary | **Selected** | Drove `target/debug/huginn` (built by `cargo build -p huginn`, exit 0) inside a pseudo-terminal with an isolated `HOME`. Produced independent observable evidence for modal rendering, navigation, apply, discard, persistence, catalog listing, and line-mode exclusion. |
+| Focused static analysis gates (`clippy -D warnings`, `cargo fmt --check`) | **Selected** | `cargo clippy -p huginn-presentation -p huginn --all-targets --all-features -- -D warnings` → exit 0; `cargo fmt --all -- --check` → exit 0. |
+| Aggregate local CI gate (`just ci-local`) | **Inherited** | Not re-executed (see limitation 1). Log inspected at `/tmp/opencode/settings-modal-ci-final3.log`; final line `CI LOCAL — all applicable local gates passed (1523s).` |
+| Security gates (gitleaks, semgrep, `cargo audit`, trivy) | **Inherited** | Part of `just ci-local`; not re-executed separately in this pass. The log records their completion. |
+| Browser / web API / DOM automation | **Rejected — not applicable** | The change has no browser or HTTP surface. |
+| Accessibility audit (axe/WCAG, screen reader) | **Rejected — not applicable** | Terminal UI with no DOM/ARIA tree. |
+| Web responsive layout | **Rejected as web; terminal adaptation selected** | Terminal viewport adaptation was exercised at 100×30 and 20×8. |
+| Locale / i18n | **Rejected — not applicable** | No i18n infrastructure in this product; the modal is English-only by design. |
+| External service / live provider | **Rejected** | No external dependency; an unreachable loopback base URL was used to satisfy start-up validation. |
+| Performance / load testing | **Rejected — not applicable** | No performance requirement in the spec. |
+| Source reading as standalone acceptance evidence | **Rejected** | Code reading cannot establish observable behavior; used only to locate assertions. |
+
+## 5. Acceptance criteria coverage matrix
+
+Legend: **PASS** = direct evidence from a command executed in this pass. **NOT TESTED** = no direct evidence (reason given).
+
+| REQ | Criterion (summary) | Result | Direct evidence (executed in this pass) |
+|---|---|---|---|
+| REQ-01 | `/settings` registered, opens the modal, never sent to the model | PASS | `cargo test -p huginn-presentation --test dispatch_settings` → `dispatch_opens_settings_dialog`, `dispatch_opens_settings_with_trailing_whitespace`, `dispatch_settings_clears_editor`, `dispatch_settings_is_not_sent_as_a_prompt` all `ok` (log `/tmp/opencode/qa-pres-tests.log`). Operator session: `/settings` in the real binary opens `┌Settings` (`/tmp/opencode/qa-operator-run5.log`, frame `settings-open`). |
+| REQ-02 | Bordered modal with header, `▶ name ✓` body, footer | PASS | `settings_pty_render_header_and_marker` `ok` (`/tmp/opencode/qa-pty-tests.log`). Operator frames: header (`theme`, `indicators`, `sound`, `toasts`, `integrations`), row `▶ one-dark ✓`, footer `Space value · Tab section · ↑↓ pick · Enter save · Esc close` (`qa-operator-run5.log`). Narrow 20×8 frame shows the compact header `theme 1/5` and keeps `Space value` visible (`qa-operator-run7-narrow.log`). |
+| REQ-03 | Tab navigation, wrap-around, selection reset, `←/→` except on toast pickers | PASS | `tests/settings.rs::tab_cycling_wraps` `ok`; `tests/state.rs::settings_horizontal_arrows_cycle_toasts_without_leaving_the_row` and `settings_section_keys_preserve_noncycle_values_and_escape_toasts` `ok` (`/tmp/opencode/qa-state-tests.log`). Operator: five `Tab` presses returned to the `theme` tab with the cursor reset to row 0 (`qa-operator-run6.log`, frame `tab-wrap-around`). |
+| REQ-04 | Item navigation within a tab, up-wrap to the last item | PASS | `tests/settings.rs::item_selection_wraps` `ok`. Operator: `↑` on the first row moved the cursor to `▶ solarized-light` (last theme) (`qa-operator-run6.log`, frame `up-wrap-last-item`). |
+| REQ-05 | Concrete items per tab (13 themes, 3 indicator booleans, sound, toast level/duration, integrations) | PASS | `tests/settings.rs::snapshot_items_match_locked_d6` `ok`; `tests/state.rs::settings_catalog_and_shell_navigation_never_persist_and_add_provider_only_notifies` asserts per-tab row counts `[3, 1, 2, 1]` `ok`. Operator: 13 theme rows rendered; `[ui]` written with `bell = false`, `level = "info"`, `duration_secs = 3`, three indicators `true`, `entries = []` (`qa-operator-run5.log`; `/tmp/opencode/qa-home/.cortex/huginn/config.toml`). |
+| REQ-06 | Working copy is separate from persisted config | PASS | `tests/settings.rs::projected_ui_config_matches_working_copy` and `discard_does_not_invoke_closure` `ok`. Operator: after moving to `one-light` and pressing Space the screen showed `▶ one-light ✓` with `one-dark` no longer checked (`qa-operator-run6.log`, frame `theme-one-light-working-copy`); the persisted file was unchanged until Enter. |
+| REQ-07 | Apply on Enter, one write, error keeps the modal open and allows retry | PASS | `tests/settings.rs::apply_invokes_closure_exactly_once` `ok`; `tests/state.rs::settings_apply_reenters_ui_once_and_late_receipt_cannot_alter_approval`, `settings_failed_apply_preserves_copy_and_error_and_can_retry`, `settings_cycle_arrows_only_persist_displayed_values_on_enter` `ok` (`qa-state-tests.log`). Operator: Enter produced the `Settings saved` notification (emitted at `crates/huginn/presentation/src/state.rs:1525`) and wrote `[ui]` to `config.toml` (`qa-operator-run5.log`, frame `after-apply-one-light`). |
+| REQ-08 | Esc discards the pending selection, nothing persisted | PASS | `tests/settings.rs::discard_does_not_invoke_closure` `ok`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream` `ok` (`qa-pty-tests.log`). Operator: Esc showed `Settings discarded` in the status bar (`crates/huginn/presentation/src/terminal.rs:1551`) and the config SHA-256 prefix was identical before and after (`ada7d70437acc11e` → unchanged in `qa-operator-run6.log`). |
+| REQ-09 | TOML round-trip; unrelated tables stay byte-stable | PASS | `apps/huginn/tests/ui_settings.rs::round_trip_full_state`, `preserves_unrelated_tables_and_comments`, `writes_to_missing_path` `ok` (`/tmp/opencode/qa-app-tests.log`). Operator: after apply, `provider`, `base_url`, `allow_loopback_http` and `model` were unchanged and only `[ui]` blocks were added (`qa-operator-run5.log`, config dump). |
+| REQ-10 | Defaults when `[ui]` is absent or partial | PASS | `apps/huginn/tests/config_resolution.rs::ui_defaults_fill_absent_sections_and_partial_nested_tables` `ok`; `tests/settings.rs::defaults_round_trip_and_match_canonical` `ok`. Operator: applying from defaults wrote exactly the documented default values (`qa-operator-run5.log`). |
+| REQ-11 | Unknown keys inside `[ui]` must not break load and must survive a round-trip | PASS | `apps/huginn/tests/ui_settings.rs::preserves_inner_unknown_keys` `ok` (asserts `Config::load(...).unwrap()` succeeds and `unknown_user_key = true` is retained); `migrates_inline_ui_table_without_losing_keys` `ok` (`qa-app-tests.log`). |
+| REQ-12 | Precedence: Approval > ordinary overlay > completion; authorized replacement discards Settings without writing | PASS | `tests/preemption.rs::settings_survives_tab_navigation`, `settings_can_be_reopened_after_esc` `ok`; `tests/state.rs::stale_settings_input_cannot_mutate_replacement_or_cancel_turn`, `late_settings_receipt_preserves_new_working_copy_and_focus`, `settings_started_write_finishes_after_shutdown_without_reopening_or_notifying`, `replaced_settings_writes_remain_serialized_in_submission_order` `ok` (`qa-state-tests.log`, `/tmp/opencode/qa-pres-tests.log`). |
+| REQ-13 | Esc cancels nothing — an active turn keeps streaming | PASS | `tests/preemption.rs::settings_esc_does_not_cancel_turn` `ok`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream` `ok` — the fixture asserts the modal closed, `Settings discarded` was emitted, and the stream was not cancelled (`qa-pty-tests.log`, `qa-pres-tests.log`). |
+| REQ-14 | `(+) Add provider…` notifies and never starts the provider flow | PASS | `tests/settings.rs::add_provider_only_on_integrations_row_zero` `ok`; `tests/state.rs::settings_catalog_and_shell_navigation_never_persist_and_add_provider_only_notifies` asserts the notice `Add provider not implemented yet` (`crates/huginn/presentation/src/terminal.rs:1543`, asserted at `crates/huginn/presentation/tests/state.rs:946`), that no overlay replaced the dialog, and that the persist closure was never called — `ok` in both logs. |
+| REQ-15 | `/settings` is excluded in line mode | PASS | Runtime PTY probe launched `target/debug/huginn --line-mode`, entered `/settings`, and observed the line prompt `huginn> /settings` followed by `model: HTTP request failed (check endpoint/network)`; no modal rendered and `config.toml` stayed unchanged (`/tmp/opencode/qa-line-mode-interactive.log`). Structural support: `apps/huginn/src/main.rs:233` builds the TUI only when `interactive && !cli.line_mode && !cli.json`. |
+| REQ-16 | `/settings` appears in the `/`-completion catalog as `TUI settings` | PASS | `tests/dispatch_settings.rs::refresh_completion_lists_settings` and `refresh_completion_lists_settings_even_when_model_configured` `ok`; catalog entry at `crates/huginn/presentation/src/state.rs:1084`. Runtime: typing `/sett` in the real binary rendered `› /settings  TUI settings` in the Commands palette (`/tmp/opencode/qa-catalog-frame2.txt`). |
+
+### Commands executed in this QA pass (verbatim)
+
+| Command | Outcome |
+|---|---|
+| `cargo test -p huginn-presentation --test settings --test dispatch_settings --test preemption --test event --test pty --test completion --test overlay --test status_bar --test conversation` | exit 0 — 9+2+6+9+4+4+0+13+0 = 47 tests passed. The `pty` target reported **0 tests** because it needs `--features test-driver`; this gap was closed by the next command. Log: `/tmp/opencode/qa-pres-tests.log` |
+| `cargo test -p huginn-presentation --features test-driver --test pty --test completion` | exit 0 — 9 completion + **48 PTY** tests passed, including `settings_pty_render_header_and_marker` and `settings_pty_escape_closes_modal_without_cancelling_stream`. Log: `/tmp/opencode/qa-pty-tests.log` |
+| `cargo test -p huginn-presentation --features test-driver --test state --test overlay --test status_bar --test event` | exit 0 — 13+5+49+7 = 74 tests passed. Log: `/tmp/opencode/qa-state-tests.log` |
+| `cargo test -p huginn --test ui_settings --test config_compat --test config_resolution` | exit 0 — 5+3+12 = 20 tests passed. Log: `/tmp/opencode/qa-app-tests.log` |
+| `cargo clippy -p huginn-presentation -p huginn --all-targets --all-features -- -D warnings` | exit 0. Log: `/tmp/opencode/qa-clippy.log` |
+| `cargo fmt --all -- --check` | exit 0. Log: `/tmp/opencode/qa-fmt.log` |
+| `cargo build -p huginn` | exit 0 — debug binary used for the operator session. Log: `/tmp/opencode/qa-build-huginn.log` |
+| `python3 /tmp/opencode/qa_settings_operator.py` (real binary, isolated `HOME`) | exit 0 — modal opened, tab switched, item toggled, Esc discarded, Enter applied. Log: `/tmp/opencode/qa-operator-run5.log` |
+| `python3 /tmp/opencode/qa_settings_operator2.py` | exit 0 — apply `one-light`, reopen round-trip, Esc leaves the config hash unchanged, 5×Tab wrap-around, `↑` wrap to the last theme. Log: `/tmp/opencode/qa-operator-run6.log` |
+| `python3 -c "qa_settings_operator2.main(rows=8, cols=20)"` | exit 0 — narrow-viewport frames. Log: `/tmp/opencode/qa-operator-run7-narrow.log` |
+| `python3 /tmp/opencode/qa_settings_operator3.py` | exit 0 — Commands palette contains `› /settings  TUI settings`. Evidence: `/tmp/opencode/qa-catalog-frame2.txt` |
+| `HOME=/tmp/opencode/qa-home HUGINN_API_KEY=qa-dummy-key target/debug/huginn run "/settings"` | exit 1 — line mode treats the input as a prompt (`HTTP request failed`), no modal, config unchanged. Log: `/tmp/opencode/qa-linemode-run.log` |
+| `just ci-local` | **not re-executed** (inherited from verify). Log inspected: `/tmp/opencode/settings-modal-ci-final3.log`, line 8,199 `CI LOCAL — all applicable local gates passed (1523s).` |
+
+## 6. Findings by severity
+
+### Blockers (CRITICAL / P0 / P1)
+
+**None.** No acceptance criterion failed, and no CRITICAL, P0, or P1 issue was observed in the automated suites, in the operator session, or in the inspected gate log.
+
+### Warnings / informational (P2 / P3 — non-blocking)
+
+- **INFO-01 (P3, documentation).** Two entries of the `tasks.md` verification matrix name tests that do not exist in the tree:
+  - `tests/settings.rs::settings_add_provider_shows_notice` → the real coverage is `crates/huginn/presentation/tests/state.rs::settings_catalog_and_shell_navigation_never_persist_and_add_provider_only_notifies` (asserts `Add provider not implemented yet`) plus `crates/huginn/presentation/tests/settings.rs::add_provider_only_on_integrations_row_zero`.
+  - `tests/completion.rs::settings_host_completion_catalog` → `crates/huginn/presentation/tests/completion.rs` contains no settings test; the real coverage is `crates/huginn/presentation/tests/dispatch_settings.rs::refresh_completion_lists_settings` and `refresh_completion_lists_settings_even_when_model_configured`.
+  The other matrix test references used for acceptance coverage were confirmed to exist and to pass in this pass. The behavior is covered; only these pointers are stale.
+- **INFO-02 (P3, wording).** In the 20-column viewport the compact header renders as `theme 1/5`, while the spec illustrates `integrations (5/5)`. The spec wording is exemplary ("por ejemplo"), and the requirement — show the active tab and its position — is met. No functional deviation.
+- **INFO-03 (P3, scope hygiene).** The working tree carries uncommitted changes outside the feature: the wiremock readiness-probe filter in `crates/infrastructure/transport-axum/tests/{gateway_e2e.rs,openai_tool_stream_round_trip.rs}` and clippy-driven refactors in `crates/huginn/presentation/src/event/test_support.rs` and `crates/huginn/presentation/tests/event.rs`. They are required to keep the aggregate gate green, but they must be committed with an explicit scope note (or split into a separate change) before archive so the `settings-modal` delta does not absorb unrelated fixes.
+- **INFO-04 (P3, gate traceability).** `just ci-local` was not re-executed in this pass (25 min, 1.6 GB free disk). The result is inherited from the verify phase and was verified by log inspection only. The feature-relevant subsets (clippy, fmt, the three presentation test targets, the PTY target, the application config tests) were all re-executed independently here.
+- **INFO-05 (carried over, unchanged).** SUGGESTION-02 (frontend coverage percentage) and SUGGESTION-03 (artifact-size environment variables `CARGO_PROFILE_TEST_DEBUG=1`, `CARGO_PROFILE_DEV_DEBUG=1`) remain informational. The debug-profile variables affect artifact size only; they change neither test selection nor coverage thresholds.
+
+## 7. Final verdict
+
+### Verdict: PASS WITH WARNINGS
+
+Rationale: all 16 acceptance criteria of `.agents/sdd/specs/ui-settings/spec.md` carry direct evidence produced in this pass — 198 test executions across the touched targets (with some test binaries intentionally repeated across commands; 48 were PTY-level), an independent operator session against the real `huginn` binary that observed the modal, navigation, `Settings saved`, `Settings discarded`, the written `[ui]` section in an isolated `config.toml`, the catalog entry, and the line-mode exclusion. The inherited aggregate gate is green. The five open items are all informational (P3) and none of them is an acceptance blocker: two stale test-name pointers in the task matrix, one exemplary wording difference in the narrow header, one working-tree scope note, and one gate-traceability note.
+
+Explicit **next action**: proceed to `sdd-archive`. Before archiving, apply INFO-01 (point the matrix at the real test names) and INFO-03 (commit or explicitly attribute the out-of-scope transport-axum and clippy-refactor changes). Neither item blocks the archive step.
+
+QA did not modify source code, and it does not modify the technical verdict recorded in `verify-report.md`; it only records acceptance evidence.

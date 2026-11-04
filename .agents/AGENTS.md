@@ -126,3 +126,4 @@ If documentation and implementation disagree, verify the behavior against code, 
 - Keep durable change artifacts in `.agents/sdd/changes/` and RPI tasks in `.agents/rpi/plan/tasks/`.
 - Use Conventional Commits without AI attribution.
 - Keep this file an operational contract: durable principles, critical invariants, and references—not duplicated README content, directory inventories, or tool manuals.
+- All documentation must be in English unless I ask you otherwise.

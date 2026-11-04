@@ -21,6 +21,13 @@ fn approval_code(pty: &Pty) -> String {
     code.to_string()
 }
 
+fn screen_row(screen: &str, fragment: &str) -> usize {
+    screen
+        .lines()
+        .position(|line| line.contains(fragment))
+        .unwrap_or_else(|| panic!("screen row missing {fragment:?}: {screen}"))
+}
+
 #[test]
 fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
     let mut pty = start("normal", true);
@@ -43,6 +50,181 @@ fn inline_stream_composer_cancel_and_normal_exit_restore_termios() {
     assert!(
         !output.contains("\x1b[?1049h"),
         "inline UI must not enter alternate screen"
+    );
+}
+
+#[test]
+fn large_paste_shows_a_compact_placeholder_and_submits_the_original_text() {
+    const FIRST: &str = "first-line-one\nfirst-line-two\nfirst-line-three";
+    const SECOND: &str = "second-line-one\nsecond-line-two\nsecond-line-three\nsecond-line-four";
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send(&format!("\x1b[200~{FIRST}\x1b[201~"));
+    pty.wait_for("[Pasted ~3 lines]");
+    pty.send(" with context ");
+    pty.wait_for("with context");
+    pty.send(&format!("\x1b[200~{SECOND}\x1b[201~"));
+    pty.wait_for("[Pasted ~4 lines]");
+    let draft = pty.screen_text();
+    assert!(
+        draft.contains("[Pasted ~3 lines]"),
+        "first paste missing: {draft}"
+    );
+    assert!(
+        draft.contains("[Pasted ~4 lines]"),
+        "second paste missing: {draft}"
+    );
+    for line in [
+        "first-line-one",
+        "first-line-two",
+        "first-line-three",
+        "second-line-one",
+        "second-line-two",
+        "second-line-three",
+        "second-line-four",
+    ] {
+        assert!(
+            !draft.contains(line),
+            "large paste content should stay behind its placeholder: {draft}"
+        );
+    }
+
+    pty.send("\r");
+    pty.wait_for("User: first-line-one");
+    let transcript = pty.screen_text();
+    assert!(
+        !transcript.contains("[Pasted ~"),
+        "the internal placeholder must not be sent to the model: {transcript}"
+    );
+    for line in [
+        "first-line-two",
+        "first-line-three",
+        "with context",
+        "second-line-one",
+        "second-line-two",
+        "second-line-three",
+        "second-line-four",
+    ] {
+        assert!(
+            transcript.contains(line),
+            "submitted prompt must include {line:?}: {transcript}"
+        );
+    }
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn shift_enter_grows_the_composer_and_submits_all_typed_lines() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[?1;2c");
+    pty.wait_output_for("\x1b[>4;2m");
+    pty.send("typed-line-one\x1b[27;2;13~typed-line-two\x1b[27;2;13~typed-line-three");
+    pty.wait_for("typed-line-three");
+
+    let draft = pty.screen_text();
+    for line in ["typed-line-one", "typed-line-two", "typed-line-three"] {
+        assert!(
+            draft.contains(line),
+            "multiline draft line should remain visible: {draft}"
+        );
+    }
+    assert_ne!(
+        screen_row(&draft, "typed-line-one"),
+        screen_row(&draft, "typed-line-two"),
+        "Shift+Enter must put draft lines on separate screen rows: {draft}"
+    );
+    assert_ne!(
+        screen_row(&draft, "typed-line-two"),
+        screen_row(&draft, "typed-line-three"),
+        "Shift+Enter must put draft lines on separate screen rows: {draft}"
+    );
+
+    pty.send("\r");
+    pty.wait_for("User: typed-line-one");
+    let transcript = pty.screen_text();
+    for line in ["typed-line-two", "typed-line-three"] {
+        assert!(
+            transcript.contains(line),
+            "submitted prompt must include {line:?}: {transcript}"
+        );
+    }
+    assert_ne!(
+        screen_row(&transcript, "typed-line-one"),
+        screen_row(&transcript, "typed-line-two"),
+        "submitted lines must remain on separate screen rows: {transcript}"
+    );
+    assert_ne!(
+        screen_row(&transcript, "typed-line-two"),
+        screen_row(&transcript, "typed-line-three"),
+        "submitted lines must remain on separate screen rows: {transcript}"
+    );
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    let output = pty.finish(true);
+    assert!(
+        output.contains("\x1b[>7u"),
+        "Kitty protocol was not requested"
+    );
+    assert!(
+        output.contains("\x1b[?u\x1b[c"),
+        "keyboard support was not queried"
+    );
+    assert!(
+        output.contains("\x1b[>4;2m"),
+        "modifyOtherKeys fallback was not enabled"
+    );
+    assert!(
+        output.contains("\x1b[>4;0m"),
+        "modifyOtherKeys was not restored"
+    );
+    assert!(
+        output.contains("\x1b[<1u"),
+        "Kitty protocol flags were not popped"
+    );
+}
+
+#[test]
+fn kitty_keyboard_protocol_uses_shift_enter_without_modify_other_keys_fallback() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("\x1b[?7u");
+    pty.send("kitty-line-one\x1b[13;2ukitty-line-two");
+    pty.wait_for("kitty-line-two");
+
+    let draft = pty.screen_text();
+    assert_ne!(
+        screen_row(&draft, "kitty-line-one"),
+        screen_row(&draft, "kitty-line-two"),
+        "Kitty Shift+Enter must create separate draft rows: {draft}"
+    );
+
+    pty.send("\r");
+    pty.wait_for("User: kitty-line-one");
+    let submitted_prompt_output_end = pty.output().len();
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    pty.send("\x03");
+    let output = pty.finish(true);
+
+    let push = output
+        .find("\x1b[>7u")
+        .expect("Kitty protocol was requested");
+    let pop = output
+        .find("\x1b[<1u")
+        .expect("Kitty protocol flags were popped");
+    assert!(
+        push < submitted_prompt_output_end,
+        "Kitty flags were pushed after prompt rendering"
+    );
+    assert!(
+        submitted_prompt_output_end < pop,
+        "Kitty flags were popped before prompt rendering completed"
+    );
+    assert!(
+        !output.contains("\x1b[>4;2m"),
+        "modifyOtherKeys fallback must stay disabled when Kitty is supported"
     );
 }
 
@@ -378,6 +560,8 @@ fn panic_restores_raw_mode_and_cursor() {
     let output = pty.finish(false);
     assert!(output.contains("intentional PTY restoration"));
     assert!(output.contains("\x1b[?2004l"));
+    assert!(output.contains("\x1b[>7u"));
+    assert!(output.contains("\x1b[<1u"));
     assert!(format!("{:?}", pty.master.get_termios().unwrap().local_flags).contains("ICANON"));
 }
 #[test]
@@ -445,6 +629,22 @@ fn command_palette_tab_completes_and_enter_dispatches_fuzzy_selection() {
 }
 
 #[test]
+fn enter_accepting_host_command_completion_still_dispatches_builtin() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("/h");
+    pty.wait_for("Commands");
+    pty.wait_for("› /help");
+
+    pty.send("\r");
+    pty.wait_for("Help — Esc closes");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("Help — Esc closes");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
 fn file_enter_completes_without_sending_and_preserves_textual_reference() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("guide file.md"), "NEVER_ATTACH_CONTENT").unwrap();
@@ -461,6 +661,51 @@ fn file_enter_completes_without_sending_and_preserves_textual_reference() {
     pty.send("\r");
     pty.wait_for("STREAM_COMPLETE");
     pty.wait_for("User: mira @\"guide file.md\"");
+    assert!(!pty.output().contains("NEVER_ATTACH_CONTENT"));
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn enter_after_large_paste_refreshes_file_completion_before_submitting() {
+    const PASTE: &str = "pasted-line-one\npasted-line-two\npasted-line-three";
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("guide.md"), "NEVER_ATTACH_CONTENT").unwrap();
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    command.cwd(root.path());
+    let mut pty = Pty::start(command, true);
+    pty.wait_for("Huginn");
+    pty.send(&format!("\x1b[200~{PASTE}\x1b[201~"));
+    pty.wait_for("[Pasted ~3 lines]");
+    pty.send(" @gmd");
+    pty.wait_for("guide.md");
+
+    let before_enter = pty.output().len();
+    pty.send("\r");
+    pty.wait_for_output_change(before_enter);
+    let after_first_enter = pty.screen_text();
+    assert!(
+        !after_first_enter.contains("User:"),
+        "stale completion range must not submit the draft: {after_first_enter}"
+    );
+    assert!(
+        after_first_enter.contains("guide.md"),
+        "completion should refresh after paste materialization: {after_first_enter}"
+    );
+
+    pty.send("\r");
+    pty.wait_for("@guide.md");
+    assert!(
+        !pty.screen_text().contains("User:"),
+        "accepting the file completion must not submit it"
+    );
+    pty.send("\r");
+    pty.wait_for("User: pasted-line-one");
+    let transcript = pty.screen_text();
+    assert!(transcript.contains("@guide.md"), "{transcript}");
+    assert!(!transcript.contains("@gmd"), "{transcript}");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
     assert!(!pty.output().contains("NEVER_ATTACH_CONTENT"));
     pty.send("\x03");
     pty.finish(true);
@@ -682,6 +927,82 @@ fn overlays_keep_status_visible_at_minimum_inline_size() {
         pty.send("\x03");
         pty.finish(true);
     }
+}
+
+#[test]
+fn settings_pty_render_header_and_marker() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("/settings\r");
+    pty.wait_for("┌Settings");
+    // The frame is delivered in chunks, and the footer hint is the last line of
+    // the modal. Wait for it so the captured screen holds the whole frame.
+    pty.wait_for("Up/Down select");
+    let screen = pty.screen_text();
+    for tab in ["theme", "indicators", "sound", "toasts", "integrations"] {
+        assert!(
+            screen.contains(tab),
+            "settings tab {tab} missing:\n{screen}"
+        );
+    }
+    assert!(
+        screen.contains("▶ one-dark ✓"),
+        "selected settings row must match the spec:\n{screen}"
+    );
+    assert!(
+        screen.contains("Up/Down select"),
+        "settings footer missing:\n{screen}"
+    );
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("┌Settings");
+    pty.send("\x03");
+    pty.finish(true);
+
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    command.arg("normal");
+    let mut narrow = Pty::start_sized(command, true, 8, 20);
+    narrow.wait_for("Huginn");
+    narrow.send("/settings\r");
+    narrow.wait_for("┌Settings");
+    // Same chunking rule as the wide case: the footer hint closes the frame.
+    narrow.wait_for("Enter save");
+    let screen = narrow.screen_text();
+    assert!(
+        screen.contains("▶ one-dark ✓"),
+        "selected settings row missing at 20x8:\n{screen}"
+    );
+    assert!(
+        screen.contains("Enter save"),
+        "settings footer missing at 20x8:\n{screen}"
+    );
+    narrow.send("\x1b");
+    narrow.wait_until_screen_not_contains("┌Settings");
+    narrow.send("\x03");
+    narrow.finish(true);
+}
+
+#[test]
+fn settings_pty_escape_closes_modal_without_cancelling_stream() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("stream\r");
+    pty.wait_for("chunk0");
+    pty.send("/settings\r");
+    pty.wait_for("┌Settings");
+    pty.send("\x1b");
+    pty.wait_until_screen_not_contains("┌Settings");
+    pty.wait_for("Assistant: STREAM_COMPLETE");
+    let output = pty.output();
+    assert!(
+        output.contains("Settings discarded"),
+        "Esc must report the discarded settings:\n{output}"
+    );
+    assert!(
+        !output.contains("operation cancelled"),
+        "Esc cancelled the active stream:\n{output}"
+    );
+    pty.send("\x03");
+    pty.finish(true);
 }
 
 #[test]

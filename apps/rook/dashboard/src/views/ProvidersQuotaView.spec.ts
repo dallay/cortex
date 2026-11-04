@@ -12,6 +12,13 @@ const quotaItem = {
 	coverage: "cortex_routed",
 	usageAvailability: "available",
 	accountQuota: { availability: "not_provided" },
+	upstreamObservations: {
+		availability: "not_reported" as
+			| "available"
+			| "not_reported"
+			| "unavailable",
+		observations: [] as Array<Record<string, unknown>>,
+	},
 	localThresholds: [{ warning: 0.5, error: 0.8, connectionCount: 1 }],
 	rateLimitObservation: {
 		source: "recorded_routed_request_status",
@@ -101,6 +108,8 @@ describe("ProvidersQuotaView", () => {
 	afterEach(() => {
 		quotaItem.last7d.costUsd = 1.25;
 		quotaItem.last7d.costAvailability = "complete";
+		quotaItem.upstreamObservations.availability = "not_reported";
+		quotaItem.upstreamObservations.observations = [];
 		vi.clearAllMocks();
 	});
 	it("labels partial cost as unknown without showing a numeric subtotal", () => {
@@ -158,6 +167,105 @@ describe("ProvidersQuotaView", () => {
 		expect(wrapper.findAll("[data-testid=quota-trend-day]")).toHaveLength(7);
 		expect(wrapper.text()).toContain("21");
 		expect(wrapper.text()).toContain("$0.25");
+		wrapper.unmount();
+	});
+	it("renders not_reported state when no upstream observations exist", () => {
+		const wrapper = mount(ProvidersQuotaView, {
+			global: {
+				stubs: {
+					Button: passthrough,
+					Table: passthrough,
+					TableBody: passthrough,
+					TableHeader: passthrough,
+					TableRow: passthrough,
+					TableCell: passthrough,
+					TableHead: passthrough,
+					Badge: passthrough,
+					Alert: passthrough,
+					AlertTitle: passthrough,
+					AlertDescription: passthrough,
+					Fuel: passthrough,
+					RefreshCw: passthrough,
+				},
+			},
+		});
+		expect(wrapper.text()).toContain(en.providers.quota.upstream.notReported);
+		wrapper.unmount();
+	});
+	it("renders upstream observations with provenance when available", () => {
+		quotaItem.upstreamObservations.availability = "available";
+		quotaItem.upstreamObservations.observations = [
+			{
+				connectionId: "conn-1",
+				metric: "requests",
+				source: "response_headers",
+				scope: "workspace",
+				window: "1m",
+				limit: 100,
+				remaining: 42,
+				observedAt: "2026-01-01T00:00:00Z",
+				ageSeconds: 12,
+				resetAt: "2026-01-01T00:01:00Z",
+				freshness: "fresh",
+			},
+		];
+		const wrapper = mount(ProvidersQuotaView, {
+			global: {
+				stubs: {
+					Button: passthrough,
+					Table: passthrough,
+					TableBody: passthrough,
+					TableHeader: passthrough,
+					TableRow: passthrough,
+					TableCell: passthrough,
+					TableHead: passthrough,
+					Badge: passthrough,
+					Alert: passthrough,
+					AlertTitle: passthrough,
+					AlertDescription: passthrough,
+					Fuel: passthrough,
+					RefreshCw: passthrough,
+				},
+			},
+		});
+		const section = wrapper.find("[data-testid=upstream-observations-openai]");
+		expect(section.exists()).toBe(true);
+		expect(section.text()).toContain("requests");
+		expect(section.text()).toContain("workspace");
+		expect(section.text()).toContain("1m");
+		expect(section.text()).toContain("100");
+		expect(section.text()).toContain("42");
+		expect(section.text()).toContain("response_headers");
+		expect(section.text()).toContain("conn-1");
+		wrapper.unmount();
+	});
+	it("does not render the upstream section when unavailable", () => {
+		quotaItem.upstreamObservations.availability = "unavailable";
+		const wrapper = mount(ProvidersQuotaView, {
+			global: {
+				stubs: {
+					Button: passthrough,
+					Table: passthrough,
+					TableBody: passthrough,
+					TableHeader: passthrough,
+					TableRow: passthrough,
+					TableCell: passthrough,
+					TableHead: passthrough,
+					Badge: passthrough,
+					Alert: passthrough,
+					AlertTitle: passthrough,
+					AlertDescription: passthrough,
+					Fuel: passthrough,
+					RefreshCw: passthrough,
+				},
+			},
+		});
+		expect(
+			wrapper.find("[data-testid=upstream-observations-openai]").exists(),
+		).toBe(false);
+		expect(wrapper.text()).not.toContain(
+			en.providers.quota.upstream.notReported,
+		);
 		wrapper.unmount();
 	});
 });

@@ -20,10 +20,24 @@ pub use workflow::{Field, FieldKind, FormInput, Workflow, WorkflowFuture, Workfl
 pub mod hooks {
     pub use huginn_core::{
         hooks::{
-            tool_hooks_id, Blocked, Note, ToolHook, ToolHooks, ToolHooksService, ToolOutcome,
-            ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
+            inference_hooks_id, tool_hooks_id, Blocked, InferenceHook, InferenceHooks,
+            InferenceHooksService, InferenceVerdict, Note, ToolHook, ToolHooks, ToolHooksService,
+            ToolOutcome, ToolVerdict, DEFAULT_HOOK_TIMEOUT, MAX_NOTE_BYTES,
         },
         ToolCall, ToolContext,
+    };
+}
+
+/// Replaceable agent loop: a trusted native plugin may provide `agent:loop@1`.
+///
+/// The host keeps authorization, effects, events and persistence; an implementation
+/// receives them and can only request decisions (ADR-0017).
+pub mod agent {
+    pub use huginn_core::{
+        agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
+        EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
+        ModelRequest, PreparedAction, Result, Role, Session, SessionStore, SteeringQueue, StepId,
+        Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
     };
 }
 

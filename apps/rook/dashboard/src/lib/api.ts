@@ -526,6 +526,31 @@ export interface ProviderQuotaTrendPointResponse {
 	costAvailability: CostAvailability;
 }
 
+export type UpstreamObservationAvailability =
+	| "available"
+	| "not_reported"
+	| "unavailable";
+export type UpstreamObservationFreshness = "fresh" | "stale" | "unknown_expiry";
+
+export interface ProviderUpstreamObservationResponse {
+	connectionId: string | null;
+	metric: string;
+	source: string;
+	scope: string | null;
+	window: string | null;
+	limit: number | null;
+	remaining: number | null;
+	observedAt: string;
+	ageSeconds: number;
+	resetAt: string | null;
+	freshness: UpstreamObservationFreshness;
+}
+
+export interface ProviderUpstreamObservationsResponse {
+	availability: UpstreamObservationAvailability;
+	observations: ProviderUpstreamObservationResponse[];
+}
+
 export interface ProviderQuotaSummaryResponse {
 	providerKind: ProviderKind;
 	connectionCount: number;
@@ -533,6 +558,7 @@ export interface ProviderQuotaSummaryResponse {
 	coverage: "cortex_routed";
 	usageAvailability: UsageAvailability;
 	accountQuota: { availability: AccountQuotaAvailability };
+	upstreamObservations: ProviderUpstreamObservationsResponse;
 	localThresholds: Array<{
 		warning: number;
 		error: number;

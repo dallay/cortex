@@ -251,7 +251,7 @@ fn connection_event_is_additive_safe_and_old_session_needs_no_backfill() {
     }))
     .unwrap();
     assert_eq!(session.events.len(), 1);
-    assert!(matches!(session.events[0], Event::TurnFinished));
+    assert!(matches!(session.events[0], Event::TurnFinished { .. }));
 }
 
 struct TemplateToolModel;
