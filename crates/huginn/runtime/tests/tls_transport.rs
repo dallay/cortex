@@ -1,4 +1,4 @@
-use huginn_core::{CancellationToken, ModelProvider, ModelRequest};
+use huginn_core::{AgentError, CancellationToken, ModelProvider, ModelRequest};
 use huginn_runtime::model::OpenAiProvider;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -78,6 +78,13 @@ async fn untrusted_tls_is_rejected_before_authorization() {
         .err()
         .unwrap();
     assert!(!error.to_string().contains("sentinel-secret"));
+    // A certificate this client does not trust is a configuration error, not a transient
+    // one: repeating the same handshake can never succeed and would only burn the budget.
+    assert!(
+        matches!(error, AgentError::Model(_)),
+        "an untrusted certificate must be a permanent failure, got {error:?}"
+    );
+    assert!(!error.is_retryable_inference());
     task.await.unwrap();
     assert!(!received.load(Ordering::SeqCst));
 }

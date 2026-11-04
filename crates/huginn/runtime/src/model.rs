@@ -99,14 +99,43 @@ fn transport_builder(
     Ok(builder)
 }
 
+/// Whether the failure came from the TLS handshake rather than the network.
+///
+/// `reqwest` exposes no typed TLS cause, and a certificate failure also reports as
+/// `is_connect()`, so the cause chain is the only signal available. The heuristic is safe in
+/// both directions: a false negative costs only bounded retries of a connection that never
+/// opens, while a false positive refuses to retry a configuration error.
+fn is_tls_failure(error: &reqwest::Error) -> bool {
+    let mut cause = std::error::Error::source(error);
+    while let Some(error) = cause {
+        let detail = error.to_string().to_ascii_lowercase();
+        if ["certificate", "handshake", "tls"]
+            .iter()
+            .any(|marker| detail.contains(marker))
+        {
+            return true;
+        }
+        cause = std::error::Error::source(error);
+    }
+    false
+}
+
 /// Whether a request that never produced response headers can plausibly reach the provider
 /// on the next attempt.
 ///
-/// A refused or reset connection, a timeout, and a body that failed to upload are transport
-/// conditions that may clear on their own. Redirect and client builder failures describe the
-/// request itself and never will.
+/// A timeout is always worth repeating, because the connection may simply be slow. A refused
+/// or reset connection, and a body that failed to upload, are transport conditions that may
+/// clear on their own. A TLS handshake or certificate failure never will: the endpoint or the
+/// configuration is wrong, so repeating it only burns the retry budget. Redirect and client
+/// builder failures describe the request itself and are permanent for the same reason.
 fn is_transient_request(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_body() || error.is_request()
+    if error.is_timeout() {
+        return true;
+    }
+    if is_tls_failure(error) {
+        return false;
+    }
+    error.is_connect() || error.is_body() || error.is_request()
 }
 
 /// Whether a response body that started arriving and then broke is worth repeating.
