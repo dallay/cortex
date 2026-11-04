@@ -16,5 +16,8 @@ tracing.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+muninn-application = { path = "../application" }
+
 [lints]
 workspace = true

@@ -3766,6 +3766,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "chrono",
+ "muninn-application",
  "muninn-core",
  "neo4rs",
  "serde_json",

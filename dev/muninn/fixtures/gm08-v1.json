@@ -1,0 +1,42 @@
+{
+  "schema": "gm08-fixture-v1",
+  "seed": 808,
+  "numeric_tolerance": 0,
+  "session_id": "gm08-synthetic-session",
+  "entity_id": "00000000-0000-4000-8000-000000000801",
+  "message_id": "00000000-0000-4000-8000-000000000802",
+  "conversation_id": "00000000-0000-4000-8000-000000000803",
+  "timestamp": "2026-01-01T00:00:00+00:00",
+  "entity_name": "GM08 synthetic component",
+  "tool_name": "gm08_inspect",
+  "tasks": [
+    {
+      "key": "success",
+      "task": "Inspect synthetic component successfully",
+      "success": true,
+      "outcome": "Synthetic inspection complete",
+      "steps": [
+        {"action": "Read synthetic configuration", "observation": "Configuration available", "status": "success", "duration_ms": 10, "arguments": {"phase": 1}, "result": {"available": true}, "error": null},
+        {"action": "Check synthetic dependency", "observation": "Dependency rejected", "status": "failure", "duration_ms": 20, "arguments": {"phase": 2}, "result": {"available": false}, "error": "synthetic rejection"},
+        {"action": "Wait for synthetic response", "observation": "Response timed out", "status": "timeout", "duration_ms": 30, "arguments": {"phase": 3}, "result": null, "error": "synthetic timeout"}
+      ]
+    },
+    {
+      "key": "failure",
+      "task": "Inspect synthetic component with failure",
+      "success": false,
+      "outcome": {"success": false, "summary": "Synthetic inspection failed", "error_kind": "timeout", "metrics": {"elapsed_ms": 60.0}},
+      "steps": [
+        {"action": "Read synthetic failure configuration", "observation": "Configuration available", "status": "success", "duration_ms": 10, "arguments": {"phase": 1}, "result": {"available": true}, "error": null},
+        {"action": "Check synthetic failure dependency", "observation": "Dependency rejected", "status": "failure", "duration_ms": 20, "arguments": {"phase": 2}, "result": {"available": false}, "error": "synthetic rejection"},
+        {"action": "Wait for synthetic failure response", "observation": "Response timed out", "status": "timeout", "duration_ms": 30, "arguments": {"phase": 3}, "result": null, "error": "synthetic timeout"}
+      ]
+    }
+  ],
+  "searches": [
+    {"key": "all", "limit": 2, "success_only": false, "threshold": 0.0},
+    {"key": "successful", "limit": 2, "success_only": true, "threshold": 0.0},
+    {"key": "limit", "limit": 1, "success_only": false, "threshold": 0.0},
+    {"key": "threshold", "limit": 2, "success_only": false, "threshold": 1.1}
+  ]
+}
