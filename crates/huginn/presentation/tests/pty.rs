@@ -1206,3 +1206,54 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     pty.send("\x03");
     pty.finish(true);
 }
+
+/// DALLAY-738: a draft typed while a turn is busy is a steering message for the
+/// running turn, not dropped input. The fixture loop drains the shared queue and
+/// echoes what it received.
+#[test]
+fn a_draft_typed_during_a_turn_reaches_the_loop_steering_queue() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("steer\r");
+    pty.wait_for("STREAM_HELD");
+    pty.send("narrow the change\r");
+    // The loop drained the shared mailbox at its next step boundary and
+    // committed the steering message to the turn's history.
+    pty.wait_for("User: narrow the change");
+    pty.wait_for("Idle");
+    pty.send("\x03");
+    let output = pty.finish(true);
+    assert!(
+        output.contains("\x1b[?2004l"),
+        "bracketed paste not restored"
+    );
+}
+
+/// A full mailbox refuses visibly and leaves the draft in the composer: a
+/// steering message is never dropped, replaced, or silently swallowed.
+#[test]
+fn a_full_steering_queue_refuses_visibly_and_keeps_the_draft() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("steer-full\r");
+    pty.wait_for("STREAM_HELD");
+    for index in 0..8 {
+        pty.send(&format!("steer-{index}\r"));
+    }
+    pty.wait_for("Steering queued");
+    pty.send("ninth-draft\r");
+    pty.wait_for("Steering refused");
+    let screen = pty.screen_text();
+    assert!(
+        screen.contains("at most 8 steering messages"),
+        "the refusal must name the bound:\n{screen}"
+    );
+    assert!(
+        screen.contains("ninth-draft"),
+        "a refused draft stays in the composer:\n{screen}"
+    );
+    pty.send("\x1b");
+    pty.wait_for("operation cancelled");
+    pty.send("\x03");
+    pty.finish(true);
+}
