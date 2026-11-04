@@ -46,6 +46,7 @@ Thumbs.db
 .claude/skills/
 .gemini/skills/
 .opencode/skills/
+/odd/
 # START AI Agent Symlinks
 .agent/commands
 .agent/commands.bak
@@ -234,4 +235,3 @@ crates/infrastructure/transport-axum/CLAUDE.md.bak
 crates/infrastructure/transport-axum/GEMINI.md
 crates/infrastructure/transport-axum/GEMINI.md.bak
 # END AI Agent Symlinks
-/odd/
