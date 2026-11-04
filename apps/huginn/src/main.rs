@@ -482,6 +482,9 @@ async fn main() -> anyhow::Result<()> {
         return Err(error.into());
     }
     let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+    if !cli.json && !is_doctor {
+        huginn::banner::print_banner();
+    }
     if !cli.json {
         eprintln!(
             "Session: {}\nWorkspace: {}",
@@ -761,6 +764,7 @@ async fn tui_chat(
             ui.synchronize(session);
             if let Err(error) = &result {
                 scoped_events.emit(huginn_core::Event::Error {
+                    turn: huginn_core::TurnId::UNKNOWN,
                     message: error.to_string(),
                 });
             }

@@ -565,7 +565,7 @@ impl<'a> LoopExecution<'a> {
                         serde_json::json!({"scope": entry.source_scope.as_str(), "canonical_path": entry.canonical_path.to_string_lossy()})
                     }).collect();
                     let sources = crate::output::bounded_text(serde_json::to_string(&sources)?);
-                    self.record(session, Event::Error { message: format!("Skill catalog changed (global/project sources in workspace {:?}): previous {previous}, current {fingerprint}. Current source sample: {sources}. Removed sources may be absent. Refresh skill identities; no instructions or effects were replayed.", session.workspace) }, sink).await?;
+                    self.record(session, Event::Error { turn, message: format!("Skill catalog changed (global/project sources in workspace {:?}): previous {previous}, current {fingerprint}. Current source sample: {sources}. Removed sources may be absent. Refresh skill identities; no instructions or effects were replayed.", session.workspace) }, sink).await?;
                 }
             }
             session.skill_catalog_fingerprint = Some(fingerprint);
@@ -836,6 +836,14 @@ pub fn recover(session: &mut Session) {
 }
 #[async_trait]
 impl AgentLoop for StandardLoop {
+    fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+        huginn_core::AgentLoopCapabilities {
+            compaction: true,
+            skill_commands: self.config.skills.is_some(),
+            rebinds_services: false,
+        }
+    }
+
     async fn skill_commands(
         &self,
         workspace: &std::path::Path,
@@ -850,6 +858,7 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .compact(session, events, cancellation)
             .await
@@ -863,6 +872,7 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .run(session, prompt, approvals, events, cancellation)
             .await
@@ -890,6 +900,7 @@ impl StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .run_with_skills(session, prompt, selected, approvals, events, cancellation)
             .await
@@ -1046,6 +1057,7 @@ impl LoopExecution<'_> {
                 self.record(
                     session,
                     Event::Error {
+                        turn,
                         message: error.to_string(),
                     },
                     events,

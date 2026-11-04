@@ -1,67 +1,67 @@
-# Catálogo de Agent Skills
+# Agent Skills catalog
 
-`huginn skills list` inspecciona metadatos locales sin configurar un modelo,
-abrir una sesión SQLite, iniciar MCP ni solicitar entrada interactiva.
+`huginn skills list` inspects local metadata without configuring a model,
+opening an SQLite session, starting MCP, or requesting interactive input.
 
 ```sh
 huginn --workspace ./packages/app skills list
 huginn --workspace ./packages/app --json skills list
 ```
 
-## Ubicaciones y precedencia
+## Locations and precedence
 
-- Global: `$HOME/.agents/skills/<nombre>/SKILL.md`. Sin `HOME`, no se consulta
-  el ámbito global.
-- Proyecto: `<raíz>/.agents/skills/<nombre>/SKILL.md`. La raíz es el ancestro
-  más cercano del workspace resuelto con un marcador `.git` de archivo o
-  directorio. Sin marcador, se usa el workspace resuelto.
+- Global: `$HOME/.agents/skills/<name>/SKILL.md`. Without `HOME`, the
+  global scope is not consulted.
+- Project: `<root>/.agents/skills/<name>/SKILL.md`. The root is the
+  nearest ancestor of the resolved workspace containing a `.git` file or
+  directory marker. Without a marker, the resolved workspace is used.
 
-Solo se inspecciona un nivel de directorios. No se buscan colecciones anidadas
-ni ámbitos adicionales por paquete. Un proyecto válido sobrescribe un global
-con el mismo nombre exacto; ambos permanecen visibles con estado `selected`
-o `overridden`. Las entradas inválidas no ocultan una entrada global válida.
+Only one level of directories is inspected. Nested collections and
+additional per-package scopes are not searched. A valid project entry overrides a global
+entry with the exact same name; both remain visible with status `selected`
+or `overridden`. Invalid entries do not hide a valid global entry.
 
-Los resultados se ordenan por nombre ASCII, ámbito (proyecto primero) y ruta
-lógica. Las rutas lógicas conservan el alias utilizado para descubrir el archivo;
-las rutas canónicas indican el destino resuelto.
+Results are sorted by ASCII name, scope (project first), and logical
+path. Logical paths preserve the alias used to discover the file;
+canonical paths indicate the resolved destination.
 
-## Validación y límites
+## Validation and limits
 
-Cada archivo debe ser UTF-8 y comenzar con frontmatter YAML entre líneas `---`.
-`name` y `description` deben ser cadenas. El nombre debe coincidir exactamente
-con el directorio lógico: entre 1 y 64 caracteres ASCII en minúsculas, dígitos o
-guiones, sin guiones iniciales, finales ni consecutivos. La descripción debe
-contener texto no vacío y como máximo 1024 caracteres Unicode.
+Each file must be UTF-8 and begin with YAML frontmatter delimited by `---` lines.
+`name` and `description` must be strings. The name must exactly match
+the logical directory name: 1 to 64 lowercase ASCII characters, digits, or
+hyphens, with no leading, trailing, or consecutive hyphens. The description must
+contain non-empty text with at most 1024 Unicode characters.
 
-`compatibility`, si existe, debe contener entre 1 y 500 caracteres Unicode.
-`license` y `allowed-tools` deben ser cadenas. `metadata` debe ser un mapa de
-cadenas a cadenas. Los campos adicionales no se interpretan como políticas.
+`compatibility`, if present, must contain between 1 and 500 Unicode characters.
+`license` and `allowed-tools` must be strings. `metadata` must be a map of
+strings to strings. Additional fields are not interpreted as policies.
 
-Huginn limita cada archivo a 65.536 bytes y cada raíz a 256 hijos directos,
-incluidos los archivos que no sean directorios de skills. Una raíz con más hijos
-se rechaza completa; la otra raíz se procesa de forma independiente. Estos
-límites son política de Huginn, no requisitos de la especificación Agent Skills.
+Huginn limits each file to 65,536 bytes and each root to 256 direct children,
+including files that are not skill directories. A root with more children
+is rejected entirely; the other root is processed independently. These
+limits are Huginn policy, not requirements of the Agent Skills specification.
 
-Los enlaces globales pueden apuntar fuera de su raíz, por ejemplo a un repositorio
-de dotfiles. Tanto el directorio como el archivo resueltos de una skill de
-proyecto deben permanecer dentro del repositorio canónico. Los destinos rotos,
-cíclicos, ilegibles o no regulares producen diagnósticos.
+Global links can point outside their root, for example to a dotfiles
+repository. Both the resolved directory and file of a project skill
+must remain inside the canonical repository. Broken, cyclic, unreadable,
+or non-regular targets produce diagnostics.
 
-## Contrato JSON
+## JSON contract
 
-La salida es un único objeto, sin mensajes adicionales en stdout:
+The output is a single object, with no additional messages on stdout:
 
 ```json
 {
-  "fingerprint": "<SHA-256 hexadecimal de 64 caracteres>",
+  "fingerprint": "<64-character hexadecimal SHA-256>",
   "skills": [
     {
       "name": "code-review",
-      "description": "Revisar cambios locales",
+      "description": "Review local changes",
       "source_scope": "project",
       "logical_path": "/repo/.agents/skills/code-review/SKILL.md",
       "canonical_path": "/repo/.agents/skills/code-review/SKILL.md",
-      "content_fingerprint": "<SHA-256 del archivo completo>",
+      "content_fingerprint": "<SHA-256 of the complete file>",
       "trust": "untrusted",
       "selected": true,
       "status": "selected"
@@ -79,99 +79,99 @@ La salida es un único objeto, sin mensajes adicionales en stdout:
 }
 ```
 
-Las rutas JSON y humanas convierten bytes de ruta no UTF-8 mediante sustitución
-por U+FFFD, sin abortar el comando. Las rutas nativas permanecen intactas en el
-catálogo tipado y en el cálculo de huellas; la cadena mostrada con pérdida no
-debe usarse como identidad para activar una skill.
+JSON and human-readable paths convert non-UTF-8 path bytes via substitution
+with U+FFFD, without aborting the command. Native paths remain intact in the
+typed catalog and in fingerprint computation; the displayed lossy string must not
+be used as identity to activate a skill.
 
-Las raíces ausentes no son errores. Una entrada inválida genera un diagnóstico
-y no impide mostrar entradas válidas. Los códigos estables son `root_unreadable`,
+Missing roots are not errors. An invalid entry produces a diagnostic
+and does not prevent displaying valid entries. The stable codes are `root_unreadable`,
 `path_resolution`, `root_limit`, `project_escape`, `not_directory`, `not_regular`,
 `file_unreadable`, `file_limit`, `source_changed`, `invalid_utf8`,
 `frontmatter_missing`, `invalid_yaml`, `metadata_type`, `invalid_name`,
-`name_mismatch`, `invalid_description` e `invalid_compatibility`.
-`project_escape` usa severidad `security`; los demás usan `error`.
+`name_mismatch`, `invalid_description`, and `invalid_compatibility`.
+`project_escape` uses severity `security`; the others use `error`.
 
-## Frescura y confianza
+## Freshness and trust
 
-No hay caché: cada consulta reconstruye el catálogo. El puerto
-`SkillCatalogQuery::refresh` vuelve a leer y calcular SHA-256, incluso si una
-edición conserva el tamaño y la fecha de modificación. La huella del catálogo
-usa las entradas ordenadas, su ámbito, nombre, rutas y digest del archivo completo.
-Las entradas sobrescritas también participan; los diagnósticos no participan.
-Las rutas forman parte de la identidad: mover un archivo cambia la huella.
+There is no cache: each query rebuilds the catalog. The
+`SkillCatalogQuery::refresh` port re-reads and recomputes SHA-256, even if an
+edit preserves the size and modification date. The catalog fingerprint
+uses the sorted entries, their scope, name, paths, and complete-file digest.
+Overridden entries also participate; diagnostics do not participate.
+Paths are part of the identity: moving a file changes the fingerprint.
 
-El adaptador comprueba metadatos y destinos antes y después de leer. Si detecta
-cambios, rechaza la entrada o la raíz afectada. Estas comprobaciones no son un
-sandbox ni garantizan aislamiento frente a un proceso local que modifique rutas
-de forma concurrente. La activación vuelve a validar el origen.
+The adapter checks metadata and targets before and after reading. If it detects
+changes, it rejects the entry or the affected root. These checks are not a
+sandbox and do not guarantee isolation against a local process modifying paths
+concurrently. Activation re-validates the origin.
 
-Toda skill se etiqueta `untrusted`, incluida la global. La salida humana escapa
-controles de terminal y controles bidireccionales; JSON conserva los datos
-mediante serialización. `description`, `allowed-tools` y los demás metadatos nunca
-conceden permisos. `huginn skills list` solo inspecciona el catálogo y no carga
-instrucciones. `AGENTS.md` y `.agents/rules` mantienen su comportamiento anterior.
+Every skill is labeled `untrusted`, including the global one. Human-readable output escapes
+terminal controls and bidirectional controls; JSON preserves the data
+through serialization. `description`, `allowed-tools`, and other metadata never
+grant permissions. `huginn skills list` only inspects the catalog and does not load
+instructions. `AGENTS.md` and `.agents/rules` retain their previous behavior.
 
-## Carga bajo demanda
+## On-demand loading
 
-La composición nativa anuncia al modelo metadatos globales como datos de tarea
-`untrusted`, con identidad exacta, ámbito y ruta canónica. El anuncio tiene un
-límite de 16 KiB de datos JSON; el anuncio indica cuántas entradas se omiten.
-Las identidades seleccionadas por el host tienen prioridad. Si sus metadatos
-no caben, el turno falla explícitamente. No incluye
-cuerpos ni descripciones de proyecto sin selección explícita del usuario.
+Native composition announces global metadata to the model as `untrusted` task
+data, with exact identity, scope, and canonical path. The announcement has a
+16 KiB limit on JSON data; the announcement indicates how many entries are omitted.
+Identities selected by the host take priority. If their metadata
+does not fit, the turn fails explicitly. It does not include
+bodies or project descriptions without explicit user selection.
 
-La herramienta `load_skill` acepta la identidad exacta anunciada, no una ruta
-arbitraria ni un nombre ambiguo. Reconstruye el catálogo y comprueba otra vez
-ámbito, rutas y huella del archivo antes de entregar `SKILL.md`. Si el origen
-cambia, desaparece o deja de ser válido, la carga falla y solicita actualizar el
-catálogo. El resultado JSON completo tiene un límite de 16 KiB; una skill que
-supere ese límite falla sin truncar instrucciones. El contexto de la sesión puede
-imponer un límite menor y conserva sus errores y reglas de compactación normales.
+The `load_skill` tool accepts the exact announced identity, not an
+arbitrary path or an ambiguous name. It rebuilds the catalog and re-checks
+scope, paths, and file fingerprint before delivering `SKILL.md`. If the source
+changes, disappears, or becomes invalid, loading fails and requests an update of the
+catalog. The complete JSON result has a 16 KiB limit; a skill that
+exceeds that limit fails without truncating instructions. The session context may
+impose a lower limit and retains its normal errors and compaction rules.
 
-`StandardLoop::run_with_skills` permite al host seleccionar identidades de
-proyecto para un solo turno. Esta selección no concede confianza persistente.
-La herramienta no ejecuta scripts, carga referencias automáticamente ni modifica `HostPolicy`.
-Las llamadas posteriores a herramientas siguen requiriendo sus aprobaciones.
+`StandardLoop::run_with_skills` allows the host to select project
+identities for a single turn. This selection does not grant persistent trust.
+The tool does not run scripts, automatically load references, or modify `HostPolicy`.
+Subsequent tool calls still require their approvals.
 
-La sesión guarda únicamente la huella versionada del catálogo, sin duplicar
-cuerpos en sus metadatos. Los resultados normales de herramientas permanecen en
-el historial original. Al iniciar otro turno, una huella distinta produce una
-advertencia con las huellas anterior y actual. No se repiten cargas ni efectos
-anteriores y no se reinyectan cuerpos fuera del historial normal.
+The session saves only the versioned catalog fingerprint, without duplicating
+bodies in its metadata. Normal tool results remain in
+the original history. When starting another turn, a different fingerprint produces a
+warning with the previous and current fingerprints. Previous loads or effects are not
+repeated and bodies are not reinjected outside the normal history.
 
-## Invocación explícita
+## Explicit invocation
 
-Usa `/skill:<nombre> [tarea]` en la TUI, modo línea, `run` o una sesión reanudada:
+Use `/skill:<name> [task]` in the TUI, line mode, `run`, or a resumed session:
 
 ```sh
-huginn --workspace . run '/skill:code-review Revisa "src/lib.rs" sin editar'
+huginn --workspace . run '/skill:code-review Review "src/lib.rs" without editing'
 huginn --workspace . --json run '/skill:code-review'
-huginn resume <uuid> --prompt '/skill:code-review Revisa los cambios nuevos'
+huginn resume <uuid> --prompt '/skill:code-review Review the new changes'
 ```
 
-La TUI muestra los nombres seleccionados y sus descripciones en el autocompletado
-existente. Tab inserta el comando; Enter lo envía. Es un comando del host, no una
-extensión de la gramática de comandos de plugins. El catálogo de autocompletado
-es una instantánea de inicio; cada invocación consulta de nuevo el catálogo.
+The TUI shows selected names and their descriptions in the existing
+autocomplete. Tab inserts the command; Enter sends it. It is a host command, not an
+extension of the plugin command grammar. The autocomplete catalog
+is a startup snapshot; each invocation queries the catalog again.
 
-El host admite un máximo de 65.536 bytes por invocación. El nombre sigue las reglas
-del catálogo. No admite rutas, scripts ni plugins remotos. Tras el nombre, consume
-un carácter de espacio en blanco como separador y conserva todos los bytes restantes
-de la tarea, incluidas comillas, barras inversas y espacios adicionales o finales.
-No realiza análisis de shell ni expansión de argumentos. La tarea es opcional.
+The host supports a maximum of 65,536 bytes per invocation. The name follows the
+catalog rules. It does not support paths, scripts, or remote plugins. After the name, it consumes
+one whitespace character as a separator and preserves all remaining bytes
+of the task, including quotes, backslashes, and extra or trailing spaces.
+It does not perform shell parsing or argument expansion. The task is optional.
 
-Antes de iniciar el turno o consultar el modelo, el host resuelve exactamente una
-entrada `selected` y carga su identidad mediante `SkillLoader`. La precedencia de
-proyecto sobre global no cambia. Un nombre inválido, desconocido, ambiguo, una
-carga no disponible o una cancelación durante la carga rechaza la solicitud sin
-inferencia, efectos ni turno de asistente artificial. Los errores JSON no añaden
-texto humano a stdout. Las plantillas de prompts no pueden activar skills de forma
-indirecta; introduce el comando de skill directamente.
+Before starting the turn or querying the model, the host resolves exactly one
+`selected` entry and loads its identity via `SkillLoader`. The precedence of
+project over global does not change. An invalid, unknown, or ambiguous name, an
+unavailable load, or a cancellation during loading rejects the request without
+inference, effects, or an artificial assistant turn. JSON errors do not add
+human-readable text to stdout. Prompt templates cannot activate skills
+indirectly; enter the skill command directly.
 
-La tarea y el resultado de carga se guardan en un mensaje de usuario como un objeto
-JSON separado en `task` y `skill`. El cuerpo conserva `untrusted`, identidad, ámbito
-y ruta canónica; nunca se convierte en un mensaje de sistema. Ni el cuerpo ni
-`allowed-tools` conceden permisos: `HostPolicy` mantiene las aprobaciones normales.
-Reanudar conserva el historial, pero una nueva invocación vuelve a validar y cargar
-el origen actual. No reproduce cargas ni efectos anteriores.
+The task and the load result are saved in a user message as a
+JSON object separated into `task` and `skill`. The body retains `untrusted`, identity, scope,
+and canonical path; it is never turned into a system message. Neither the body nor
+`allowed-tools` grant permissions: `HostPolicy` retains the normal approvals.
+Resuming preserves the history, but a new invocation re-validates and loads
+the current source. It does not replay previous loads or effects.

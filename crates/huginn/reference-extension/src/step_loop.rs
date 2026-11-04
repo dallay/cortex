@@ -9,10 +9,12 @@ use futures::StreamExt;
 use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext},
     v1::agent::{
-        agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, PreparedAction, Role, Session, SessionStore, SteeringQueue, StepId, Tool,
-        ToolCall, ToolContext, ToolDefinition, ToolRegistry,
+        agent_loop_id, inference_hooks_id, model_id, sessions_id, tool_hooks_id, AgentLoop,
+        ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
+        InferenceHooksService, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
+        ModelRequest, ModelService, PreparedAction, Role, ServiceSlotHandle, Session,
+        SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool, ToolCall,
+        ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -20,6 +22,9 @@ use huginn_plugin_api::{
 use std::{collections::BTreeSet, sync::Arc};
 
 /// Configuration a loop author defines for itself; the host does not ship one.
+///
+/// `hooks` and `inference_hooks` exist only for a loop composed outside a supervisor. A
+/// lease-aware loop leaves both empty: the kernel owns those registries.
 #[derive(Clone)]
 pub struct StepLoopConfig {
     pub max_iterations: usize,
@@ -45,11 +50,24 @@ impl Default for StepLoopConfig {
 }
 
 pub struct StepLoop {
-    model: Arc<dyn ModelProvider>,
+    model: Option<Arc<dyn ModelProvider>>,
+    sessions: Option<Arc<dyn SessionStore>>,
+    leased: Option<LeasedServices>,
     tools: Arc<dyn ToolRegistry>,
-    sessions: Arc<dyn SessionStore>,
     instructions: Arc<dyn InstructionSource>,
     config: StepLoopConfig,
+}
+
+/// The kernel-owned services this loop resolves instead of pinning.
+///
+/// Holding slot handles rather than `Arc`s is the whole difference between surviving a
+/// `Supervisor::substitute` and being left on the retired services.
+#[derive(Clone)]
+pub struct LeasedServices {
+    pub model: ServiceSlotHandle<ModelService>,
+    pub sessions: ServiceSlotHandle<SessionsService>,
+    pub hooks: ServiceSlotHandle<ToolHooksService>,
+    pub inference_hooks: ServiceSlotHandle<InferenceHooksService>,
 }
 
 impl StepLoop {
@@ -61,11 +79,65 @@ impl StepLoop {
         config: StepLoopConfig,
     ) -> Self {
         Self {
-            model,
+            model: Some(model),
+            sessions: Some(sessions),
+            leased: None,
             tools,
-            sessions,
             instructions,
             config,
+        }
+    }
+
+    /// A loop whose services are leased from the kernel instead of pinned, so a service
+    /// substituted between turns is the one the next turn uses.
+    pub fn leasing(
+        tools: Arc<dyn ToolRegistry>,
+        instructions: Arc<dyn InstructionSource>,
+        config: StepLoopConfig,
+        leased: LeasedServices,
+    ) -> Self {
+        Self {
+            model: None,
+            sessions: None,
+            leased: Some(leased),
+            tools,
+            instructions,
+            config,
+        }
+    }
+
+    /// Each use re-acquires, so a provider or registry substituted between turns is the one
+    /// the next acquisition observes. A pinned loop has nothing to re-acquire.
+    fn model(&self) -> Result<Arc<dyn ModelProvider>> {
+        match &self.leased {
+            Some(leased) => Ok(leased.model.acquire()?.0.clone()),
+            None => self
+                .model
+                .clone()
+                .ok_or_else(|| AgentError::Composition("the loop has no model binding".into())),
+        }
+    }
+    fn sessions(&self) -> Result<Arc<dyn SessionStore>> {
+        match &self.leased {
+            Some(leased) => Ok(leased.sessions.acquire()?.0.clone()),
+            None => self
+                .sessions
+                .clone()
+                .ok_or_else(|| AgentError::Composition("the loop has no session binding".into())),
+        }
+    }
+    /// The kernel owns the hook registries; a leased loop takes the live one, never a copy
+    /// captured at construction.
+    fn tool_hooks(&self) -> Result<Option<Arc<ToolHooks>>> {
+        match &self.leased {
+            Some(leased) => Ok(Some(leased.hooks.acquire()?.0.clone())),
+            None => Ok(self.config.hooks.clone()),
+        }
+    }
+    fn inference_hooks(&self) -> Result<Option<Arc<InferenceHooks>>> {
+        match &self.leased {
+            Some(leased) => Ok(Some(leased.inference_hooks.acquire()?.0.clone())),
+            None => Ok(self.config.inference_hooks.clone()),
         }
     }
 
@@ -77,7 +149,7 @@ impl StepLoop {
         sink: &dyn EventSink,
     ) -> Result<()> {
         session.events.push(event.clone());
-        self.sessions.save(session).await?;
+        self.sessions()?.save(session).await?;
         sink.emit(event);
         Ok(())
     }
@@ -134,10 +206,11 @@ impl StepLoop {
         call: &Call<'_>,
         spent: &mut u64,
     ) -> Result<Message> {
+        let model = self.model()?;
         let mut stream = tokio::select! {
             biased;
             _ = call.cancel.cancelled() => return Err(AgentError::Cancelled),
-            result = self.model.stream(
+            result = model.stream(
                 ModelRequest {
                     messages: context,
                     tools,
@@ -220,7 +293,7 @@ impl StepLoop {
                     .tools
                     .get(&call.name)
                     .ok_or_else(|| AgentError::Tool(format!("unknown tool {}", call.name)))?;
-                if let Some(hooks) = &self.config.hooks {
+                if let Some(hooks) = &self.tool_hooks()? {
                     if let Some(blocked) = hooks.before(&call, &context).await {
                         return Err(AgentError::Tool(format!(
                             "blocked by hook {}: {}",
@@ -263,7 +336,7 @@ impl StepLoop {
                 Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
                 Err(error) => (error.to_string(), true),
             };
-            if let Some(hooks) = &self.config.hooks {
+            if let Some(hooks) = &self.tool_hooks()? {
                 let notes = hooks
                     .after(
                         &call,
@@ -359,7 +432,7 @@ impl StepLoop {
                 workspace: session.workspace.clone(),
                 cancellation: cancel.clone(),
             };
-            if let Some(hooks) = &self.config.inference_hooks {
+            if let Some(hooks) = &self.inference_hooks()? {
                 if let Some(blocked) = hooks.before(turn, step, &hook_context).await {
                     self.record(
                         session,
@@ -430,7 +503,7 @@ impl StepLoop {
                     Err(error) => return Err(error),
                 }
             };
-            if let Some(hooks) = &self.config.inference_hooks {
+            if let Some(hooks) = &self.inference_hooks()? {
                 let notes = hooks.after(turn, step, &response, &hook_context).await;
                 if !notes.is_empty() {
                     let mut annotations = String::new();
@@ -463,7 +536,7 @@ impl StepLoop {
             }
             let calls = response.tool_calls.clone();
             session.messages.push(response);
-            self.sessions.save(session).await?;
+            self.sessions()?.save(session).await?;
             if calls.is_empty() {
                 return Ok(());
             }
@@ -527,6 +600,16 @@ async fn execute(tool: &dyn Tool, action: PreparedAction, context: &ToolContext)
 
 #[async_trait]
 impl AgentLoop for StepLoop {
+    fn capabilities(&self) -> huginn_plugin_api::v1::agent::AgentLoopCapabilities {
+        huginn_plugin_api::v1::agent::AgentLoopCapabilities {
+            compaction: true,
+            skill_commands: false,
+            // A pinned loop keeps the services it was constructed with; only the leased
+            // variant resolves the kernel slots per turn and survives a substitution.
+            rebinds_services: self.leased.is_some(),
+        }
+    }
+
     async fn run(
         &self,
         session: &mut Session,
@@ -535,6 +618,7 @@ impl AgentLoop for StepLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = SessionOperation::try_enter(&session.id)?;
         let turn = session.allocate_turn()?;
         session.interrupted = true;
         self.record(
@@ -559,6 +643,7 @@ impl AgentLoop for StepLoop {
                 self.record(
                     session,
                     Event::Error {
+                        turn,
                         message: error.to_string(),
                     },
                     events,
@@ -575,6 +660,7 @@ impl AgentLoop for StepLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = SessionOperation::try_enter(&session.id)?;
         let Some(through) = Self::complete_turn_end(&session.messages, session.summary_through)
         else {
             return Err(AgentError::Model(
@@ -663,4 +749,59 @@ pub fn step_loop_plugin(
     config: StepLoopConfig,
 ) -> Box<dyn Plugin> {
     Box::new(StepLoopPlugin(model, tools, sessions, instructions, config))
+}
+
+struct LeasedStepLoopPlugin {
+    tools: Arc<dyn ToolRegistry>,
+    instructions: Arc<dyn InstructionSource>,
+    config: StepLoopConfig,
+}
+
+#[async_trait]
+impl Plugin for LeasedStepLoopPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "example.step-loop-leased".into(),
+            provides: vec![agent_loop_id()],
+            requires: vec![
+                model_id(),
+                sessions_id(),
+                tool_hooks_id(),
+                inference_hooks_id(),
+            ],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let leased = LeasedServices {
+            model: ctx.service_slot_handle::<ModelService>(&model_id())?,
+            sessions: ctx.service_slot_handle::<SessionsService>(&sessions_id())?,
+            hooks: ctx.service_slot_handle::<ToolHooksService>(&tool_hooks_id())?,
+            inference_hooks: ctx
+                .service_slot_handle::<InferenceHooksService>(&inference_hooks_id())?,
+        };
+        let implementation = StepLoop::leasing(
+            self.tools.clone(),
+            self.instructions.clone(),
+            self.config.clone(),
+            leased,
+        );
+        ctx.provide(agent_loop_id(), LoopService(Arc::new(implementation)))
+    }
+}
+
+/// Publishes this loop as a lease-aware plugin.
+///
+/// The kernel owns `agent:model`, `agent:sessions` and both hook registries, so the loop
+/// resolves them per turn instead of pinning them, and its config must not carry a
+/// registry of its own.
+pub fn step_loop_plugin_leased(
+    tools: Arc<dyn ToolRegistry>,
+    instructions: Arc<dyn InstructionSource>,
+    config: StepLoopConfig,
+) -> Box<dyn Plugin> {
+    Box::new(LeasedStepLoopPlugin {
+        tools,
+        instructions,
+        config,
+    })
 }

@@ -1,4 +1,5 @@
 //! Host configuration, skill completion, and UI preference persistence.
+pub mod banner;
 pub mod config;
 pub mod skill_completion;
 pub mod ui_settings;

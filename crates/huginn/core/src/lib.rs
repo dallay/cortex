@@ -1,4 +1,6 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
+mod admission;
+pub use admission::SessionOperation;
 pub mod connections;
 pub mod kernel;
 pub mod providers;
@@ -323,6 +325,9 @@ pub enum Event {
         turn: TurnId,
     },
     Error {
+        /// Unknown for legacy records and diagnostics outside an allocated turn.
+        #[serde(default)]
+        turn: TurnId,
         message: String,
     },
 }
@@ -445,8 +450,34 @@ pub trait SessionStore: Send + Sync {
     async fn load(&self, id: &str) -> Result<Session>;
     async fn list(&self) -> Result<Vec<SessionInfo>>;
 }
+/// Optional operations declared by an implementation for its current configuration.
+///
+/// Discovery is synchronous and side-effect-free: it must not acquire provider leases
+/// or perform I/O. A declaration describes support, not readiness or authorization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentLoopCapabilities {
+    pub compaction: bool,
+    pub skill_commands: bool,
+    /// The loop acquires its model and session store from the kernel per turn, so a
+    /// substitution between turns is honored instead of served by a retired provider.
+    pub rebinds_services: bool,
+}
+
+/// A certifiable loop admits one in-process operation per exact `Session::id`.
+///
+/// This applies across snapshots and loop instances. Acquire a
+/// `SessionOperation` before host access in `run` and supported `compact`;
+/// hold it through final persistence. Busy admission returns `AgentError::Session`
+/// immediately with no queue, mutation, event, or host effect. Different sessions
+/// remain independent. Reuse the completed snapshot or reload before retrying;
+/// admission provides no merge or stale-snapshot protection.
 #[async_trait]
 pub trait AgentLoop: Send + Sync {
+    /// Conservative by default so existing implementations need not opt in.
+    fn capabilities(&self) -> AgentLoopCapabilities {
+        AgentLoopCapabilities::default()
+    }
+
     /// Host-owned discovery only. Entries are not plugin command contributions.
     async fn skill_commands(
         &self,
@@ -490,6 +521,21 @@ pub struct LoopService(pub Arc<dyn AgentLoop>);
 /// the service it provides (ADR-0017).
 pub fn agent_loop_id() -> kernel::ServiceId {
     kernel::ServiceId::new("agent:loop", 1)
+}
+
+/// Stable service id for the model provider a loop calls.
+///
+/// A loop that leases this slot instead of pinning a provider keeps working when the
+/// host substitutes `agent:model` between turns (ADR-0017).
+pub fn model_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:model", 1)
+}
+
+/// Stable service id for the session store a loop persists through.
+///
+/// Leased like [`model_id`]: a substituted store is picked up at the next turn.
+pub fn sessions_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:sessions", 1)
 }
 
 /// Workspace context supplied by a replaceable adapter.

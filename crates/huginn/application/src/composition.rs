@@ -13,14 +13,16 @@ use huginn_core::{
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn model_id() -> ServiceId {
-    ServiceId::new("agent:model", 1)
+    huginn_core::model_id()
 }
 pub fn tools_id() -> ServiceId {
     ServiceId::new("agent:tools", 1)
 }
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn sessions_id() -> ServiceId {
-    ServiceId::new("agent:sessions", 1)
+    huginn_core::sessions_id()
 }
 /// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn loop_id() -> ServiceId {
@@ -316,6 +318,14 @@ impl LeasedAgentLoop {
 
 #[async_trait]
 impl AgentLoop for LeasedAgentLoop {
+    fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+        huginn_core::AgentLoopCapabilities {
+            compaction: true,
+            skill_commands: self.config.skills.is_some(),
+            rebinds_services: true,
+        }
+    }
+
     async fn skill_commands(
         &self,
         workspace: &std::path::Path,
@@ -332,6 +342,7 @@ impl AgentLoop for LeasedAgentLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
@@ -349,6 +360,7 @@ impl AgentLoop for LeasedAgentLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;

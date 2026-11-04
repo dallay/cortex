@@ -81,9 +81,9 @@ impl Guardrails {
         }
         Ok(())
     }
-    /// Comprueba nombres sensibles y prefijos del proyecto, sin conceder acceso.
-    /// Resuelve aliases y el ancestro existente de destinos nuevos.
-    /// Los enlaces colgantes fallan; no ofrece confinamiento atómico frente a carreras.
+    /// Checks sensitive names and project prefixes, without granting access.
+    /// Resolves aliases and the existing ancestor of new destinations.
+    /// Dangling links fail; it does not provide atomic confinement against race conditions.
     pub fn check_path(
         &self,
         workspace: &Path,

@@ -32,12 +32,51 @@ pub mod hooks {
 ///
 /// The host keeps authorization, effects, events and persistence; an implementation
 /// receives them and can only request decisions (ADR-0017).
+///
+/// # Hook registries
+///
+/// The kernel owns both hook registries, `agent:tool-hooks@1`
+/// ([`tool_hooks_id`](crate::v1::agent::tool_hooks_id)) and `agent:inference-hooks@1`
+/// ([`inference_hooks_id`](crate::v1::agent::inference_hooks_id)). A loop never chooses them
+/// and never accepts one from its own configuration: a host that was handed a different
+/// registry refuses the loop instead of dropping guards silently. This is why
+/// [`ToolHooksService`](crate::v1::agent::ToolHooksService) and
+/// [`InferenceHooksService`](crate::v1::agent::InferenceHooksService) are exported here: the
+/// loop acquires them from the kernel and evaluates whatever registry is live at that moment,
+/// so a hook installed or a registry substituted after the loop started still gates the turn.
+///
+/// # Surviving a provider substitution
+///
+/// [`std::sync::Arc`] pins the provider or store that existed at construction. A loop that
+/// wants to survive `Supervisor::substitute` instead holds a
+/// [`ServiceSlotHandle`](crate::v1::agent::ServiceSlotHandle) per leased service and calls
+/// [`ServiceSlotHandle::acquire`](crate::v1::agent::ServiceSlotHandle::acquire) at the start of
+/// every turn and every compaction:
+///
+/// ```ignore
+/// async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+///     let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
+///     let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
+///     ctx.provide(agent_loop_id(), LoopService(Arc::new(Mine { model, sessions })))
+/// }
+///
+/// // inside `AgentLoop::run`, once per turn:
+/// let model = self.model.acquire()?;
+/// ```
+///
+/// A loop that leases its services declares `AgentLoopCapabilities::rebinds_services` in the
+/// conformance suite, which then proves it uses the substituted provider on the next turn.
 pub mod agent {
     pub use huginn_core::{
-        agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, PreparedAction, Result, Role, Session, SessionStore, SteeringQueue, StepId,
+        agent_loop_id, model_id, sessions_id, AgentLoop, AgentLoopCapabilities, ApprovalPolicy,
+        ApprovalRequest, CancellationToken, Event, EventSink, InstructionSource, LoopService,
+        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Result,
+        Role, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId,
         Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
+    };
+    pub use huginn_core::{
+        hooks::{inference_hooks_id, tool_hooks_id, InferenceHooksService, ToolHooksService},
+        kernel::{ServiceId, ServiceSlotHandle},
     };
 }
 

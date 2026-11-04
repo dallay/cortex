@@ -115,55 +115,55 @@ keeps its existing 64 KiB content budget plus a marker when truncated.
 Registrations follow the plugin generation like other contributions. See
 [ADR-0016](adr/0016-restrict-only-tool-hooks.md).
 
-## Registro de herramientas desde plugin-api
+## Registering tools from plugin-api
 
-Un autor nativo puede implementar `Tool` y registrar herramientas mediante
-`huginn_plugin_api::v1::tools`, sin depender de `huginn-runtime`:
+A native author can implement `Tool` and register tools through
+`huginn_plugin_api::v1::tools`, without depending on `huginn-runtime`:
 
 ```rust
 use huginn_plugin_api::v1::tools::{tool_registration_id, ToolRegistrationService};
 
-// En manifest(): requires: vec![tool_registration_id()].
-// En activate(), con una herramienta que implementa Tool:
+// In manifest(): requires: vec![tool_registration_id()].
+// In activate(), with a tool implementing Tool:
 let service = ctx.resolve::<ToolRegistrationService>(&tool_registration_id())?;
 service.register(ctx, tool)?;
 ```
 
-El módulo también expone `Tool`, `ToolDefinition`, `ToolCall`, `ToolContext`,
-`PreparedAction` y `ApprovalRequest`. El autor puede construir
+The module also exposes `Tool`, `ToolDefinition`, `ToolCall`, `ToolContext`,
+`PreparedAction`, and `ApprovalRequest`. The author can build
 `PreparedAction { approval: Some(ApprovalRequest { id, action, preview }), payload }`
-para solicitar aprobación de un efecto; la solicitud no equivale a autorización.
-El servicio exige la dependencia declarada y la misma instancia
-publicada por el host; retener otra instancia no sustituye esa declaración.
-`ToolRegistration` es el puerto que implementan los adaptadores del host, no una
-concesión de permisos al autor.
+to request approval for an effect; the request does not equal authorization.
+The service requires the declared dependency and the same instance
+published by the host; retaining a different instance does not substitute that declaration.
+`ToolRegistration` is the port implemented by the host's adapters, not a
+grant of permissions to the author.
 
-El host construye el servicio con `ToolRegistrationService::new(port)`, donde
-`port` es un `Arc<dyn ToolRegistration>`, y lo publica con
-`ctx.provide(tool_registration_id(), service)`. El campo del puerto es privado:
-la API del autor solo permite registrar mediante `service.register(ctx, tool)`.
-La implementación pública de `ToolRegistration` para `Registry` sigue siendo una
-API de adaptador del host; esta encapsulación no convierte el código nativo en un
+The host builds the service with `ToolRegistrationService::new(port)`, where
+`port` is an `Arc<dyn ToolRegistration>`, and publishes it with
+`ctx.provide(tool_registration_id(), service)`. The port field is private:
+the author's API only allows registration via `service.register(ctx, tool)`.
+The public implementation of `ToolRegistration` for `Registry` remains a
+host adapter API; this encapsulation does not turn native code into a
 sandbox.
 
-`agent:tool-registration@1` comparte almacenamiento con los servicios anteriores
-`agent:tool-registrations@1` y `agent:tools@1`. Los nombres se reservan al registrar;
-las herramientas solo son visibles tras la activación y validación del manifest.
-Las colisiones producen un error. Si la activación falla, el contexto revoca las
-reservas. Al retirar el plugin, cerrar el supervisor o descartarlo, sus leases
-revocan las herramientas y los handles retenidos rechazan preparación y ejecución.
+`agent:tool-registration@1` shares storage with the previous services
+`agent:tool-registrations@1` and `agent:tools@1`. Names are reserved upon registration;
+tools become visible only after activation and manifest validation succeed.
+Collisions produce an error. If activation fails, the context revokes the
+reservations. When the plugin is retired, or the supervisor is shut down or dropped, its leases
+revoke the tools, and retained handles reject preparation and execution.
 
-El registro no autoriza efectos: el host conserva la decisión de aprobación y los
-hooks solo pueden restringir. El código nativo sigue siendo confiable y comparte
-el proceso; esta API no añade aislamiento ni carga dinámica. La ruta antigua
-`Registry::register` exige declarar su servicio `registry_id()` y usar el registro
-publicado por el host; `Registry::native` e `insert` conservan su API existente.
+Registration does not authorize effects: the host retains the approval decision, and
+hooks can only restrict. Native code remains trusted and shares
+the process; this API does not add isolation or dynamic loading. The legacy path
+`Registry::register` requires declaring its `registry_id()` service and using the
+registry published by the host; `Registry::native` and `insert` keep their existing API.
 
 ## Conflicts and dependencies
 
-`huginn-guards` ofrece [protecciones de rutas y shell](guardrails.md) activas en
-run/chat/resume. No concede permisos ni altera los hooks registrados por autores;
-otros hosts deben seleccionar explícitamente el plugin y el builder protegido.
+`huginn-guards` offers [path and shell protections](guardrails.md) active in
+run/chat/resume. It does not grant permissions or alter the hooks registered by authors;
+other hosts must explicitly select the plugin and the protected builder.
 
 Contribution IDs and capability keys must be unique. Commands reserve their
 command name; renderers reserve their tool selector; widgets reserve their

@@ -119,7 +119,7 @@ a cleanup intent until recovery; this must not become a usable connection.
   [inference adapters](inference-adapters.md#reproducible-real-ollama-checks).
   They are P0.4 evidence and are not rerun by these fixtures.
 - Full pre-PR validation is `just ci-local`, subject to the prerequisites in
-  [development](../development.md#validación-pre-pr) and
+  [development](../development.md#pre-pr-validation) and
   [container E2E](../../dev/README.md#path-2--playwright-e2e-against-docker).
   Focused Rust tests are not full CI.
 
